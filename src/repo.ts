@@ -6,10 +6,14 @@ function getRepoPath() {
 }
 
 function getRepoUrl() {
-  return (
+  const base =
     process.env.GITHUB_REPO_URL ||
-    "https://github.com/comprehensiveio/comp.git"
-  );
+    "https://github.com/comprehensiveio/comp.git";
+  const pat = process.env.GITHUB_PERSONAL_ACCESS_TOKEN;
+  if (pat && base.startsWith("https://")) {
+    return base.replace("https://", `https://x-access-token:${pat}@`);
+  }
+  return base;
 }
 
 function getRepoBranch() {
@@ -42,10 +46,9 @@ export function ensureRepo() {
     });
   } else {
     console.log("[repo] cloning repository");
-    execSync(
-      `git clone --depth 1 --branch ${branch} ${repoUrl} ${repoPath}`,
-      { stdio: "inherit" }
-    );
+    execSync(`git clone --branch ${branch} ${repoUrl} ${repoPath}`, {
+      stdio: "inherit",
+    });
   }
 }
 
