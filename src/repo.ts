@@ -46,9 +46,10 @@ export function ensureRepo() {
     });
   } else {
     console.log("[repo] cloning repository");
-    execSync(`git clone --branch ${branch} ${repoUrl} ${repoPath}`, {
-      stdio: "inherit",
-    });
+    execSync(
+      `git clone --depth 1 --branch ${branch} ${repoUrl} ${repoPath}`,
+      { stdio: "inherit" }
+    );
   }
 }
 

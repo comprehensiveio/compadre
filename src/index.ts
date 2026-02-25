@@ -35,7 +35,12 @@ async function start() {
     refreshToken: process.env.DATADOG_MCP_REFRESH_TOKEN!,
   });
 
-  // Clone or update the repo on startup
+  // Start the server first so Render sees the port binding
+  serve({ fetch: app.fetch, port }, (info) => {
+    console.log(`[agent] server running on port ${info.port}`);
+  });
+
+  // Clone or update the repo in the background (can be slow)
   try {
     ensureRepo();
   } catch (err) {
@@ -44,10 +49,6 @@ async function start() {
 
   // Periodic repo refresh
   setInterval(refreshRepo, REPO_REFRESH_INTERVAL_MS);
-
-  serve({ fetch: app.fetch, port }, (info) => {
-    console.log(`[agent] server running on port ${info.port}`);
-  });
 }
 
 start();
