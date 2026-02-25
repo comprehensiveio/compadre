@@ -18,7 +18,7 @@ function env(key: string): string {
 export async function buildMcpServers() {
   const datadogToken = await getDatadogAccessToken();
 
-  return {
+  const servers: Record<string, unknown> = {
     "datadog-mcp": {
       type: "http" as const,
       url: "https://mcp.datadoghq.com/api/unstable/mcp-server/mcp?toolsets=core,apm,error-tracking",
@@ -59,14 +59,18 @@ export async function buildMcpServers() {
         Authorization: `Bearer ${env("RENDER_API_KEY")}`,
       },
     },
+  };
 
-    postgres: {
+  if (process.env.DATABASE_URL) {
+    servers.postgres = {
       command: "npx",
       args: [
         "-y",
         "@modelcontextprotocol/server-postgres",
-        env("DATABASE_URL"),
+        process.env.DATABASE_URL,
       ],
-    },
-  };
+    };
+  }
+
+  return servers;
 }
