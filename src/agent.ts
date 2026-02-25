@@ -21,8 +21,8 @@ interface RunTaskOptions {
 export async function runTask({
   prompt,
   sessionId: resumeSessionId,
-  maxTurns = 30,
-  maxBudgetUsd = 2.0,
+  maxTurns = Number(process.env.DEFAULT_MAX_TURNS) || 50,
+  maxBudgetUsd = Number(process.env.DEFAULT_MAX_BUDGET_USD) || 3.0,
 }: RunTaskOptions): Promise<TaskResult> {
   const repoPath = process.env.REPO_PATH || "/opt/render/repo";
 
