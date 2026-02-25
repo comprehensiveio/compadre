@@ -7,6 +7,7 @@
  * Postgres MCP runs as a stdio subprocess.
  */
 
+import type { McpServerConfig } from "@anthropic-ai/claude-agent-sdk";
 import { getDatadogAccessToken } from "./auth/datadog.js";
 
 function env(key: string): string {
@@ -18,7 +19,7 @@ function env(key: string): string {
 export async function buildMcpServers() {
   const datadogToken = await getDatadogAccessToken();
 
-  const servers: Record<string, unknown> = {
+  const servers: Record<string, McpServerConfig> = {
     "datadog-mcp": {
       type: "http" as const,
       url: "https://mcp.datadoghq.com/api/unstable/mcp-server/mcp?toolsets=core,apm,error-tracking",
