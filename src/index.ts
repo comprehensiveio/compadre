@@ -45,14 +45,6 @@ async function start() {
     console.log(`[agent] server running on port ${info.port}`);
   });
 
-  // Check DD agent connectivity
-  if (process.env.DD_AGENT_HOST) {
-    const host = process.env.DD_AGENT_HOST;
-    fetch(`http://${host}:8126/info`)
-      .then((r) => r.text().then((t) => console.log(`[dd-agent] reachable at ${host}:8126, status=${r.status}`)))
-      .catch((e) => console.error(`[dd-agent] unreachable at ${host}:8126:`, e.message));
-  }
-
   // Clone or update the repo in the background (can be slow)
   try {
     ensureRepo();
