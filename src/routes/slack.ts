@@ -76,13 +76,14 @@ function buildSlackPrompt({
   threadTs?: string;
   userId?: string;
 }) {
-  const parts = [
-    `A user${userId ? ` (Slack user ID: ${userId})` : ""} sent you this message via Slack.`,
-    `Respond in Slack channel ${channel}${threadTs ? ` in thread ${threadTs}` : ""} using the Slack MCP.`,
-    `Do NOT return a text response — post your answer directly to Slack.`,
+  const lines = [
+    `Slack message from user ${userId || "unknown"}.`,
     ``,
-    `Their message:`,
+    `Reply to:`,
+    `- channel: ${channel}`,
+    threadTs ? `- thread_ts: ${threadTs} (reply in this thread)` : `- no thread (start a new message)`,
+    ``,
     message,
   ];
-  return parts.join("\n");
+  return lines.join("\n");
 }
