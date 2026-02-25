@@ -35,31 +35,23 @@ promptRoutes.post("/prompt", async (c) => {
 
   console.log(`[prompt] received: ${prompt.slice(0, 100)}`);
 
-  try {
-    const result = await runTask({
-      prompt,
-      sessionId,
-      maxTurns: (body.maxTurns as number) ?? 30,
-      maxBudgetUsd: (body.maxBudgetUsd as number) ?? 2.0,
-    });
+  const result = await runTask({
+    prompt,
+    sessionId,
+    maxTurns: (body.maxTurns as number) ?? 30,
+    maxBudgetUsd: (body.maxBudgetUsd as number) ?? 2.0,
+  });
 
-    if (threadId && result.sessionId) {
-      threadSessions.set(threadId, result.sessionId);
-    }
-
-    return c.json({
-      ok: true,
-      result: result.result,
-      sessionId: result.sessionId,
-      turns: result.numTurns,
-      cost: result.costUsd,
-      duration: result.durationMs,
-    });
-  } catch (err) {
-    console.error("[prompt] agent error:", err);
-    return c.json(
-      { ok: false, error: err instanceof Error ? err.message : "unknown" },
-      500
-    );
+  if (threadId && result.sessionId) {
+    threadSessions.set(threadId, result.sessionId);
   }
+
+  return c.json({
+    ok: true,
+    result: result.result,
+    sessionId: result.sessionId,
+    turns: result.numTurns,
+    cost: result.costUsd,
+    duration: result.durationMs,
+  });
 });

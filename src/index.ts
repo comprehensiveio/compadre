@@ -8,6 +8,7 @@ if (!process.env.PATH?.includes(process.execPath.replace(/\/node$/, ""))) {
 }
 
 import { serve } from "@hono/node-server";
+import ddTrace from "dd-trace";
 import { Hono } from "hono";
 import { logger } from "hono/logger";
 import { healthRoutes } from "./routes/health.js";
@@ -23,6 +24,19 @@ app.use("*", async (c, next) => {
   if (c.req.path === "/health") return next();
   return logger()(c, next);
 });
+
+app.onError((err, c) => {
+  const span = ddTrace.scope().active();
+  if (span) {
+    span.setTag("error", true);
+    span.setTag("error.message", err.message);
+    span.setTag("error.stack", err.stack);
+    span.setTag("error.type", err.constructor.name);
+  }
+  console.error(`[error] ${c.req.method} ${c.req.path}:`, err.message);
+  return c.json({ ok: false, error: err.message }, 500);
+});
+
 app.route("/", healthRoutes);
 app.route("/", promptRoutes);
 app.route("/", slackRoutes);
