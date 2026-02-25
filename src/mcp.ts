@@ -61,13 +61,13 @@ export async function buildMcpServers() {
     },
   };
 
-  if (process.env.DATABASE_URL) {
+  if (process.env.READONLY_DATABASE_URL) {
     servers.postgres = {
       command: "npx",
       args: [
         "-y",
         "@modelcontextprotocol/server-postgres",
-        process.env.DATABASE_URL,
+        process.env.READONLY_DATABASE_URL,
       ],
     };
   }
