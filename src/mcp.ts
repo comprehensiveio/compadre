@@ -21,7 +21,7 @@ export async function buildMcpServers() {
   return {
     "datadog-mcp": {
       type: "http" as const,
-      url: "https://mcp.datadoghq.com/api/unstable/mcp-server/mcp",
+      url: "https://mcp.datadoghq.com/api/unstable/mcp-server/mcp?toolsets=core,apm,error-tracking",
       headers: {
         Authorization: `Bearer ${datadogToken}`,
       },
