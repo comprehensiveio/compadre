@@ -34,14 +34,34 @@ promptRoutes.post("/prompt", async (c) => {
     sessionId = threadSessions.get(threadId);
   }
 
-  console.log(`[prompt] received: ${prompt.slice(0, 100)}`);
+  const async = body.async === true;
 
-  const result = await runTask({
+  console.log(`[prompt] received (async=${async}): ${prompt.slice(0, 100)}`);
+
+  const taskOptions = {
     prompt,
     sessionId,
     maxTurns: (body.maxTurns as number) ?? DEFAULT_MAX_TURNS,
     maxBudgetUsd: (body.maxBudgetUsd as number) ?? DEFAULT_MAX_BUDGET_USD,
-  });
+  };
+
+  if (async) {
+    runTask(taskOptions)
+      .then((result) => {
+        if (threadId && result.sessionId) {
+          threadSessions.set(threadId, result.sessionId);
+        }
+        console.log(
+          `[prompt] async completed: turns=${result.numTurns} cost=$${result.costUsd.toFixed(3)} duration=${result.durationMs}ms`
+        );
+      })
+      .catch((err) => {
+        console.error("[prompt] async error:", err);
+      });
+    return c.json({ ok: true, message: "accepted" }, 202);
+  }
+
+  const result = await runTask(taskOptions);
 
   if (threadId && result.sessionId) {
     threadSessions.set(threadId, result.sessionId);
