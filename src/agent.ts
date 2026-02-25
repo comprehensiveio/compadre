@@ -23,6 +23,9 @@ interface RunTaskOptions {
   maxBudgetUsd?: number;
 }
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type AnyMessage = any;
+
 export async function runTask({
   prompt,
   sessionId: resumeSessionId,
@@ -74,47 +77,97 @@ export async function runTask({
     });
 
     let sessionId: string | undefined;
+    let modelName = "claude-sonnet-4-5-20250929";
+    const pendingTools = new Map<string, { name: string; input: unknown }>();
 
     try {
       for await (const message of stream) {
         if (message.type === "system" && message.subtype === "init") {
           sessionId = message.session_id;
+          modelName = (message as AnyMessage).model ?? modelName;
           console.log(`[agent] session ${resumeSessionId ? "resumed" : "started"}: ${sessionId}`);
         }
 
         if (message.type === "assistant") {
-          const textBlocks = message.message.content.filter(
-            (b: { type: string }) => b.type === "text"
-          );
+          const msg = (message as AnyMessage).message;
+
+          // LLM span for this API call — DD auto-calculates cost from model + tokens
+          llmobs.trace({
+            kind: "llm",
+            name: "claude-completion",
+            modelName,
+            modelProvider: "anthropic",
+          }, () => {
+            const textOutput = (msg.content ?? [])
+              .filter((b: AnyMessage) => b.type === "text")
+              .map((b: AnyMessage) => ({ content: b.text, role: "assistant" }));
+
+            llmobs.annotate({
+              outputData: textOutput,
+              metrics: {
+                inputTokens: msg.usage?.input_tokens ?? 0,
+                outputTokens: msg.usage?.output_tokens ?? 0,
+                totalTokens: (msg.usage?.input_tokens ?? 0) + (msg.usage?.output_tokens ?? 0),
+                ...(msg.usage?.cache_read_input_tokens && { cacheReadTokens: msg.usage.cache_read_input_tokens }),
+                ...(msg.usage?.cache_creation_input_tokens && { cacheWriteTokens: msg.usage.cache_creation_input_tokens }),
+              },
+            });
+          });
+
+          // Track tool_use blocks for pairing with results
+          for (const block of msg.content ?? []) {
+            if (block.type === "tool_use") {
+              pendingTools.set(block.id, { name: block.name, input: block.input });
+            }
+          }
+
+          const textBlocks = (msg.content ?? []).filter((b: AnyMessage) => b.type === "text");
           for (const block of textBlocks) {
-            console.log(
-              `[agent] ${(block as { type: "text"; text: string }).text.slice(0, 200)}`
-            );
+            console.log(`[agent] ${block.text.slice(0, 200)}`);
+          }
+        }
+
+        // Tool result — create a tool span with input/output
+        if (message.type === "user") {
+          const userMsg = message as AnyMessage;
+          if (userMsg.tool_use_result !== undefined && userMsg.parent_tool_use_id) {
+            const toolInfo = pendingTools.get(userMsg.parent_tool_use_id);
+            if (toolInfo) {
+              llmobs.trace({ kind: "tool", name: toolInfo.name }, () => {
+                llmobs.annotate({
+                  inputData: JSON.stringify(toolInfo.input).slice(0, 2000),
+                  outputData: JSON.stringify(userMsg.tool_use_result).slice(0, 2000),
+                });
+              });
+              pendingTools.delete(userMsg.parent_tool_use_id);
+            }
           }
         }
 
         if (message.type === "result") {
-          if (message.subtype === "success") {
+          const resultMsg = message as AnyMessage;
+          if (resultMsg.subtype === "success") {
             llmobs.annotate({
-              outputData: message.result,
+              outputData: resultMsg.result,
               metrics: {
-                turns: message.num_turns,
-                cost_usd: message.total_cost_usd,
-                duration_ms: message.duration_ms,
+                inputTokens: resultMsg.usage?.input_tokens ?? 0,
+                outputTokens: resultMsg.usage?.output_tokens ?? 0,
+                totalTokens: (resultMsg.usage?.input_tokens ?? 0) + (resultMsg.usage?.output_tokens ?? 0),
+                turns: resultMsg.num_turns,
               },
             });
             return {
-              result: message.result,
+              result: resultMsg.result,
               sessionId: sessionId ?? resumeSessionId ?? "",
-              costUsd: message.total_cost_usd,
-              durationMs: message.duration_ms,
-              numTurns: message.num_turns,
+              costUsd: resultMsg.total_cost_usd,
+              durationMs: resultMsg.duration_ms,
+              numTurns: resultMsg.num_turns,
             };
           }
           throw new Error(
-            `Agent task failed (${message.subtype}): ${
-              "errors" in message
-                ? (message.errors as string[]).join(", ")
+            `Agent task failed (${resultMsg.subtype}): ${
+              "errors" in resultMsg
+                ? (resultMsg.errors as string[]).join(", ")
                 : "unknown error"
             }`
           );
