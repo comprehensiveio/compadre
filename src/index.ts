@@ -18,7 +18,10 @@ import { initDatadogAuth } from "./auth/datadog.js";
 
 const app = new Hono();
 
-app.use("*", logger());
+app.use("*", async (c, next) => {
+  if (c.req.path === "/health") return next();
+  return logger()(c, next);
+});
 app.route("/", healthRoutes);
 app.route("/", promptRoutes);
 app.route("/", webhookRoutes);
@@ -39,6 +42,14 @@ async function start() {
   serve({ fetch: app.fetch, port }, (info) => {
     console.log(`[agent] server running on port ${info.port}`);
   });
+
+  // Check DD agent connectivity
+  if (process.env.DD_AGENT_HOST) {
+    const host = process.env.DD_AGENT_HOST;
+    fetch(`http://${host}:8126/info`)
+      .then((r) => r.text().then((t) => console.log(`[dd-agent] reachable at ${host}:8126, status=${r.status}`)))
+      .catch((e) => console.error(`[dd-agent] unreachable at ${host}:8126:`, e.message));
+  }
 
   // Clone or update the repo in the background (can be slow)
   try {
