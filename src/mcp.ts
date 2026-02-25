@@ -4,7 +4,7 @@
  * HTTP-based MCPs use pre-obtained tokens via environment variables.
  * Datadog uses OAuth refresh tokens (managed by src/auth/datadog.ts).
  * Slack uses a bot token via the stdio-based MCP server.
- * Postgres and Render MCPs run as stdio subprocesses.
+ * Postgres MCP runs as a stdio subprocess.
  */
 
 import { getDatadogAccessToken } from "./auth/datadog.js";
@@ -53,10 +53,10 @@ export async function buildMcpServers() {
     },
 
     render: {
-      command: "npx",
-      args: ["-y", "@anthropic-ai/mcp-server-render"],
-      env: {
-        RENDER_API_KEY: env("RENDER_API_KEY"),
+      type: "http" as const,
+      url: "https://mcp.render.com/mcp",
+      headers: {
+        Authorization: `Bearer ${env("RENDER_API_KEY")}`,
       },
     },
 
