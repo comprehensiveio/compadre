@@ -1,8 +1,9 @@
 import { Hono } from "hono";
 import { runTask } from "../agent.js";
-import { getSessionId, setSessionId } from "../sessions.js";
 
 export const promptRoutes = new Hono();
+
+const threadSessions = new Map<string, string>();
 
 promptRoutes.post("/prompt", async (c) => {
   const apiKey = process.env.COMPADRE_API_KEY;
@@ -29,7 +30,7 @@ promptRoutes.post("/prompt", async (c) => {
   let sessionId: string | undefined = (body.sessionId as string) ?? undefined;
 
   if (!sessionId && threadId) {
-    sessionId = getSessionId(threadId);
+    sessionId = threadSessions.get(threadId);
   }
 
   console.log(`[prompt] received: ${prompt.slice(0, 100)}`);
@@ -43,7 +44,7 @@ promptRoutes.post("/prompt", async (c) => {
     });
 
     if (threadId && result.sessionId) {
-      setSessionId(threadId, result.sessionId);
+      threadSessions.set(threadId, result.sessionId);
     }
 
     return c.json({
