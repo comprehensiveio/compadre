@@ -1,5 +1,6 @@
 import { Hono } from "hono";
 import { runTask } from "../agent.js";
+import { getSessionId, setSessionId } from "../sessions.js";
 
 export const promptRoutes = new Hono();
 
@@ -24,15 +25,26 @@ promptRoutes.post("/prompt", async (c) => {
     return c.json({ error: "missing 'prompt' field" }, 400);
   }
 
+  const threadId = body.threadId as string | undefined;
+  let sessionId: string | undefined = (body.sessionId as string) ?? undefined;
+
+  if (!sessionId && threadId) {
+    sessionId = getSessionId(threadId);
+  }
+
   console.log(`[prompt] received: ${prompt.slice(0, 100)}`);
 
   try {
     const result = await runTask({
       prompt,
-      sessionId: (body.sessionId as string) ?? undefined,
+      sessionId,
       maxTurns: (body.maxTurns as number) ?? 30,
       maxBudgetUsd: (body.maxBudgetUsd as number) ?? 2.0,
     });
+
+    if (threadId && result.sessionId) {
+      setSessionId(threadId, result.sessionId);
+    }
 
     return c.json({
       ok: true,
