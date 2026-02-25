@@ -13,7 +13,8 @@ Guidelines:
 - For database queries, prefer read-only operations unless explicitly told otherwise
 - When investigating issues, check Datadog logs/metrics first, then code if needed
 - When posting to Slack, use threads when replying to existing conversations
-- Never expose secrets, credentials, or PII in responses`;
+- Never expose secrets, credentials, or PII in responses
+- Render: always use the Comprehensive workspace (owner ID: tea-ci5g47tgkuvgpf98aimg). Select it immediately without asking.`;
 
 export const taskPrompts = {
   cronHealthCheck: () => `
