@@ -1,0 +1,69 @@
+# Compadre
+
+AI operations agent for Comprehensive. Spawns headless Claude Code sessions via the [Claude Agent SDK](https://docs.anthropic.com/en/docs/claude-agent-sdk) with MCP access to our infrastructure.
+
+## MCP Servers
+
+| Server | Transport | What it does |
+|--------|-----------|-------------|
+| **Datadog** | HTTP (OAuth) | Logs, metrics, traces, incidents, monitors |
+| **Slack** | stdio (`@modelcontextprotocol/server-slack`) | Read/send messages via bot token |
+| **Linear** | HTTP | Issue tracking, project management |
+| **GitHub** | HTTP (Copilot MCP) | Repos, PRs, issues |
+| **Render** | stdio (`@anthropic-ai/mcp-server-render`) | Service management, deploys, logs |
+| **Postgres** | stdio (`@modelcontextprotocol/server-postgres`) | Read-only database access |
+
+The agent also gets all built-in Claude Code tools (Read, Grep, Glob, Bash, Edit, Write, WebSearch, WebFetch) with the comp repo cloned locally.
+
+## Endpoints
+
+```
+GET  /health                 # Health check
+POST /prompt                 # Ad-hoc prompt (Bearer COMPADRE_API_KEY)
+POST /cron/health-check      # Datadog health check (Bearer CRON_SECRET)
+POST /cron/stale-tickets     # Linear stale ticket review (Bearer CRON_SECRET)
+POST /webhook/:source        # Generic webhook (fire-and-forget)
+```
+
+## Local Dev
+
+```bash
+cp .env.example .env.local   # Fill in all values
+npm install
+npm run dev                  # tsx watch on port 3100
+```
+
+Test with curl:
+```bash
+curl -X POST http://localhost:3100/prompt \
+  -H "Authorization: Bearer $COMPADRE_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"prompt": "Check Datadog for any active alerts"}'
+```
+
+## Environment Variables
+
+See `.env.example` for the full list. Key notes:
+
+- **DATADOG_MCP_CLIENT_ID / DATADOG_MCP_REFRESH_TOKEN**: OAuth credentials from Datadog MCP. The server auto-refreshes access tokens.
+- **SLACK_BOT_TOKEN**: `xoxb-*` token from the Compadre Slack app.
+- **REPO_PATH**: Set to `/opt/render/repo` on Render (auto-cloned). Set to your local comp checkout for dev.
+- **COMPADRE_API_KEY / CRON_SECRET**: Auth tokens for the API. Generate with `openssl rand -hex 32`.
+
+## Deployment (Render)
+
+Uses the Dockerfile. The image installs git so the agent can clone and search the comp repo.
+
+On Render:
+- REPO_PATH defaults to `/opt/render/repo` (the agent clones comp there on startup)
+- The repo is refreshed every 15 minutes and reset to `qa` before/after each agent session
+
+## Architecture
+
+```
+HTTP request → Hono route → runTask() → Claude Agent SDK query()
+                                           ├── MCP servers (Datadog, Slack, Linear, GitHub, Render, Postgres)
+                                           └── Built-in tools (Read, Grep, Bash, etc.)
+```
+
+Each `runTask()` call spawns an independent Claude Code session. Sessions don't share state — the repo is reset to clean `qa` between runs.
