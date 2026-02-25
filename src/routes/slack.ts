@@ -1,5 +1,6 @@
 import { Hono } from "hono";
 import { runTask } from "../agent.js";
+import { DEFAULT_MAX_TURNS, DEFAULT_MAX_BUDGET_USD } from "../config.js";
 import { SLACK_SYSTEM_PROMPT } from "../prompts/index.js";
 
 export const slackRoutes = new Hono();
@@ -47,8 +48,8 @@ slackRoutes.post("/slack", async (c) => {
     prompt,
     sessionId,
     systemPrompt: SLACK_SYSTEM_PROMPT,
-    maxTurns: (body.maxTurns as number) ?? 50,
-    maxBudgetUsd: (body.maxBudgetUsd as number) ?? 3.0,
+    maxTurns: (body.maxTurns as number) ?? DEFAULT_MAX_TURNS,
+    maxBudgetUsd: (body.maxBudgetUsd as number) ?? DEFAULT_MAX_BUDGET_USD,
   })
     .then((result) => {
       if (result.sessionId) {

@@ -1,5 +1,6 @@
 import { Hono } from "hono";
 import { runTask } from "../agent.js";
+import { DEFAULT_MAX_TURNS, DEFAULT_MAX_BUDGET_USD } from "../config.js";
 
 export const promptRoutes = new Hono();
 
@@ -38,8 +39,8 @@ promptRoutes.post("/prompt", async (c) => {
   const result = await runTask({
     prompt,
     sessionId,
-    maxTurns: (body.maxTurns as number) ?? 30,
-    maxBudgetUsd: (body.maxBudgetUsd as number) ?? 2.0,
+    maxTurns: (body.maxTurns as number) ?? DEFAULT_MAX_TURNS,
+    maxBudgetUsd: (body.maxBudgetUsd as number) ?? DEFAULT_MAX_BUDGET_USD,
   });
 
   if (threadId && result.sessionId) {

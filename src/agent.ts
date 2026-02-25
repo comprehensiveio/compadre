@@ -1,4 +1,5 @@
 import { query } from "@anthropic-ai/claude-agent-sdk";
+import { DEFAULT_MAX_TURNS, DEFAULT_MAX_BUDGET_USD, REPO_PATH } from "./config.js";
 import { buildMcpServers } from "./mcp.js";
 import { BASE_SYSTEM_PROMPT } from "./prompts/index.js";
 import { resetToQa } from "./repo.js";
@@ -23,10 +24,9 @@ export async function runTask({
   prompt,
   sessionId: resumeSessionId,
   systemPrompt = BASE_SYSTEM_PROMPT,
-  maxTurns = Number(process.env.DEFAULT_MAX_TURNS) || 50,
-  maxBudgetUsd = Number(process.env.DEFAULT_MAX_BUDGET_USD) || 3.0,
+  maxTurns = DEFAULT_MAX_TURNS,
+  maxBudgetUsd = DEFAULT_MAX_BUDGET_USD,
 }: RunTaskOptions): Promise<TaskResult> {
-  const repoPath = process.env.REPO_PATH || "/opt/render/repo";
 
   if (!resumeSessionId) {
     resetToQa();
@@ -37,7 +37,7 @@ export async function runTask({
   const stream = query({
     prompt,
     options: {
-      cwd: repoPath,
+      cwd: REPO_PATH,
       env: process.env as Record<string, string>,
       systemPrompt,
       maxTurns,
