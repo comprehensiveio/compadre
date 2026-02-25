@@ -5,6 +5,7 @@ import { resetToQa } from "./repo.js";
 
 interface TaskResult {
   result: string;
+  sessionId: string;
   costUsd: number;
   durationMs: number;
   numTurns: number;
@@ -12,19 +13,22 @@ interface TaskResult {
 
 interface RunTaskOptions {
   prompt: string;
+  sessionId?: string;
   maxTurns?: number;
   maxBudgetUsd?: number;
 }
 
 export async function runTask({
   prompt,
+  sessionId: resumeSessionId,
   maxTurns = 30,
   maxBudgetUsd = 2.0,
 }: RunTaskOptions): Promise<TaskResult> {
   const repoPath = process.env.REPO_PATH || "/opt/render/repo";
 
-  // Start from clean qa state
-  resetToQa();
+  if (!resumeSessionId) {
+    resetToQa();
+  }
 
   const mcpServers = await buildMcpServers();
 
@@ -33,13 +37,13 @@ export async function runTask({
     options: {
       cwd: repoPath,
       env: process.env as Record<string, string>,
-      systemPrompt: `${BASE_SYSTEM_PROMPT}`,
+      systemPrompt: BASE_SYSTEM_PROMPT,
       maxTurns,
       maxBudgetUsd,
       permissionMode: "bypassPermissions",
       allowDangerouslySkipPermissions: true,
+      ...(resumeSessionId ? { resume: resumeSessionId } : {}),
       allowedTools: [
-        // Built-in tools
         "Read",
         "Glob",
         "Grep",
@@ -48,7 +52,6 @@ export async function runTask({
         "Write",
         "WebSearch",
         "WebFetch",
-        // MCP tools - wildcard per server
         "mcp__datadog-mcp__*",
         "mcp__slack__*",
         "mcp__linear__*",
@@ -66,10 +69,9 @@ export async function runTask({
     for await (const message of stream) {
       if (message.type === "system" && message.subtype === "init") {
         sessionId = message.session_id;
-        console.log(`[agent] session started: ${sessionId}`);
+        console.log(`[agent] session ${resumeSessionId ? "resumed" : "started"}: ${sessionId}`);
       }
 
-      // Log assistant text for debugging
       if (message.type === "assistant") {
         const textBlocks = message.message.content.filter(
           (b: { type: string }) => b.type === "text"
@@ -85,6 +87,7 @@ export async function runTask({
         if (message.subtype === "success") {
           return {
             result: message.result,
+            sessionId: sessionId ?? resumeSessionId ?? "",
             costUsd: message.total_cost_usd,
             durationMs: message.duration_ms,
             numTurns: message.num_turns,
@@ -102,6 +105,8 @@ export async function runTask({
 
     throw new Error("Agent stream ended without result");
   } finally {
-    resetToQa();
+    if (!resumeSessionId) {
+      resetToQa();
+    }
   }
 }

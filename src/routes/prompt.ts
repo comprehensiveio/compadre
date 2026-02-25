@@ -29,6 +29,7 @@ promptRoutes.post("/prompt", async (c) => {
   try {
     const result = await runTask({
       prompt,
+      sessionId: (body.sessionId as string) ?? undefined,
       maxTurns: (body.maxTurns as number) ?? 30,
       maxBudgetUsd: (body.maxBudgetUsd as number) ?? 2.0,
     });
@@ -36,6 +37,7 @@ promptRoutes.post("/prompt", async (c) => {
     return c.json({
       ok: true,
       result: result.result,
+      sessionId: result.sessionId,
       turns: result.numTurns,
       cost: result.costUsd,
       duration: result.durationMs,
