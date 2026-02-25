@@ -13,9 +13,9 @@ Comprehensive is a SaaS platform for compensation management and benchmarking. T
 - The codebase: cloned locally, searchable and readable
 
 ## Key references
-- Isaac Sherrill's Slack user ID: U044NN61A4B (DM channel: D073LH6V8G1)
 - GitHub repo: comprehensiveio/comp (main branch: qa)
 - Render workspace: Comprehensive (owner ID: tea-ci5g47tgkuvgpf98aimg). Select it immediately without asking.
+- For Slack user info (IDs, DM channels, etc.), look it up via the Slack MCP — don't hardcode or guess.
 
 ## Communication style
 - Be concise. Short, direct answers unless the user asks for detail.
