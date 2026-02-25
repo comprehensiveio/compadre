@@ -3,15 +3,15 @@ import { runTask } from "../agent.js";
 
 export const webhookRoutes = new Hono();
 
-/**
- * Generic webhook endpoint for forwarding events to the agent.
- *
- * Accepts arbitrary JSON payloads and constructs a prompt from them.
- * Useful for Datadog alerts, GitHub webhooks, Linear webhooks, etc.
- */
 webhookRoutes.post("/webhook/:source", async (c) => {
   const source = c.req.param("source");
-  const body = await c.req.json();
+
+  let body: Record<string, unknown>;
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
 
   console.log(`[webhook] received from ${source}`);
 
@@ -26,7 +26,6 @@ Based on the source and payload, determine what action to take. For example:
 - GitHub PR: review the changes, post feedback
 - Linear update: check if any follow-up is needed`;
 
-  // Process async
   runTask({ prompt, maxTurns: 25, maxBudgetUsd: 1.5 }).catch((err) =>
     console.error(`[webhook] ${source} task failed:`, err)
   );

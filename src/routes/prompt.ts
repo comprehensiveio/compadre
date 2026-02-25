@@ -3,15 +3,6 @@ import { runTask } from "../agent.js";
 
 export const promptRoutes = new Hono();
 
-/**
- * Direct prompt endpoint for interacting with the agent via curl.
- *
- * Usage:
- *   curl -X POST http://localhost:3100/prompt \
- *     -H "Authorization: Bearer $COMPADRE_API_KEY" \
- *     -H "Content-Type: application/json" \
- *     -d '{"prompt": "Check Datadog for any active alerts"}'
- */
 promptRoutes.post("/prompt", async (c) => {
   const apiKey = process.env.COMPADRE_API_KEY;
   if (apiKey) {
@@ -21,9 +12,14 @@ promptRoutes.post("/prompt", async (c) => {
     }
   }
 
-  const body = await c.req.json();
-  const prompt = body.prompt;
+  let body: Record<string, unknown>;
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
 
+  const prompt = body.prompt;
   if (!prompt || typeof prompt !== "string") {
     return c.json({ error: "missing 'prompt' field" }, 400);
   }
@@ -33,8 +29,8 @@ promptRoutes.post("/prompt", async (c) => {
   try {
     const result = await runTask({
       prompt,
-      maxTurns: body.maxTurns ?? 30,
-      maxBudgetUsd: body.maxBudgetUsd ?? 2.0,
+      maxTurns: (body.maxTurns as number) ?? 30,
+      maxBudgetUsd: (body.maxBudgetUsd as number) ?? 2.0,
     });
 
     return c.json({
