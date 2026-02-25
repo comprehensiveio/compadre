@@ -12,6 +12,7 @@ import { Hono } from "hono";
 import { logger } from "hono/logger";
 import { healthRoutes } from "./routes/health.js";
 import { promptRoutes } from "./routes/prompt.js";
+import { slackRoutes } from "./routes/slack.js";
 import { webhookRoutes } from "./routes/webhook.js";
 import { ensureRepo, refreshRepo } from "./repo.js";
 import { initDatadogAuth } from "./auth/datadog.js";
@@ -24,6 +25,7 @@ app.use("*", async (c, next) => {
 });
 app.route("/", healthRoutes);
 app.route("/", promptRoutes);
+app.route("/", slackRoutes);
 app.route("/", webhookRoutes);
 
 // Refresh the repo clone periodically (every 15 minutes)

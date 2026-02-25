@@ -14,6 +14,7 @@ interface TaskResult {
 interface RunTaskOptions {
   prompt: string;
   sessionId?: string;
+  systemPrompt?: string;
   maxTurns?: number;
   maxBudgetUsd?: number;
 }
@@ -21,6 +22,7 @@ interface RunTaskOptions {
 export async function runTask({
   prompt,
   sessionId: resumeSessionId,
+  systemPrompt = BASE_SYSTEM_PROMPT,
   maxTurns = Number(process.env.DEFAULT_MAX_TURNS) || 50,
   maxBudgetUsd = Number(process.env.DEFAULT_MAX_BUDGET_USD) || 3.0,
 }: RunTaskOptions): Promise<TaskResult> {
@@ -37,7 +39,7 @@ export async function runTask({
     options: {
       cwd: repoPath,
       env: process.env as Record<string, string>,
-      systemPrompt: BASE_SYSTEM_PROMPT,
+      systemPrompt,
       maxTurns,
       maxBudgetUsd,
       permissionMode: "bypassPermissions",

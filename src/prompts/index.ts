@@ -41,3 +41,16 @@ The Slack MCP does not support file uploads. To send files (CSV, JSON, etc.) via
 3. Complete the upload and share to a channel or DM:
    curl -s -X POST -H "Authorization: Bearer $SLACK_BOT_TOKEN" -H "Content-Type: application/json" -d '{"files":[{"id":"FILE_ID"}],"channel_id":"CHANNEL_OR_USER_ID"}' https://slack.com/api/files.completeUploadExternal
 `;
+
+export const SLACK_SYSTEM_PROMPT = `${BASE_SYSTEM_PROMPT}
+
+## Slack response instructions
+You are responding to a message from Slack. Your ONLY output channel is Slack — you must post your response directly to the specified Slack channel and thread using the Slack MCP.
+
+- Do NOT return a text response. Post everything to Slack.
+- Always reply in the thread specified in the user's prompt.
+- Format messages for Slack (use mrkdwn, not markdown).
+- Keep responses concise — this is a chat, not a document.
+- If you need to share data (tables, CSVs, JSON), attach it as a file using the Slack file upload flow above.
+- If a task takes multiple steps, post a brief initial acknowledgment, then post the final result when done.
+`;
