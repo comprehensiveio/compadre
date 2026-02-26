@@ -1,9 +1,6 @@
 const SLACK_API = "https://slack.com/api";
 
-const STREAM_CHUNKS = 25;
-const STREAM_DELAY_MS = 40;
-
-interface StreamOptions {
+interface SlackStreamOptions {
   channel: string;
   threadTs: string;
   botToken: string;
@@ -14,8 +11,9 @@ export class SlackStream {
   private threadTs: string;
   private botToken: string;
   private lastStatus = "";
+  private activeStreamTs: string | null = null;
 
-  constructor({ channel, threadTs, botToken }: StreamOptions) {
+  constructor({ channel, threadTs, botToken }: SlackStreamOptions) {
     this.channel = channel;
     this.threadTs = threadTs;
     this.botToken = botToken;
@@ -39,40 +37,29 @@ export class SlackStream {
     });
   }
 
-  async streamResponse(text: string): Promise<void> {
-    if (!text.trim()) return;
-
-    const res = await this.call("chat.startStream", {
-      channel: this.channel,
-      thread_ts: this.threadTs,
-    });
-    const ts = res.ts as string | undefined;
-    if (!ts) {
-      // Fallback to regular message if streaming fails
-      await this.call("chat.postMessage", {
+  async appendText(text: string): Promise<void> {
+    if (!this.activeStreamTs) {
+      const data = await this.call("chat.startStream", {
         channel: this.channel,
         thread_ts: this.threadTs,
-        text,
       });
-      return;
+      this.activeStreamTs = (data.ts as string) ?? null;
+      if (!this.activeStreamTs) return;
     }
+    await this.call("chat.appendStream", {
+      channel: this.channel,
+      ts: this.activeStreamTs,
+      markdown_text: text,
+    });
+  }
 
-    const chunkSize = Math.max(1, Math.ceil(text.length / STREAM_CHUNKS));
-    for (let i = 0; i < text.length; i += chunkSize) {
-      await this.call("chat.appendStream", {
-        channel: this.channel,
-        ts,
-        markdown_text: text.slice(i, i + chunkSize),
-      });
-      if (i + chunkSize < text.length) {
-        await new Promise((r) => setTimeout(r, STREAM_DELAY_MS));
-      }
-    }
-
+  async stopStream(): Promise<void> {
+    if (!this.activeStreamTs) return;
     await this.call("chat.stopStream", {
       channel: this.channel,
-      ts,
+      ts: this.activeStreamTs,
     });
+    this.activeStreamTs = null;
   }
 
   private async call(method: string, body: Record<string, unknown>): Promise<Record<string, unknown>> {

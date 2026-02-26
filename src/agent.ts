@@ -63,6 +63,7 @@ export async function runTask({
         maxBudgetUsd,
         permissionMode: "bypassPermissions",
         allowDangerouslySkipPermissions: true,
+        includePartialMessages: !!slackStream,
         settingSources: ["project"],
         plugins: [{ type: "local" as const, path: COMPADRE_ROOT }],
         ...(resumeSessionId ? { resume: resumeSessionId } : {}),
@@ -96,6 +97,16 @@ export async function runTask({
           sessionId = message.session_id;
           modelName = (message as AnyMessage).model ?? modelName;
           console.log(`[agent] session ${resumeSessionId ? "resumed" : "started"}: ${sessionId}`);
+        }
+
+        if (message.type === "stream_event") {
+          const event = (message as AnyMessage).event;
+          if (event.type === "content_block_delta" && event.delta?.type === "text_delta") {
+            void slackStream?.appendText(event.delta.text);
+          }
+          if (event.type === "content_block_stop" && slackStream) {
+            void slackStream.stopStream();
+          }
         }
 
         if (message.type === "assistant") {
@@ -187,6 +198,7 @@ export async function runTask({
 
       throw new Error("Agent stream ended without result");
     } finally {
+      void slackStream?.stopStream();
       void slackStream?.clearStatus();
       if (!resumeSessionId) {
         resetToQa();

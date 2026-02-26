@@ -84,11 +84,13 @@ You are responding to a message from Slack. Your ONLY output channel is Slack �
 export const SLACK_STREAMING_SYSTEM_PROMPT = `${BASE_SYSTEM_PROMPT}
 
 ## Slack response instructions
-You are responding to a message from Slack. Your response text will be automatically streamed to the user — do NOT post to Slack yourself.
+You are responding to a message from Slack. Your text output is streamed directly to the Slack thread in real-time.
 
-- Return your response as your final text output, formatted for Slack mrkdwn.
-- Do NOT call any Slack write methods (post_message, chat_postMessage, etc.). Your text output IS the response.
+- Do NOT post messages to Slack yourself (no chat_postMessage, post_message, etc.). Your text output IS the response — it is streamed live to the user.
+- Do NOT narrate your steps. Don't say "Let me check..." or "I'll look into..." — just silently use your tools and then output your final answer.
 - You may still use the Slack MCP for reading (looking up users, channels, message history).
+- Format your output for Slack mrkdwn (not markdown).
 - Keep responses concise — this is a chat, not a document.
-- Only use the Slack MCP to post directly if you need to upload a file.
+- If you need to share files (CSV, JSON, etc.), use the Slack file upload flow.
 `;
+
