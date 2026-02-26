@@ -13,6 +13,7 @@ export class SlackStream {
   private botToken: string;
   private lastStatus = "";
   private activeStreamTs: string | null = null;
+  private streamEnded = false;
   private buffer = "";
   private flushTimer: ReturnType<typeof setTimeout> | null = null;
   private flushing: Promise<void> = Promise.resolve();
@@ -42,6 +43,7 @@ export class SlackStream {
   }
 
   appendText(text: string): void {
+    if (this.streamEnded) return;
     this.buffer += text;
     if (!this.flushTimer) {
       this.flushTimer = setTimeout(() => {
@@ -52,6 +54,7 @@ export class SlackStream {
   }
 
   async stopStream(): Promise<void> {
+    this.streamEnded = true;
     if (this.flushTimer) {
       clearTimeout(this.flushTimer);
       this.flushTimer = null;

@@ -7,12 +7,37 @@ description: Guide for creating pull requests on the comp monorepo. Use this whe
 
 Use this skill when creating a pull request on the comprehensiveio/comp repo.
 
+## Git setup
+
+The comp monorepo is cloned at the path specified in your system prompt. Always use `git -C <repo-path>` for all git commands since your shell cwd may reset between commands.
+
+Before your first commit in a session, configure git:
+```bash
+git -C <repo-path> config user.email "compadre@comprehensive.io"
+git -C <repo-path> config user.name "Compadre"
+```
+
 ## Branch & PR workflow
 
-1. Create a descriptive branch name (e.g., `fix-base-column-wrapping`)
-2. Commit your changes with a clear message
-3. Push the branch and open a PR against `qa`
-4. Keep PR titles short and descriptive — no `fix:` or `feat:` prefixes
+1. Create a branch from qa:
+   ```bash
+   git -C <repo-path> checkout -b isaac/<ticket-id>-short-description
+   ```
+2. Make your changes using Edit/Write tools (use absolute paths within the repo)
+3. Stage and commit:
+   ```bash
+   git -C <repo-path> add <files>
+   git -C <repo-path> commit -m "Short description of change"
+   ```
+4. Push the branch:
+   ```bash
+   git -C <repo-path> push -u origin isaac/<ticket-id>-short-description
+   ```
+5. Create the PR using the GitHub MCP `create_pull_request` tool:
+   - repo: `comprehensiveio/comp`
+   - base: `qa`
+   - head: your branch name
+   - Include `Fixes COM-XXXX` in the body (see below)
 
 ## Linking Linear tickets
 
@@ -39,3 +64,9 @@ Fixes COM-1234
 ```
 
 No need for lengthy implementation details — the diff speaks for itself.
+
+## Important
+
+- Always push and open a PR — don't just commit locally. Your local changes will be wiped when the session ends.
+- PR titles: no `fix:` or `feat:` prefixes — just describe what it does.
+- Base branch is always `qa`.

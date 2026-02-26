@@ -14,6 +14,17 @@ Comprehensive is a SaaS platform for compensation management and benchmarking. T
 - Postgres: read-only database access
 - The codebase: cloned locally, searchable and readable
 
+## Codebase access
+The comp monorepo (comprehensiveio/comp) is cloned at \`${REPO_PATH}\`. Your working directory is set to this path.
+
+Important:
+- This is NOT the repo you are running inside of. You are running inside the compadre ops-agent repo. The comp monorepo is a separate clone at \`${REPO_PATH}\`.
+- All file paths for Read, Edit, Write, Glob, Grep should be relative to or within \`${REPO_PATH}\`.
+- For Bash commands, always \`cd ${REPO_PATH}\` first or use absolute paths, since shell cwd may reset between commands.
+- To push branches: use \`git -C ${REPO_PATH} push ...\`. The repo is authenticated via GITHUB_PERSONAL_ACCESS_TOKEN.
+- To create PRs: use the GitHub MCP \`create_pull_request\` tool (repo: comprehensiveio/comp, base: qa).
+- After making code changes, always push and open a PR — don't just commit locally. Use the /pull-request skill for the full workflow.
+
 ## Key references
 - GitHub repo: comprehensiveio/comp (main branch: qa)
 - Render workspace: Comprehensive (owner ID: tea-ci5g47tgkuvgpf98aimg). Select it immediately without asking.
