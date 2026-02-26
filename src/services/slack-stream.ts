@@ -18,7 +18,7 @@ export class SlackStream {
   private threadTs: string;
   private botToken: string;
   private ts: string | undefined;
-  private started = false;
+  private seenCategories = new Set<string>();
 
   constructor({ channel, threadTs, botToken }: StartOptions) {
     this.channel = channel;
@@ -34,18 +34,21 @@ export class SlackStream {
       task_display_mode: "timeline",
     });
     this.ts = res.ts as string | undefined;
-    this.started = true;
   }
 
-  async appendTask(id: string, title: string, status: TaskChunk["status"]): Promise<void> {
+  async toolStarted(toolName: string): Promise<void> {
     if (!this.ts) return;
-    // Complete the init task on the first real task
+    const category = humanizeToolName(toolName);
+    // Only show each category once
+    if (this.seenCategories.has(category)) return;
+    this.seenCategories.add(category);
+
     const chunks: TaskChunk[] = [];
-    if (this.started && status === "in_progress") {
+    // Complete "Starting" on the first real tool
+    if (this.seenCategories.size === 1) {
       chunks.push({ type: "task_update", id: "init", title: "Starting", status: "complete" });
-      this.started = false;
     }
-    chunks.push({ type: "task_update", id, title, status });
+    chunks.push({ type: "task_update", id: category, title: category, status: "in_progress" });
     await this.call("chat.appendStream", {
       channel: this.channel,
       ts: this.ts,
@@ -55,9 +58,17 @@ export class SlackStream {
 
   async stop(): Promise<void> {
     if (!this.ts) return;
+    // Complete all in-progress tasks
+    const chunks: TaskChunk[] = [...this.seenCategories].map((cat) => ({
+      type: "task_update" as const,
+      id: cat,
+      title: cat,
+      status: "complete" as const,
+    }));
     await this.call("chat.stopStream", {
       channel: this.channel,
       ts: this.ts,
+      chunks,
     });
     this.ts = undefined;
   }
@@ -85,12 +96,12 @@ export class SlackStream {
 }
 
 const TOOL_LABELS: Record<string, string> = {
-  Read: "Reading file",
-  Glob: "Finding files",
-  Grep: "Searching code",
+  Read: "Reading code",
+  Glob: "Reading code",
+  Grep: "Reading code",
   Bash: "Running command",
   Edit: "Editing code",
-  Write: "Writing file",
+  Write: "Writing code",
   WebSearch: "Searching web",
   WebFetch: "Fetching page",
 };

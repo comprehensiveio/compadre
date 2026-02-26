@@ -128,7 +128,7 @@ export async function runTask({
           for (const block of msg.content ?? []) {
             if (block.type === "tool_use") {
               pendingTools.set(block.id, { name: block.name, input: block.input });
-              void slackStream?.appendTask(block.id, humanizeToolName(block.name), "in_progress");
+              void slackStream?.toolStarted(block.name);
             }
           }
 
@@ -150,7 +150,6 @@ export async function runTask({
                   outputData: JSON.stringify(userMsg.tool_use_result).slice(0, 2000),
                 });
               });
-              void slackStream?.appendTask(userMsg.parent_tool_use_id, humanizeToolName(toolInfo.name), "complete");
               pendingTools.delete(userMsg.parent_tool_use_id);
             }
           }
