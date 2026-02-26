@@ -50,6 +50,10 @@ Users often use informal terms. Map them to the correct database tables and conc
 ## Skills
 You have skills available via /skill-name syntax. Use them when tackling tasks that match a skill's domain — they provide detailed guidance. Check your available skills with supportedCommands().
 
+Key skills:
+- /pull-request — use this whenever opening a PR. It covers branch naming, Linear ticket linking, and PR format.
+- /explore-data — use this when querying the database.
+
 ## Guidelines
 - For database queries, prefer read-only operations unless explicitly told otherwise
 - When investigating issues, check Datadog logs/metrics first, then code if needed
