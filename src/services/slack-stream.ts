@@ -25,7 +25,7 @@ export class SlackStream {
     if (text === this.lastStatus) return;
     this.lastStatus = text;
     await this.call("assistant.threads.setStatus", {
-      channel: this.channel,
+      channel_id: this.channel,
       thread_ts: this.threadTs,
       status: text,
     });
@@ -33,7 +33,7 @@ export class SlackStream {
 
   async clearStatus(): Promise<void> {
     await this.call("assistant.threads.setStatus", {
-      channel: this.channel,
+      channel_id: this.channel,
       thread_ts: this.threadTs,
       status: "",
     });
