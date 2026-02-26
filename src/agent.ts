@@ -95,6 +95,7 @@ export async function runTask({
     let sessionId: string | undefined;
     let modelName = "claude-sonnet-4-5-20250929";
     const pendingTools = new Map<string, { name: string; input: unknown }>();
+    let hasStreamedText = false;
 
     try {
       for await (const message of stream) {
@@ -106,6 +107,12 @@ export async function runTask({
 
         if (message.type === "stream_event") {
           const event = (message as AnyMessage).event;
+          if (event.type === "content_block_start" && event.content_block?.type === "text") {
+            if (hasStreamedText) {
+              streamCallbacks?.onTextDelta?.("\n\n");
+            }
+            hasStreamedText = true;
+          }
           if (event.type === "content_block_delta" && event.delta?.type === "text_delta") {
             streamCallbacks?.onTextDelta?.(event.delta.text);
           }
