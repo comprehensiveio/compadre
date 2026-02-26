@@ -6,6 +6,7 @@ import { DEFAULT_MAX_TURNS, DEFAULT_MAX_BUDGET_USD, REPO_PATH } from "./config.j
 import { buildMcpServers } from "./mcp.js";
 import { BASE_SYSTEM_PROMPT } from "./prompts/index.js";
 import { resetToQa } from "./repo.js";
+import { SlackStream, humanizeToolName } from "./services/slack-stream.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const COMPADRE_ROOT = path.resolve(__dirname, "..");
@@ -26,6 +27,7 @@ interface RunTaskOptions {
   systemPrompt?: string;
   maxTurns?: number;
   maxBudgetUsd?: number;
+  slackStream?: SlackStream;
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -37,6 +39,7 @@ export async function runTask({
   systemPrompt = BASE_SYSTEM_PROMPT,
   maxTurns = DEFAULT_MAX_TURNS,
   maxBudgetUsd = DEFAULT_MAX_BUDGET_USD,
+  slackStream,
 }: RunTaskOptions): Promise<TaskResult> {
   return llmobs.trace({ name: "compadre-agent", kind: "agent" }, async () => {
     llmobs.annotate({
@@ -125,6 +128,7 @@ export async function runTask({
           for (const block of msg.content ?? []) {
             if (block.type === "tool_use") {
               pendingTools.set(block.id, { name: block.name, input: block.input });
+              void slackStream?.appendTask(block.id, humanizeToolName(block.name), "in_progress");
             }
           }
 
@@ -146,6 +150,7 @@ export async function runTask({
                   outputData: JSON.stringify(userMsg.tool_use_result).slice(0, 2000),
                 });
               });
+              void slackStream?.appendTask(userMsg.parent_tool_use_id, humanizeToolName(toolInfo.name), "complete");
               pendingTools.delete(userMsg.parent_tool_use_id);
             }
           }
@@ -183,6 +188,7 @@ export async function runTask({
 
       throw new Error("Agent stream ended without result");
     } finally {
+      void slackStream?.stop();
       if (!resumeSessionId) {
         resetToQa();
       }

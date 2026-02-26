@@ -1,7 +1,8 @@
 import { Hono } from "hono";
 import { runTask } from "../agent.js";
-import { DEFAULT_MAX_TURNS, DEFAULT_MAX_BUDGET_USD } from "../config.js";
+import { DEFAULT_MAX_TURNS, DEFAULT_MAX_BUDGET_USD, SLACK_STREAMING_ENABLED } from "../config.js";
 import { SLACK_SYSTEM_PROMPT } from "../prompts/index.js";
+import { SlackStream } from "../services/slack-stream.js";
 
 export const slackRoutes = new Hono();
 
@@ -43,11 +44,27 @@ slackRoutes.post("/slack", async (c) => {
 
   console.log(`[slack] received from ${userId} in ${channel}: ${message.slice(0, 100)}`);
 
+  // Start Slack stream for real-time progress (if enabled)
+  let slackStream: SlackStream | undefined;
+  if (SLACK_STREAMING_ENABLED && threadTs) {
+    const botToken = process.env.SLACK_BOT_TOKEN;
+    if (botToken) {
+      slackStream = new SlackStream({ channel, threadTs, botToken });
+      try {
+        await slackStream.start();
+      } catch (err) {
+        console.error("[slack] stream start failed, continuing without streaming:", err);
+        slackStream = undefined;
+      }
+    }
+  }
+
   // Fire and forget — respond 202 immediately
   runTask({
     prompt,
     sessionId,
     systemPrompt: SLACK_SYSTEM_PROMPT,
+    slackStream,
     maxTurns: (body.maxTurns as number) ?? DEFAULT_MAX_TURNS,
     maxBudgetUsd: (body.maxBudgetUsd as number) ?? DEFAULT_MAX_BUDGET_USD,
   })
