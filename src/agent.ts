@@ -176,6 +176,8 @@ export async function runTask({
             const modelUsage = resultMsg.modelUsage ?? {};
             for (const [model, usage] of Object.entries(modelUsage)) {
               const u = usage as AnyMessage;
+              const inputTokens = u.inputTokens ?? 0;
+              const outputTokens = u.outputTokens ?? 0;
               llmobs.trace({
                 kind: "llm",
                 name: "claude-usage-summary",
@@ -184,9 +186,9 @@ export async function runTask({
               }, () => {
                 llmobs.annotate({
                   metrics: {
-                    inputTokens: u.inputTokens ?? 0,
-                    outputTokens: u.outputTokens ?? 0,
-                    totalTokens: (u.inputTokens ?? 0) + (u.outputTokens ?? 0),
+                    inputTokens,
+                    outputTokens,
+                    totalTokens: inputTokens + outputTokens,
                     ...(u.cacheReadInputTokens && { cacheReadTokens: u.cacheReadInputTokens }),
                     ...(u.cacheCreationInputTokens && { cacheWriteTokens: u.cacheCreationInputTokens }),
                   },
