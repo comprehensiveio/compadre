@@ -121,7 +121,9 @@ export async function runTask({
         if (message.type === "assistant") {
           const msg = (message as AnyMessage).message;
 
-          // LLM span for this API call — DD auto-calculates cost from model + tokens
+          // LLM span for this API call — output only (per-message usage from
+          // the Agent SDK is unreliable; accurate totals come from modelUsage
+          // on the result message and are recorded in a summary span below)
           llmobs.trace({
             kind: "llm",
             name: "claude-completion",
@@ -132,16 +134,7 @@ export async function runTask({
               .filter((b: AnyMessage) => b.type === "text")
               .map((b: AnyMessage) => ({ content: b.text, role: "assistant" }));
 
-            llmobs.annotate({
-              outputData: textOutput,
-              metrics: {
-                inputTokens: msg.usage?.input_tokens ?? 0,
-                outputTokens: msg.usage?.output_tokens ?? 0,
-                totalTokens: (msg.usage?.input_tokens ?? 0) + (msg.usage?.output_tokens ?? 0),
-                ...(msg.usage?.cache_read_input_tokens && { cacheReadTokens: msg.usage.cache_read_input_tokens }),
-                ...(msg.usage?.cache_creation_input_tokens && { cacheWriteTokens: msg.usage.cache_creation_input_tokens }),
-              },
-            });
+            llmobs.annotate({ outputData: textOutput });
           });
 
           // Track tool_use blocks for pairing with results
@@ -178,13 +171,36 @@ export async function runTask({
         if (message.type === "result") {
           const resultMsg = message as AnyMessage;
           if (resultMsg.subtype === "success") {
+            // Create a summary LLM span per model with accurate token counts
+            // from modelUsage — DD uses these for cost calculation
+            const modelUsage = resultMsg.modelUsage ?? {};
+            for (const [model, usage] of Object.entries(modelUsage)) {
+              const u = usage as AnyMessage;
+              const inputTokens = u.inputTokens ?? 0;
+              const outputTokens = u.outputTokens ?? 0;
+              llmobs.trace({
+                kind: "llm",
+                name: "claude-usage-summary",
+                modelName: model,
+                modelProvider: "anthropic",
+              }, () => {
+                llmobs.annotate({
+                  metrics: {
+                    inputTokens,
+                    outputTokens,
+                    totalTokens: inputTokens + outputTokens,
+                    ...(u.cacheReadInputTokens && { cacheReadTokens: u.cacheReadInputTokens }),
+                    ...(u.cacheCreationInputTokens && { cacheWriteTokens: u.cacheCreationInputTokens }),
+                  },
+                });
+              });
+            }
+
             llmobs.annotate({
               outputData: resultMsg.result,
               metrics: {
-                inputTokens: resultMsg.usage?.input_tokens ?? 0,
-                outputTokens: resultMsg.usage?.output_tokens ?? 0,
-                totalTokens: (resultMsg.usage?.input_tokens ?? 0) + (resultMsg.usage?.output_tokens ?? 0),
                 turns: resultMsg.num_turns,
+                costUsd: resultMsg.total_cost_usd,
               },
             });
             return {
