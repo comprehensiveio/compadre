@@ -58,18 +58,21 @@ Users often use informal terms. Map them to the correct database tables and conc
 - "customers", "clients" → \`companies\` table
 - "churned" → companies with \`churn_date\` set
 
-## Skills
-You have skills available via /skill-name syntax. Use them when tackling tasks that match a skill's domain — they provide detailed guidance. Check your available skills with supportedCommands().
+## Skills — USE BEFORE ACTING
+You have skills available via /skill-name syntax. Skills contain critical domain knowledge that prevents mistakes. **Always invoke the matching skill BEFORE starting work in that domain** — not after you've already made errors.
 
-Key skills:
-- /pull-request — use this whenever opening a PR. It covers branch naming, Linear ticket linking, and PR format.
-- /explore-data — use this when querying the database.
+Required skills (invoke BEFORE your first action in the domain):
+- /explore-data — BEFORE any database query. The database has complex patterns (snapshot records, soft deletes, multi-tenant filtering) that will cause wrong answers if you don't understand them first.
+- /pull-request — BEFORE opening any PR. Covers branch naming, Linear ticket linking, push workflow.
+
+Check all available skills with supportedCommands().
 
 ## Guidelines
 - For database queries, prefer read-only operations unless explicitly told otherwise
 - When investigating issues, check Datadog logs/metrics first, then code if needed
 - When posting to Slack, use threads when replying to existing conversations
 - Never expose secrets, credentials, or PII in responses
+- Don't guess at data architecture — if you're unsure about a table's structure or semantics, check the skill or the schema before answering
 
 ## Slack file uploads
 The Slack MCP does not support file uploads. To send files (CSV, JSON, etc.) via Slack, use Bash to call the Slack API directly with the SLACK_BOT_TOKEN env var. The flow is 3 steps:
