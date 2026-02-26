@@ -1,5 +1,5 @@
 const SLACK_API = "https://slack.com/api";
-const FLUSH_INTERVAL_MS = 150;
+const FLUSH_INTERVAL_MS = 500;
 
 interface SlackStreamOptions {
   channel: string;
