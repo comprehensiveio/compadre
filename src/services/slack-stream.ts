@@ -1,4 +1,5 @@
 const SLACK_API = "https://slack.com/api";
+const FLUSH_INTERVAL_MS = 150;
 
 interface SlackStreamOptions {
   channel: string;
@@ -12,6 +13,9 @@ export class SlackStream {
   private botToken: string;
   private lastStatus = "";
   private activeStreamTs: string | null = null;
+  private buffer = "";
+  private flushTimer: ReturnType<typeof setTimeout> | null = null;
+  private flushing: Promise<void> = Promise.resolve();
 
   constructor({ channel, threadTs, botToken }: SlackStreamOptions) {
     this.channel = channel;
@@ -37,7 +41,36 @@ export class SlackStream {
     });
   }
 
-  async appendText(text: string): Promise<void> {
+  appendText(text: string): void {
+    this.buffer += text;
+    if (!this.flushTimer) {
+      this.flushTimer = setTimeout(() => {
+        this.flushTimer = null;
+        this.flushing = this.flush();
+      }, FLUSH_INTERVAL_MS);
+    }
+  }
+
+  async stopStream(): Promise<void> {
+    if (this.flushTimer) {
+      clearTimeout(this.flushTimer);
+      this.flushTimer = null;
+    }
+    await this.flushing;
+    await this.flush();
+    if (!this.activeStreamTs) return;
+    await this.call("chat.stopStream", {
+      channel: this.channel,
+      ts: this.activeStreamTs,
+    });
+    this.activeStreamTs = null;
+  }
+
+  private async flush(): Promise<void> {
+    const text = this.buffer;
+    if (!text) return;
+    this.buffer = "";
+
     if (!this.activeStreamTs) {
       const data = await this.call("chat.startStream", {
         channel: this.channel,
@@ -51,15 +84,6 @@ export class SlackStream {
       ts: this.activeStreamTs,
       markdown_text: text,
     });
-  }
-
-  async stopStream(): Promise<void> {
-    if (!this.activeStreamTs) return;
-    await this.call("chat.stopStream", {
-      channel: this.channel,
-      ts: this.activeStreamTs,
-    });
-    this.activeStreamTs = null;
   }
 
   private async call(method: string, body: Record<string, unknown>): Promise<Record<string, unknown>> {
