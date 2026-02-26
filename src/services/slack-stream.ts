@@ -1,13 +1,9 @@
 const SLACK_API = "https://slack.com/api";
 
-interface TaskChunk {
-  type: "task_update";
-  id: string;
-  title: string;
-  status: "pending" | "in_progress" | "complete" | "error";
-}
+const STREAM_CHUNKS = 25;
+const STREAM_DELAY_MS = 40;
 
-interface StartOptions {
+interface StreamOptions {
   channel: string;
   threadTs: string;
   botToken: string;
@@ -17,60 +13,66 @@ export class SlackStream {
   private channel: string;
   private threadTs: string;
   private botToken: string;
-  private ts: string | undefined;
-  private seenCategories = new Set<string>();
+  private lastStatus = "";
 
-  constructor({ channel, threadTs, botToken }: StartOptions) {
+  constructor({ channel, threadTs, botToken }: StreamOptions) {
     this.channel = channel;
     this.threadTs = threadTs;
     this.botToken = botToken;
   }
 
-  async start(): Promise<void> {
+  async setStatus(text: string): Promise<void> {
+    if (text === this.lastStatus) return;
+    this.lastStatus = text;
+    await this.call("assistant.threads.setStatus", {
+      channel: this.channel,
+      thread_ts: this.threadTs,
+      status: text,
+    });
+  }
+
+  async clearStatus(): Promise<void> {
+    await this.call("assistant.threads.setStatus", {
+      channel: this.channel,
+      thread_ts: this.threadTs,
+      status: "",
+    });
+  }
+
+  async streamResponse(text: string): Promise<void> {
+    if (!text.trim()) return;
+
     const res = await this.call("chat.startStream", {
       channel: this.channel,
       thread_ts: this.threadTs,
-      chunks: [{ type: "task_update", id: "init", title: "Starting", status: "in_progress" }],
-      task_display_mode: "timeline",
     });
-    this.ts = res.ts as string | undefined;
-  }
-
-  async toolStarted(toolName: string): Promise<void> {
-    if (!this.ts) return;
-    const category = humanizeToolName(toolName);
-    // Only show each category once
-    if (this.seenCategories.has(category)) return;
-    this.seenCategories.add(category);
-
-    const chunks: TaskChunk[] = [];
-    // Complete "Starting" on the first real tool
-    if (this.seenCategories.size === 1) {
-      chunks.push({ type: "task_update", id: "init", title: "Starting", status: "complete" });
+    const ts = res.ts as string | undefined;
+    if (!ts) {
+      // Fallback to regular message if streaming fails
+      await this.call("chat.postMessage", {
+        channel: this.channel,
+        thread_ts: this.threadTs,
+        text,
+      });
+      return;
     }
-    chunks.push({ type: "task_update", id: category, title: category, status: "in_progress" });
-    await this.call("chat.appendStream", {
-      channel: this.channel,
-      ts: this.ts,
-      chunks,
-    });
-  }
 
-  async stop(): Promise<void> {
-    if (!this.ts) return;
-    // Complete all in-progress tasks
-    const chunks: TaskChunk[] = [...this.seenCategories].map((cat) => ({
-      type: "task_update" as const,
-      id: cat,
-      title: cat,
-      status: "complete" as const,
-    }));
+    const chunkSize = Math.max(1, Math.ceil(text.length / STREAM_CHUNKS));
+    for (let i = 0; i < text.length; i += chunkSize) {
+      await this.call("chat.appendStream", {
+        channel: this.channel,
+        ts,
+        markdown_text: text.slice(i, i + chunkSize),
+      });
+      if (i + chunkSize < text.length) {
+        await new Promise((r) => setTimeout(r, STREAM_DELAY_MS));
+      }
+    }
+
     await this.call("chat.stopStream", {
       channel: this.channel,
-      ts: this.ts,
-      chunks,
+      ts,
     });
-    this.ts = undefined;
   }
 
   private async call(method: string, body: Record<string, unknown>): Promise<Record<string, unknown>> {

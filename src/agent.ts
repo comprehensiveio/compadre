@@ -128,7 +128,7 @@ export async function runTask({
           for (const block of msg.content ?? []) {
             if (block.type === "tool_use") {
               pendingTools.set(block.id, { name: block.name, input: block.input });
-              void slackStream?.toolStarted(block.name);
+              void slackStream?.setStatus(humanizeToolName(block.name) + "...");
             }
           }
 
@@ -187,7 +187,7 @@ export async function runTask({
 
       throw new Error("Agent stream ended without result");
     } finally {
-      void slackStream?.stop();
+      void slackStream?.clearStatus();
       if (!resumeSessionId) {
         resetToQa();
       }

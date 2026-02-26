@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import { runTask } from "../agent.js";
 import { DEFAULT_MAX_TURNS, DEFAULT_MAX_BUDGET_USD, SLACK_STREAMING_ENABLED } from "../config.js";
-import { SLACK_SYSTEM_PROMPT } from "../prompts/index.js";
+import { SLACK_SYSTEM_PROMPT, SLACK_STREAMING_SYSTEM_PROMPT } from "../prompts/index.js";
 import { SlackStream } from "../services/slack-stream.js";
 
 export const slackRoutes = new Hono();
@@ -44,40 +44,40 @@ slackRoutes.post("/slack", async (c) => {
 
   console.log(`[slack] received from ${userId} in ${channel}: ${message.slice(0, 100)}`);
 
-  // Start Slack stream for real-time progress (if enabled)
+  // Set up streaming if enabled
   let slackStream: SlackStream | undefined;
-  if (SLACK_STREAMING_ENABLED && threadTs) {
-    const botToken = process.env.SLACK_BOT_TOKEN;
-    if (botToken) {
-      slackStream = new SlackStream({ channel, threadTs, botToken });
-      try {
-        await slackStream.start();
-      } catch (err) {
-        console.error("[slack] stream start failed, continuing without streaming:", err);
-        slackStream = undefined;
-      }
-    }
+  const botToken = process.env.SLACK_BOT_TOKEN;
+  if (SLACK_STREAMING_ENABLED && threadTs && botToken) {
+    slackStream = new SlackStream({ channel, threadTs, botToken });
   }
 
   // Fire and forget — respond 202 immediately
   runTask({
     prompt,
     sessionId,
-    systemPrompt: SLACK_SYSTEM_PROMPT,
+    systemPrompt: slackStream ? SLACK_STREAMING_SYSTEM_PROMPT : SLACK_SYSTEM_PROMPT,
     slackStream,
     maxTurns: (body.maxTurns as number) ?? DEFAULT_MAX_TURNS,
     maxBudgetUsd: (body.maxBudgetUsd as number) ?? DEFAULT_MAX_BUDGET_USD,
   })
-    .then((result) => {
+    .then(async (result) => {
       if (result.sessionId) {
         threadSessions.set(threadKey, result.sessionId);
+      }
+      // Stream the response to Slack
+      if (slackStream && result.result) {
+        await slackStream.streamResponse(result.result);
       }
       console.log(
         `[slack] completed for ${userId}: turns=${result.numTurns} cost=$${result.costUsd.toFixed(3)} duration=${result.durationMs}ms`
       );
     })
-    .catch((err) => {
+    .catch(async (err) => {
       console.error(`[slack] agent error for ${userId}:`, err);
+      // Clear status and post error if streaming was active
+      if (slackStream) {
+        await slackStream.clearStatus();
+      }
     });
 
   return c.json({ ok: true, message: "accepted" }, 202);

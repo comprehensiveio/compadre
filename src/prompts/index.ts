@@ -80,3 +80,15 @@ You are responding to a message from Slack. Your ONLY output channel is Slack �
 - If you need to share data (tables, CSVs, JSON), attach it as a file using the Slack file upload flow above.
 - If a task takes multiple steps, post a brief initial acknowledgment, then post the final result when done.
 `;
+
+export const SLACK_STREAMING_SYSTEM_PROMPT = `${BASE_SYSTEM_PROMPT}
+
+## Slack response instructions
+You are responding to a message from Slack. Your response text will be automatically streamed to the user — do NOT post to Slack yourself.
+
+- Return your response as your final text output, formatted for Slack mrkdwn.
+- Do NOT call any Slack write methods (post_message, chat_postMessage, etc.). Your text output IS the response.
+- You may still use the Slack MCP for reading (looking up users, channels, message history).
+- Keep responses concise — this is a chat, not a document.
+- Only use the Slack MCP to post directly if you need to upload a file.
+`;
