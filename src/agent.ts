@@ -104,9 +104,6 @@ export async function runTask({
           if (event.type === "content_block_delta" && event.delta?.type === "text_delta") {
             void slackStream?.appendText(event.delta.text);
           }
-          if (event.type === "content_block_stop" && slackStream) {
-            void slackStream.stopStream();
-          }
         }
 
         if (message.type === "assistant") {
