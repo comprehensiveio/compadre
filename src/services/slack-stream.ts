@@ -18,6 +18,7 @@ export class SlackStream {
   private threadTs: string;
   private botToken: string;
   private ts: string | undefined;
+  private started = false;
 
   constructor({ channel, threadTs, botToken }: StartOptions) {
     this.channel = channel;
@@ -29,18 +30,26 @@ export class SlackStream {
     const res = await this.call("chat.startStream", {
       channel: this.channel,
       thread_ts: this.threadTs,
-      markdown_text: "_Working on it..._",
+      chunks: [{ type: "task_update", id: "init", title: "Starting", status: "in_progress" }],
+      task_display_mode: "timeline",
     });
     this.ts = res.ts as string | undefined;
+    this.started = true;
   }
 
   async appendTask(id: string, title: string, status: TaskChunk["status"]): Promise<void> {
     if (!this.ts) return;
-    const chunk: TaskChunk = { type: "task_update", id, title, status };
+    // Complete the init task on the first real task
+    const chunks: TaskChunk[] = [];
+    if (this.started && status === "in_progress") {
+      chunks.push({ type: "task_update", id: "init", title: "Starting", status: "complete" });
+      this.started = false;
+    }
+    chunks.push({ type: "task_update", id, title, status });
     await this.call("chat.appendStream", {
       channel: this.channel,
       ts: this.ts,
-      chunks: [chunk],
+      chunks,
     });
   }
 
