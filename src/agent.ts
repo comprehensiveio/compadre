@@ -6,14 +6,13 @@ import { DEFAULT_MAX_TURNS, DEFAULT_MAX_BUDGET_USD, REPO_PATH } from "./config.j
 import { buildMcpServers } from "./mcp.js";
 import { BASE_SYSTEM_PROMPT } from "./prompts/index.js";
 import { resetToQa } from "./repo.js";
-import { SlackStream, humanizeToolName } from "./services/slack-stream.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const COMPADRE_ROOT = path.resolve(__dirname, "..");
 
 const llmobs = ddTrace.llmobs;
 
-interface TaskResult {
+export interface TaskResult {
   result: string;
   sessionId: string;
   costUsd: number;
@@ -21,13 +20,19 @@ interface TaskResult {
   numTurns: number;
 }
 
-interface RunTaskOptions {
+export interface StreamCallbacks {
+  onTextDelta?: (text: string) => void;
+  onToolStart?: (toolName: string) => void;
+  onComplete?: () => void;
+}
+
+export interface RunTaskOptions {
   prompt: string;
   sessionId?: string;
   systemPrompt?: string;
   maxTurns?: number;
   maxBudgetUsd?: number;
-  slackStream?: SlackStream;
+  stream?: StreamCallbacks;
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -39,7 +44,7 @@ export async function runTask({
   systemPrompt = BASE_SYSTEM_PROMPT,
   maxTurns = DEFAULT_MAX_TURNS,
   maxBudgetUsd = DEFAULT_MAX_BUDGET_USD,
-  slackStream,
+  stream: streamCallbacks,
 }: RunTaskOptions): Promise<TaskResult> {
   return llmobs.trace({ name: "compadre-agent", kind: "agent" }, async () => {
     llmobs.annotate({
@@ -63,7 +68,7 @@ export async function runTask({
         maxBudgetUsd,
         permissionMode: "bypassPermissions",
         allowDangerouslySkipPermissions: true,
-        includePartialMessages: !!slackStream,
+        includePartialMessages: !!streamCallbacks?.onTextDelta,
         settingSources: ["project"],
         plugins: [{ type: "local" as const, path: COMPADRE_ROOT }],
         ...(resumeSessionId ? { resume: resumeSessionId } : {}),
@@ -102,7 +107,7 @@ export async function runTask({
         if (message.type === "stream_event") {
           const event = (message as AnyMessage).event;
           if (event.type === "content_block_delta" && event.delta?.type === "text_delta") {
-            void slackStream?.appendText(event.delta.text);
+            streamCallbacks?.onTextDelta?.(event.delta.text);
           }
         }
 
@@ -136,7 +141,7 @@ export async function runTask({
           for (const block of msg.content ?? []) {
             if (block.type === "tool_use") {
               pendingTools.set(block.id, { name: block.name, input: block.input });
-              void slackStream?.setStatus(humanizeToolName(block.name) + "...");
+              streamCallbacks?.onToolStart?.(block.name);
             }
           }
 
@@ -195,8 +200,7 @@ export async function runTask({
 
       throw new Error("Agent stream ended without result");
     } finally {
-      void slackStream?.stopStream();
-      void slackStream?.clearStatus();
+      streamCallbacks?.onComplete?.();
       if (!resumeSessionId) {
         resetToQa();
       }
