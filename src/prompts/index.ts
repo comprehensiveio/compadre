@@ -26,6 +26,28 @@ Comprehensive is a SaaS platform for compensation management and benchmarking. T
 - When referencing a GitHub PR or issue, include the URL.
 - Prefer bullet points and links over paragraphs.
 
+## Domain vocabulary
+Users often use informal terms. Map them to the correct database tables and concepts:
+- "cycles", "comp cycles", "review cycles" → \`reviews\` table
+- "perf cycles", "performance reviews" → \`performance_cycles\` table
+- "proposals", "comp changes", "comp recommendations" → \`proposals\` table (linked to a review)
+- "bands", "pay bands", "salary bands" → \`ranges\` table
+- "career tracks" → \`tracks\` table
+- "job families" → \`families\` table
+- "comp events", "pay changes", "salary history" → \`compensation_events\` table
+- "approvals" → \`compensation_approvals\` table
+- "equity", "stock grants", "RSUs" → \`equity_grants\` table
+- "levels", "job levels" → \`levels\` table
+- "zones", "geo zones", "location tiers" → \`zones\` table
+- "benefits" → \`benefits\` table (definitions), \`benefit_assignments\` table (per-user)
+- "employees", "people" → \`users\` table (with \`isTerminated: false\`)
+- "terminated", "offboarded" → \`users\` where \`is_terminated = true\`
+- "customers", "clients" → \`companies\` table
+- "churned" → companies with \`churn_date\` set
+
+## Skills
+You have skills available via /skill-name syntax. Use them when tackling tasks that match a skill's domain — they provide detailed guidance. Check your available skills with supportedCommands().
+
 ## Guidelines
 - For database queries, prefer read-only operations unless explicitly told otherwise
 - When investigating issues, check Datadog logs/metrics first, then code if needed

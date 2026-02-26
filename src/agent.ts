@@ -1,9 +1,14 @@
+import path from "path";
+import { fileURLToPath } from "url";
 import { query } from "@anthropic-ai/claude-agent-sdk";
 import ddTrace from "dd-trace";
 import { DEFAULT_MAX_TURNS, DEFAULT_MAX_BUDGET_USD, REPO_PATH } from "./config.js";
 import { buildMcpServers } from "./mcp.js";
 import { BASE_SYSTEM_PROMPT } from "./prompts/index.js";
 import { resetToQa } from "./repo.js";
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const COMPADRE_ROOT = path.resolve(__dirname, "..");
 
 const llmobs = ddTrace.llmobs;
 
@@ -55,6 +60,8 @@ export async function runTask({
         maxBudgetUsd,
         permissionMode: "bypassPermissions",
         allowDangerouslySkipPermissions: true,
+        settingSources: ["project"],
+        plugins: [{ type: "local" as const, path: COMPADRE_ROOT }],
         ...(resumeSessionId ? { resume: resumeSessionId } : {}),
         allowedTools: [
           "Read",
