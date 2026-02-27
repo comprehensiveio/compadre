@@ -10,6 +10,7 @@ export const slackEventsRoutes = new Hono();
 const threadSessions = new Map<string, string>();
 
 const APP_LINK_REGEX = /https:\/\/(?:www\.)?app\.comprehensive\.io\/\S+/i;
+const SLACKBOT_USER_ID = "U073509NYP7";
 
 interface SlackEvent {
   type: string;
@@ -51,7 +52,10 @@ slackEventsRoutes.post("/slack/events", async (c) => {
   }
 
   if (payload.type === "event_callback") {
-    void handleEvent(payload.event as SlackEvent);
+    const event = payload.event;
+    if (event && typeof event === "object") {
+      void handleEvent(event as SlackEvent);
+    }
   }
 
   return c.json({ ok: true });
@@ -61,10 +65,8 @@ function handleEvent(event: SlackEvent) {
   if (event.type !== "message") return;
   if (event.subtype || event.bot_id) return;
 
-  const slackbotUserId = process.env.SLACKBOT_USER_ID;
   const isDM = event.channel.startsWith("D");
-  const isMention =
-    slackbotUserId && event.text?.startsWith(`<@${slackbotUserId}>`);
+  const isMention = event.text?.startsWith(`<@${SLACKBOT_USER_ID}>`);
 
   if (isDM || isMention) {
     handleAIMessage(event);
@@ -86,9 +88,8 @@ function handleAIMessage(event: SlackEvent) {
   const threadTs = event.thread_ts || event.ts;
 
   let messageText = event.text;
-  const slackbotUserId = process.env.SLACKBOT_USER_ID;
-  if (slackbotUserId && messageText.startsWith(`<@${slackbotUserId}>`)) {
-    messageText = messageText.slice(`<@${slackbotUserId}>`.length).trim();
+  if (messageText.startsWith(`<@${SLACKBOT_USER_ID}>`)) {
+    messageText = messageText.slice(`<@${SLACKBOT_USER_ID}>`.length).trim();
   }
 
   const threadKey = threadTs;
