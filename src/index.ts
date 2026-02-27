@@ -14,6 +14,7 @@ import { logger } from "hono/logger";
 import { healthRoutes } from "./routes/health.js";
 import { promptRoutes } from "./routes/prompt.js";
 import { slackRoutes } from "./routes/slack.js";
+import { slackEventsRoutes } from "./routes/slack-events.js";
 import { webhookRoutes } from "./routes/webhook.js";
 import { ensureRepo, refreshRepo } from "./repo.js";
 import { initDatadogAuth } from "./auth/datadog.js";
@@ -40,6 +41,7 @@ app.onError((err, c) => {
 app.route("/", healthRoutes);
 app.route("/", promptRoutes);
 app.route("/", slackRoutes);
+app.route("/", slackEventsRoutes);
 app.route("/", webhookRoutes);
 
 // Refresh the repo clone periodically (every 15 minutes)
