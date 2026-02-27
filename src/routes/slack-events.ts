@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import { runTask } from "../agent.js";
 import { DEFAULT_MAX_TURNS, DEFAULT_MAX_BUDGET_USD } from "../config.js";
-import { SLACK_STREAMING_SYSTEM_PROMPT } from "../prompts/index.js";
+import { SLACK_SYSTEM_PROMPT, SLACK_STREAMING_SYSTEM_PROMPT } from "../prompts/index.js";
 import { SlackStream, humanizeToolName } from "../services/slack-stream.js";
 import { verifySlackSignature } from "../services/slack-verify.js";
 
@@ -26,17 +26,25 @@ slackEventsRoutes.post("/slack/events", async (c) => {
   const rawBody = await c.req.text();
 
   const signingSecret = process.env.SLACK_SIGNING_SECRET;
-  if (signingSecret) {
-    const signature = c.req.header("X-Slack-Signature") || "";
-    const timestamp = c.req.header("X-Slack-Request-Timestamp") || "";
-    if (
-      !verifySlackSignature({ signingSecret, signature, timestamp, body: rawBody })
-    ) {
-      return c.json({ error: "invalid signature" }, 401);
-    }
+  if (!signingSecret) {
+    console.error("[slack-events] SLACK_SIGNING_SECRET not configured");
+    return c.json({ error: "server misconfigured" }, 500);
   }
 
-  const payload = JSON.parse(rawBody);
+  const signature = c.req.header("X-Slack-Signature") || "";
+  const timestamp = c.req.header("X-Slack-Request-Timestamp") || "";
+  if (
+    !verifySlackSignature({ signingSecret, signature, timestamp, body: rawBody })
+  ) {
+    return c.json({ error: "invalid signature" }, 401);
+  }
+
+  let payload: Record<string, unknown>;
+  try {
+    payload = JSON.parse(rawBody);
+  } catch {
+    return c.json({ error: "invalid JSON" }, 400);
+  }
 
   if (payload.type === "url_verification") {
     return c.json({ challenge: payload.challenge });
@@ -108,7 +116,7 @@ function handleAIMessage(event: SlackEvent) {
   runTask({
     prompt,
     sessionId,
-    systemPrompt: SLACK_STREAMING_SYSTEM_PROMPT,
+    systemPrompt: slackStream ? SLACK_STREAMING_SYSTEM_PROMPT : SLACK_SYSTEM_PROMPT,
     maxTurns: DEFAULT_MAX_TURNS,
     maxBudgetUsd: DEFAULT_MAX_BUDGET_USD,
     stream: slackStream
@@ -167,12 +175,20 @@ async function forwardProdSupportLinks(event: SlackEvent) {
     return;
   }
 
+  const compadreApiKey = process.env.COMPADRE_API_KEY;
+  if (!compadreApiKey) {
+    console.error(
+      "[slack-events] COMPADRE_API_KEY not set, cannot forward prod-support links",
+    );
+    return;
+  }
+
   try {
-    await fetch(`${compAppUrl}/api/v1/slack/debug-links`, {
+    const res = await fetch(`${compAppUrl}/api/v1/slack/debug-links`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        Authorization: `Bearer ${process.env.COMPADRE_API_KEY || ""}`,
+        Authorization: `Bearer ${compadreApiKey}`,
       },
       body: JSON.stringify({
         text: event.text,
@@ -180,6 +196,9 @@ async function forwardProdSupportLinks(event: SlackEvent) {
         threadTs: event.thread_ts || event.ts,
       }),
     });
+    if (!res.ok) {
+      console.error(`[slack-events] debug-links returned ${res.status}`);
+    }
   } catch (err) {
     console.error(
       "[slack-events] failed to forward prod-support links:",

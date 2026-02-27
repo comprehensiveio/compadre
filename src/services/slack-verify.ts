@@ -14,7 +14,8 @@ export function verifySlackSignature({
   body: string;
 }): boolean {
   const now = Math.floor(Date.now() / 1000);
-  if (Math.abs(now - Number(timestamp)) > MAX_TIMESTAMP_DIFF_S) return false;
+  const ts = Number(timestamp);
+  if (Number.isNaN(ts) || Math.abs(now - ts) > MAX_TIMESTAMP_DIFF_S) return false;
 
   const baseString = `v0:${timestamp}:${body}`;
   const hmac = crypto
@@ -23,5 +24,8 @@ export function verifySlackSignature({
     .digest("hex");
   const expected = `v0=${hmac}`;
 
-  return crypto.timingSafeEqual(Buffer.from(signature), Buffer.from(expected));
+  const sigBuffer = Buffer.from(signature);
+  const expectedBuffer = Buffer.from(expected);
+  if (sigBuffer.length !== expectedBuffer.length) return false;
+  return crypto.timingSafeEqual(sigBuffer, expectedBuffer);
 }
