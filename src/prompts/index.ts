@@ -1,6 +1,23 @@
 import { REPO_PATH } from "../config.js";
 
-export const BASE_SYSTEM_PROMPT = `You are an AI operations agent for Comprehensive, a compensation benchmarking platform.
+function currentTimestamp() {
+  const now = new Date();
+  return now.toLocaleString("en-US", {
+    timeZone: "UTC",
+    weekday: "long",
+    year: "numeric",
+    month: "long",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    timeZoneName: "short",
+  });
+}
+
+export function getBaseSystemPrompt() {
+  return `You are an AI operations agent for Comprehensive, a compensation benchmarking platform.
+
+Current date and time: ${currentTimestamp()}
 
 ## About Comprehensive
 Comprehensive is a SaaS platform for compensation management and benchmarking. The engineering team is small. The main monorepo is comprehensiveio/comp on GitHub — it contains the full-stack TypeScript app (TanStack Start frontend, tRPC API, Prisma ORM, BullMQ workers). The codebase is cloned locally at ${REPO_PATH} on the qa branch. The app directory is at ${REPO_PATH}/app.
@@ -87,8 +104,10 @@ The Slack MCP does not support file uploads. To send files (CSV, JSON, etc.) via
 3. Complete the upload and share to a channel or DM:
    curl -s -X POST -H "Authorization: Bearer $SLACK_BOT_TOKEN" -H "Content-Type: application/json" -d '{"files":[{"id":"FILE_ID"}],"channel_id":"CHANNEL_OR_USER_ID"}' https://slack.com/api/files.completeUploadExternal
 `;
+}
 
-export const SLACK_SYSTEM_PROMPT = `${BASE_SYSTEM_PROMPT}
+export function getSlackSystemPrompt() {
+  return `${getBaseSystemPrompt()}
 
 ## Slack response instructions
 You are responding to a message from Slack. Your ONLY output channel is Slack — you must post your response directly to the specified Slack channel and thread using the Slack MCP.
@@ -100,8 +119,10 @@ You are responding to a message from Slack. Your ONLY output channel is Slack �
 - If you need to share data (tables, CSVs, JSON), attach it as a file using the Slack file upload flow above.
 - If a task takes multiple steps, post a brief initial acknowledgment, then post the final result when done.
 `;
+}
 
-export const SLACK_STREAMING_SYSTEM_PROMPT = `${BASE_SYSTEM_PROMPT}
+export function getSlackStreamingSystemPrompt() {
+  return `${getBaseSystemPrompt()}
 
 ## Slack response instructions
 You are responding to a message from Slack. Your text output is streamed directly to the Slack thread in real-time.
@@ -113,4 +134,5 @@ You are responding to a message from Slack. Your text output is streamed directl
 - Keep responses concise — this is a chat, not a document.
 - If you need to share files (CSV, JSON, etc.), use the Slack file upload flow.
 `;
+}
 

@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import { runTask } from "../agent.js";
 import { DEFAULT_MAX_TURNS, DEFAULT_MAX_BUDGET_USD } from "../config.js";
-import { SLACK_SYSTEM_PROMPT, SLACK_STREAMING_SYSTEM_PROMPT } from "../prompts/index.js";
+import { getSlackSystemPrompt, getSlackStreamingSystemPrompt } from "../prompts/index.js";
 import { SlackStream, humanizeToolName } from "../services/slack-stream.js";
 
 export const slackRoutes = new Hono();
@@ -54,7 +54,7 @@ slackRoutes.post("/slack", async (c) => {
   runTask({
     prompt,
     sessionId,
-    systemPrompt: slackStream ? SLACK_STREAMING_SYSTEM_PROMPT : SLACK_SYSTEM_PROMPT,
+    systemPrompt: slackStream ? getSlackStreamingSystemPrompt() : getSlackSystemPrompt(),
     maxTurns: (body.maxTurns as number) ?? DEFAULT_MAX_TURNS,
     maxBudgetUsd: (body.maxBudgetUsd as number) ?? DEFAULT_MAX_BUDGET_USD,
     stream: slackStream

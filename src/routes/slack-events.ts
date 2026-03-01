@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import { runTask } from "../agent.js";
 import { DEFAULT_MAX_TURNS, DEFAULT_MAX_BUDGET_USD } from "../config.js";
-import { SLACK_SYSTEM_PROMPT, SLACK_STREAMING_SYSTEM_PROMPT } from "../prompts/index.js";
+import { getSlackSystemPrompt, getSlackStreamingSystemPrompt } from "../prompts/index.js";
 import { SlackStream, humanizeToolName } from "../services/slack-stream.js";
 import { verifySlackSignature } from "../services/slack-verify.js";
 
@@ -131,7 +131,7 @@ function handleAIMessage(event: SlackEvent) {
   runTask({
     prompt,
     sessionId,
-    systemPrompt: slackStream ? SLACK_STREAMING_SYSTEM_PROMPT : SLACK_SYSTEM_PROMPT,
+    systemPrompt: slackStream ? getSlackStreamingSystemPrompt() : getSlackSystemPrompt(),
     maxTurns: DEFAULT_MAX_TURNS,
     maxBudgetUsd: DEFAULT_MAX_BUDGET_USD,
     stream: slackStream
