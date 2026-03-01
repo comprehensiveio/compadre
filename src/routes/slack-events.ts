@@ -23,6 +23,7 @@ function pruneThreadSessions() {
 
 const APP_LINK_REGEX = /https:\/\/(?:www\.)?app\.comprehensive\.io\/\S+/i;
 const SLACKBOT_USER_ID = "U073509NYP7";
+const PRODUCTION_SUPPORT_CHANNEL_ID = "C04D24LB4J1";
 
 interface SlackEvent {
   type: string;
@@ -84,10 +85,8 @@ async function handleEvent(event: SlackEvent) {
 
   // Check for prod-support links before routing to AI, so @mentions in
   // #production-support that contain app links still get debug-link treatment.
-  const prodSupportChannel = process.env.PRODUCTION_SUPPORT_CHANNEL_ID;
   if (
-    prodSupportChannel &&
-    event.channel === prodSupportChannel &&
+    event.channel === PRODUCTION_SUPPORT_CHANNEL_ID &&
     APP_LINK_REGEX.test(event.text)
   ) {
     void forwardProdSupportLinks(event);
