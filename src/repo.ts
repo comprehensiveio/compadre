@@ -1,8 +1,9 @@
-import { execSync } from "child_process";
+import { execFileSync } from "child_process";
 import { existsSync } from "fs";
+import { REPO_PATH } from "./config.js";
 
-function getRepoPath() {
-  return process.env.REPO_PATH || "/opt/render/repo";
+function git(...args: string[]) {
+  execFileSync("git", args, { stdio: "inherit" });
 }
 
 function getRepoUrl() {
@@ -21,49 +22,36 @@ function getRepoBranch() {
 }
 
 function isLocalDev() {
-  const repoPath = getRepoPath();
-  return repoPath.includes("/Users/");
+  return REPO_PATH.includes("/Users/");
 }
 
 export function ensureRepo() {
-  const repoPath = getRepoPath();
-
   if (isLocalDev()) {
-    console.log(`[repo] using local repo at ${repoPath}`);
+    console.log(`[repo] using local repo at ${REPO_PATH}`);
     return;
   }
 
   const repoUrl = getRepoUrl();
   const branch = getRepoBranch();
 
-  if (existsSync(`${repoPath}/.git`)) {
+  if (existsSync(`${REPO_PATH}/.git`)) {
     console.log("[repo] pulling latest changes");
-    execSync(`git -C ${repoPath} fetch origin ${branch}`, {
-      stdio: "inherit",
-    });
-    execSync(`git -C ${repoPath} reset --hard origin/${branch}`, {
-      stdio: "inherit",
-    });
+    git("-C", REPO_PATH, "fetch", "origin", branch);
+    git("-C", REPO_PATH, "reset", "--hard", `origin/${branch}`);
   } else {
     console.log("[repo] cloning repository");
-    execSync(
-      `git clone --depth 1 --branch ${branch} ${repoUrl} ${repoPath}`,
-      { stdio: "inherit" }
-    );
+    git("clone", "--depth", "1", "--branch", branch, repoUrl, REPO_PATH);
   }
 }
 
 export function refreshRepo() {
   if (isLocalDev()) return;
 
-  const repoPath = getRepoPath();
   const branch = getRepoBranch();
 
   try {
-    execSync(
-      `git -C ${repoPath} fetch origin ${branch} && git -C ${repoPath} reset --hard origin/${branch}`,
-      { stdio: "inherit" }
-    );
+    git("-C", REPO_PATH, "fetch", "origin", branch);
+    git("-C", REPO_PATH, "reset", "--hard", `origin/${branch}`);
     console.log("[repo] refreshed to latest");
   } catch (err) {
     console.error("[repo] refresh failed:", err);
@@ -78,14 +66,13 @@ export function refreshRepo() {
 export function resetToQa() {
   if (isLocalDev()) return;
 
-  const repoPath = getRepoPath();
   const branch = getRepoBranch();
 
   try {
-    execSync(
-      `git -C ${repoPath} checkout ${branch} 2>/dev/null; git -C ${repoPath} clean -fd; git -C ${repoPath} fetch origin ${branch} && git -C ${repoPath} reset --hard origin/${branch}`,
-      { stdio: "inherit" }
-    );
+    git("-C", REPO_PATH, "checkout", branch);
+    git("-C", REPO_PATH, "clean", "-fd");
+    git("-C", REPO_PATH, "fetch", "origin", branch);
+    git("-C", REPO_PATH, "reset", "--hard", `origin/${branch}`);
     console.log("[repo] reset to clean qa state");
   } catch (err) {
     console.error("[repo] reset to qa failed:", err);
