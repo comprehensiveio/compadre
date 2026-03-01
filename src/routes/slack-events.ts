@@ -7,7 +7,19 @@ import { verifySlackSignature } from "../services/slack-verify.js";
 
 export const slackEventsRoutes = new Hono();
 
+const MAX_THREAD_SESSIONS = 5000;
 const threadSessions = new Map<string, string>();
+
+/** Evict oldest entries when the map exceeds the cap. */
+function pruneThreadSessions() {
+  if (threadSessions.size <= MAX_THREAD_SESSIONS) return;
+  const toDelete = threadSessions.size - MAX_THREAD_SESSIONS;
+  const iter = threadSessions.keys();
+  for (let i = 0; i < toDelete; i++) {
+    const key = iter.next().value;
+    if (key !== undefined) threadSessions.delete(key);
+  }
+}
 
 const APP_LINK_REGEX = /https:\/\/(?:www\.)?app\.comprehensive\.io\/\S+/i;
 const SLACKBOT_USER_ID = "U073509NYP7";
@@ -54,25 +66,24 @@ slackEventsRoutes.post("/slack/events", async (c) => {
   if (payload.type === "event_callback") {
     const event = payload.event;
     if (event && typeof event === "object") {
-      void handleEvent(event as SlackEvent);
+      handleEvent(event as SlackEvent).catch((err) =>
+        console.error("[slack-events] unhandled error in handleEvent:", err),
+      );
     }
   }
 
   return c.json({ ok: true });
 });
 
-function handleEvent(event: SlackEvent) {
+async function handleEvent(event: SlackEvent) {
   if (event.type !== "message") return;
   if (event.subtype || event.bot_id) return;
 
   const isDM = event.channel.startsWith("D");
   const isMention = event.text?.startsWith(`<@${SLACKBOT_USER_ID}>`);
 
-  if (isDM || isMention) {
-    handleAIMessage(event);
-    return;
-  }
-
+  // Check for prod-support links before routing to AI, so @mentions in
+  // #production-support that contain app links still get debug-link treatment.
   const prodSupportChannel = process.env.PRODUCTION_SUPPORT_CHANNEL_ID;
   if (
     prodSupportChannel &&
@@ -80,6 +91,10 @@ function handleEvent(event: SlackEvent) {
     APP_LINK_REGEX.test(event.text)
   ) {
     void forwardProdSupportLinks(event);
+  }
+
+  if (isDM || isMention) {
+    handleAIMessage(event);
   }
 }
 
@@ -135,6 +150,7 @@ function handleAIMessage(event: SlackEvent) {
     .then((result) => {
       if (result.sessionId) {
         threadSessions.set(threadKey, result.sessionId);
+        pruneThreadSessions();
       }
       console.log(
         `[slack-events] completed for ${event.user}: turns=${result.numTurns} cost=$${result.costUsd.toFixed(3)} duration=${result.durationMs}ms`,
