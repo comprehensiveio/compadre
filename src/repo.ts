@@ -1,6 +1,10 @@
-import { execSync } from "child_process";
+import { execFileSync } from "child_process";
 import { existsSync } from "fs";
 import { REPO_PATH } from "./config.js";
+
+function git(...args: string[]) {
+  execFileSync("git", args, { stdio: "inherit" });
+}
 
 function getRepoUrl() {
   const base =
@@ -32,18 +36,11 @@ export function ensureRepo() {
 
   if (existsSync(`${REPO_PATH}/.git`)) {
     console.log("[repo] pulling latest changes");
-    execSync(`git -C ${REPO_PATH} fetch origin ${branch}`, {
-      stdio: "inherit",
-    });
-    execSync(`git -C ${REPO_PATH} reset --hard origin/${branch}`, {
-      stdio: "inherit",
-    });
+    git("-C", REPO_PATH, "fetch", "origin", branch);
+    git("-C", REPO_PATH, "reset", "--hard", `origin/${branch}`);
   } else {
     console.log("[repo] cloning repository");
-    execSync(
-      `git clone --depth 1 --branch ${branch} ${repoUrl} ${REPO_PATH}`,
-      { stdio: "inherit" }
-    );
+    git("clone", "--depth", "1", "--branch", branch, repoUrl, REPO_PATH);
   }
 }
 
@@ -53,10 +50,8 @@ export function refreshRepo() {
   const branch = getRepoBranch();
 
   try {
-    execSync(
-      `git -C ${REPO_PATH} fetch origin ${branch} && git -C ${REPO_PATH} reset --hard origin/${branch}`,
-      { stdio: "inherit" }
-    );
+    git("-C", REPO_PATH, "fetch", "origin", branch);
+    git("-C", REPO_PATH, "reset", "--hard", `origin/${branch}`);
     console.log("[repo] refreshed to latest");
   } catch (err) {
     console.error("[repo] refresh failed:", err);
@@ -74,10 +69,10 @@ export function resetToQa() {
   const branch = getRepoBranch();
 
   try {
-    execSync(
-      `git -C ${REPO_PATH} checkout ${branch} 2>/dev/null; git -C ${REPO_PATH} clean -fd; git -C ${REPO_PATH} fetch origin ${branch} && git -C ${REPO_PATH} reset --hard origin/${branch}`,
-      { stdio: "inherit" }
-    );
+    git("-C", REPO_PATH, "checkout", branch);
+    git("-C", REPO_PATH, "clean", "-fd");
+    git("-C", REPO_PATH, "fetch", "origin", branch);
+    git("-C", REPO_PATH, "reset", "--hard", `origin/${branch}`);
     console.log("[repo] reset to clean qa state");
   } catch (err) {
     console.error("[repo] reset to qa failed:", err);
