@@ -73,7 +73,10 @@ export async function runTask({
         allowDangerouslySkipPermissions: true,
         includePartialMessages: !!streamCallbacks?.onTextDelta,
         settingSources: ["project"],
-        plugins: [{ type: "local" as const, path: COMPADRE_ROOT }],
+        plugins: [
+          { type: "local" as const, path: COMPADRE_ROOT },
+          { type: "local" as const, path: path.resolve(REPO_PATH) },
+        ],
         ...(resumeSessionId ? { resume: resumeSessionId } : {}),
         allowedTools: [
           "Read",

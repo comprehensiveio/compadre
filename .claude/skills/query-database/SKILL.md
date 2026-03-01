@@ -1,6 +1,6 @@
 ---
-name: explore-data
-description: Guide for exploring and querying the application database via the Postgres MCP.
+name: query-database
+description: Guide for querying the Comprehensive production database via the Postgres MCP. Covers snapshot filtering, naming conventions, and common queries.
 ---
 
 # Database Exploration Guide
