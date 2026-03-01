@@ -4,7 +4,7 @@ import { query } from "@anthropic-ai/claude-agent-sdk";
 import ddTrace from "dd-trace";
 import { DEFAULT_MAX_TURNS, DEFAULT_MAX_BUDGET_USD, REPO_PATH } from "./config.js";
 import { buildMcpServers } from "./mcp.js";
-import { BASE_SYSTEM_PROMPT } from "./prompts/index.js";
+import { getBaseSystemPrompt } from "./prompts/index.js";
 import { resetToQa } from "./repo.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -41,7 +41,7 @@ type AnyMessage = any;
 export async function runTask({
   prompt,
   sessionId: resumeSessionId,
-  systemPrompt = BASE_SYSTEM_PROMPT,
+  systemPrompt = getBaseSystemPrompt(),
   maxTurns = DEFAULT_MAX_TURNS,
   maxBudgetUsd = DEFAULT_MAX_BUDGET_USD,
   stream: streamCallbacks,
