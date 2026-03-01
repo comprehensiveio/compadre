@@ -1,9 +1,6 @@
 import { execSync } from "child_process";
 import { existsSync } from "fs";
-
-function getRepoPath() {
-  return process.env.REPO_PATH || "/tmp/comp-repo";
-}
+import { REPO_PATH } from "./config.js";
 
 function getRepoUrl() {
   const base =
@@ -21,33 +18,30 @@ function getRepoBranch() {
 }
 
 function isLocalDev() {
-  const repoPath = getRepoPath();
-  return repoPath.includes("/Users/");
+  return REPO_PATH.includes("/Users/");
 }
 
 export function ensureRepo() {
-  const repoPath = getRepoPath();
-
   if (isLocalDev()) {
-    console.log(`[repo] using local repo at ${repoPath}`);
+    console.log(`[repo] using local repo at ${REPO_PATH}`);
     return;
   }
 
   const repoUrl = getRepoUrl();
   const branch = getRepoBranch();
 
-  if (existsSync(`${repoPath}/.git`)) {
+  if (existsSync(`${REPO_PATH}/.git`)) {
     console.log("[repo] pulling latest changes");
-    execSync(`git -C ${repoPath} fetch origin ${branch}`, {
+    execSync(`git -C ${REPO_PATH} fetch origin ${branch}`, {
       stdio: "inherit",
     });
-    execSync(`git -C ${repoPath} reset --hard origin/${branch}`, {
+    execSync(`git -C ${REPO_PATH} reset --hard origin/${branch}`, {
       stdio: "inherit",
     });
   } else {
     console.log("[repo] cloning repository");
     execSync(
-      `git clone --depth 1 --branch ${branch} ${repoUrl} ${repoPath}`,
+      `git clone --depth 1 --branch ${branch} ${repoUrl} ${REPO_PATH}`,
       { stdio: "inherit" }
     );
   }
@@ -56,12 +50,11 @@ export function ensureRepo() {
 export function refreshRepo() {
   if (isLocalDev()) return;
 
-  const repoPath = getRepoPath();
   const branch = getRepoBranch();
 
   try {
     execSync(
-      `git -C ${repoPath} fetch origin ${branch} && git -C ${repoPath} reset --hard origin/${branch}`,
+      `git -C ${REPO_PATH} fetch origin ${branch} && git -C ${REPO_PATH} reset --hard origin/${branch}`,
       { stdio: "inherit" }
     );
     console.log("[repo] refreshed to latest");
@@ -78,12 +71,11 @@ export function refreshRepo() {
 export function resetToQa() {
   if (isLocalDev()) return;
 
-  const repoPath = getRepoPath();
   const branch = getRepoBranch();
 
   try {
     execSync(
-      `git -C ${repoPath} checkout ${branch} 2>/dev/null; git -C ${repoPath} clean -fd; git -C ${repoPath} fetch origin ${branch} && git -C ${repoPath} reset --hard origin/${branch}`,
+      `git -C ${REPO_PATH} checkout ${branch} 2>/dev/null; git -C ${REPO_PATH} clean -fd; git -C ${REPO_PATH} fetch origin ${branch} && git -C ${REPO_PATH} reset --hard origin/${branch}`,
       { stdio: "inherit" }
     );
     console.log("[repo] reset to clean qa state");

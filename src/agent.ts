@@ -64,7 +64,7 @@ export async function runTask({
         cwd: REPO_PATH,
         env: {
           ...process.env as Record<string, string>,
-          GIT_CEILING_DIRECTORIES: path.dirname(REPO_PATH),
+          GIT_CEILING_DIRECTORIES: path.dirname(path.resolve(REPO_PATH)),
         },
         systemPrompt,
         maxTurns,
