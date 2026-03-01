@@ -7,33 +7,39 @@ description: Guide for creating pull requests on the comp monorepo. Use this whe
 
 Use this skill when creating a pull request on the comprehensiveio/comp repo.
 
-## Git setup
+## Git setup — READ THIS FIRST
 
-The comp monorepo is cloned at the path specified in your system prompt. Always use `git -C <repo-path>` for all git commands since your shell cwd may reset between commands.
+The comp monorepo is cloned at the REPO_PATH from your system prompt. EVERY git command MUST use `git -C $REPO_PATH` — never run bare `git` or you'll operate on the wrong repo (the compadre agent repo).
 
 Before your first commit in a session, configure git:
 ```bash
-git -C <repo-path> config user.email "compadre@comprehensive.io"
-git -C <repo-path> config user.name "Compadre"
+git -C $REPO_PATH config user.email "compadre@comprehensive.io"
+git -C $REPO_PATH config user.name "Compadre"
 ```
 
 ## Branch & PR workflow
 
+**Create the branch BEFORE making any edits.** Do not commit directly to qa.
+
 1. Create a branch from qa:
    ```bash
-   git -C <repo-path> checkout -b isaac/<ticket-id>-short-description
+   git -C $REPO_PATH checkout -b isaac/<ticket-id>-short-description
    ```
-2. Make your changes using Edit/Write tools (use absolute paths within the repo)
-3. Stage and commit:
+2. Verify you're on the new branch:
    ```bash
-   git -C <repo-path> add <files>
-   git -C <repo-path> commit -m "Short description of change"
+   git -C $REPO_PATH branch --show-current
    ```
-4. Push the branch:
+3. Make your changes using Edit/Write tools (use absolute paths within the repo)
+4. Stage and commit:
    ```bash
-   git -C <repo-path> push -u origin isaac/<ticket-id>-short-description
+   git -C $REPO_PATH add <files>
+   git -C $REPO_PATH commit -m "Short description of change"
    ```
-5. Create the PR using the GitHub MCP `create_pull_request` tool:
+5. Push the branch:
+   ```bash
+   git -C $REPO_PATH push -u origin isaac/<ticket-id>-short-description
+   ```
+6. Create the PR using the GitHub MCP `create_pull_request` tool:
    - repo: `comprehensiveio/comp`
    - base: `qa`
    - head: your branch name
