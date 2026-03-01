@@ -62,7 +62,10 @@ export async function runTask({
       prompt,
       options: {
         cwd: REPO_PATH,
-        env: process.env as Record<string, string>,
+        env: {
+          ...process.env as Record<string, string>,
+          GIT_CEILING_DIRECTORIES: path.dirname(REPO_PATH),
+        },
         systemPrompt,
         maxTurns,
         maxBudgetUsd,

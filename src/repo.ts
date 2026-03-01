@@ -2,7 +2,7 @@ import { execSync } from "child_process";
 import { existsSync } from "fs";
 
 function getRepoPath() {
-  return process.env.REPO_PATH || "/opt/render/repo";
+  return process.env.REPO_PATH || "/tmp/comp-repo";
 }
 
 function getRepoUrl() {
