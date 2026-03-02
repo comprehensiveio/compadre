@@ -119,7 +119,7 @@ async function handleAIMessage(event: SlackEvent, isDM: boolean) {
   const botToken = process.env.SLACK_BOT_TOKEN;
   const threadTs = event.thread_ts || event.ts;
 
-  const messageText = event.text.replace(`<@${SLACKBOT_USER_ID}>`, "").trim();
+  const messageText = (event.text || "").replaceAll(`<@${SLACKBOT_USER_ID}>`, "").trim();
 
   const threadKey = threadTs;
   const sessionId = threadSessions.get(threadKey);
