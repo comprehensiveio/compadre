@@ -18,6 +18,7 @@ export class SlackStream {
   private activeStreamTs: string | null = null;
   private streamEnded = false;
   private buffer = "";
+  private fullText = ""; // accumulated text for chat.update in channels
   private flushTimer: ReturnType<typeof setTimeout> | null = null;
   private flushing: Promise<void> = Promise.resolve();
 
@@ -84,10 +85,13 @@ export class SlackStream {
     await this.flushing;
     await this.flush();
     if (!this.activeStreamTs) return;
-    await this.call("chat.stopStream", {
-      channel: this.channel,
-      ts: this.activeStreamTs,
-    });
+    if (this.enableStatus) {
+      // Assistant streaming API — finalize the stream
+      await this.call("chat.stopStream", {
+        channel: this.channel,
+        ts: this.activeStreamTs,
+      });
+    }
     this.activeStreamTs = null;
   }
 
@@ -95,20 +99,40 @@ export class SlackStream {
     const text = this.buffer;
     if (!text) return;
     this.buffer = "";
+    this.fullText += text;
 
-    if (!this.activeStreamTs) {
-      const data = await this.call("chat.startStream", {
+    if (this.enableStatus) {
+      // DM assistant mode: use streaming API
+      if (!this.activeStreamTs) {
+        const data = await this.call("chat.startStream", {
+          channel: this.channel,
+          thread_ts: this.threadTs,
+        });
+        this.activeStreamTs = (data.ts as string) ?? null;
+        if (!this.activeStreamTs) return;
+      }
+      await this.call("chat.appendStream", {
         channel: this.channel,
-        thread_ts: this.threadTs,
+        ts: this.activeStreamTs,
+        markdown_text: text,
       });
-      this.activeStreamTs = (data.ts as string) ?? null;
-      if (!this.activeStreamTs) return;
+    } else {
+      // Channel mode: use postMessage + update
+      if (!this.activeStreamTs) {
+        const data = await this.call("chat.postMessage", {
+          channel: this.channel,
+          thread_ts: this.threadTs,
+          text: this.fullText,
+        });
+        this.activeStreamTs = (data.ts as string) ?? null;
+      } else {
+        await this.call("chat.update", {
+          channel: this.channel,
+          ts: this.activeStreamTs,
+          text: this.fullText,
+        });
+      }
     }
-    await this.call("chat.appendStream", {
-      channel: this.channel,
-      ts: this.activeStreamTs,
-      markdown_text: text,
-    });
   }
 
   private async call(method: string, body: Record<string, unknown>): Promise<Record<string, unknown>> {
