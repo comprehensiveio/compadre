@@ -21,6 +21,21 @@ function pruneThreadSessions() {
   }
 }
 
+const MAX_SEEN_EVENTS = 10_000;
+const seenEvents = new Set<string>();
+
+/** Deduplicate Slack events by `event.ts`. Returns true if already seen. */
+function isDuplicate(ts: string): boolean {
+  if (seenEvents.has(ts)) return true;
+  seenEvents.add(ts);
+  if (seenEvents.size > MAX_SEEN_EVENTS) {
+    const iter = seenEvents.values();
+    const oldest = iter.next().value;
+    if (oldest !== undefined) seenEvents.delete(oldest);
+  }
+  return false;
+}
+
 const APP_LINK_REGEX = /https:\/\/(?:www\.)?app\.comprehensive\.io\/\S+/i;
 const SLACKBOT_USER_ID = "U073509NYP7";
 const PRODUCTION_SUPPORT_CHANNEL_ID = "C04D24LB4J1";
@@ -79,9 +94,10 @@ slackEventsRoutes.post("/slack/events", async (c) => {
 async function handleEvent(event: SlackEvent) {
   if (event.type !== "message") return;
   if (event.subtype || event.bot_id) return;
+  if (isDuplicate(event.ts)) return;
 
   const isDM = event.channel.startsWith("D");
-  const isMention = event.text?.startsWith(`<@${SLACKBOT_USER_ID}>`);
+  const isMention = event.text?.includes(`<@${SLACKBOT_USER_ID}>`);
 
   // Check for prod-support links before routing to AI, so @mentions in
   // #production-support that contain app links still get debug-link treatment.
@@ -93,31 +109,48 @@ async function handleEvent(event: SlackEvent) {
   }
 
   if (isDM || isMention) {
-    handleAIMessage(event);
+    handleAIMessage(event, isDM).catch((err) =>
+      console.error("[slack-events] unhandled error in handleAIMessage:", err),
+    );
   }
 }
 
-function handleAIMessage(event: SlackEvent) {
+async function handleAIMessage(event: SlackEvent, isDM: boolean) {
   const botToken = process.env.SLACK_BOT_TOKEN;
   const threadTs = event.thread_ts || event.ts;
 
-  let messageText = event.text;
-  if (messageText.startsWith(`<@${SLACKBOT_USER_ID}>`)) {
-    messageText = messageText.slice(`<@${SLACKBOT_USER_ID}>`.length).trim();
-  }
+  const messageText = event.text.replace(`<@${SLACKBOT_USER_ID}>`, "").trim();
 
   const threadKey = threadTs;
   const sessionId = threadSessions.get(threadKey);
 
-  const prompt = [
+  // Fetch thread context when mentioned in an existing thread
+  let threadContext: string | null = null;
+  if (event.thread_ts && botToken) {
+    threadContext = await fetchThreadContext(
+      event.channel,
+      event.thread_ts,
+      event.ts,
+      botToken,
+    );
+  }
+
+  const promptParts = [
     `Slack message from user ${event.user || "unknown"}.`,
     "",
     "Reply to:",
     `- channel: ${event.channel}`,
     `- thread_ts: ${threadTs} (reply in this thread)`,
-    "",
-    messageText,
-  ].join("\n");
+  ];
+  if (threadContext) {
+    promptParts.push(
+      "",
+      "Thread context (prior messages in this thread):",
+      threadContext,
+    );
+  }
+  promptParts.push("", "New message:", messageText);
+  const prompt = promptParts.join("\n");
 
   let slackStream: SlackStream | undefined;
   if (botToken) {
@@ -125,7 +158,13 @@ function handleAIMessage(event: SlackEvent) {
       channel: event.channel,
       threadTs,
       botToken,
+      enableStatus: isDM,
     });
+  }
+
+  // In non-DM contexts, use a reaction to indicate processing
+  if (!isDM && slackStream) {
+    await slackStream.addReaction("compadre-thinking", event.ts);
   }
 
   runTask({
@@ -146,10 +185,13 @@ function handleAIMessage(event: SlackEvent) {
         }
       : undefined,
   })
-    .then((result) => {
+    .then(async (result) => {
       if (result.sessionId) {
         threadSessions.set(threadKey, result.sessionId);
         pruneThreadSessions();
+      }
+      if (!isDM && slackStream) {
+        await slackStream.removeReaction("compadre-thinking", event.ts);
       }
       console.log(
         `[slack-events] completed for ${event.user}: turns=${result.numTurns} cost=$${result.costUsd.toFixed(3)} duration=${result.durationMs}ms`,
@@ -161,7 +203,10 @@ function handleAIMessage(event: SlackEvent) {
         await slackStream.stopStream();
         await slackStream.clearStatus();
       }
-      if (botToken) {
+      if (!isDM && slackStream) {
+        await slackStream.removeReaction("compadre-thinking", event.ts);
+        await slackStream.addReaction("compadre-failure", event.ts);
+      } else if (isDM && botToken) {
         try {
           await fetch("https://slack.com/api/reactions.add", {
             method: "POST",
@@ -180,6 +225,43 @@ function handleAIMessage(event: SlackEvent) {
         }
       }
     });
+}
+
+async function fetchThreadContext(
+  channel: string,
+  threadTs: string,
+  triggeringTs: string,
+  botToken: string,
+): Promise<string | null> {
+  try {
+    const res = await fetch(
+      `https://slack.com/api/conversations.replies?${new URLSearchParams({
+        channel,
+        ts: threadTs,
+        limit: "21",
+      })}`,
+      {
+        headers: { Authorization: `Bearer ${botToken}` },
+      },
+    );
+    const data = (await res.json()) as {
+      ok: boolean;
+      messages?: { user?: string; text?: string; ts: string }[];
+      error?: string;
+    };
+    if (!data.ok || !data.messages) {
+      console.error("[slack-events] conversations.replies failed:", data.error);
+      return null;
+    }
+    const lines = data.messages
+      .filter((m) => m.ts !== triggeringTs)
+      .slice(-20)
+      .map((m) => `<@${m.user || "unknown"}>: ${m.text || ""}`);
+    return lines.length > 0 ? lines.join("\n") : null;
+  } catch (err) {
+    console.error("[slack-events] fetchThreadContext error:", err);
+    return null;
+  }
 }
 
 async function forwardProdSupportLinks(event: SlackEvent) {

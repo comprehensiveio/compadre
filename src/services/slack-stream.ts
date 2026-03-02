@@ -5,12 +5,15 @@ interface SlackStreamOptions {
   channel: string;
   threadTs: string;
   botToken: string;
+  /** When false, setStatus/clearStatus become no-ops (assistant API only works in DMs). */
+  enableStatus?: boolean;
 }
 
 export class SlackStream {
   private channel: string;
   private threadTs: string;
   private botToken: string;
+  private enableStatus: boolean;
   private lastStatus = "";
   private activeStreamTs: string | null = null;
   private streamEnded = false;
@@ -18,13 +21,15 @@ export class SlackStream {
   private flushTimer: ReturnType<typeof setTimeout> | null = null;
   private flushing: Promise<void> = Promise.resolve();
 
-  constructor({ channel, threadTs, botToken }: SlackStreamOptions) {
+  constructor({ channel, threadTs, botToken, enableStatus = true }: SlackStreamOptions) {
     this.channel = channel;
     this.threadTs = threadTs;
     this.botToken = botToken;
+    this.enableStatus = enableStatus;
   }
 
   async setStatus(text: string): Promise<void> {
+    if (!this.enableStatus) return;
     if (text === this.lastStatus) return;
     this.lastStatus = text;
     await this.call("assistant.threads.setStatus", {
@@ -35,10 +40,27 @@ export class SlackStream {
   }
 
   async clearStatus(): Promise<void> {
+    if (!this.enableStatus) return;
     await this.call("assistant.threads.setStatus", {
       channel_id: this.channel,
       thread_ts: this.threadTs,
       status: "",
+    });
+  }
+
+  async addReaction(name: string, messageTs: string): Promise<void> {
+    await this.call("reactions.add", {
+      channel: this.channel,
+      timestamp: messageTs,
+      name,
+    });
+  }
+
+  async removeReaction(name: string, messageTs: string): Promise<void> {
+    await this.call("reactions.remove", {
+      channel: this.channel,
+      timestamp: messageTs,
+      name,
     });
   }
 
