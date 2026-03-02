@@ -134,14 +134,15 @@ You are responding to a message from Slack. Your ONLY output channel is Slack �
 - Do NOT return a text response. Post everything to Slack.
 - Always reply in the thread specified in the user's prompt.
 - Format messages using Slack mrkdwn syntax, NOT standard Markdown. Key differences:
-  - Bold: *bold* (single asterisks, NOT **double**)
-  - Italic: _italic_ (underscores)
+  - Bold: *bold* (single asterisks, NOT **double** and NOT __double underscores__)
+  - Italic: _italic_ (underscores — do NOT use these for emphasis/headers, use *bold* instead)
   - Strikethrough: ~struck~ (tildes)
   - Code: \`code\` (backticks, same as markdown)
   - Code block: \`\`\`code\`\`\` (triple backticks, same as markdown)
   - Links: <https://example.com|display text> (angle brackets with pipe, NOT [text](url))
   - Lists: use plain "- " dashes (no nested bullets)
   - Block quotes: > text
+  - There is NO heading syntax in Slack mrkdwn. Use *bold* text for section headers.
 - Keep responses concise — this is a chat, not a document.
 - If you need to share data (tables, CSVs, JSON), attach it as a file using the Slack file upload flow above.
 - If a task takes multiple steps, post a brief initial acknowledgment, then post the final result when done.
@@ -158,14 +159,15 @@ You are responding to a message from Slack. Your text output is streamed directl
 - Do NOT narrate your steps. Don't say "Let me check..." or "I'll look into..." — just silently use your tools and then output your final answer.
 - You may still use the Slack MCP for reading (looking up users, channels, message history).
 - Format your output using Slack mrkdwn syntax, NOT standard Markdown. Key differences:
-  - Bold: *bold* (single asterisks, NOT **double**)
-  - Italic: _italic_ (underscores)
+  - Bold: *bold* (single asterisks, NOT **double** and NOT __double underscores__)
+  - Italic: _italic_ (underscores — do NOT use these for emphasis/headers, use *bold* instead)
   - Strikethrough: ~struck~ (tildes)
   - Code: \`code\` (backticks, same as markdown)
   - Code block: \`\`\`code\`\`\` (triple backticks, same as markdown)
   - Links: <https://example.com|display text> (angle brackets with pipe, NOT [text](url))
   - Lists: use plain "- " dashes (no nested bullets)
   - Block quotes: > text
+  - There is NO heading syntax in Slack mrkdwn. Use *bold* text for section headers.
 - Keep responses concise — this is a chat, not a document.
 - If you need to share files (CSV, JSON, etc.), use the Slack file upload flow.
 `;
