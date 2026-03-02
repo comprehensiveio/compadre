@@ -99,7 +99,6 @@ export async function runTask({
     });
 
     let sessionId: string | undefined;
-    let modelName = "claude-sonnet-4-5-20250929";
     const pendingTools = new Map<string, { name: string; input: unknown }>();
     let hasStreamedText = false;
 
@@ -107,7 +106,6 @@ export async function runTask({
       for await (const message of stream) {
         if (message.type === "system" && message.subtype === "init") {
           sessionId = message.session_id;
-          modelName = (message as AnyMessage).model ?? modelName;
           console.log(`[agent] session ${resumeSessionId ? "resumed" : "started"}: ${sessionId}`);
         }
 
@@ -126,22 +124,6 @@ export async function runTask({
 
         if (message.type === "assistant") {
           const msg = (message as AnyMessage).message;
-
-          // LLM span for this API call — output only (per-message usage from
-          // the Agent SDK is unreliable; accurate totals come from modelUsage
-          // on the result message and are recorded in a summary span below)
-          llmobs.trace({
-            kind: "llm",
-            name: "claude-completion",
-            modelName,
-            modelProvider: "anthropic",
-          }, () => {
-            const textOutput = (msg.content ?? [])
-              .filter((b: AnyMessage) => b.type === "text")
-              .map((b: AnyMessage) => ({ content: b.text, role: "assistant" }));
-
-            llmobs.annotate({ outputData: textOutput });
-          });
 
           // Track tool_use blocks for pairing with results
           for (const block of msg.content ?? []) {
@@ -177,12 +159,17 @@ export async function runTask({
         if (message.type === "result") {
           const resultMsg = message as AnyMessage;
           if (resultMsg.subtype === "success") {
-            // Create a summary LLM span per model with accurate token counts
-            // from modelUsage — DD uses these for cost calculation
+            // Create a summary LLM span per model with token counts from
+            // modelUsage — DD auto-calculates cost from these.
+            // IMPORTANT: DD expects inputTokens to be the TOTAL input
+            // (including cache read + cache write). Anthropic's inputTokens
+            // is only the non-cached portion, so we must add cache tokens.
             const modelUsage = resultMsg.modelUsage ?? {};
             for (const [model, usage] of Object.entries(modelUsage)) {
               const u = usage as AnyMessage;
-              const inputTokens = u.inputTokens ?? 0;
+              const cacheReadTokens = u.cacheReadInputTokens ?? 0;
+              const cacheWriteTokens = u.cacheCreationInputTokens ?? 0;
+              const inputTokens = (u.inputTokens ?? 0) + cacheReadTokens + cacheWriteTokens;
               const outputTokens = u.outputTokens ?? 0;
               llmobs.trace({
                 kind: "llm",
@@ -195,8 +182,8 @@ export async function runTask({
                     inputTokens,
                     outputTokens,
                     totalTokens: inputTokens + outputTokens,
-                    ...(u.cacheReadInputTokens && { cacheReadTokens: u.cacheReadInputTokens }),
-                    ...(u.cacheCreationInputTokens && { cacheWriteTokens: u.cacheCreationInputTokens }),
+                    ...(cacheReadTokens && { cacheReadTokens }),
+                    ...(cacheWriteTokens && { cacheWriteTokens }),
                   },
                 });
               });
