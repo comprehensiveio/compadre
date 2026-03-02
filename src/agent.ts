@@ -112,42 +112,6 @@ export async function runTask({
     // message_delta carries the real output_tokens (the assistant message
     // only has a placeholder value of 1 from message_start).
     let pendingOutputTokens: number | undefined;
-    // Defer LLM span creation so message_delta has time to arrive.
-    // For tool-only turns, message_delta may come AFTER the assistant message.
-    let pendingLlmTurn: {
-      turnNumber: number;
-      model: string;
-      inputTokens: number;
-      usageOutputTokens: number;
-      cacheReadTokens: number;
-      cacheWriteTokens: number;
-    } | undefined;
-
-    function flushLlmTurn() {
-      if (!pendingLlmTurn) return;
-      const t = pendingLlmTurn;
-      pendingLlmTurn = undefined;
-      const outputTokens = pendingOutputTokens ?? t.usageOutputTokens;
-      const source = pendingOutputTokens != null ? "message_delta" : "msg.usage";
-      console.log(`[agent] turn-${t.turnNumber} outputTokens=${outputTokens} (source: ${source}, msg.usage=${t.usageOutputTokens})`);
-      pendingOutputTokens = undefined;
-      llmobs.trace({
-        kind: "llm",
-        name: `turn-${t.turnNumber}`,
-        modelName: t.model,
-        modelProvider: "anthropic",
-      }, () => {
-        llmobs.annotate({
-          metrics: {
-            inputTokens: t.inputTokens,
-            outputTokens,
-            totalTokens: t.inputTokens + outputTokens,
-            ...(t.cacheReadTokens && { cacheReadTokens: t.cacheReadTokens }),
-            ...(t.cacheWriteTokens && { cacheWriteTokens: t.cacheWriteTokens }),
-          },
-        });
-      });
-    }
 
     try {
       for await (const message of stream) {
@@ -173,32 +137,39 @@ export async function runTask({
           }
         }
 
-        // Flush the previous turn's LLM span before processing a new turn,
-        // tool result, or the final result. This gives message_delta events
-        // time to arrive and set pendingOutputTokens.
-        if (message.type === "assistant" || message.type === "user" || message.type === "result") {
-          flushLlmTurn();
-        }
-
         if (message.type === "assistant") {
           const msg = (message as AnyMessage).message;
           turnNumber++;
 
-          // Store turn data — the LLM span is created later by flushLlmTurn()
-          // so message_delta has time to arrive with the real output_tokens.
+          // Create a per-turn LLM span from the Anthropic API usage data.
+          // msg.usage has per-turn token counts; msg.model has the model ID.
           const usage = msg.usage;
           if (usage) {
             const cacheReadTokens = usage.cache_read_input_tokens ?? 0;
             const cacheWriteTokens = usage.cache_creation_input_tokens ?? 0;
+            // DD expects inputTokens = total input (including cache tokens)
             const inputTokens = (usage.input_tokens ?? 0) + cacheReadTokens + cacheWriteTokens;
-            pendingLlmTurn = {
-              turnNumber,
-              model: msg.model ?? "unknown",
-              inputTokens,
-              usageOutputTokens: usage.output_tokens ?? 0,
-              cacheReadTokens,
-              cacheWriteTokens,
-            };
+            // Prefer output_tokens from message_delta (real count) over
+            // msg.usage.output_tokens (placeholder of 1 from message_start).
+            const outputTokens = pendingOutputTokens ?? usage.output_tokens ?? 0;
+            pendingOutputTokens = undefined;
+
+            llmobs.trace({
+              kind: "llm",
+              name: `turn-${turnNumber}`,
+              modelName: msg.model ?? "unknown",
+              modelProvider: "anthropic",
+            }, () => {
+              llmobs.annotate({
+                metrics: {
+                  inputTokens,
+                  outputTokens,
+                  totalTokens: inputTokens + outputTokens,
+                  ...(cacheReadTokens && { cacheReadTokens }),
+                  ...(cacheWriteTokens && { cacheWriteTokens }),
+                },
+              });
+            });
           }
 
           // Start a tool span for each tool_use block. The span stays open
@@ -267,7 +238,6 @@ export async function runTask({
 
       throw new Error("Agent stream ended without result");
     } finally {
-      flushLlmTurn();
       // Close any tool spans that never got a result
       for (const [, toolInfo] of pendingTools) {
         llmobs.annotate(toolInfo.span, { outputData: "no result received" });
