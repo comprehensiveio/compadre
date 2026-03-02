@@ -71,7 +71,9 @@ export async function runTask({
         maxBudgetUsd,
         permissionMode: "bypassPermissions",
         allowDangerouslySkipPermissions: true,
-        includePartialMessages: !!streamCallbacks?.onTextDelta,
+        // Always include partial messages so we can capture message_delta
+        // usage events (the assistant message only has placeholder output_tokens).
+        includePartialMessages: true,
         settingSources: ["project"],
         plugins: [
           { type: "local" as const, path: COMPADRE_ROOT },
@@ -99,9 +101,17 @@ export async function runTask({
     });
 
     let sessionId: string | undefined;
-    const pendingTools = new Map<string, { name: string; input: unknown }>();
+    const pendingTools = new Map<string, {
+      name: string;
+      input: unknown;
+      span: ddTrace.Span;
+      done: (error?: Error) => void;
+    }>();
     let hasStreamedText = false;
     let turnNumber = 0;
+    // message_delta carries the real output_tokens (the assistant message
+    // only has a placeholder value of 1 from message_start).
+    let pendingOutputTokens: number | undefined;
 
     try {
       for await (const message of stream) {
@@ -121,6 +131,10 @@ export async function runTask({
           if (event.type === "content_block_delta" && event.delta?.type === "text_delta") {
             streamCallbacks?.onTextDelta?.(event.delta.text);
           }
+          // Capture real output_tokens from message_delta (arrives before assistant message)
+          if (event.type === "message_delta" && event.usage?.output_tokens != null) {
+            pendingOutputTokens = event.usage.output_tokens;
+          }
         }
 
         if (message.type === "assistant") {
@@ -135,7 +149,11 @@ export async function runTask({
             const cacheWriteTokens = usage.cache_creation_input_tokens ?? 0;
             // DD expects inputTokens = total input (including cache tokens)
             const inputTokens = (usage.input_tokens ?? 0) + cacheReadTokens + cacheWriteTokens;
-            const outputTokens = usage.output_tokens ?? 0;
+            // Prefer output_tokens from message_delta (real count) over
+            // msg.usage.output_tokens (placeholder of 1 from message_start).
+            const outputTokens = pendingOutputTokens ?? usage.output_tokens ?? 0;
+            pendingOutputTokens = undefined;
+
             llmobs.trace({
               kind: "llm",
               name: `turn-${turnNumber}`,
@@ -154,10 +172,17 @@ export async function runTask({
             });
           }
 
-          // Track tool_use blocks for pairing with results
+          // Start a tool span for each tool_use block. The span stays open
+          // (via the done callback) until the matching tool_use_result arrives,
+          // giving us real execution duration like the comp repo pattern.
           for (const block of msg.content ?? []) {
             if (block.type === "tool_use") {
-              pendingTools.set(block.id, { name: block.name, input: block.input });
+              llmobs.trace({ kind: "tool", name: block.name }, (span: AnyMessage, done: (error?: Error) => void) => {
+                llmobs.annotate(span, {
+                  inputData: JSON.stringify(block.input).slice(0, 2000),
+                });
+                pendingTools.set(block.id, { name: block.name, input: block.input, span, done });
+              });
               streamCallbacks?.onToolStart?.(block.name);
             }
           }
@@ -168,18 +193,16 @@ export async function runTask({
           }
         }
 
-        // Tool result — create a tool span with input/output
+        // Tool result — annotate output and close the pending tool span
         if (message.type === "user") {
           const userMsg = message as AnyMessage;
           if (userMsg.tool_use_result !== undefined && userMsg.parent_tool_use_id) {
             const toolInfo = pendingTools.get(userMsg.parent_tool_use_id);
             if (toolInfo) {
-              llmobs.trace({ kind: "tool", name: toolInfo.name }, () => {
-                llmobs.annotate({
-                  inputData: JSON.stringify(toolInfo.input).slice(0, 2000),
-                  outputData: JSON.stringify(userMsg.tool_use_result).slice(0, 2000),
-                });
+              llmobs.annotate(toolInfo.span, {
+                outputData: JSON.stringify(userMsg.tool_use_result).slice(0, 2000),
               });
+              toolInfo.done();
               pendingTools.delete(userMsg.parent_tool_use_id);
             }
           }
@@ -215,6 +238,12 @@ export async function runTask({
 
       throw new Error("Agent stream ended without result");
     } finally {
+      // Close any tool spans that never got a result
+      for (const [, toolInfo] of pendingTools) {
+        llmobs.annotate(toolInfo.span, { outputData: "no result received" });
+        toolInfo.done();
+      }
+      pendingTools.clear();
       streamCallbacks?.onComplete?.();
       if (!resumeSessionId) {
         resetToQa();
