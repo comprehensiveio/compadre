@@ -111,6 +111,9 @@ export async function runTask({
     let turnNumber = 0;
     // message_delta carries the real output_tokens (the assistant message
     // only has a placeholder value of 1 from message_start).
+    // We track it in two places depending on arrival order:
+    // - pendingOutputTokens: message_delta arrived BEFORE assistant message
+    // - pendingLlmTurn.deltaOutputTokens: message_delta arrived AFTER assistant message
     let pendingOutputTokens: number | undefined;
     // Defer LLM span creation so message_delta has time to arrive.
     // For tool-only turns, message_delta may come AFTER the assistant message.
@@ -119,6 +122,7 @@ export async function runTask({
       model: string;
       inputTokens: number;
       usageOutputTokens: number;
+      deltaOutputTokens: number | undefined;
       cacheReadTokens: number;
       cacheWriteTokens: number;
     } | undefined;
@@ -127,8 +131,12 @@ export async function runTask({
       if (!pendingLlmTurn) return;
       const t = pendingLlmTurn;
       pendingLlmTurn = undefined;
-      const outputTokens = pendingOutputTokens ?? t.usageOutputTokens;
-      const source = pendingOutputTokens != null ? "message_delta" : "msg.usage";
+      // Prefer message_delta output_tokens (real value) over msg.usage (placeholder 1).
+      // deltaOutputTokens is set if message_delta arrived after assistant message;
+      // pendingOutputTokens is set if it arrived before.
+      const deltaTokens = t.deltaOutputTokens ?? pendingOutputTokens;
+      const outputTokens = deltaTokens ?? t.usageOutputTokens;
+      const source = deltaTokens != null ? "message_delta" : "msg.usage";
       console.log(`[agent] turn-${t.turnNumber} outputTokens=${outputTokens} (source: ${source}, msg.usage=${t.usageOutputTokens})`);
       pendingOutputTokens = undefined;
       llmobs.trace({
@@ -167,9 +175,18 @@ export async function runTask({
           if (event.type === "content_block_delta" && event.delta?.type === "text_delta") {
             streamCallbacks?.onTextDelta?.(event.delta.text);
           }
-          // Capture real output_tokens from message_delta (arrives before assistant message)
+          // Capture real output_tokens from message_delta.
+          // If pendingLlmTurn exists, the assistant message already arrived —
+          // attach directly to the turn. Otherwise, store globally for the
+          // upcoming assistant message to pick up.
           if (event.type === "message_delta" && event.usage?.output_tokens != null) {
-            pendingOutputTokens = event.usage.output_tokens;
+            if (pendingLlmTurn) {
+              pendingLlmTurn.deltaOutputTokens = event.usage.output_tokens;
+              console.log(`[agent] message_delta output_tokens=${event.usage.output_tokens} (attached to turn-${pendingLlmTurn.turnNumber})`);
+            } else {
+              pendingOutputTokens = event.usage.output_tokens;
+              console.log(`[agent] message_delta output_tokens=${pendingOutputTokens} (pre-assistant, turn-${turnNumber + 1})`);
+            }
           }
         }
 
@@ -196,9 +213,11 @@ export async function runTask({
               model: msg.model ?? "unknown",
               inputTokens,
               usageOutputTokens: usage.output_tokens ?? 0,
+              deltaOutputTokens: pendingOutputTokens,
               cacheReadTokens,
               cacheWriteTokens,
             };
+            pendingOutputTokens = undefined;
           }
 
           // Start a tool span for each tool_use block. The span stays open
@@ -222,17 +241,25 @@ export async function runTask({
           }
         }
 
-        // Tool result — annotate output and close the pending tool span
+        // Tool result — annotate output and close the pending tool span.
+        // The tool_use_id is inside message.content (tool_result blocks), NOT
+        // in parent_tool_use_id (which is the nesting context, null for top-level).
         if (message.type === "user") {
           const userMsg = message as AnyMessage;
-          if (userMsg.tool_use_result !== undefined && userMsg.parent_tool_use_id) {
-            const toolInfo = pendingTools.get(userMsg.parent_tool_use_id);
-            if (toolInfo) {
-              llmobs.annotate(toolInfo.span, {
-                outputData: JSON.stringify(userMsg.tool_use_result).slice(0, 2000),
-              });
-              toolInfo.done();
-              pendingTools.delete(userMsg.parent_tool_use_id);
+          const contentBlocks = userMsg.message?.content;
+          if (Array.isArray(contentBlocks)) {
+            for (const block of contentBlocks) {
+              if (block.type === "tool_result" && block.tool_use_id) {
+                const toolInfo = pendingTools.get(block.tool_use_id);
+                if (toolInfo) {
+                  const output = block.content ?? userMsg.tool_use_result;
+                  llmobs.annotate(toolInfo.span, {
+                    outputData: JSON.stringify(output).slice(0, 2000),
+                  });
+                  toolInfo.done();
+                  pendingTools.delete(block.tool_use_id);
+                }
+              }
             }
           }
         }
