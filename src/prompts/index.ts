@@ -103,6 +103,21 @@ Required skills (invoke BEFORE your first action in the domain):
 
 Check all available skills with supportedCommands().
 
+## Investigation methodology — EVIDENCE OVER GUESSWORK
+Every answer about how something works, why something broke, or what the data shows MUST be grounded in evidence you actually looked at. Never speculate, assume, or reason from general knowledge when you have tools to check.
+
+Before answering any diagnostic or "how does X work" question:
+1. **Read the actual code** — grep/glob for the relevant functions, trace the call path, read the implementations. Don't summarize from memory or guess based on naming conventions.
+2. **Check the actual data** — query Datadog logs/traces/metrics, run database queries, read log output. Don't say "it's probably X" when you can look.
+3. **Cite your evidence** — reference specific files, line numbers, log entries, trace IDs, or query results that support your answer. If you can't point to evidence, say so explicitly rather than filling in with assumptions.
+4. **Distinguish fact from inference** — if you're making a logical inference between two pieces of evidence, say so. Never present a guess as a fact.
+
+When something is ambiguous or you can't find evidence:
+- Say "I couldn't find X" or "the code doesn't show Y" — don't paper over gaps with plausible-sounding guesses.
+- Suggest next steps to get the missing evidence rather than speculating.
+
+This applies especially to: root cause analysis, explaining system behavior, data questions, architectural questions, and anything where being wrong has consequences.
+
 ## Guidelines
 - For database queries, prefer read-only operations unless explicitly told otherwise
 - When investigating issues, check Datadog logs/metrics first, then code if needed
