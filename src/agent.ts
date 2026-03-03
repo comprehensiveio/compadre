@@ -312,10 +312,15 @@ export async function runTask({
             const modelUsage = resultMsg.modelUsage as Record<string, { outputTokens?: number }> | undefined;
             let totalOutputTokens: number | undefined;
             if (modelUsage) {
-              totalOutputTokens = 0;
+              let sum = 0;
+              let hasOutputTokens = false;
               for (const mu of Object.values(modelUsage)) {
-                totalOutputTokens += mu.outputTokens ?? 0;
+                if (typeof mu.outputTokens === "number") {
+                  sum += mu.outputTokens;
+                  hasOutputTokens = true;
+                }
               }
+              totalOutputTokens = hasOutputTokens ? sum : undefined;
             }
             console.log(`[agent] result totalOutputTokens=${totalOutputTokens}`);
             emitLlmSpans(totalOutputTokens);
