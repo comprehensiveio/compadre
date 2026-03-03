@@ -125,6 +125,7 @@ export async function runTask({
       deltaOutputTokens: number | undefined;
       cacheReadTokens: number;
       cacheWriteTokens: number;
+      output: string;
     } | undefined;
 
     function flushLlmTurn() {
@@ -145,6 +146,8 @@ export async function runTask({
         modelProvider: "anthropic",
       }, () => {
         llmobs.annotate({
+          inputData: `[turn ${t.turnNumber} — ${t.inputTokens} input tokens]`,
+          outputData: t.output,
           metrics: {
             inputTokens: t.inputTokens,
             outputTokens,
@@ -209,6 +212,16 @@ export async function runTask({
             const cacheReadTokens = usage.cache_read_input_tokens ?? 0;
             const cacheWriteTokens = usage.cache_creation_input_tokens ?? 0;
             const inputTokens = (usage.input_tokens ?? 0) + cacheReadTokens + cacheWriteTokens;
+            // Summarize the assistant output for the LLM span annotation.
+            const outputParts: string[] = [];
+            for (const block of msg.content ?? []) {
+              if (block.type === "text") {
+                outputParts.push(block.text);
+              } else if (block.type === "tool_use") {
+                outputParts.push(`[tool_use: ${block.name}]`);
+              }
+            }
+
             pendingLlmTurn = {
               turnNumber,
               model: msg.model ?? "unknown",
@@ -217,6 +230,7 @@ export async function runTask({
               deltaOutputTokens: pendingOutputTokens,
               cacheReadTokens,
               cacheWriteTokens,
+              output: outputParts.join("\n").slice(0, 2000),
             };
             pendingOutputTokens = undefined;
           }
