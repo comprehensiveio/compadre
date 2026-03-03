@@ -182,6 +182,7 @@ export async function runTask({
           });
         });
       }
+      completedTurns.length = 0;
     }
 
     try {
@@ -306,8 +307,17 @@ export async function runTask({
           const resultMsg = message as AnyMessage;
           if (resultMsg.subtype === "success") {
             // Emit all LLM spans now that we have the total output tokens
-            // from the result for reconciliation.
-            const totalOutputTokens = resultMsg.usage?.output_tokens;
+            // from the result for reconciliation. modelUsage has the aggregate
+            // across all turns; usage.output_tokens is only the last message.
+            const modelUsage = resultMsg.modelUsage as Record<string, { outputTokens?: number }> | undefined;
+            let totalOutputTokens: number | undefined;
+            if (modelUsage) {
+              totalOutputTokens = 0;
+              for (const mu of Object.values(modelUsage)) {
+                totalOutputTokens += mu.outputTokens ?? 0;
+              }
+            }
+            console.log(`[agent] result totalOutputTokens=${totalOutputTokens}`);
             emitLlmSpans(totalOutputTokens);
             llmobs.annotate({
               outputData: resultMsg.result,
