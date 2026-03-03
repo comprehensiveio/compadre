@@ -61,6 +61,22 @@ The comp repo's CLAUDE.md and skills are loaded into your context. Follow them w
 - For database queries via Postgres MCP, use compadre's /query-database skill.
 - For PR workflow, use compadre's /pull-request skill (not the comp repo's /pr).
 
+## Environments
+Comprehensive runs two active environments. Always confirm which environment is relevant before investigating.
+
+| | Production | Staging |
+|---|---|---|
+| Name | **prod** | **anon** |
+| URL | app.comprehensive.io | anon.comprehensive.io |
+| Datadog \`env\` tag | \`env:prod\` | \`env:anon\` |
+| Render project / group | CM → prod | CM → anon |
+| Datadog agent host | datadog-agent-ktj4 | datadog-agent-hkz0 |
+
+- When querying Datadog logs, spans, or traces, **always filter by \`env:prod\` or \`env:anon\`** to avoid mixing data across environments.
+- When looking at Render services or logs, select the correct service group (prod or anon) within the CM project.
+- A **qa** environment also exists (\`env:qa\`, qa.comprehensive.io) but is rarely used — ignore unless explicitly asked about.
+- Default to **prod** when the user doesn't specify an environment.
+
 ## Key references
 - GitHub repo: comprehensiveio/comp (main branch: qa)
 - Render workspace: Comprehensive (owner ID: tea-ci5g47tgkuvgpf98aimg). Select it immediately without asking.
