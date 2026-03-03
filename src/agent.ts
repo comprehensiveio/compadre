@@ -132,13 +132,12 @@ export async function runTask({
       const t = pendingLlmTurn;
       pendingLlmTurn = undefined;
       // Prefer message_delta output_tokens (real value) over msg.usage (placeholder 1).
-      // deltaOutputTokens is set if message_delta arrived after assistant message;
-      // pendingOutputTokens is set if it arrived before.
-      const deltaTokens = t.deltaOutputTokens ?? pendingOutputTokens;
-      const outputTokens = deltaTokens ?? t.usageOutputTokens;
-      const source = deltaTokens != null ? "message_delta" : "msg.usage";
+      // deltaOutputTokens captures the message_delta value regardless of whether
+      // it arrived before or after the assistant message (see message_delta handler
+      // and assistant handler below).
+      const outputTokens = t.deltaOutputTokens ?? t.usageOutputTokens;
+      const source = t.deltaOutputTokens != null ? "message_delta" : "msg.usage";
       console.log(`[agent] turn-${t.turnNumber} outputTokens=${outputTokens} (source: ${source}, msg.usage=${t.usageOutputTokens})`);
-      pendingOutputTokens = undefined;
       llmobs.trace({
         kind: "llm",
         name: `turn-${t.turnNumber}`,
@@ -254,7 +253,7 @@ export async function runTask({
                 if (toolInfo) {
                   const output = block.content ?? userMsg.tool_use_result;
                   llmobs.annotate(toolInfo.span, {
-                    outputData: JSON.stringify(output).slice(0, 2000),
+                    outputData: JSON.stringify(output ?? null).slice(0, 2000),
                   });
                   toolInfo.done();
                   pendingTools.delete(block.tool_use_id);
