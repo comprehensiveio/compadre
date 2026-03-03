@@ -113,11 +113,10 @@ export async function runTask({
     // only has a placeholder value of 1 from message_start).
     // We track it in two places depending on arrival order:
     // - pendingOutputTokens: message_delta arrived BEFORE assistant message
-    // - pendingLlmTurn.deltaOutputTokens: message_delta arrived AFTER assistant message
+    // - turn.deltaOutputTokens: message_delta arrived AFTER assistant message
     let pendingOutputTokens: number | undefined;
-    // Defer LLM span creation so message_delta has time to arrive.
-    // For tool-only turns, message_delta may come AFTER the assistant message.
-    let pendingLlmTurn: {
+
+    interface TurnData {
       turnNumber: number;
       model: string;
       inputTokens: number;
@@ -126,37 +125,63 @@ export async function runTask({
       cacheReadTokens: number;
       cacheWriteTokens: number;
       output: string;
-    } | undefined;
+    }
+    // Collect all turns — LLM spans are created at the end when the result
+    // message arrives, so we can reconcile output tokens from the total.
+    const completedTurns: TurnData[] = [];
+    let currentTurn: TurnData | undefined;
 
-    function flushLlmTurn() {
-      if (!pendingLlmTurn) return;
-      const t = pendingLlmTurn;
-      pendingLlmTurn = undefined;
-      // Prefer message_delta output_tokens (real value) over msg.usage (placeholder 1).
-      // deltaOutputTokens captures the message_delta value regardless of whether
-      // it arrived before or after the assistant message (see message_delta handler
-      // and assistant handler below).
-      const outputTokens = t.deltaOutputTokens ?? t.usageOutputTokens;
-      const source = t.deltaOutputTokens != null ? "message_delta" : "msg.usage";
-      console.log(`[agent] turn-${t.turnNumber} outputTokens=${outputTokens} (source: ${source}, msg.usage=${t.usageOutputTokens})`);
-      llmobs.trace({
-        kind: "llm",
-        name: `turn-${t.turnNumber}`,
-        modelName: t.model,
-        modelProvider: "anthropic",
-      }, () => {
-        llmobs.annotate({
-          inputData: `[turn ${t.turnNumber} — ${t.inputTokens} input tokens]`,
-          outputData: t.output,
-          metrics: {
-            inputTokens: t.inputTokens,
-            outputTokens,
-            totalTokens: t.inputTokens + outputTokens,
-            ...(t.cacheReadTokens && { cacheReadTokens: t.cacheReadTokens }),
-            ...(t.cacheWriteTokens && { cacheWriteTokens: t.cacheWriteTokens }),
-          },
+    function finalizeTurn() {
+      if (!currentTurn) return;
+      completedTurns.push(currentTurn);
+      currentTurn = undefined;
+    }
+
+    function emitLlmSpans(totalOutputTokens?: number) {
+      // If the SDK didn't emit message_delta for some turns (e.g. turn-1),
+      // their deltaOutputTokens will be undefined and they fall back to
+      // usageOutputTokens (placeholder 1). Use the total from the result
+      // message to reconcile: subtract known turns from the total and
+      // assign the remainder to the unknown turn.
+      let unknownTurns: TurnData[] = [];
+      let knownOutputSum = 0;
+      for (const t of completedTurns) {
+        const known = t.deltaOutputTokens;
+        if (known != null) {
+          knownOutputSum += known;
+        } else {
+          unknownTurns.push(t);
+        }
+      }
+      // If exactly one turn is unknown and we have a total, compute by subtraction.
+      if (unknownTurns.length === 1 && totalOutputTokens != null) {
+        unknownTurns[0].deltaOutputTokens = totalOutputTokens - knownOutputSum;
+        console.log(`[agent] reconciled turn-${unknownTurns[0].turnNumber} outputTokens=${unknownTurns[0].deltaOutputTokens} (total=${totalOutputTokens} - known=${knownOutputSum})`);
+      }
+
+      for (const t of completedTurns) {
+        const outputTokens = t.deltaOutputTokens ?? t.usageOutputTokens;
+        const source = t.deltaOutputTokens != null ? "message_delta" : "msg.usage";
+        console.log(`[agent] turn-${t.turnNumber} outputTokens=${outputTokens} (source: ${source})`);
+        llmobs.trace({
+          kind: "llm",
+          name: `turn-${t.turnNumber}`,
+          modelName: t.model,
+          modelProvider: "anthropic",
+        }, () => {
+          llmobs.annotate({
+            inputData: `[turn ${t.turnNumber} — ${t.inputTokens} input tokens]`,
+            outputData: t.output,
+            metrics: {
+              inputTokens: t.inputTokens,
+              outputTokens,
+              totalTokens: t.inputTokens + outputTokens,
+              ...(t.cacheReadTokens && { cacheReadTokens: t.cacheReadTokens }),
+              ...(t.cacheWriteTokens && { cacheWriteTokens: t.cacheWriteTokens }),
+            },
+          });
         });
-      });
+      }
     }
 
     try {
@@ -178,13 +203,13 @@ export async function runTask({
             streamCallbacks?.onTextDelta?.(event.delta.text);
           }
           // Capture real output_tokens from message_delta.
-          // If pendingLlmTurn exists, the assistant message already arrived —
+          // If currentTurn exists, the assistant message already arrived —
           // attach directly to the turn. Otherwise, store globally for the
           // upcoming assistant message to pick up.
           if (event.type === "message_delta" && event.usage?.output_tokens != null) {
-            if (pendingLlmTurn) {
-              pendingLlmTurn.deltaOutputTokens = event.usage.output_tokens;
-              console.log(`[agent] message_delta output_tokens=${event.usage.output_tokens} (attached to turn-${pendingLlmTurn.turnNumber})`);
+            if (currentTurn) {
+              currentTurn.deltaOutputTokens = event.usage.output_tokens;
+              console.log(`[agent] message_delta output_tokens=${event.usage.output_tokens} (attached to turn-${currentTurn.turnNumber})`);
             } else {
               pendingOutputTokens = event.usage.output_tokens;
               console.log(`[agent] message_delta output_tokens=${pendingOutputTokens} (pre-assistant, turn-${turnNumber + 1})`);
@@ -192,21 +217,19 @@ export async function runTask({
           }
         }
 
-        // Flush the previous turn's LLM span before processing a new turn
-        // or the final result. We intentionally do NOT flush on "user" messages
-        // (tool results) — message_delta for the current turn may arrive after
-        // the user message, and flushing too early would miss it and fall back
-        // to the placeholder output_tokens value.
+        // Finalize the current turn when a new assistant message or result arrives.
+        // We don't finalize on "user" messages (tool results) because
+        // message_delta may still arrive after the user message.
         if (message.type === "assistant" || message.type === "result") {
-          flushLlmTurn();
+          finalizeTurn();
         }
 
         if (message.type === "assistant") {
           const msg = (message as AnyMessage).message;
           turnNumber++;
 
-          // Store turn data — the LLM span is created later by flushLlmTurn()
-          // so message_delta has time to arrive with the real output_tokens.
+          // Store turn data — LLM spans are emitted later by emitLlmSpans()
+          // when the result arrives, allowing output token reconciliation.
           const usage = msg.usage;
           if (usage) {
             const cacheReadTokens = usage.cache_read_input_tokens ?? 0;
@@ -222,7 +245,7 @@ export async function runTask({
               }
             }
 
-            pendingLlmTurn = {
+            currentTurn = {
               turnNumber,
               model: msg.model ?? "unknown",
               inputTokens,
@@ -282,6 +305,10 @@ export async function runTask({
         if (message.type === "result") {
           const resultMsg = message as AnyMessage;
           if (resultMsg.subtype === "success") {
+            // Emit all LLM spans now that we have the total output tokens
+            // from the result for reconciliation.
+            const totalOutputTokens = resultMsg.usage?.output_tokens;
+            emitLlmSpans(totalOutputTokens);
             llmobs.annotate({
               outputData: resultMsg.result,
               metrics: {
@@ -309,7 +336,11 @@ export async function runTask({
 
       throw new Error("Agent stream ended without result");
     } finally {
-      flushLlmTurn();
+      finalizeTurn();
+      // Emit LLM spans without reconciliation (no result total available)
+      if (completedTurns.length > 0) {
+        emitLlmSpans();
+      }
       // Close any tool spans that never got a result
       for (const [, toolInfo] of pendingTools) {
         llmobs.annotate(toolInfo.span, { outputData: "no result received" });
