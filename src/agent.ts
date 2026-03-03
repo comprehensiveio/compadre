@@ -189,10 +189,12 @@ export async function runTask({
           }
         }
 
-        // Flush the previous turn's LLM span before processing a new turn,
-        // tool result, or the final result. This gives message_delta events
-        // time to arrive and set pendingOutputTokens.
-        if (message.type === "assistant" || message.type === "user" || message.type === "result") {
+        // Flush the previous turn's LLM span before processing a new turn
+        // or the final result. We intentionally do NOT flush on "user" messages
+        // (tool results) — message_delta for the current turn may arrive after
+        // the user message, and flushing too early would miss it and fall back
+        // to the placeholder output_tokens value.
+        if (message.type === "assistant" || message.type === "result") {
           flushLlmTurn();
         }
 
