@@ -128,64 +128,88 @@ export async function runTask({
       cacheReadTokens: number;
       cacheWriteTokens: number;
       output: string;
+      // Span is opened in real-time when the assistant message arrives.
+      // doneSpan is called (after annotation) to close it.
+      span: AnyMessage;
+      doneSpan: (error?: Error) => void;
+      // Recorded when the turn logically ends so we can back-date the span
+      // finish time even if we must defer annotation for reconciliation.
+      recordedEndTime: number | undefined;
     }
-    // Collect all turns — LLM spans are created at the end when the result
-    // message arrives, so we can reconcile output tokens from the total.
-    const completedTurns: TurnData[] = [];
+    // Turns whose deltaOutputTokens is still unknown are deferred here until
+    // the result message arrives with a total we can reconcile against.
+    const reconciliationQueue: TurnData[] = [];
+    // Sum of output tokens for turns already closed — used for reconciliation.
+    let closedOutputSum = 0;
     let currentTurn: TurnData | undefined;
+
+    function annotateTurn(t: TurnData, outputTokens: number) {
+      llmobs.annotate(t.span, {
+        inputData: `[turn ${t.turnNumber} — ${t.inputTokens} input tokens]`,
+        outputData: t.output,
+        metrics: {
+          inputTokens: t.inputTokens,
+          outputTokens,
+          totalTokens: t.inputTokens + outputTokens,
+          ...(t.cacheReadTokens && { cacheReadTokens: t.cacheReadTokens }),
+          ...(t.cacheWriteTokens && { cacheWriteTokens: t.cacheWriteTokens }),
+        },
+      });
+    }
+
+    function closeTurnSpan(t: TurnData) {
+      // Back-date the span finish time to when the turn logically ended so
+      // the flame graph reflects real duration rather than reconciliation lag.
+      if (t.recordedEndTime !== undefined) {
+        (t.span as ddTrace.Span).finish(t.recordedEndTime);
+      }
+      t.doneSpan();
+    }
 
     function finalizeTurn() {
       if (!currentTurn) return;
-      completedTurns.push(currentTurn);
+      const t = currentTurn;
       currentTurn = undefined;
+      t.recordedEndTime = Date.now();
+
+      if (t.deltaOutputTokens !== undefined) {
+        // We have the real token count — annotate and close immediately.
+        const outputTokens = t.deltaOutputTokens;
+        console.log(`[agent] turn-${t.turnNumber} outputTokens=${outputTokens} (source: message_delta)`);
+        annotateTurn(t, outputTokens);
+        closeTurnSpan(t);
+        closedOutputSum += outputTokens;
+      } else {
+        // message_delta hasn't arrived yet — defer annotation until we can
+        // reconcile output tokens from the result total.
+        console.log(`[agent] turn-${t.turnNumber} queued for reconciliation (no message_delta yet)`);
+        reconciliationQueue.push(t);
+      }
     }
 
-    function emitLlmSpans(totalOutputTokens?: number) {
-      // If the SDK didn't emit message_delta for some turns (e.g. turn-1),
-      // their deltaOutputTokens will be undefined and they fall back to
-      // usageOutputTokens (placeholder 1). Use the total from the result
-      // message to reconcile: subtract known turns from the total and
-      // assign the remainder to the unknown turn.
-      let unknownTurns: TurnData[] = [];
-      let knownOutputSum = 0;
-      for (const t of completedTurns) {
-        const known = t.deltaOutputTokens;
-        if (known != null) {
-          knownOutputSum += known;
-        } else {
-          unknownTurns.push(t);
+    function reconcileAndClose(totalOutputTokens?: number) {
+      if (reconciliationQueue.length === 0) return;
+
+      // If exactly one turn is unknown and we have a total, compute by subtraction.
+      if (reconciliationQueue.length === 1 && totalOutputTokens != null) {
+        const t = reconciliationQueue[0];
+        const outputTokens = Math.max(0, totalOutputTokens - closedOutputSum);
+        console.log(`[agent] reconciled turn-${t.turnNumber} outputTokens=${outputTokens} (total=${totalOutputTokens} - closed=${closedOutputSum})`);
+        annotateTurn(t, outputTokens);
+      } else {
+        // Multiple unknown turns or no total available — fall back to
+        // usageOutputTokens (placeholder, but better than nothing).
+        for (const t of reconciliationQueue) {
+          const outputTokens = t.usageOutputTokens;
+          console.log(`[agent] turn-${t.turnNumber} outputTokens=${outputTokens} (source: msg.usage fallback)`);
+          annotateTurn(t, outputTokens);
         }
       }
-      // If exactly one turn is unknown and we have a total, compute by subtraction.
-      if (unknownTurns.length === 1 && totalOutputTokens != null) {
-        unknownTurns[0].deltaOutputTokens = totalOutputTokens - knownOutputSum;
-        console.log(`[agent] reconciled turn-${unknownTurns[0].turnNumber} outputTokens=${unknownTurns[0].deltaOutputTokens} (total=${totalOutputTokens} - known=${knownOutputSum})`);
-      }
 
-      for (const t of completedTurns) {
-        const outputTokens = t.deltaOutputTokens ?? t.usageOutputTokens;
-        const source = t.deltaOutputTokens != null ? "message_delta" : "msg.usage";
-        console.log(`[agent] turn-${t.turnNumber} outputTokens=${outputTokens} (source: ${source})`);
-        llmobs.trace({
-          kind: "llm",
-          name: `turn-${t.turnNumber}`,
-          modelName: t.model,
-          modelProvider: "anthropic",
-        }, () => {
-          llmobs.annotate({
-            inputData: `[turn ${t.turnNumber} — ${t.inputTokens} input tokens]`,
-            outputData: t.output,
-            metrics: {
-              inputTokens: t.inputTokens,
-              outputTokens,
-              totalTokens: t.inputTokens + outputTokens,
-              ...(t.cacheReadTokens && { cacheReadTokens: t.cacheReadTokens }),
-              ...(t.cacheWriteTokens && { cacheWriteTokens: t.cacheWriteTokens }),
-            },
-          });
-        });
+      for (const t of reconciliationQueue) {
+        closeTurnSpan(t);
       }
-      completedTurns.length = 0;
+      reconciliationQueue.length = 0;
     }
 
     try {
@@ -232,8 +256,9 @@ export async function runTask({
           const msg = (message as AnyMessage).message;
           turnNumber++;
 
-          // Store turn data — LLM spans are emitted later by emitLlmSpans()
-          // when the result arrives, allowing output token reconciliation.
+          // Open the LLM span now so its start time reflects when the turn
+          // actually began. We annotate and close it in finalizeTurn() (or
+          // reconcileAndClose() if output tokens need reconciliation).
           const usage = msg.usage;
           if (usage) {
             const cacheReadTokens = usage.cache_read_input_tokens ?? 0;
@@ -249,17 +274,27 @@ export async function runTask({
               }
             }
 
-            currentTurn = {
-              turnNumber,
-              model: msg.model ?? "unknown",
-              inputTokens,
-              usageOutputTokens: usage.output_tokens ?? 0,
-              deltaOutputTokens: pendingOutputTokens,
-              cacheReadTokens,
-              cacheWriteTokens,
-              output: outputParts.join("\n").slice(0, 2000),
-            };
-            pendingOutputTokens = undefined;
+            llmobs.trace({
+              kind: "llm",
+              name: `turn-${turnNumber}`,
+              modelName: msg.model ?? "unknown",
+              modelProvider: "anthropic",
+            }, (span: AnyMessage, done: (error?: Error) => void) => {
+              currentTurn = {
+                turnNumber,
+                model: msg.model ?? "unknown",
+                inputTokens,
+                usageOutputTokens: usage.output_tokens ?? 0,
+                deltaOutputTokens: pendingOutputTokens,
+                cacheReadTokens,
+                cacheWriteTokens,
+                output: outputParts.join("\n").slice(0, 2000),
+                span,
+                doneSpan: done,
+                recordedEndTime: undefined,
+              };
+              pendingOutputTokens = undefined;
+            });
           }
 
           // Start a tool span for each tool_use block. The span stays open
@@ -326,7 +361,7 @@ export async function runTask({
               totalOutputTokens = hasOutputTokens ? sum : undefined;
             }
             console.log(`[agent] result totalOutputTokens=${totalOutputTokens}`);
-            emitLlmSpans(totalOutputTokens);
+            reconcileAndClose(totalOutputTokens);
             llmobs.annotate({
               outputData: resultMsg.result,
               metrics: {
@@ -355,10 +390,9 @@ export async function runTask({
       throw new Error("Agent stream ended without result");
     } finally {
       finalizeTurn();
-      // Emit LLM spans without reconciliation (no result total available)
-      if (completedTurns.length > 0) {
-        emitLlmSpans();
-      }
+      // Close any deferred spans without reconciliation (error/abort path —
+      // no result total available, so fall back to usageOutputTokens).
+      reconcileAndClose();
       // Close any tool spans that never got a result
       for (const [, toolInfo] of pendingTools) {
         llmobs.annotate(toolInfo.span, { outputData: "no result received" });
