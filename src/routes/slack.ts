@@ -1,12 +1,13 @@
+import crypto from "crypto";
 import { Hono } from "hono";
 import { runTask } from "../agent.js";
 import { DEFAULT_MAX_TURNS, DEFAULT_MAX_BUDGET_USD } from "../config.js";
 import { getSlackSystemPrompt, getSlackStreamingSystemPrompt } from "../prompts/index.js";
+import { createWorktree, removeWorktree } from "../repo.js";
+import { getSession, setSession } from "../sessions.js";
 import { SlackStream, humanizeToolName } from "../services/slack-stream.js";
 
 export const slackRoutes = new Hono();
-
-const threadSessions = new Map<string, string>();
 
 slackRoutes.post("/slack", async (c) => {
   const apiKey = process.env.COMPADRE_API_KEY;
@@ -38,7 +39,10 @@ slackRoutes.post("/slack", async (c) => {
   }
 
   const threadKey = threadTs || `${channel}-${Date.now()}`;
-  const sessionId = threadSessions.get(threadKey);
+  const existing = getSession(threadKey);
+  const sessionId = existing?.sessionId;
+  const worktreeId = existing?.worktreeId ?? crypto.randomUUID();
+  const worktreePath = createWorktree(worktreeId);
 
   const prompt = buildSlackPrompt({ message, channel, threadTs, userId });
 
@@ -54,7 +58,8 @@ slackRoutes.post("/slack", async (c) => {
   runTask({
     prompt,
     sessionId,
-    systemPrompt: slackStream ? getSlackStreamingSystemPrompt() : getSlackSystemPrompt(),
+    systemPrompt: slackStream ? getSlackStreamingSystemPrompt(worktreePath) : getSlackSystemPrompt(worktreePath),
+    worktreePath,
     maxTurns: (body.maxTurns as number) ?? DEFAULT_MAX_TURNS,
     maxBudgetUsd: (body.maxBudgetUsd as number) ?? DEFAULT_MAX_BUDGET_USD,
     stream: slackStream
@@ -70,14 +75,16 @@ slackRoutes.post("/slack", async (c) => {
   })
     .then(async (result) => {
       if (result.sessionId) {
-        threadSessions.set(threadKey, result.sessionId);
+        setSession(threadKey, { sessionId: result.sessionId, worktreeId });
       }
+      removeWorktree(worktreeId);
       console.log(
         `[slack] completed for ${userId}: turns=${result.numTurns} cost=$${result.costUsd.toFixed(3)} duration=${result.durationMs}ms`
       );
     })
     .catch(async (err) => {
       console.error(`[slack] agent error for ${userId}:`, err);
+      removeWorktree(worktreeId);
       if (slackStream) {
         await slackStream.stopStream();
         await slackStream.clearStatus();
