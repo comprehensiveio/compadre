@@ -134,6 +134,13 @@ export function createWorktree(id: string): string {
     console.error("[repo] fetch before worktree creation failed:", err);
   }
 
+  // Prune stale metadata in case a previous worktree was removed uncleanly
+  try {
+    git("-C", REPO_PATH, "worktree", "prune");
+  } catch {
+    // ignore
+  }
+
   git("-C", REPO_PATH, "worktree", "add", worktreePath, "--detach", `origin/${branch}`);
   console.log(`[repo] created worktree: ${worktreePath}`);
   return worktreePath;
