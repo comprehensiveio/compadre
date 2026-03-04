@@ -1,5 +1,6 @@
 import { execFileSync } from "child_process";
-import { existsSync, writeFileSync, mkdirSync, chmodSync } from "fs";
+import { existsSync, writeFileSync, mkdirSync, chmodSync, readdirSync, statSync, rmSync } from "fs";
+import path from "path";
 import { REPO_PATH } from "./config.js";
 
 function git(...args: string[]) {
@@ -106,23 +107,98 @@ export function refreshRepo() {
   }
 }
 
+const WORKTREES_DIR = path.resolve(REPO_PATH, "..", "comp-worktrees");
+
 /**
- * Reset the repo to clean qa state. Called before and after each agent session
- * so the next session always starts from a known-good state.
- * Skipped in local dev to avoid trashing your working tree.
+ * Create a git worktree for isolated agent work.
+ * Returns the absolute path to the worktree directory.
+ * On local dev, returns REPO_PATH directly (no worktree created).
+ * Idempotent — if the worktree path already exists, returns it as-is.
  */
-export function resetToQa() {
-  if (isLocalDev()) return;
+export function createWorktree(id: string): string {
+  if (isLocalDev()) return REPO_PATH;
+
+  const worktreePath = path.join(WORKTREES_DIR, id);
+  if (existsSync(worktreePath)) {
+    console.log(`[repo] reusing existing worktree: ${worktreePath}`);
+    return worktreePath;
+  }
 
   const branch = getRepoBranch();
+  mkdirSync(WORKTREES_DIR, { recursive: true });
 
+  // Fetch latest before creating worktree so it's up to date
   try {
-    git("-C", REPO_PATH, "checkout", branch);
-    git("-C", REPO_PATH, "clean", "-fd");
     git("-C", REPO_PATH, "fetch", "origin", branch);
-    git("-C", REPO_PATH, "reset", "--hard", `origin/${branch}`);
-    console.log("[repo] reset to clean qa state");
   } catch (err) {
-    console.error("[repo] reset to qa failed:", err);
+    console.error("[repo] fetch before worktree creation failed:", err);
+  }
+
+  // Prune stale metadata in case a previous worktree was removed uncleanly
+  try {
+    git("-C", REPO_PATH, "worktree", "prune");
+  } catch {
+    // ignore
+  }
+
+  git("-C", REPO_PATH, "worktree", "add", worktreePath, "--detach", `origin/${branch}`);
+  console.log(`[repo] created worktree: ${worktreePath}`);
+  return worktreePath;
+}
+
+/**
+ * Remove a git worktree by id. Silently ignores errors.
+ */
+export function removeWorktree(id: string): void {
+  if (isLocalDev()) return;
+
+  const worktreePath = path.join(WORKTREES_DIR, id);
+  try {
+    git("-C", REPO_PATH, "worktree", "remove", worktreePath, "--force");
+    console.log(`[repo] removed worktree: ${worktreePath}`);
+  } catch {
+    // Worktree may already be gone — try cleaning up the directory directly
+    try {
+      rmSync(worktreePath, { recursive: true, force: true });
+    } catch {
+      // ignore
+    }
+  }
+}
+
+/**
+ * Remove worktrees older than maxAgeMs. Called periodically to clean up
+ * abandoned worktrees from crashed tasks or pruned sessions.
+ */
+export function cleanupStaleWorktrees(maxAgeMs: number): void {
+  if (isLocalDev()) return;
+  if (!existsSync(WORKTREES_DIR)) return;
+
+  const now = Date.now();
+  let entries: string[];
+  try {
+    entries = readdirSync(WORKTREES_DIR);
+  } catch {
+    return;
+  }
+
+  for (const entry of entries) {
+    const entryPath = path.join(WORKTREES_DIR, entry);
+    try {
+      const stat = statSync(entryPath);
+      if (stat.isDirectory() && now - stat.mtimeMs > maxAgeMs) {
+        removeWorktree(entry);
+        console.log(`[repo] cleaned up stale worktree: ${entry}`);
+      }
+    } catch {
+      // ignore stat errors
+    }
+  }
+
+  // Prune worktree metadata for any that were removed externally
+  try {
+    git("-C", REPO_PATH, "worktree", "prune");
+  } catch {
+    // ignore
   }
 }

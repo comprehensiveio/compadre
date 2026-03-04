@@ -16,7 +16,7 @@ import { promptRoutes } from "./routes/prompt.js";
 import { slackRoutes } from "./routes/slack.js";
 import { slackEventsRoutes } from "./routes/slack-events.js";
 import { webhookRoutes } from "./routes/webhook.js";
-import { ensureRepo, refreshRepo } from "./repo.js";
+import { ensureRepo, refreshRepo, cleanupStaleWorktrees } from "./repo.js";
 import { initDatadogAuth } from "./auth/datadog.js";
 
 const app = new Hono();
@@ -68,8 +68,12 @@ async function start() {
     console.error("[startup] repo setup failed — agent will have no codebase access:", err);
   }
 
-  // Periodic repo refresh
-  setInterval(refreshRepo, REPO_REFRESH_INTERVAL_MS);
+  // Periodic repo refresh and stale worktree cleanup
+  const STALE_WORKTREE_MAX_AGE_MS = 60 * 60 * 1000; // 1 hour
+  setInterval(() => {
+    refreshRepo();
+    cleanupStaleWorktrees(STALE_WORKTREE_MAX_AGE_MS);
+  }, REPO_REFRESH_INTERVAL_MS);
 }
 
 start();
