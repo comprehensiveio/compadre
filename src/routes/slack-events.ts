@@ -1,14 +1,25 @@
-import crypto from "crypto";
 import { Hono } from "hono";
 import { runTask } from "../agent.js";
 import { DEFAULT_MAX_TURNS, DEFAULT_MAX_BUDGET_USD } from "../config.js";
 import { getSlackSystemPrompt, getSlackStreamingSystemPrompt } from "../prompts/index.js";
-import { createWorktree, removeWorktree } from "../repo.js";
-import { getSession, setSession } from "../sessions.js";
 import { SlackStream, humanizeToolName } from "../services/slack-stream.js";
 import { verifySlackSignature } from "../services/slack-verify.js";
 
 export const slackEventsRoutes = new Hono();
+
+const MAX_THREAD_SESSIONS = 5000;
+const threadSessions = new Map<string, string>();
+
+/** Evict oldest entries when the map exceeds the cap. */
+function pruneThreadSessions() {
+  if (threadSessions.size <= MAX_THREAD_SESSIONS) return;
+  const toDelete = threadSessions.size - MAX_THREAD_SESSIONS;
+  const iter = threadSessions.keys();
+  for (let i = 0; i < toDelete; i++) {
+    const key = iter.next().value;
+    if (key !== undefined) threadSessions.delete(key);
+  }
+}
 
 const MAX_SEEN_EVENTS = 10_000;
 const seenEvents = new Set<string>();
@@ -111,10 +122,7 @@ async function handleAIMessage(event: SlackEvent, isDM: boolean) {
   const messageText = (event.text || "").replaceAll(`<@${SLACKBOT_USER_ID}>`, "").trim();
 
   const threadKey = threadTs;
-  const existing = getSession(threadKey);
-  const sessionId = existing?.sessionId;
-  const worktreeId = existing?.worktreeId ?? crypto.randomUUID();
-  const worktreePath = createWorktree(worktreeId);
+  const sessionId = threadSessions.get(threadKey);
 
   // Fetch thread context when mentioned in an existing thread
   let threadContext: string | null = null;
@@ -162,8 +170,7 @@ async function handleAIMessage(event: SlackEvent, isDM: boolean) {
   runTask({
     prompt,
     sessionId,
-    systemPrompt: slackStream ? getSlackStreamingSystemPrompt(worktreePath) : getSlackSystemPrompt(worktreePath),
-    worktreePath,
+    systemPrompt: slackStream ? getSlackStreamingSystemPrompt() : getSlackSystemPrompt(),
     maxTurns: DEFAULT_MAX_TURNS,
     maxBudgetUsd: DEFAULT_MAX_BUDGET_USD,
     stream: slackStream
@@ -180,9 +187,9 @@ async function handleAIMessage(event: SlackEvent, isDM: boolean) {
   })
     .then(async (result) => {
       if (result.sessionId) {
-        setSession(threadKey, { sessionId: result.sessionId, worktreeId });
+        threadSessions.set(threadKey, result.sessionId);
+        pruneThreadSessions();
       }
-      removeWorktree(worktreeId);
       if (!isDM && slackStream) {
         await slackStream.removeReaction("compadre-thinking", event.ts);
       }
@@ -192,7 +199,6 @@ async function handleAIMessage(event: SlackEvent, isDM: boolean) {
     })
     .catch(async (err) => {
       console.error(`[slack-events] agent error for ${event.user}:`, err);
-      removeWorktree(worktreeId);
       if (slackStream) {
         await slackStream.stopStream();
         await slackStream.clearStatus();

@@ -5,6 +5,7 @@ import ddTrace from "dd-trace";
 import { DEFAULT_MAX_TURNS, DEFAULT_MAX_BUDGET_USD, REPO_PATH } from "./config.js";
 import { buildMcpServers } from "./mcp.js";
 import { getBaseSystemPrompt } from "./prompts/index.js";
+import { resetToQa } from "./repo.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const COMPADRE_ROOT = path.resolve(__dirname, "..");
@@ -29,7 +30,6 @@ export interface RunTaskOptions {
   prompt: string;
   sessionId?: string;
   systemPrompt?: string;
-  worktreePath?: string;
   maxTurns?: number;
   maxBudgetUsd?: number;
   stream?: StreamCallbacks;
@@ -41,33 +41,30 @@ type AnyMessage = any;
 export async function runTask({
   prompt,
   sessionId: resumeSessionId,
-  systemPrompt,
-  worktreePath,
+  systemPrompt = getBaseSystemPrompt(),
   maxTurns = DEFAULT_MAX_TURNS,
   maxBudgetUsd = DEFAULT_MAX_BUDGET_USD,
   stream: streamCallbacks,
 }: RunTaskOptions): Promise<TaskResult> {
-  const cwd = worktreePath ?? REPO_PATH;
-  // Default system prompt uses the effective cwd so the agent sees the correct path
-  if (!systemPrompt) {
-    systemPrompt = getBaseSystemPrompt(cwd);
-  }
-
   return llmobs.trace({ name: "compadre-agent", kind: "agent" }, async () => {
     llmobs.annotate({
       inputData: prompt,
       metadata: { maxTurns, maxBudgetUsd, resumed: !!resumeSessionId },
     });
 
+    if (!resumeSessionId) {
+      resetToQa();
+    }
+
     const mcpServers = await buildMcpServers();
 
     const stream = query({
       prompt,
       options: {
-        cwd,
+        cwd: REPO_PATH,
         env: {
           ...process.env as Record<string, string>,
-          GIT_CEILING_DIRECTORIES: path.dirname(path.resolve(cwd)),
+          GIT_CEILING_DIRECTORIES: path.dirname(path.resolve(REPO_PATH)),
         },
         systemPrompt,
         maxTurns,
@@ -80,7 +77,7 @@ export async function runTask({
         settingSources: ["project"],
         plugins: [
           { type: "local" as const, path: COMPADRE_ROOT },
-          { type: "local" as const, path: path.resolve(cwd) },
+          { type: "local" as const, path: path.resolve(REPO_PATH) },
         ],
         ...(resumeSessionId ? { resume: resumeSessionId } : {}),
         allowedTools: [
@@ -366,6 +363,9 @@ export async function runTask({
       }
       pendingTools.clear();
       streamCallbacks?.onComplete?.();
+      if (!resumeSessionId) {
+        resetToQa();
+      }
     }
   });
 }
