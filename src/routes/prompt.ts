@@ -1,11 +1,10 @@
-import crypto from "crypto";
 import { Hono } from "hono";
 import { runTask } from "../agent.js";
 import { DEFAULT_MAX_TURNS, DEFAULT_MAX_BUDGET_USD } from "../config.js";
-import { createWorktree, removeWorktree } from "../repo.js";
-import { getSession, setSession } from "../sessions.js";
 
 export const promptRoutes = new Hono();
+
+const threadSessions = new Map<string, string>();
 
 promptRoutes.post("/prompt", async (c) => {
   const apiKey = process.env.COMPADRE_API_KEY;
@@ -31,15 +30,9 @@ promptRoutes.post("/prompt", async (c) => {
   const threadId = body.threadId as string | undefined;
   let sessionId: string | undefined = (body.sessionId as string) ?? undefined;
 
-  let existingWorktreeId: string | undefined;
   if (!sessionId && threadId) {
-    const existing = getSession(threadId);
-    sessionId = existing?.sessionId;
-    existingWorktreeId = existing?.worktreeId;
+    sessionId = threadSessions.get(threadId);
   }
-
-  const worktreeId = existingWorktreeId ?? crypto.randomUUID();
-  const worktreePath = createWorktree(worktreeId);
 
   const async = body.async === true;
 
@@ -48,7 +41,6 @@ promptRoutes.post("/prompt", async (c) => {
   const taskOptions = {
     prompt,
     sessionId,
-    worktreePath,
     maxTurns: (body.maxTurns as number) ?? DEFAULT_MAX_TURNS,
     maxBudgetUsd: (body.maxBudgetUsd as number) ?? DEFAULT_MAX_BUDGET_USD,
   };
@@ -57,38 +49,30 @@ promptRoutes.post("/prompt", async (c) => {
     runTask(taskOptions)
       .then((result) => {
         if (threadId && result.sessionId) {
-          setSession(threadId, { sessionId: result.sessionId, worktreeId });
+          threadSessions.set(threadId, result.sessionId);
         }
-        removeWorktree(worktreeId);
         console.log(
           `[prompt] async completed: turns=${result.numTurns} cost=$${result.costUsd.toFixed(3)} duration=${result.durationMs}ms`
         );
       })
       .catch((err) => {
-        removeWorktree(worktreeId);
         console.error("[prompt] async error:", err);
       });
     return c.json({ ok: true, message: "accepted" }, 202);
   }
 
-  try {
-    const result = await runTask(taskOptions);
+  const result = await runTask(taskOptions);
 
-    if (threadId && result.sessionId) {
-      setSession(threadId, { sessionId: result.sessionId, worktreeId });
-    }
-    removeWorktree(worktreeId);
-
-    return c.json({
-      ok: true,
-      result: result.result,
-      sessionId: result.sessionId,
-      turns: result.numTurns,
-      cost: result.costUsd,
-      duration: result.durationMs,
-    });
-  } catch (err) {
-    removeWorktree(worktreeId);
-    throw err;
+  if (threadId && result.sessionId) {
+    threadSessions.set(threadId, result.sessionId);
   }
+
+  return c.json({
+    ok: true,
+    result: result.result,
+    sessionId: result.sessionId,
+    turns: result.numTurns,
+    cost: result.costUsd,
+    duration: result.durationMs,
+  });
 });
