@@ -9,6 +9,7 @@ let expiresAt = 0;
 let currentRefreshToken: string;
 let clientId: string;
 let refreshTimer: ReturnType<typeof setTimeout> | null = null;
+let refreshPromise: Promise<string> | null = null;
 
 export function initDatadogAuth(opts: {
   clientId: string;
@@ -26,6 +27,16 @@ export async function getDatadogAccessToken(): Promise<string> {
 }
 
 async function refreshAccessToken(): Promise<string> {
+  // If a refresh is already in-flight, return the same promise
+  if (refreshPromise) return refreshPromise;
+
+  refreshPromise = doRefreshAccessToken().finally(() => {
+    refreshPromise = null;
+  });
+  return refreshPromise;
+}
+
+async function doRefreshAccessToken(): Promise<string> {
   console.log("[datadog] refreshing access token");
 
   const body = new URLSearchParams({
