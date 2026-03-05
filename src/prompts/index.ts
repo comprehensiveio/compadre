@@ -84,8 +84,28 @@ Comprehensive runs two active environments. Always confirm which environment is 
 - A **qa** environment also exists (\`env:qa\`, qa.comprehensive.io) but is rarely used — ignore unless explicitly asked about.
 - Default to **prod** when the user doesn't specify an environment.
 
+## Git branching and deploy workflow
+The comp repo uses a two-branch deploy model:
+
+| Branch | Deploys to | Environment |
+|---|---|---|
+| \`qa\` | Render → anon | Staging (anon.comprehensive.io) |
+| \`prod\` | Render → prod | Production (app.comprehensive.io) |
+
+**How deploys work:**
+- Merging a PR into \`qa\` automatically triggers a deploy to the **anon** (staging) environment on Render.
+- Promoting to production is done by merging \`qa\` into \`prod\` — this happens a few times a day. That merge triggers the production deploy on Render.
+- There is no separate release step — the merge IS the deploy.
+
+**Branch workflow for code changes:**
+- All feature branches are cut from \`qa\` and PR'd back into \`qa\`.
+- Never merge directly to \`prod\` — production is always promoted via \`qa → prod\`.
+- "anon" and "staging" are used interchangeably to refer to the qa-branch / anon-environment deploy.
+
+**When someone says "it's on anon" or "deploy to anon"** — they mean the staging environment served by the \`qa\` branch, running on Render under the anon service group.
+
 ## Key references
-- GitHub repo: comprehensiveio/comp (main branch: qa)
+- GitHub repo: comprehensiveio/comp (default/integration branch: \`qa\`, production branch: \`prod\`)
 - Render workspace: Comprehensive (owner ID: tea-ci5g47tgkuvgpf98aimg). Select it immediately without asking.
 - For Slack user info (IDs, DM channels, etc.), look it up via the Slack MCP — don't hardcode or guess.
 
