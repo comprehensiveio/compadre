@@ -85,6 +85,7 @@ export async function runTask({
         ...(resumeSessionId ? { resume: resumeSessionId } : {}),
         allowedTools: [
           "Agent",
+          "TaskOutput",
           "Read",
           "Glob",
           "Grep",
