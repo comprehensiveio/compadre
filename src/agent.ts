@@ -2,7 +2,7 @@ import path from "path";
 import { fileURLToPath } from "url";
 import { query } from "@anthropic-ai/claude-agent-sdk";
 import ddTrace from "dd-trace";
-import { DEFAULT_MAX_TURNS, DEFAULT_MAX_BUDGET_USD, REPO_PATH } from "./config.js";
+import { DEFAULT_MAX_TURNS, DEFAULT_MAX_BUDGET_USD, DEFAULT_MODEL, REPO_PATH } from "./config.js";
 import { buildMcpServers } from "./mcp.js";
 import { getBaseSystemPrompt } from "./prompts/index.js";
 
@@ -69,6 +69,7 @@ export async function runTask({
           ...process.env as Record<string, string>,
           GIT_CEILING_DIRECTORIES: path.dirname(path.resolve(cwd)),
         },
+        model: DEFAULT_MODEL,
         systemPrompt,
         maxTurns,
         maxBudgetUsd,
@@ -345,32 +346,34 @@ export async function runTask({
 
         if (message.type === "result") {
           const resultMsg = message as AnyMessage;
-          if (resultMsg.subtype === "success") {
-            // Emit all LLM spans now that we have the total output tokens
-            // from the result for reconciliation. modelUsage has the aggregate
-            // across all turns; usage.output_tokens is only the last message.
-            const modelUsage = resultMsg.modelUsage as Record<string, { outputTokens?: number }> | undefined;
-            let totalOutputTokens: number | undefined;
-            if (modelUsage) {
-              let sum = 0;
-              let hasOutputTokens = false;
-              for (const mu of Object.values(modelUsage)) {
-                if (typeof mu.outputTokens === "number") {
-                  sum += mu.outputTokens;
-                  hasOutputTokens = true;
-                }
+
+          // Reconcile output tokens from modelUsage for all result subtypes.
+          const modelUsage = resultMsg.modelUsage as Record<string, { outputTokens?: number }> | undefined;
+          let totalOutputTokens: number | undefined;
+          if (modelUsage) {
+            let sum = 0;
+            let hasOutputTokens = false;
+            for (const mu of Object.values(modelUsage)) {
+              if (typeof mu.outputTokens === "number") {
+                sum += mu.outputTokens;
+                hasOutputTokens = true;
               }
-              totalOutputTokens = hasOutputTokens ? sum : undefined;
             }
-            console.log(`[agent] result totalOutputTokens=${totalOutputTokens}`);
-            reconcileAndClose(totalOutputTokens);
-            llmobs.annotate({
-              outputData: resultMsg.result,
-              metrics: {
-                turns: resultMsg.num_turns,
-                costUsd: resultMsg.total_cost_usd,
-              },
-            });
+            totalOutputTokens = hasOutputTokens ? sum : undefined;
+          }
+          console.log(`[agent] result totalOutputTokens=${totalOutputTokens}`);
+          reconcileAndClose(totalOutputTokens);
+
+          // Annotate the agent span with SDK-reported cost (source of truth).
+          llmobs.annotate({
+            outputData: resultMsg.result ?? "",
+            metrics: {
+              turns: resultMsg.num_turns,
+              costUsd: resultMsg.total_cost_usd,
+            },
+          });
+
+          if (resultMsg.subtype === "success") {
             return {
               result: resultMsg.result,
               sessionId: sessionId ?? resumeSessionId ?? "",
