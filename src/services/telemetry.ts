@@ -35,6 +35,8 @@ export class AgentTelemetryTracker {
   private reconciliationQueue: TurnData[] = [];
   private closedOutputSum = 0;
   private turnNumber = 0;
+  private lastMessageId: string | undefined;
+  private seenToolUseIds = new Set<string>();
 
   /** Handle a stream_event from the SDK. Returns nothing — side effects only. */
   onStreamEvent(event: AnyMessage): void {
@@ -56,13 +58,21 @@ export class AgentTelemetryTracker {
     }
   }
 
-  /** Call when an assistant message arrives. Opens turn + tool spans. */
-  onAssistantMessage(msg: AnyMessage): void {
-    this.finalizeTurn();
-    this.turnNumber++;
+  /** Call when an assistant message arrives. Opens turn + tool spans.
+   *  Returns the list of newly-seen tool_use blocks (for onToolStart callbacks). */
+  onAssistantMessage(msg: AnyMessage): AnyMessage[] {
+    const messageId = msg.id as string | undefined;
+    const isUpdate = messageId != null && messageId === this.lastMessageId && this.currentTurn != null;
+
+    if (!isUpdate) {
+      // New API call — finalize previous turn and start a new one.
+      this.finalizeTurn();
+      this.turnNumber++;
+      this.lastMessageId = messageId;
+    }
 
     const usage = msg.usage;
-    if (usage) {
+    if (usage && !isUpdate) {
       const cacheReadTokens = usage.cache_read_input_tokens ?? 0;
       const cacheWriteTokens = usage.cache_creation_input_tokens ?? 0;
       const inputTokens = (usage.input_tokens ?? 0) + cacheReadTokens + cacheWriteTokens;
@@ -97,11 +107,28 @@ export class AgentTelemetryTracker {
         };
         this.pendingOutputTokens = undefined;
       });
+    } else if (isUpdate && this.currentTurn) {
+      // Partial update — refresh output and usage on the existing turn.
+      const outputParts: string[] = [];
+      for (const block of msg.content ?? []) {
+        if (block.type === "text") {
+          outputParts.push(block.text);
+        } else if (block.type === "tool_use") {
+          outputParts.push(`[tool_use: ${block.name}]`);
+        }
+      }
+      this.currentTurn.output = outputParts.join("\n").slice(0, 2000);
+      if (usage) {
+        this.currentTurn.usageOutputTokens = usage.output_tokens ?? 0;
+      }
     }
 
-    // Start a tool span for each tool_use block.
+    // Start tool spans only for newly-seen tool_use blocks.
+    const newToolBlocks: AnyMessage[] = [];
     for (const block of msg.content ?? []) {
-      if (block.type === "tool_use") {
+      if (block.type === "tool_use" && !this.seenToolUseIds.has(block.id)) {
+        this.seenToolUseIds.add(block.id);
+        newToolBlocks.push(block);
         llmobs.trace({ kind: "tool", name: block.name }, (span: AnyMessage, done: (error?: Error) => void) => {
           llmobs.annotate(span, {
             inputData: JSON.stringify(block.input).slice(0, 2000),
@@ -110,6 +137,8 @@ export class AgentTelemetryTracker {
         });
       }
     }
+
+    return newToolBlocks;
   }
 
   /** Call when a user (tool result) message arrives. Closes matching tool spans. */
