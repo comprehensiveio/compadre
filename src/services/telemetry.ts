@@ -62,29 +62,24 @@ export class AgentTelemetryTracker {
    *  Returns the list of newly-seen tool_use blocks (for onToolStart callbacks). */
   onAssistantMessage(msg: AnyMessage): AnyMessage[] {
     const messageId = msg.id as string | undefined;
-    const isUpdate = messageId != null && messageId === this.lastMessageId && this.currentTurn != null;
+    const isSameMessage = messageId != null && messageId === this.lastMessageId;
+    const isUpdate = isSameMessage && this.currentTurn != null;
 
     if (!isUpdate) {
-      // New API call — finalize previous turn and start a new one.
+      // New API call (or first partial before currentTurn exists) —
+      // finalize previous turn and start a new one.
       this.finalizeTurn();
       this.turnNumber++;
       this.lastMessageId = messageId;
     }
 
+    const output = this.buildOutputSummary(msg.content);
     const usage = msg.usage;
+
     if (usage && !isUpdate) {
       const cacheReadTokens = usage.cache_read_input_tokens ?? 0;
       const cacheWriteTokens = usage.cache_creation_input_tokens ?? 0;
       const inputTokens = (usage.input_tokens ?? 0) + cacheReadTokens + cacheWriteTokens;
-
-      const outputParts: string[] = [];
-      for (const block of msg.content ?? []) {
-        if (block.type === "text") {
-          outputParts.push(block.text);
-        } else if (block.type === "tool_use") {
-          outputParts.push(`[tool_use: ${block.name}]`);
-        }
-      }
 
       llmobs.trace({
         kind: "llm",
@@ -100,7 +95,7 @@ export class AgentTelemetryTracker {
           deltaOutputTokens: this.pendingOutputTokens,
           cacheReadTokens,
           cacheWriteTokens,
-          output: outputParts.join("\n").slice(0, 2000),
+          output,
           span,
           doneSpan: done,
           recordedEndTime: undefined,
@@ -109,15 +104,7 @@ export class AgentTelemetryTracker {
       });
     } else if (isUpdate && this.currentTurn) {
       // Partial update — refresh output and usage on the existing turn.
-      const outputParts: string[] = [];
-      for (const block of msg.content ?? []) {
-        if (block.type === "text") {
-          outputParts.push(block.text);
-        } else if (block.type === "tool_use") {
-          outputParts.push(`[tool_use: ${block.name}]`);
-        }
-      }
-      this.currentTurn.output = outputParts.join("\n").slice(0, 2000);
+      this.currentTurn.output = output;
       if (usage) {
         this.currentTurn.usageOutputTokens = usage.output_tokens ?? 0;
       }
@@ -199,6 +186,18 @@ export class AgentTelemetryTracker {
       toolInfo.done();
     }
     this.pendingTools.clear();
+  }
+
+  private buildOutputSummary(content: AnyMessage[] | undefined): string {
+    const parts: string[] = [];
+    for (const block of content ?? []) {
+      if (block.type === "text") {
+        parts.push(block.text);
+      } else if (block.type === "tool_use") {
+        parts.push(`[tool_use: ${block.name}]`);
+      }
+    }
+    return parts.join("\n").slice(0, 2000);
   }
 
   private annotateTurn(t: TurnData, outputTokens: number) {
