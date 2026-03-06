@@ -5,7 +5,8 @@ import { DEFAULT_MAX_TURNS, DEFAULT_MAX_BUDGET_USD } from "../config.js";
 import { getSlackSystemPrompt, getSlackStreamingSystemPrompt } from "../prompts/index.js";
 import { createWorktree, removeWorktree } from "../repo.js";
 import { getSession, setSession } from "../sessions.js";
-import { SlackStream, humanizeToolName } from "../services/slack-stream.js";
+import { SlackStream } from "../services/slack-stream.js";
+import { humanizeToolName } from "../services/tool-labels.js";
 
 export const slackRoutes = new Hono();
 
