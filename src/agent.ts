@@ -131,9 +131,9 @@ export async function runTask({
 
         if (message.type === "assistant") {
           const msg = (message as AnyMessage).message;
-          telemetry.onAssistantMessage(msg);
+          const newToolBlocks = telemetry.onAssistantMessage(msg);
 
-          for (const block of (msg.content ?? []).filter((b: AnyMessage) => b.type === "tool_use")) {
+          for (const block of newToolBlocks) {
             streamCallbacks?.onToolStart?.(block.name);
           }
 
