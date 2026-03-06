@@ -234,16 +234,22 @@ export async function runTask({
             streamCallbacks?.onTextDelta?.(event.delta.text);
           }
           // Capture real output_tokens from message_delta.
-          // If currentTurn exists, the assistant message already arrived —
-          // attach directly to the turn. Otherwise, store globally for the
-          // upcoming assistant message to pick up.
+          // If currentTurn exists but hasn't received its delta yet, the
+          // delta belongs to the current turn (delta-after ordering).
+          // Otherwise stash it in pendingOutputTokens for the next turn.
           if (event.type === "message_delta" && event.usage?.output_tokens != null) {
-            if (currentTurn) {
+            if (currentTurn && currentTurn.deltaOutputTokens === undefined) {
+              // message_delta arrived AFTER the assistant message for this
+              // turn (delta-after ordering). Attach directly to the turn.
               currentTurn.deltaOutputTokens = event.usage.output_tokens;
               console.log(`[agent] message_delta output_tokens=${event.usage.output_tokens} (attached to turn-${currentTurn.turnNumber})`);
             } else {
+              // Either no currentTurn yet (first turn) or currentTurn
+              // already has its delta (meaning this delta belongs to the
+              // NEXT turn, i.e. delta-before ordering). Stash it so the
+              // upcoming assistant message picks it up.
               pendingOutputTokens = event.usage.output_tokens;
-              console.log(`[agent] message_delta output_tokens=${pendingOutputTokens} (pre-assistant, turn-${turnNumber + 1})`);
+              console.log(`[agent] message_delta output_tokens=${pendingOutputTokens} (pending for next turn, current=${currentTurn ? `turn-${currentTurn.turnNumber}` : "none"})`);
             }
           }
         }
