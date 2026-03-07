@@ -128,13 +128,7 @@ async function handleAIMessage(event: SlackEvent, isDM: boolean) {
     );
   }
 
-  const promptParts = [
-    `Slack message from user ${event.user || "unknown"}.`,
-    "",
-    "Reply to:",
-    `- channel: ${event.channel}`,
-    `- thread_ts: ${threadTs} (reply in this thread)`,
-  ];
+  const promptParts = [messageText];
   if (threadContext) {
     promptParts.push(
       "",
@@ -142,7 +136,14 @@ async function handleAIMessage(event: SlackEvent, isDM: boolean) {
       threadContext,
     );
   }
-  promptParts.push("", "New message:", messageText);
+  promptParts.push(
+    "",
+    `Slack message from user ${event.user || "unknown"}.`,
+    "",
+    "Reply to:",
+    `- channel: ${event.channel}`,
+    `- thread_ts: ${threadTs} (reply in this thread)`,
+  );
   const prompt = promptParts.join("\n");
 
   let slackStream: SlackStream | undefined;
