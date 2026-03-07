@@ -13,6 +13,7 @@ interface TurnData {
   deltaOutputTokens: number | undefined;
   cacheReadTokens: number;
   cacheWriteTokens: number;
+  inputContent: string;
   output: string;
   span: AnyMessage;
   doneSpan: (error?: Error) => void;
@@ -37,6 +38,9 @@ export class AgentTelemetryTracker {
   private turnNumber = 0;
   private lastMessageId: string | undefined;
   private seenToolUseIds = new Set<string>();
+  private bufferedInputContent: string[] = [];
+
+  constructor(private prompt: string) {}
 
   /** Handle a stream_event from the SDK. Returns nothing — side effects only. */
   onStreamEvent(event: AnyMessage): void {
@@ -81,6 +85,11 @@ export class AgentTelemetryTracker {
       const cacheWriteTokens = usage.cache_creation_input_tokens ?? 0;
       const inputTokens = (usage.input_tokens ?? 0) + cacheReadTokens + cacheWriteTokens;
 
+      const inputContent = this.turnNumber === 1
+        ? this.prompt
+        : this.bufferedInputContent.join("\n").slice(0, 4000) || `[turn ${this.turnNumber} continuation]`;
+      this.bufferedInputContent = [];
+
       llmobs.trace({
         kind: "llm",
         name: `turn-${this.turnNumber}`,
@@ -95,6 +104,7 @@ export class AgentTelemetryTracker {
           deltaOutputTokens: this.pendingOutputTokens,
           cacheReadTokens,
           cacheWriteTokens,
+          inputContent,
           output,
           span,
           doneSpan: done,
@@ -141,6 +151,7 @@ export class AgentTelemetryTracker {
           llmobs.annotate(toolInfo.span, {
             outputData: JSON.stringify(output ?? null).slice(0, 2000),
           });
+          this.bufferedInputContent.push(`[${toolInfo.name} result]: ${JSON.stringify(output ?? null).slice(0, 500)}`);
           toolInfo.done();
           this.pendingTools.delete(block.tool_use_id);
         }
@@ -194,15 +205,16 @@ export class AgentTelemetryTracker {
       if (block.type === "text") {
         parts.push(block.text);
       } else if (block.type === "tool_use") {
-        parts.push(`[tool_use: ${block.name}]`);
+        const inputStr = JSON.stringify(block.input).slice(0, 500);
+        parts.push(`[tool_use: ${block.name}] ${inputStr}`);
       }
     }
-    return parts.join("\n").slice(0, 2000);
+    return parts.join("\n").slice(0, 4000);
   }
 
   private annotateTurn(t: TurnData, outputTokens: number) {
     llmobs.annotate(t.span, {
-      inputData: `[turn ${t.turnNumber} — ${t.inputTokens} input tokens]`,
+      inputData: t.inputContent,
       outputData: t.output,
       metrics: {
         inputTokens: t.inputTokens,
