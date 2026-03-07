@@ -148,9 +148,10 @@ export class AgentTelemetryTracker {
         const toolInfo = this.pendingTools.get(block.tool_use_id);
         if (toolInfo) {
           const output = block.content ?? msg.tool_use_result;
-          const outputStr = JSON.stringify(output ?? null).slice(0, 2000);
-          llmobs.annotate(toolInfo.span, { outputData: outputStr });
-          this.bufferedInputContent.push(`[${toolInfo.name} result]: ${outputStr.slice(0, 500)}`);
+          llmobs.annotate(toolInfo.span, {
+            outputData: JSON.stringify(output ?? null).slice(0, 2000),
+          });
+          this.bufferedInputContent.push(`[${toolInfo.name} result]: ${JSON.stringify(output ?? null).slice(0, 500)}`);
           toolInfo.done();
           this.pendingTools.delete(block.tool_use_id);
         }
