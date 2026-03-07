@@ -213,8 +213,8 @@ export class AgentTelemetryTracker {
 
   private annotateTurn(t: TurnData, outputTokens: number) {
     llmobs.annotate(t.span, {
-      inputData: [{ role: "user", content: t.inputContent }],
-      outputData: [{ role: "assistant", content: t.output }],
+      inputData: t.inputContent,
+      outputData: t.output,
       metrics: {
         inputTokens: t.inputTokens,
         outputTokens,
