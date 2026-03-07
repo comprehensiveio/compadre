@@ -60,7 +60,7 @@ export async function runTask({
     });
 
     const mcpServers = await buildMcpServers();
-    const telemetry = new AgentTelemetryTracker();
+    const telemetry = new AgentTelemetryTracker(prompt);
 
     const stream = query({
       prompt,
