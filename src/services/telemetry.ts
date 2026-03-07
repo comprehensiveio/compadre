@@ -14,7 +14,8 @@ interface TurnData {
   cacheReadTokens: number;
   cacheWriteTokens: number;
   inputContent: string;
-  output: string;
+  textContent: string;
+  toolParts: string[];
   span: AnyMessage;
   doneSpan: (error?: Error) => void;
   recordedEndTime: number | undefined;
@@ -77,7 +78,6 @@ export class AgentTelemetryTracker {
       this.lastMessageId = messageId;
     }
 
-    const output = this.buildOutputSummary(msg.content);
     const usage = msg.usage;
 
     if (usage && !isUpdate) {
@@ -105,7 +105,8 @@ export class AgentTelemetryTracker {
           cacheReadTokens,
           cacheWriteTokens,
           inputContent,
-          output,
+          textContent: "",
+          toolParts: [],
           span,
           doneSpan: done,
           recordedEndTime: undefined,
@@ -113,10 +114,19 @@ export class AgentTelemetryTracker {
         this.pendingOutputTokens = undefined;
       });
     } else if (isUpdate && this.currentTurn) {
-      // Partial update — refresh output and usage on the existing turn.
-      this.currentTurn.output = output;
       if (usage) {
         this.currentTurn.usageOutputTokens = usage.output_tokens ?? 0;
+      }
+    }
+
+    // Update text content from the latest message (text grows with partials).
+    if (this.currentTurn) {
+      const textParts: string[] = [];
+      for (const block of msg.content ?? []) {
+        if (block.type === "text") textParts.push(block.text);
+      }
+      if (textParts.length > 0) {
+        this.currentTurn.textContent = textParts.join("\n");
       }
     }
 
@@ -126,6 +136,10 @@ export class AgentTelemetryTracker {
       if (block.type === "tool_use" && !this.seenToolUseIds.has(block.id)) {
         this.seenToolUseIds.add(block.id);
         newToolBlocks.push(block);
+        if (this.currentTurn) {
+          const inputStr = JSON.stringify(block.input).slice(0, 500);
+          this.currentTurn.toolParts.push(`[tool_use: ${block.name}] ${inputStr}`);
+        }
         llmobs.trace({ kind: "tool", name: block.name }, (span: AnyMessage, done: (error?: Error) => void) => {
           llmobs.annotate(span, {
             inputData: JSON.stringify(block.input).slice(0, 2000),
@@ -199,23 +213,11 @@ export class AgentTelemetryTracker {
     this.pendingTools.clear();
   }
 
-  private buildOutputSummary(content: AnyMessage[] | undefined): string {
-    const parts: string[] = [];
-    for (const block of content ?? []) {
-      if (block.type === "text") {
-        parts.push(block.text);
-      } else if (block.type === "tool_use") {
-        const inputStr = JSON.stringify(block.input).slice(0, 500);
-        parts.push(`[tool_use: ${block.name}] ${inputStr}`);
-      }
-    }
-    return parts.join("\n").slice(0, 4000);
-  }
-
   private annotateTurn(t: TurnData, outputTokens: number) {
+    const outputParts = [t.textContent, ...t.toolParts].filter(Boolean);
     llmobs.annotate(t.span, {
       inputData: t.inputContent,
-      outputData: t.output,
+      outputData: outputParts.join("\n").slice(0, 4000),
       metrics: {
         inputTokens: t.inputTokens,
         outputTokens,
