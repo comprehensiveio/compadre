@@ -128,7 +128,7 @@ async function handleAIMessage(event: SlackEvent, isDM: boolean) {
     );
   }
 
-  const promptParts = [messageText];
+  const promptParts = ["User query:", messageText];
   if (threadContext) {
     promptParts.push(
       "",
