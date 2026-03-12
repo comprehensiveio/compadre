@@ -5,10 +5,15 @@
  * Datadog uses OAuth refresh tokens (managed by src/auth/datadog.ts).
  * Slack uses a bot token via the stdio-based MCP server.
  * Postgres MCP runs as a stdio subprocess.
+ * S3 MCP runs as a stdio subprocess for read-only S3 access.
  */
 
+import path from "path";
+import { fileURLToPath } from "url";
 import type { McpServerConfig } from "@anthropic-ai/claude-agent-sdk";
 import { getDatadogAccessToken } from "./auth/datadog.js";
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 function env(key: string): string {
   const val = process.env[key];
@@ -70,6 +75,18 @@ export async function buildMcpServers() {
         "@modelcontextprotocol/server-postgres",
         process.env.READONLY_DATABASE_URL,
       ],
+    };
+  }
+
+  if (process.env.AWS_ACCESS_KEY_ID && process.env.AWS_SECRET_ACCESS_KEY) {
+    servers.s3 = {
+      command: "node",
+      args: [path.join(__dirname, "..", "dist", "mcp-servers", "s3.js")],
+      env: {
+        AWS_ACCESS_KEY_ID: process.env.AWS_ACCESS_KEY_ID,
+        AWS_SECRET_ACCESS_KEY: process.env.AWS_SECRET_ACCESS_KEY,
+        AWS_REGION: process.env.AWS_REGION ?? "us-west-2",
+      },
     };
   }
 
