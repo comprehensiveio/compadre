@@ -68,12 +68,7 @@ The `s3_file_url` value is a relative path (not a full S3 URI). The file lives i
 - **US:** `comprehensive-prod-media`
 - **EU:** `comprehensive-eu-prod-media`
 
-Try the US bucket first. If the file is not found, fall back to the EU bucket. Use the S3 MCP to fetch the file:
-
-```
-s3://comprehensive-prod-media/<s3_file_url value>
-s3://comprehensive-eu-prod-media/<s3_file_url value>
-```
+Use the `s3.get_object` tool to fetch the file. The `key` is the `s3_file_url` value. Try the US bucket first, then fall back to the EU bucket if the file is not found.
 
 The JSON file contains the raw request and response for that API call. Inspect:
 
