@@ -26,6 +26,14 @@ export interface StreamCallbacks {
   onComplete?: () => void;
 }
 
+export interface Initiator {
+  source: "slack" | "api" | "webhook";
+  userId?: string;
+  channel?: string;
+  threadTs?: string;
+  webhookSource?: string;
+}
+
 export interface RunTaskOptions {
   prompt: string;
   sessionId?: string;
@@ -34,6 +42,7 @@ export interface RunTaskOptions {
   maxTurns?: number;
   maxBudgetUsd?: number;
   stream?: StreamCallbacks;
+  initiator?: Initiator;
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -47,6 +56,7 @@ export async function runTask({
   maxTurns = DEFAULT_MAX_TURNS,
   maxBudgetUsd = DEFAULT_MAX_BUDGET_USD,
   stream: streamCallbacks,
+  initiator,
 }: RunTaskOptions): Promise<TaskResult> {
   const cwd = worktreePath ?? REPO_PATH;
   if (!systemPrompt) {
@@ -56,7 +66,18 @@ export async function runTask({
   return llmobs.trace({ name: "compadre-agent", kind: "agent" }, async () => {
     llmobs.annotate({
       inputData: prompt,
-      metadata: { maxTurns, maxBudgetUsd, resumed: !!resumeSessionId },
+      metadata: {
+        maxTurns,
+        maxBudgetUsd,
+        resumed: !!resumeSessionId,
+        ...(initiator && {
+          initiatorSource: initiator.source,
+          ...(initiator.userId && { initiatorUserId: initiator.userId }),
+          ...(initiator.channel && { initiatorChannel: initiator.channel }),
+          ...(initiator.threadTs && { initiatorThreadTs: initiator.threadTs }),
+          ...(initiator.webhookSource && { initiatorWebhookSource: initiator.webhookSource }),
+        }),
+      },
     });
 
     const mcpServers = await buildMcpServers();
