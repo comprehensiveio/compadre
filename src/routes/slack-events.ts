@@ -161,8 +161,14 @@ async function handleAIMessage(event: SlackEvent, isDM: boolean) {
     await slackStream.addReaction("compadre-thinking", event.ts);
   }
 
+  let readableSource = "dm";
+  if (!isDM && botToken) {
+    readableSource = await resolveChannelName(event.channel, botToken);
+  }
+
   const initiator: Initiator = {
     source: "slack",
+    readableSource,
     userId: event.user,
     channel: event.channel,
     threadTs: threadTs,
@@ -229,6 +235,27 @@ async function handleAIMessage(event: SlackEvent, isDM: boolean) {
         }
       }
     });
+}
+
+async function resolveChannelName(channel: string, botToken: string): Promise<string> {
+  try {
+    const res = await fetch(
+      `https://slack.com/api/conversations.info?${new URLSearchParams({ channel })}`,
+      { headers: { Authorization: `Bearer ${botToken}` } },
+    );
+    const data = (await res.json()) as {
+      ok: boolean;
+      channel?: { name?: string };
+      error?: string;
+    };
+    if (data.ok && data.channel?.name) {
+      return `#${data.channel.name}`;
+    }
+    console.error("[slack-events] conversations.info failed:", data.error);
+  } catch (err) {
+    console.error("[slack-events] resolveChannelName error:", err);
+  }
+  return channel;
 }
 
 async function fetchThreadContext(

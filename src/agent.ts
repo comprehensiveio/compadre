@@ -28,6 +28,7 @@ export interface StreamCallbacks {
 
 export interface Initiator {
   source: "slack" | "api" | "webhook";
+  readableSource?: string;
   userId?: string;
   channel?: string;
   threadTs?: string;
@@ -72,6 +73,7 @@ export async function runTask({
         resumed: !!resumeSessionId,
         ...(initiator && {
           initiatorSource: initiator.source,
+          ...(initiator.readableSource && { readableSource: initiator.readableSource }),
           ...(initiator.userId && { initiatorUserId: initiator.userId }),
           ...(initiator.channel && { initiatorChannel: initiator.channel }),
           ...(initiator.threadTs && { initiatorThreadTs: initiator.threadTs }),
