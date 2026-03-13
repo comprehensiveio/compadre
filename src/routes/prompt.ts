@@ -51,6 +51,7 @@ promptRoutes.post("/prompt", async (c) => {
     worktreePath,
     maxTurns: (body.maxTurns as number) ?? DEFAULT_MAX_TURNS,
     maxBudgetUsd: (body.maxBudgetUsd as number) ?? DEFAULT_MAX_BUDGET_USD,
+    initiator: { source: "api" as const },
   };
 
   if (async) {

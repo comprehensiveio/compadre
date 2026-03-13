@@ -1,6 +1,6 @@
 import crypto from "crypto";
 import { Hono } from "hono";
-import { runTask } from "../agent.js";
+import { runTask, type Initiator } from "../agent.js";
 import { DEFAULT_MAX_TURNS, DEFAULT_MAX_BUDGET_USD } from "../config.js";
 import { getSlackSystemPrompt, getSlackStreamingSystemPrompt } from "../prompts/index.js";
 import { createWorktree, removeWorktree } from "../repo.js";
@@ -161,6 +161,13 @@ async function handleAIMessage(event: SlackEvent, isDM: boolean) {
     await slackStream.addReaction("compadre-thinking", event.ts);
   }
 
+  const initiator: Initiator = {
+    source: "slack",
+    userId: event.user,
+    channel: event.channel,
+    threadTs: threadTs,
+  };
+
   runTask({
     prompt,
     sessionId,
@@ -168,6 +175,7 @@ async function handleAIMessage(event: SlackEvent, isDM: boolean) {
     worktreePath,
     maxTurns: DEFAULT_MAX_TURNS,
     maxBudgetUsd: DEFAULT_MAX_BUDGET_USD,
+    initiator,
     stream: slackStream
       ? {
           onTextDelta: (text) => void slackStream!.appendText(text),
