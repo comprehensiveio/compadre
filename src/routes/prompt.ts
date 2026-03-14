@@ -59,14 +59,17 @@ promptRoutes.post("/prompt", async (c) => {
       .then((result) => {
         if (threadId && result.sessionId) {
           setSession(threadId, { sessionId: result.sessionId, worktreeId });
+        } else {
+          removeWorktree(worktreeId);
         }
-        removeWorktree(worktreeId);
         console.log(
           `[prompt] async completed: turns=${result.numTurns} cost=$${result.costUsd.toFixed(3)} duration=${result.durationMs}ms`
         );
       })
       .catch((err) => {
-        removeWorktree(worktreeId);
+        if (!threadId || !getSession(threadId)) {
+          removeWorktree(worktreeId);
+        }
         console.error("[prompt] async error:", err);
       });
     return c.json({ ok: true, message: "accepted" }, 202);
@@ -77,8 +80,9 @@ promptRoutes.post("/prompt", async (c) => {
 
     if (threadId && result.sessionId) {
       setSession(threadId, { sessionId: result.sessionId, worktreeId });
+    } else {
+      removeWorktree(worktreeId);
     }
-    removeWorktree(worktreeId);
 
     return c.json({
       ok: true,
@@ -89,7 +93,9 @@ promptRoutes.post("/prompt", async (c) => {
       duration: result.durationMs,
     });
   } catch (err) {
-    removeWorktree(worktreeId);
+    if (!threadId || !getSession(threadId)) {
+      removeWorktree(worktreeId);
+    }
     throw err;
   }
 });

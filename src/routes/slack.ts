@@ -77,15 +77,18 @@ slackRoutes.post("/slack", async (c) => {
     .then(async (result) => {
       if (result.sessionId) {
         setSession(threadKey, { sessionId: result.sessionId, worktreeId });
+      } else {
+        removeWorktree(worktreeId);
       }
-      removeWorktree(worktreeId);
       console.log(
         `[slack] completed for ${userId}: turns=${result.numTurns} cost=$${result.costUsd.toFixed(3)} duration=${result.durationMs}ms`
       );
     })
     .catch(async (err) => {
       console.error(`[slack] agent error for ${userId}:`, err);
-      removeWorktree(worktreeId);
+      if (!getSession(threadKey)) {
+        removeWorktree(worktreeId);
+      }
       if (slackStream) {
         await slackStream.stopStream();
         await slackStream.clearStatus();
