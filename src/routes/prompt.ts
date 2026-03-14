@@ -67,7 +67,7 @@ promptRoutes.post("/prompt", async (c) => {
         );
       })
       .catch((err) => {
-        if (!threadId || !getSession(threadId)?.worktreeId) {
+        if (!threadId || !getSession(threadId)) {
           removeWorktree(worktreeId);
         }
         console.error("[prompt] async error:", err);
@@ -93,7 +93,7 @@ promptRoutes.post("/prompt", async (c) => {
       duration: result.durationMs,
     });
   } catch (err) {
-    if (!threadId || !getSession(threadId)?.worktreeId) {
+    if (!threadId || !getSession(threadId)) {
       removeWorktree(worktreeId);
     }
     throw err;

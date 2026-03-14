@@ -212,7 +212,7 @@ async function handleAIMessage(event: SlackEvent, isDM: boolean) {
     })
     .catch(async (err) => {
       console.error(`[slack-events] agent error for ${event.user}:`, err);
-      if (!getSession(threadKey)?.worktreeId) {
+      if (!getSession(threadKey)) {
         removeWorktree(worktreeId);
       }
       if (slackStream) {

@@ -86,7 +86,7 @@ slackRoutes.post("/slack", async (c) => {
     })
     .catch(async (err) => {
       console.error(`[slack] agent error for ${userId}:`, err);
-      if (!getSession(threadKey)?.worktreeId) {
+      if (!getSession(threadKey)) {
         removeWorktree(worktreeId);
       }
       if (slackStream) {
