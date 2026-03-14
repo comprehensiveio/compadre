@@ -197,8 +197,12 @@ async function handleAIMessage(event: SlackEvent, isDM: boolean) {
     .then(async (result) => {
       if (result.sessionId) {
         setSession(threadKey, { sessionId: result.sessionId, worktreeId });
+      } else {
+        // Only remove the worktree when there's no session to resume.
+        // Multi-turn conversations need the worktree preserved between turns
+        // so that commits and branches created in earlier turns persist.
+        removeWorktree(worktreeId);
       }
-      removeWorktree(worktreeId);
       if (!isDM && slackStream) {
         await slackStream.removeReaction("compadre-thinking", event.ts);
       }
@@ -208,7 +212,9 @@ async function handleAIMessage(event: SlackEvent, isDM: boolean) {
     })
     .catch(async (err) => {
       console.error(`[slack-events] agent error for ${event.user}:`, err);
-      removeWorktree(worktreeId);
+      if (!getSession(threadKey)?.worktreeId) {
+        removeWorktree(worktreeId);
+      }
       if (slackStream) {
         await slackStream.stopStream();
         await slackStream.clearStatus();
