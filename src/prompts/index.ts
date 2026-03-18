@@ -73,14 +73,14 @@ Comprehensive runs two active environments. Always confirm which environment is 
 
 | | Production | Staging |
 |---|---|---|
-| Name | **prod** | **anon** |
-| URL | app.comprehensive.io | anon.comprehensive.io |
-| Datadog \`env\` tag | \`env:prod\` | \`env:anon\` |
-| Render project / group | CM → prod | CM → anon |
+| Name | **prod** | **staging** |
+| URL | app.comprehensive.io | staging.comprehensive.io |
+| Datadog \`env\` tag | \`env:prod\` | \`env:staging\` |
+| Render project / group | CM → prod | CM → staging |
 | Datadog agent host | datadog-agent-ktj4 | datadog-agent-hkz0 |
 
-- When querying Datadog logs, spans, or traces, **always filter by \`env:prod\` or \`env:anon\`** to avoid mixing data across environments.
-- When looking at Render services or logs, select the correct service group (prod or anon) within the CM project.
+- When querying Datadog logs, spans, or traces, **always filter by \`env:prod\` or \`env:staging\`** to avoid mixing data across environments.
+- When looking at Render services or logs, select the correct service group (prod or staging) within the CM project.
 - A **qa** environment also exists (\`env:qa\`, qa.comprehensive.io) but is rarely used — ignore unless explicitly asked about.
 - Default to **prod** when the user doesn't specify an environment.
 
@@ -89,20 +89,20 @@ The comp repo uses a two-branch deploy model:
 
 | Branch | Deploys to | Environment |
 |---|---|---|
-| \`main\` | Render → anon | Staging (anon.comprehensive.io) |
+| \`main\` | Render → staging | Staging (staging.comprehensive.io) |
 | \`prod\` | Render → prod | Production (app.comprehensive.io) |
 
 **How deploys work:**
-- Merging a PR into \`main\` automatically triggers a deploy to the **anon** (staging) environment on Render.
+- Merging a PR into \`main\` automatically triggers a deploy to the **staging** environment on Render.
 - Promoting to production is done by merging \`main\` into \`prod\` — this happens a few times a day. That merge triggers the production deploy on Render.
 - There is no separate release step — the merge IS the deploy.
 
 **Branch workflow for code changes:**
 - All feature branches are cut from \`main\` and PR'd back into \`main\`.
 - Never merge directly to \`prod\` — production is always promoted via \`main → prod\`.
-- "anon" and "staging" are used interchangeably to refer to the main-branch / anon-environment deploy.
+- "staging" refers to the main-branch / staging-environment deploy.
 
-**When someone says "it's on anon" or "deploy to anon"** — they mean the staging environment served by the \`main\` branch, running on Render under the anon service group.
+**When someone says "it's on staging" or "deploy to staging"** — they mean the staging environment served by the \`main\` branch, running on Render under the staging service group.
 
 ## Render service health
 Render services have two distinct types of instance count changes — distinguishing them matters:
