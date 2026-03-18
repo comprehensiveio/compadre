@@ -98,6 +98,10 @@ slackRoutes.post("/slack", async (c) => {
   return c.json({ ok: true, message: "accepted" }, 202);
 });
 
+function buildSlackThreadUrl(channel: string, threadTs: string): string {
+  return `https://comprehensiveio.slack.com/archives/${channel}/p${threadTs.replace(".", "")}`;
+}
+
 function buildSlackPrompt({
   message,
   channel,
@@ -115,6 +119,7 @@ function buildSlackPrompt({
     `Reply to:`,
     `- channel: ${channel}`,
     threadTs ? `- thread_ts: ${threadTs} (reply in this thread)` : `- no thread (start a new message)`,
+    threadTs ? `- slack_thread_url: ${buildSlackThreadUrl(channel, threadTs)}` : ``,
     ``,
     message,
   ];
