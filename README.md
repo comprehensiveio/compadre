@@ -54,7 +54,7 @@ Native Node.js service. Build: `npm install && npm run build`, Start: `node dist
 
 On Render:
 - REPO_PATH defaults to `/opt/render/repo` (the agent clones comp there on startup)
-- The repo is refreshed every 15 minutes and reset to `qa` before/after each agent session
+- The repo is refreshed every 15 minutes and reset to `main` before/after each agent session
 
 ## Architecture
 
@@ -64,4 +64,4 @@ HTTP request → Hono route → runTask() → Claude Agent SDK query()
                                            └── Built-in tools (Read, Grep, Bash, etc.)
 ```
 
-Each `runTask()` call spawns an independent Claude Code session. Sessions don't share state — the repo is reset to clean `qa` between runs.
+Each `runTask()` call spawns an independent Claude Code session. Sessions don't share state — the repo is reset to clean `main` between runs.
