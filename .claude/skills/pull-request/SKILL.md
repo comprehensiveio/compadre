@@ -19,9 +19,9 @@ git -C $REPO_PATH config user.name "Compadre"
 
 ## Branch & PR workflow
 
-**Create the branch BEFORE making any edits.** Do not commit directly to qa.
+**Create the branch BEFORE making any edits.** Do not commit directly to main.
 
-1. Create a branch from qa:
+1. Create a branch from main:
    ```bash
    git -C $REPO_PATH checkout -b isaac/<ticket-id>-short-description
    ```
@@ -41,7 +41,7 @@ git -C $REPO_PATH config user.name "Compadre"
    ```
 6. Create the PR using the GitHub MCP `create_pull_request` tool:
    - repo: `comprehensiveio/comp`
-   - base: `qa`
+   - base: `main`
    - head: your branch name
    - Include `Fixes COM-XXXX` in the body (see below)
 
@@ -100,4 +100,4 @@ The goal is that from **any** starting point (Slack thread, Linear ticket, or PR
 
 - Always push and open a PR — don't just commit locally. Your local changes will be wiped when the session ends.
 - PR titles: no `fix:` or `feat:` prefixes — just describe what it does.
-- Base branch is always `qa`.
+- Base branch is always `main`.

@@ -19,14 +19,14 @@ function getRepoUrl() {
 }
 
 function getRepoBranch() {
-  return process.env.REPO_BRANCH || "qa";
+  return process.env.REPO_BRANCH || "main";
 }
 
 function isLocalDev() {
   return REPO_PATH.includes("/Users/");
 }
 
-const PROTECTED_BRANCHES = ["qa", "main", "master", "prod", "production"];
+const PROTECTED_BRANCHES = ["main", "master", "prod", "production"];
 
 /**
  * Install git hooks that prevent committing to or pushing protected branches.
