@@ -105,6 +105,10 @@ async function handleEvent(event: SlackEvent) {
   }
 }
 
+function buildSlackThreadUrl(channel: string, threadTs: string): string {
+  return `https://comprehensiveio.slack.com/archives/${channel}/p${threadTs.replace(".", "")}`;
+}
+
 async function handleAIMessage(event: SlackEvent, isDM: boolean) {
   const botToken = process.env.SLACK_BOT_TOKEN;
   const threadTs = event.thread_ts || event.ts;
@@ -136,6 +140,7 @@ async function handleAIMessage(event: SlackEvent, isDM: boolean) {
       threadContext,
     );
   }
+  const slackThreadUrl = buildSlackThreadUrl(event.channel, threadTs);
   promptParts.push(
     "",
     `Slack message from user ${event.user || "unknown"}.`,
@@ -143,6 +148,7 @@ async function handleAIMessage(event: SlackEvent, isDM: boolean) {
     "Reply to:",
     `- channel: ${event.channel}`,
     `- thread_ts: ${threadTs} (reply in this thread)`,
+    `- slack_thread_url: ${slackThreadUrl}`,
   );
   const prompt = promptParts.join("\n");
 
