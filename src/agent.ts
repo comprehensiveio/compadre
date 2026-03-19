@@ -64,6 +64,9 @@ export async function runTask({
     systemPrompt = getBaseSystemPrompt(cwd);
   }
 
+  // Detach from the incoming distributed trace so LLMObs spans are rooted
+  // under the compadre ml_app instead of inheriting the caller's ml_app.
+  return ddTrace.scope().activate(null as unknown as ddTrace.Span, () => {
   return llmobs.trace({ name: "compadre-agent", kind: "agent" }, async () => {
     llmobs.annotate({
       inputData: prompt,
@@ -199,5 +202,6 @@ export async function runTask({
       telemetry.cleanup();
       streamCallbacks?.onComplete?.();
     }
+  });
   });
 }
