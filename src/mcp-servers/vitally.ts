@@ -14,17 +14,20 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
 
-const API_KEY = process.env.VITALLY_API_KEY!;
+const API_KEY = process.env.VITALLY_API_KEY;
+if (!API_KEY) {
+  throw new Error("VITALLY_API_KEY environment variable must be set.");
+}
 
 const BASE_URL = "https://comprehensive.rest.vitally.io";
 
 const AUTH_HEADER = `Basic ${Buffer.from(`${API_KEY}:`).toString("base64")}`;
 
-async function vitallyGet(path: string, params?: Record<string, string | undefined>): Promise<unknown> {
+async function vitallyGet(path: string, params?: Record<string, string | number | boolean | undefined>): Promise<unknown> {
   const url = new URL(`${BASE_URL}${path}`);
   if (params) {
     for (const [key, value] of Object.entries(params)) {
-      if (value !== undefined) url.searchParams.set(key, value);
+      if (value !== undefined) url.searchParams.set(key, String(value));
     }
   }
 
@@ -70,7 +73,7 @@ server.tool(
   async ({ status, limit, from }) => {
     const data = await vitallyGet("/resources/accounts", {
       status,
-      limit: limit?.toString(),
+      limit,
       from,
     });
     return jsonResult(data);
@@ -86,7 +89,7 @@ server.tool(
   },
   async ({ organizationId, limit, from }) => {
     const data = await vitallyGet(`/resources/organizations/${organizationId}/accounts`, {
-      limit: limit?.toString(),
+      limit,
       from,
     });
     return jsonResult(data);
@@ -127,7 +130,7 @@ server.tool(
   },
   async ({ limit, from }) => {
     const data = await vitallyGet("/resources/users", {
-      limit: limit?.toString(),
+      limit,
       from,
     });
     return jsonResult(data);
@@ -143,7 +146,7 @@ server.tool(
   },
   async ({ accountId, limit, from }) => {
     const data = await vitallyGet(`/resources/accounts/${accountId}/users`, {
-      limit: limit?.toString(),
+      limit,
       from,
     });
     return jsonResult(data);
@@ -159,7 +162,7 @@ server.tool(
   },
   async ({ organizationId, limit, from }) => {
     const data = await vitallyGet(`/resources/organizations/${organizationId}/users`, {
-      limit: limit?.toString(),
+      limit,
       from,
     });
     return jsonResult(data);
@@ -188,7 +191,7 @@ server.tool(
   },
   async ({ limit, from }) => {
     const data = await vitallyGet("/resources/conversations", {
-      limit: limit?.toString(),
+      limit,
       from,
     });
     return jsonResult(data);
@@ -204,7 +207,7 @@ server.tool(
   },
   async ({ accountId, limit, from }) => {
     const data = await vitallyGet(`/resources/accounts/${accountId}/conversations`, {
-      limit: limit?.toString(),
+      limit,
       from,
     });
     return jsonResult(data);
@@ -220,7 +223,7 @@ server.tool(
   },
   async ({ organizationId, limit, from }) => {
     const data = await vitallyGet(`/resources/organizations/${organizationId}/conversations`, {
-      limit: limit?.toString(),
+      limit,
       from,
     });
     return jsonResult(data);
@@ -251,9 +254,9 @@ server.tool(
   },
   async ({ archived, source, limit, from }) => {
     const data = await vitallyGet("/resources/notes", {
-      archived: archived?.toString(),
+      archived,
       source,
-      limit: limit?.toString(),
+      limit,
       from,
     });
     return jsonResult(data);
@@ -271,9 +274,9 @@ server.tool(
   },
   async ({ accountId, archived, source, limit, from }) => {
     const data = await vitallyGet(`/resources/accounts/${accountId}/notes`, {
-      archived: archived?.toString(),
+      archived,
       source,
-      limit: limit?.toString(),
+      limit,
       from,
     });
     return jsonResult(data);
@@ -291,9 +294,9 @@ server.tool(
   },
   async ({ organizationId, archived, source, limit, from }) => {
     const data = await vitallyGet(`/resources/organizations/${organizationId}/notes`, {
-      archived: archived?.toString(),
+      archived,
       source,
-      limit: limit?.toString(),
+      limit,
       from,
     });
     return jsonResult(data);
@@ -321,7 +324,7 @@ server.tool(
   },
   async ({ limit, from }) => {
     const data = await vitallyGet("/resources/noteCategories", {
-      limit: limit?.toString(),
+      limit,
       from,
     });
     return jsonResult(data);
@@ -340,9 +343,9 @@ server.tool(
   },
   async ({ archived, source, limit, from }) => {
     const data = await vitallyGet("/resources/tasks", {
-      archived: archived?.toString(),
+      archived,
       source,
-      limit: limit?.toString(),
+      limit,
       from,
     });
     return jsonResult(data);
@@ -360,9 +363,9 @@ server.tool(
   },
   async ({ accountId, archived, source, limit, from }) => {
     const data = await vitallyGet(`/resources/accounts/${accountId}/tasks`, {
-      archived: archived?.toString(),
+      archived,
       source,
-      limit: limit?.toString(),
+      limit,
       from,
     });
     return jsonResult(data);
@@ -380,9 +383,9 @@ server.tool(
   },
   async ({ organizationId, archived, source, limit, from }) => {
     const data = await vitallyGet(`/resources/organizations/${organizationId}/tasks`, {
-      archived: archived?.toString(),
+      archived,
       source,
-      limit: limit?.toString(),
+      limit,
       from,
     });
     return jsonResult(data);
@@ -410,7 +413,7 @@ server.tool(
   },
   async ({ limit, from }) => {
     const data = await vitallyGet("/resources/taskCategories", {
-      limit: limit?.toString(),
+      limit,
       from,
     });
     return jsonResult(data);
@@ -432,7 +435,7 @@ server.tool(
   async ({ target, limit, from }) => {
     const data = await vitallyGet("/resources/npsResponses", {
       target,
-      limit: limit?.toString(),
+      limit,
       from,
     });
     return jsonResult(data);
@@ -448,7 +451,7 @@ server.tool(
   },
   async ({ accountId, limit, from }) => {
     const data = await vitallyGet(`/resources/accounts/${accountId}/npsResponses`, {
-      limit: limit?.toString(),
+      limit,
       from,
     });
     return jsonResult(data);
@@ -464,7 +467,7 @@ server.tool(
   },
   async ({ organizationId, limit, from }) => {
     const data = await vitallyGet(`/resources/organizations/${organizationId}/npsResponses`, {
-      limit: limit?.toString(),
+      limit,
       from,
     });
     return jsonResult(data);
@@ -494,8 +497,8 @@ server.tool(
   },
   async ({ archived, limit, from }) => {
     const data = await vitallyGet("/resources/projects", {
-      archived: archived?.toString(),
-      limit: limit?.toString(),
+      archived,
+      limit,
       from,
     });
     return jsonResult(data);
@@ -511,7 +514,7 @@ server.tool(
   },
   async ({ accountId, limit, from }) => {
     const data = await vitallyGet(`/resources/accounts/${accountId}/projects`, {
-      limit: limit?.toString(),
+      limit,
       from,
     });
     return jsonResult(data);
@@ -527,7 +530,7 @@ server.tool(
   },
   async ({ organizationId, limit, from }) => {
     const data = await vitallyGet(`/resources/organizations/${organizationId}/projects`, {
-      limit: limit?.toString(),
+      limit,
       from,
     });
     return jsonResult(data);
@@ -558,7 +561,7 @@ server.tool(
   async ({ categoryId, limit, from }) => {
     const data = await vitallyGet("/resources/projectTemplates", {
       categoryId,
-      limit: limit?.toString(),
+      limit,
       from,
     });
     return jsonResult(data);
@@ -573,7 +576,7 @@ server.tool(
   },
   async ({ limit, from }) => {
     const data = await vitallyGet("/resources/projectCategories", {
-      limit: limit?.toString(),
+      limit,
       from,
     });
     return jsonResult(data);
@@ -590,7 +593,7 @@ server.tool(
   },
   async ({ limit, from }) => {
     const data = await vitallyGet("/resources/admins", {
-      limit: limit?.toString(),
+      limit,
       from,
     });
     return jsonResult(data);
@@ -607,7 +610,7 @@ server.tool(
   },
   async ({ limit, from }) => {
     const data = await vitallyGet("/resources/organizations", {
-      limit: limit?.toString(),
+      limit,
       from,
     });
     return jsonResult(data);
