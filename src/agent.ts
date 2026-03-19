@@ -64,7 +64,9 @@ export async function runTask({
     systemPrompt = getBaseSystemPrompt(cwd);
   }
 
-  return llmobs.trace({ name: "compadre-agent", kind: "agent" }, async () => {
+  // Explicit mlApp overrides the propagated ml_app from distributed tracing,
+  // ensuring compadre LLM costs are attributed to "compadre" not the caller's ml_app.
+  return llmobs.trace({ name: "compadre-agent", kind: "agent", mlApp: process.env.DD_LLMOBS_ML_APP }, async () => {
     llmobs.annotate({
       inputData: prompt,
       metadata: {
