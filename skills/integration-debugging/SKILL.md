@@ -5,7 +5,7 @@ description: Guide for debugging integration sync issues. Covers finding the int
 
 # Integration Debugging Guide
 
-Use this skill when investigating integration sync issues, data import failures, or questions about integration data. Always invoke /query-database alongside this skill for general database querying conventions.
+Use this skill when investigating integration sync issues, data import failures, or questions about integration data. Always invoke /compadre:query-database alongside this skill for general database querying conventions.
 
 ## 1. Identify the integration
 
