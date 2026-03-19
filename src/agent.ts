@@ -127,6 +127,7 @@ export async function runTask({
           "mcp__render__*",
           "mcp__postgres__*",
           "mcp__s3__*",
+          "mcp__vitally__*",
         ],
         mcpServers,
       },

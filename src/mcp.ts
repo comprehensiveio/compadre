@@ -6,6 +6,7 @@
  * Slack uses a bot token via the stdio-based MCP server.
  * Postgres MCP runs as a stdio subprocess.
  * S3 MCP runs as a stdio subprocess for read-only S3 access.
+ * Vitally MCP runs as a stdio subprocess for read-only Vitally access.
  */
 
 import path from "path";
@@ -86,6 +87,16 @@ export async function buildMcpServers() {
         AWS_ACCESS_KEY_ID: process.env.AWS_ACCESS_KEY_ID,
         AWS_SECRET_ACCESS_KEY: process.env.AWS_SECRET_ACCESS_KEY,
         AWS_REGION: process.env.AWS_REGION ?? "us-west-2",
+      },
+    };
+  }
+
+  if (process.env.VITALLY_API_KEY) {
+    servers.vitally = {
+      command: "node",
+      args: [path.join(__dirname, "..", "dist", "mcp-servers", "vitally.js")],
+      env: {
+        VITALLY_API_KEY: process.env.VITALLY_API_KEY,
       },
     };
   }
