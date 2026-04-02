@@ -1,11 +1,13 @@
 /**
- * Standalone stdio MCP server exposing read-only Vitally tools.
+ * Standalone stdio MCP server exposing Vitally tools (read & write).
  *
- * Tools: list_accounts, get_account, get_health_scores, list_users, get_user,
- *        list_conversations, get_conversation, list_notes, get_note,
- *        list_note_categories, list_tasks, get_task, list_task_categories,
- *        list_nps_responses, list_projects, get_project, list_project_templates,
- *        list_project_categories
+ * Read tools: list_accounts, get_account, get_health_scores, list_users, get_user,
+ *             list_conversations, get_conversation, list_notes, get_note,
+ *             list_note_categories, list_tasks, get_task, list_task_categories,
+ *             list_nps_responses, list_projects, get_project, list_project_templates,
+ *             list_project_categories
+ *
+ * Write tools: create_note, create_task, update_account
  *
  * Expects VITALLY_API_KEY in env.
  */
@@ -38,6 +40,42 @@ async function vitallyGet(path: string, params?: Record<string, string | number 
   if (!res.ok) {
     const body = await res.text();
     throw new Error(`Vitally API ${res.status}: ${body}`);
+  }
+
+  return res.json();
+}
+
+async function vitallyPost(path: string, body: Record<string, unknown>): Promise<unknown> {
+  const res = await fetch(`${BASE_URL}${path}`, {
+    method: "POST",
+    headers: {
+      Authorization: AUTH_HEADER,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(body),
+  });
+
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`Vitally API ${res.status}: ${text}`);
+  }
+
+  return res.json();
+}
+
+async function vitallyPut(path: string, body: Record<string, unknown>): Promise<unknown> {
+  const res = await fetch(`${BASE_URL}${path}`, {
+    method: "PUT",
+    headers: {
+      Authorization: AUTH_HEADER,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(body),
+  });
+
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`Vitally API ${res.status}: ${text}`);
   }
 
   return res.json();
@@ -625,6 +663,83 @@ server.tool(
   },
   async ({ id }) => {
     const data = await vitallyGet(`/resources/organizations/${id}`);
+    return jsonResult(data);
+  },
+);
+
+// ─── Write: Notes ───────────────────────────────────────────────────────
+
+server.tool(
+  "create_note",
+  "Create a note on a Vitally account. Use this to log churn feedback, meeting summaries, or any account-level context.",
+  {
+    accountId: z.string().describe("Vitally account ID to attach the note to"),
+    subject: z.string().describe("Note subject/title"),
+    note: z.string().describe("Note body content (HTML supported)"),
+    noteDate: z.string().optional().describe("Timestamp for the note in ISO 8601 format (e.g. 2026-04-01T14:30:00Z). Defaults to now if omitted."),
+    categoryId: z.string().optional().describe("Note category ID (use list_note_categories to find available categories)"),
+    tags: z.array(z.string()).optional().describe("Array of string tags to associate with the note"),
+    authorId: z.string().optional().describe("Vitally admin ID to attribute the note to (use list_admins to find IDs)"),
+    externalId: z.string().optional().describe("Optional external ID for deduplication"),
+  },
+  async ({ accountId, subject, note, noteDate, categoryId, tags, authorId, externalId }) => {
+    const body: Record<string, unknown> = {
+      accountId,
+      subject,
+      note,
+      noteDate: noteDate ?? new Date().toISOString(),
+    };
+    if (categoryId) body.categoryId = categoryId;
+    if (tags) body.tags = tags;
+    if (authorId) body.authorId = authorId;
+    if (externalId) body.externalId = externalId;
+    const data = await vitallyPost("/resources/notes", body);
+    return jsonResult(data);
+  },
+);
+
+// ─── Write: Tasks ───────────────────────────────────────────────────────
+
+server.tool(
+  "create_task",
+  "Create a task on a Vitally account. Use this to track follow-ups, action items, or account-level to-dos.",
+  {
+    accountId: z.string().describe("Vitally account ID to attach the task to"),
+    subject: z.string().describe("Task subject/title"),
+    description: z.string().optional().describe("Task description (HTML supported)"),
+    dueDate: z.string().optional().describe("Due date in ISO 8601 format (e.g. 2026-04-15)"),
+    assignedToId: z.string().optional().describe("Admin ID to assign the task to (use list_admins to find IDs)"),
+    categoryId: z.string().optional().describe("Task category ID (use list_task_categories to find available categories)"),
+    externalId: z.string().optional().describe("Optional external ID for deduplication"),
+  },
+  async ({ accountId, subject, description, dueDate, assignedToId, categoryId, externalId }) => {
+    const body: Record<string, unknown> = {
+      accountId,
+      subject,
+    };
+    if (description) body.description = description;
+    if (dueDate) body.dueDate = dueDate;
+    if (assignedToId) body.assignedToId = assignedToId;
+    if (categoryId) body.categoryId = categoryId;
+    if (externalId) body.externalId = externalId;
+    const data = await vitallyPost("/resources/tasks", body);
+    return jsonResult(data);
+  },
+);
+
+// ─── Write: Accounts ────────────────────────────────────────────────────
+
+server.tool(
+  "update_account",
+  "Update a Vitally account's traits or custom fields. Use this to set churn reasons, update custom properties, etc.",
+  {
+    id: z.string().describe("Vitally account ID or externalId"),
+    traits: z
+      .record(z.string(), z.unknown())
+      .describe("Key-value map of traits/custom fields to set on the account (e.g. { \"churn-reason\": \"consolidating tool stack\" })"),
+  },
+  async ({ id, traits }) => {
+    const data = await vitallyPut(`/resources/accounts/${id}`, { traits });
     return jsonResult(data);
   },
 );
