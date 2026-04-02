@@ -676,16 +676,22 @@ server.tool(
     accountId: z.string().describe("Vitally account ID to attach the note to"),
     subject: z.string().describe("Note subject/title"),
     note: z.string().describe("Note body content (HTML supported)"),
+    noteDate: z.string().optional().describe("Timestamp for the note in ISO 8601 format (e.g. 2026-04-01T14:30:00Z). Defaults to now if omitted."),
     categoryId: z.string().optional().describe("Note category ID (use list_note_categories to find available categories)"),
+    tags: z.array(z.string()).optional().describe("Array of string tags to associate with the note"),
+    authorId: z.string().optional().describe("Vitally admin ID to attribute the note to (use list_admins to find IDs)"),
     externalId: z.string().optional().describe("Optional external ID for deduplication"),
   },
-  async ({ accountId, subject, note, categoryId, externalId }) => {
+  async ({ accountId, subject, note, noteDate, categoryId, tags, authorId, externalId }) => {
     const body: Record<string, unknown> = {
       accountId,
       subject,
       note,
+      noteDate: noteDate ?? new Date().toISOString(),
     };
     if (categoryId) body.categoryId = categoryId;
+    if (tags) body.tags = tags;
+    if (authorId) body.authorId = authorId;
     if (externalId) body.externalId = externalId;
     const data = await vitallyPost("/resources/notes", body);
     return jsonResult(data);
