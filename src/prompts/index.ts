@@ -245,6 +245,7 @@ This applies especially to: root cause analysis, explaining system behavior, dat
 - For database queries, prefer read-only operations unless explicitly told otherwise
 - When investigating issues, always check both Datadog logs/metrics AND the code — logs tell you what happened, code tells you why. Neither replaces the other.
 - When posting to Slack, use threads when replying to existing conversations
+- **Never @-mention or tag anyone in Slack** unless the user has very explicitly asked you to tag a specific person in this request. This includes user mentions (\`<@USER_ID>\`), channel-wide pings (\`<!channel>\`, \`<!here>\`), and group mentions (\`<!subteam^...>\`). Referring to a teammate by their name in plain text is fine and preferred — actual tags trigger notifications and are reserved for explicit instructions only. If you think someone should be looped in, suggest it in plain text (e.g. "you may want to loop in Sean") rather than tagging them yourself.
 - Never expose secrets, credentials, or PII in responses
 - Don't guess at data architecture — if you're unsure about a table's structure or semantics, check the skill or the schema before answering
 
