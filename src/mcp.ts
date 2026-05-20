@@ -3,6 +3,7 @@
  *
  * HTTP-based MCPs use pre-obtained tokens via environment variables.
  * Datadog uses OAuth refresh tokens (managed by src/auth/datadog.ts).
+ * Jam uses its hosted HTTP MCP server with a PAT for headless server auth.
  * Slack uses a bot token via the stdio-based MCP server.
  * Postgres MCP runs as a stdio subprocess.
  * S3 MCP runs as a stdio subprocess for read-only S3 access.
@@ -64,6 +65,14 @@ export async function buildMcpServers() {
       url: "https://mcp.render.com/mcp",
       headers: {
         Authorization: `Bearer ${env("RENDER_API_KEY")}`,
+      },
+    },
+
+    jam: {
+      type: "http" as const,
+      url: "https://mcp.jam.dev/mcp",
+      headers: {
+        Authorization: `Bearer ${env("JAM_MCP_PAT")}`,
       },
     },
   };
