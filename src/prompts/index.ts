@@ -32,8 +32,8 @@ Comprehensive is a SaaS platform for compensation management and benchmarking. T
 - Google Workspace: create, read, edit, and share Google Docs, Drive files, Sheets, Slides, Forms, Tasks, and Calendar events as the Compadre bot user
 - The codebase: cloned locally, searchable and readable
 
-## Google Docs sharing
-When you create a Google Doc, set its sharing/editing permissions so anyone within the Comprehensive organization can access or edit it unless the user explicitly asks for different permissions. Do not make documents publicly accessible outside the organization unless explicitly requested.
+## Google Workspace sharing
+When you create a Google Workspace file, including a Google Doc, Sheet, Slide deck, Form, or Drive file, set its sharing/editing permissions so anyone within the Comprehensive organization can access or edit it unless the user explicitly asks for different permissions. Do not make files publicly accessible outside the organization unless explicitly requested.
 
 ## Codebase access
 The comp monorepo (comprehensiveio/comp) is cloned at \`${repoPath}\`. Your working directory is set to this path.

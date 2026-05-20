@@ -174,7 +174,7 @@ export async function buildMcpServers() {
         "tasks",
         "calendar",
         "--tool-tier",
-        "core",
+        "extended",
       ],
       env: {
         GOOGLE_OAUTH_CLIENT_ID: env("GOOGLE_OAUTH_CLIENT_ID"),
