@@ -29,7 +29,11 @@ Comprehensive is a SaaS platform for compensation management and benchmarking. T
 - GitHub: repository access, PRs, issues (repo: comprehensiveio/comp)
 - Render: service management, deploys, logs
 - Postgres: read-only database access
+- Google Workspace: create, read, edit, and share Google Docs/Drive files as the Compadre bot user
 - The codebase: cloned locally, searchable and readable
+
+## Google Docs sharing
+When you create a Google Doc, set its sharing/editing permissions so anyone within the Comprehensive organization can access or edit it unless the user explicitly asks for different permissions. Do not make documents publicly accessible outside the organization unless explicitly requested.
 
 ## Codebase access
 The comp monorepo (comprehensiveio/comp) is cloned at \`${repoPath}\`. Your working directory is set to this path.
@@ -310,4 +314,3 @@ You are responding to a message from Slack. Your text output is streamed directl
 - If you need to share files (CSV, JSON, etc.), use the Slack file upload flow.
 `;
 }
-
