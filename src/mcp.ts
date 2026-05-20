@@ -19,6 +19,16 @@ import type { McpServerConfig } from "@anthropic-ai/claude-agent-sdk";
 import { getDatadogAccessToken } from "./auth/datadog.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const GOOGLE_WORKSPACE_SCOPES = [
+  "https://www.googleapis.com/auth/documents",
+  "https://www.googleapis.com/auth/drive",
+  "https://www.googleapis.com/auth/spreadsheets",
+  "https://www.googleapis.com/auth/presentations",
+  "https://www.googleapis.com/auth/forms.body",
+  "https://www.googleapis.com/auth/forms.responses.readonly",
+  "https://www.googleapis.com/auth/tasks",
+  "https://www.googleapis.com/auth/calendar",
+];
 
 function env(key: string): string {
   const val = process.env[key];
@@ -59,10 +69,7 @@ async function prepareGoogleWorkspaceCredentials(): Promise<string | null> {
     token_uri: "https://oauth2.googleapis.com/token",
     client_id: clientId,
     client_secret: clientSecret,
-    scopes: [
-      "https://www.googleapis.com/auth/documents",
-      "https://www.googleapis.com/auth/drive.file",
-    ],
+    scopes: GOOGLE_WORKSPACE_SCOPES,
     expiry: null,
   };
 
@@ -161,6 +168,11 @@ export async function buildMcpServers() {
         "--tools",
         "docs",
         "drive",
+        "sheets",
+        "slides",
+        "forms",
+        "tasks",
+        "calendar",
         "--tool-tier",
         "core",
       ],
