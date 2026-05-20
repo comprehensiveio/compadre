@@ -12,7 +12,7 @@ AI operations agent for Comprehensive. Spawns headless Claude Code sessions via 
 | **GitHub** | HTTP (Copilot MCP) | Repos, PRs, issues |
 | **Render** | HTTP (`mcp.render.com`) | Service management, deploys, logs |
 | **Postgres** | stdio (`@modelcontextprotocol/server-postgres`) | Read-only database access |
-| **Google Workspace** | stdio (`workspace-mcp`) | Google Docs/Drive access as the Compadre bot user |
+| **Google Workspace** | stdio (`workspace-mcp`) | Google Docs, Drive, Sheets, Slides, Forms, Tasks, and Calendar access as the Compadre bot user |
 
 The agent also gets all built-in Claude Code tools (Read, Grep, Glob, Bash, Edit, Write, WebSearch, WebFetch) with the comp repo cloned locally.
 
@@ -46,7 +46,7 @@ See `.env.example` for the full list. Key notes:
 
 - **DATADOG_MCP_CLIENT_ID / DATADOG_MCP_REFRESH_TOKEN**: OAuth credentials from Datadog MCP. The server auto-refreshes access tokens.
 - **SLACK_BOT_TOKEN**: `xoxb-*` token from the Compadre Slack app.
-- **GOOGLE_WORKSPACE_USER_EMAIL / GOOGLE_OAUTH_CLIENT_ID / GOOGLE_OAUTH_CLIENT_SECRET / GOOGLE_OAUTH_REFRESH_TOKEN**: OAuth credentials for the Compadre Google Workspace bot user. When set, Compadre enables Docs/Drive tools through `workspace-mcp`.
+- **GOOGLE_WORKSPACE_USER_EMAIL / GOOGLE_OAUTH_CLIENT_ID / GOOGLE_OAUTH_CLIENT_SECRET / GOOGLE_OAUTH_REFRESH_TOKEN**: OAuth credentials for the Compadre Google Workspace bot user. When set, Compadre enables Google Workspace tools through `workspace-mcp`.
 - **REPO_PATH**: Set to `/opt/render/repo` on Render (auto-cloned). Set to your local comp checkout for dev.
 - **COMPADRE_API_KEY**: Auth token for the API. Generate with `openssl rand -hex 32`.
 

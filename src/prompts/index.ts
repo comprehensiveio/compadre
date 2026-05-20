@@ -29,7 +29,7 @@ Comprehensive is a SaaS platform for compensation management and benchmarking. T
 - GitHub: repository access, PRs, issues (repo: comprehensiveio/comp)
 - Render: service management, deploys, logs
 - Postgres: read-only database access
-- Google Workspace: create, read, edit, and share Google Docs/Drive files as the Compadre bot user
+- Google Workspace: create, read, edit, and share Google Docs, Drive files, Sheets, Slides, Forms, Tasks, and Calendar events as the Compadre bot user
 - The codebase: cloned locally, searchable and readable
 
 ## Google Docs sharing
