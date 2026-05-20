@@ -52,9 +52,9 @@ See `.env.example` for the full list. Key notes:
 
 ## Deployment (Render)
 
-Native Node.js service. Build: `npm install && npm run build`, Start: `node dist/index.js`.
+Native Node.js service. Build: `npm install && npm run build`, Start: `npm start`.
 
-Google Workspace support also requires Python 3.10+ and `uvx` on the runtime image because `workspace-mcp` runs as a Python MCP server.
+Google Workspace support uses `uvx` because `workspace-mcp` runs as a Python MCP server. `npm start` installs `uvx` at startup when Google Workspace env vars are present and `uvx` is not already available.
 
 On Render:
 - REPO_PATH defaults to `/opt/render/repo` (the agent clones comp there on startup)
