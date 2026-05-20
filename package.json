@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "tsx watch src/index.ts",
     "build": "tsc",
-    "start": "node --import dd-trace/initialize.mjs dist/index.js",
+    "start": "node --import dd-trace/initialize.mjs dist/start.js",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

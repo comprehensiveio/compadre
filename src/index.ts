@@ -1,6 +1,3 @@
-import dotenv from "dotenv";
-dotenv.config({ path: ".env.local" });
-
 // Ensure nvm-managed node/npx are available to child processes (Claude Agent SDK)
 if (!process.env.PATH?.includes(process.execPath.replace(/\/node$/, ""))) {
   const nodeDir = process.execPath.replace(/\/node$/, "");
