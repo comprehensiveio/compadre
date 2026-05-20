@@ -4,12 +4,15 @@
  * HTTP-based MCPs use pre-obtained tokens via environment variables.
  * Datadog uses OAuth refresh tokens (managed by src/auth/datadog.ts).
  * Jam uses its hosted HTTP MCP server with a PAT for headless server auth.
+ * Google Workspace uses a bot-user OAuth refresh token cached for workspace-mcp.
  * Slack uses a bot token via the stdio-based MCP server.
  * Postgres MCP runs as a stdio subprocess.
  * S3 MCP runs as a stdio subprocess for read-only S3 access.
  * Vitally MCP runs as a stdio subprocess for read-only Vitally access.
  */
 
+import fs from "fs/promises";
+import os from "os";
 import path from "path";
 import { fileURLToPath } from "url";
 import type { McpServerConfig } from "@anthropic-ai/claude-agent-sdk";
@@ -23,8 +26,57 @@ function env(key: string): string {
   return val;
 }
 
+function workspaceCredentialFilename(email: string): string {
+  return `${encodeURIComponent(email).replaceAll("%40", "@")}.json`;
+}
+
+async function prepareGoogleWorkspaceCredentials(): Promise<string | null> {
+  const clientId = process.env.GOOGLE_OAUTH_CLIENT_ID;
+  const clientSecret = process.env.GOOGLE_OAUTH_CLIENT_SECRET;
+  const refreshToken = process.env.GOOGLE_OAUTH_REFRESH_TOKEN;
+  const userEmail = process.env.GOOGLE_WORKSPACE_USER_EMAIL;
+
+  if (!clientId && !clientSecret && !refreshToken && !userEmail) {
+    return null;
+  }
+
+  if (!clientId || !clientSecret || !refreshToken || !userEmail) {
+    throw new Error(
+      "Google Workspace MCP requires GOOGLE_OAUTH_CLIENT_ID, GOOGLE_OAUTH_CLIENT_SECRET, GOOGLE_OAUTH_REFRESH_TOKEN, and GOOGLE_WORKSPACE_USER_EMAIL"
+    );
+  }
+
+  const credentialsDir =
+    process.env.WORKSPACE_MCP_CREDENTIALS_DIR ??
+    path.join(os.tmpdir(), "compadre-google-workspace-credentials");
+  const credentialsPath = path.join(
+    credentialsDir,
+    workspaceCredentialFilename(userEmail)
+  );
+  const credentials = {
+    token: null,
+    refresh_token: refreshToken,
+    token_uri: "https://oauth2.googleapis.com/token",
+    client_id: clientId,
+    client_secret: clientSecret,
+    scopes: [
+      "https://www.googleapis.com/auth/documents",
+      "https://www.googleapis.com/auth/drive.file",
+    ],
+    expiry: null,
+  };
+
+  await fs.mkdir(credentialsDir, { recursive: true, mode: 0o700 });
+  await fs.writeFile(credentialsPath, JSON.stringify(credentials, null, 2), {
+    mode: 0o600,
+  });
+
+  return credentialsDir;
+}
+
 export async function buildMcpServers() {
   const datadogToken = await getDatadogAccessToken();
+  const googleWorkspaceCredentialsDir = await prepareGoogleWorkspaceCredentials();
 
   const servers: Record<string, McpServerConfig> = {
     "datadog-mcp": {
@@ -96,6 +148,28 @@ export async function buildMcpServers() {
         AWS_ACCESS_KEY_ID: process.env.AWS_ACCESS_KEY_ID,
         AWS_SECRET_ACCESS_KEY: process.env.AWS_SECRET_ACCESS_KEY,
         AWS_REGION: process.env.AWS_REGION ?? "us-west-2",
+      },
+    };
+  }
+
+  if (googleWorkspaceCredentialsDir) {
+    servers.google_workspace = {
+      command: "uvx",
+      args: [
+        "workspace-mcp",
+        "--single-user",
+        "--tools",
+        "docs",
+        "drive",
+        "--tool-tier",
+        "core",
+      ],
+      env: {
+        GOOGLE_OAUTH_CLIENT_ID: env("GOOGLE_OAUTH_CLIENT_ID"),
+        GOOGLE_OAUTH_CLIENT_SECRET: env("GOOGLE_OAUTH_CLIENT_SECRET"),
+        USER_GOOGLE_EMAIL: env("GOOGLE_WORKSPACE_USER_EMAIL"),
+        WORKSPACE_MCP_CREDENTIALS_DIR: googleWorkspaceCredentialsDir,
+        MCP_SINGLE_USER_MODE: "1",
       },
     };
   }

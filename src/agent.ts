@@ -129,6 +129,7 @@ export async function runTask({
           "mcp__postgres__*",
           "mcp__s3__*",
           "mcp__vitally__*",
+          "mcp__google_workspace__*",
         ],
         mcpServers,
       },
