@@ -21,6 +21,7 @@ import {
   getDatadogAuthDisabledReason,
   isDatadogAuthConfigured,
 } from "./auth/datadog.js";
+import { alertDatadogRefreshTokenInvalid } from "./services/ops-alerts.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const GOOGLE_WORKSPACE_SCOPES = [
@@ -89,6 +90,9 @@ async function prepareGoogleWorkspaceCredentials(): Promise<string | null> {
 async function buildDatadogMcpServer(): Promise<McpServerConfig | null> {
   if (!isDatadogAuthConfigured()) {
     const reason = getDatadogAuthDisabledReason();
+    if (reason) {
+      void alertDatadogRefreshTokenInvalid(reason);
+    }
     const message = reason
       ? `[mcp] Datadog MCP disabled: ${reason}`
       : "[mcp] Datadog MCP disabled: credentials are not configured";

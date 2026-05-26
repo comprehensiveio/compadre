@@ -1,3 +1,5 @@
+import { alertDatadogRefreshTokenInvalid } from "../services/ops-alerts.js";
+
 const TOKEN_ENDPOINT =
   "https://mcp.datadoghq.com/api/unstable/mcp-server/token";
 
@@ -96,6 +98,7 @@ async function doRefreshAccessToken(): Promise<string> {
         clearTimeout(refreshTimer);
         refreshTimer = null;
       }
+      void alertDatadogRefreshTokenInvalid(text);
     }
     throw new Error(`Datadog token refresh failed (${res.status}): ${text}`);
   }
