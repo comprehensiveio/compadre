@@ -16,7 +16,11 @@ import os from "os";
 import path from "path";
 import { fileURLToPath } from "url";
 import type { McpServerConfig } from "@anthropic-ai/claude-agent-sdk";
-import { getDatadogAccessToken } from "./auth/datadog.js";
+import {
+  getDatadogAccessToken,
+  getDatadogAuthDisabledReason,
+  isDatadogAuthConfigured,
+} from "./auth/datadog.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const GOOGLE_WORKSPACE_SCOPES = [
@@ -29,6 +33,7 @@ const GOOGLE_WORKSPACE_SCOPES = [
   "https://www.googleapis.com/auth/tasks",
   "https://www.googleapis.com/auth/calendar",
 ];
+let lastDatadogDisabledLog: string | null = null;
 
 function env(key: string): string {
   const val = process.env[key];
@@ -81,19 +86,41 @@ async function prepareGoogleWorkspaceCredentials(): Promise<string | null> {
   return credentialsDir;
 }
 
-export async function buildMcpServers() {
-  const datadogToken = await getDatadogAccessToken();
-  const googleWorkspaceCredentialsDir = await prepareGoogleWorkspaceCredentials();
+async function buildDatadogMcpServer(): Promise<McpServerConfig | null> {
+  if (!isDatadogAuthConfigured()) {
+    const reason = getDatadogAuthDisabledReason();
+    const message = reason
+      ? `[mcp] Datadog MCP disabled: ${reason}`
+      : "[mcp] Datadog MCP disabled: credentials are not configured";
+    if (message !== lastDatadogDisabledLog) {
+      console.warn(message);
+      lastDatadogDisabledLog = message;
+    }
+    return null;
+  }
 
-  const servers: Record<string, McpServerConfig> = {
-    "datadog-mcp": {
+  try {
+    const datadogToken = await getDatadogAccessToken();
+    return {
       type: "http" as const,
       url: "https://mcp.datadoghq.com/api/unstable/mcp-server/mcp?toolsets=core,apm,error-tracking,llmobs",
       headers: {
         Authorization: `Bearer ${datadogToken}`,
       },
-    },
+    };
+  } catch (err) {
+    console.error("[mcp] Datadog MCP disabled after auth failure:", err);
+    return null;
+  }
+}
 
+export async function buildMcpServers() {
+  const [datadogServer, googleWorkspaceCredentialsDir] = await Promise.all([
+    buildDatadogMcpServer(),
+    prepareGoogleWorkspaceCredentials(),
+  ]);
+
+  const servers: Record<string, McpServerConfig> = {
     slack: {
       command: "npx",
       args: ["-y", "@modelcontextprotocol/server-slack"],
@@ -135,6 +162,10 @@ export async function buildMcpServers() {
       },
     },
   };
+
+  if (datadogServer) {
+    servers["datadog-mcp"] = datadogServer;
+  }
 
   if (process.env.READONLY_DATABASE_URL) {
     servers.postgres = {

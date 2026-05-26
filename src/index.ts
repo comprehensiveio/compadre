@@ -48,10 +48,16 @@ const port = Number(process.env.PORT) || 3100;
 
 async function start() {
   // Initialize Datadog OAuth token refresh
-  initDatadogAuth({
-    clientId: process.env.DATADOG_MCP_CLIENT_ID!,
-    refreshToken: process.env.DATADOG_MCP_REFRESH_TOKEN!,
-  });
+  if (process.env.DATADOG_MCP_CLIENT_ID && process.env.DATADOG_MCP_REFRESH_TOKEN) {
+    initDatadogAuth({
+      clientId: process.env.DATADOG_MCP_CLIENT_ID,
+      refreshToken: process.env.DATADOG_MCP_REFRESH_TOKEN,
+    });
+  } else {
+    console.warn(
+      "[startup] Datadog MCP disabled: DATADOG_MCP_CLIENT_ID and DATADOG_MCP_REFRESH_TOKEN are not both configured"
+    );
+  }
 
   // Start the server first so Render sees the port binding
   serve({ fetch: app.fetch, port }, (info) => {
