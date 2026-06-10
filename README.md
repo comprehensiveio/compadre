@@ -49,6 +49,7 @@ See `.env.example` for the full list. Key notes:
 - **GOOGLE_WORKSPACE_USER_EMAIL / GOOGLE_OAUTH_CLIENT_ID / GOOGLE_OAUTH_CLIENT_SECRET / GOOGLE_OAUTH_REFRESH_TOKEN**: OAuth credentials for the Compadre Google Workspace bot user. When set, Compadre enables Google Workspace tools through `workspace-mcp`.
 - **REPO_PATH**: Set to `/opt/render/repo` on Render (auto-cloned). Set to your local comp checkout for dev.
 - **COMPADRE_API_KEY**: Auth token for the API. Generate with `openssl rand -hex 32`.
+- **FABLE_MODEL**: Optional model ID used when a prompt includes `--fable`. Defaults to `claude-fable-5`; normal prompts use `DEFAULT_MODEL` or the built-in default.
 
 ## Deployment (Render)
 

@@ -2,7 +2,7 @@ import path from "path";
 import { fileURLToPath } from "url";
 import { query } from "@anthropic-ai/claude-agent-sdk";
 import ddTrace from "dd-trace";
-import { DEFAULT_MAX_TURNS, DEFAULT_MAX_BUDGET_USD, DEFAULT_MODEL, REPO_PATH } from "./config.js";
+import { DEFAULT_MAX_TURNS, DEFAULT_MAX_BUDGET_USD, DEFAULT_MODEL, FABLE_MODEL, REPO_PATH } from "./config.js";
 import { buildMcpServers } from "./mcp.js";
 import { getBaseSystemPrompt } from "./prompts/index.js";
 import { AgentTelemetryTracker } from "./services/telemetry.js";
@@ -11,6 +11,8 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const COMPADRE_ROOT = path.resolve(__dirname, "..");
 
 const llmobs = ddTrace.llmobs;
+const FABLE_FLAG = "--fable";
+const FABLE_FLAG_PATTERN = /--fable/g;
 
 export interface TaskResult {
   result: string;
@@ -49,6 +51,24 @@ export interface RunTaskOptions {
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type AnyMessage = any;
 
+function selectModelForPrompt(prompt: string): { prompt: string; model: string; fableRequested: boolean } {
+  if (!prompt.includes(FABLE_FLAG)) {
+    return { prompt, model: DEFAULT_MODEL, fableRequested: false };
+  }
+
+  const cleanedPrompt = prompt
+    .replace(FABLE_FLAG_PATTERN, "")
+    .replace(/[ \t]+\n/g, "\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+
+  return {
+    prompt: cleanedPrompt || prompt,
+    model: FABLE_MODEL,
+    fableRequested: true,
+  };
+}
+
 export async function runTask({
   prompt,
   sessionId: resumeSessionId,
@@ -60,6 +80,7 @@ export async function runTask({
   initiator,
 }: RunTaskOptions): Promise<TaskResult> {
   const cwd = worktreePath ?? REPO_PATH;
+  const selected = selectModelForPrompt(prompt);
   if (!systemPrompt) {
     systemPrompt = getBaseSystemPrompt(cwd);
   }
@@ -68,10 +89,12 @@ export async function runTask({
   // ensuring compadre LLM costs are attributed to "compadre" not the caller's ml_app.
   return llmobs.trace({ name: "compadre-agent", kind: "agent", mlApp: process.env.DD_LLMOBS_ML_APP }, async () => {
     llmobs.annotate({
-      inputData: prompt,
+      inputData: selected.prompt,
       metadata: {
         maxTurns,
         maxBudgetUsd,
+        model: selected.model,
+        fableRequested: selected.fableRequested,
         resumed: !!resumeSessionId,
         ...(initiator && {
           initiatorSource: initiator.source,
@@ -85,17 +108,17 @@ export async function runTask({
     });
 
     const mcpServers = await buildMcpServers();
-    const telemetry = new AgentTelemetryTracker(prompt);
+    const telemetry = new AgentTelemetryTracker(selected.prompt);
 
     const stream = query({
-      prompt,
+      prompt: selected.prompt,
       options: {
         cwd,
         env: {
           ...process.env as Record<string, string>,
           GIT_CEILING_DIRECTORIES: path.dirname(path.resolve(cwd)),
         },
-        model: DEFAULT_MODEL,
+        model: selected.model,
         systemPrompt,
         maxTurns,
         maxBudgetUsd,
