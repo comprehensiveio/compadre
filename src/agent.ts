@@ -149,6 +149,7 @@ export async function runTask({
           "mcp__github__*",
           "mcp__jam__*",
           "mcp__render__*",
+          "mcp__comp_app__*",
           "mcp__postgres__*",
           "mcp__s3__*",
           "mcp__vitally__*",

@@ -29,6 +29,7 @@ Comprehensive is a SaaS platform for compensation management and benchmarking. T
 - GitHub: repository access, PRs, issues (repo: comprehensiveio/comp)
 - Render: service management, deploys, logs
 - Postgres: read-only database access
+- Comp app server: internal MCP tools exposed by the running Comprehensive app server. Use these when you need app-server behavior or server-side operations that are not available from the local code clone or read-only Postgres.
 - Google Workspace: create, read, edit, and share Google Docs, Drive files, Sheets, Slides, Forms, Tasks, and Calendar events as the Compadre bot user
 - The codebase: cloned locally, searchable and readable
 

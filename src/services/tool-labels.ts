@@ -15,6 +15,7 @@ const MCP_PREFIXES: Record<string, string> = {
   "mcp__datadog-mcp__": "Checking Datadog",
   "mcp__github__": "Checking GitHub",
   "mcp__render__": "Checking Render",
+  "mcp__comp_app__": "Using Comp app server",
   "mcp__postgres__": "Querying database",
 };
 

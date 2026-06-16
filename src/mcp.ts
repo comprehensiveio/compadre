@@ -35,6 +35,7 @@ const GOOGLE_WORKSPACE_SCOPES = [
   "https://www.googleapis.com/auth/calendar",
 ];
 let lastDatadogDisabledLog: string | null = null;
+let hasLoggedCompDisabled = false;
 
 function env(key: string): string {
   const val = process.env[key];
@@ -118,6 +119,29 @@ async function buildDatadogMcpServer(): Promise<McpServerConfig | null> {
   }
 }
 
+function buildCompMcpServer(): McpServerConfig | null {
+  const compAppUrl = process.env.COMP_APP_URL;
+  const apiKey = process.env.COMPADRE_API_KEY;
+
+  if (!compAppUrl || !apiKey) {
+    if (!hasLoggedCompDisabled) {
+      console.warn(
+        "[mcp] Comp MCP disabled: COMP_APP_URL and COMPADRE_API_KEY are not both configured"
+      );
+      hasLoggedCompDisabled = true;
+    }
+    return null;
+  }
+
+  return {
+    type: "http" as const,
+    url: `${compAppUrl}/api/mcp/compadre`,
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+    },
+  };
+}
+
 export async function buildMcpServers() {
   const [datadogServer, googleWorkspaceCredentialsDir] = await Promise.all([
     buildDatadogMcpServer(),
@@ -166,6 +190,11 @@ export async function buildMcpServers() {
       },
     },
   };
+
+  const compAppServer = buildCompMcpServer();
+  if (compAppServer) {
+    servers.comp_app = compAppServer;
+  }
 
   if (datadogServer) {
     servers["datadog-mcp"] = datadogServer;
