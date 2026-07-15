@@ -45,6 +45,7 @@ curl -X POST http://localhost:3100/prompt \
 See `.env.example` for the full list. Key notes:
 
 - **DATADOG_MCP_CLIENT_ID / DATADOG_MCP_REFRESH_TOKEN**: OAuth credentials from Datadog MCP. The server auto-refreshes access tokens.
+- **DD_LLMOBS_ENABLED / DD_LLMOBS_ML_APP**: Enable Datadog's automatic Claude Agent SDK instrumentation and attribute its agent, step, LLM, and tool spans to the `compadre` ML app.
 - **SLACK_BOT_TOKEN**: `xoxb-*` token from the Compadre Slack app.
 - **GOOGLE_WORKSPACE_USER_EMAIL / GOOGLE_OAUTH_CLIENT_ID / GOOGLE_OAUTH_CLIENT_SECRET / GOOGLE_OAUTH_REFRESH_TOKEN**: OAuth credentials for the Compadre Google Workspace bot user. When set, Compadre enables Google Workspace tools through `workspace-mcp`.
 - **REPO_PATH**: Set to `/opt/render/repo` on Render (auto-cloned). Set to your local comp checkout for dev.

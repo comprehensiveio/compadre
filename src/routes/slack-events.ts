@@ -1,6 +1,6 @@
 import crypto from "crypto";
 import { Hono } from "hono";
-import { runTask, type Initiator } from "../agent.js";
+import { runTask } from "../agent.js";
 import { DEFAULT_MAX_TURNS, DEFAULT_MAX_BUDGET_USD } from "../config.js";
 import { getSlackSystemPrompt, getSlackStreamingSystemPrompt } from "../prompts/index.js";
 import { createWorktree, removeWorktree } from "../repo.js";
@@ -167,19 +167,6 @@ async function handleAIMessage(event: SlackEvent, isDM: boolean) {
     await slackStream.addReaction("compadre-thinking", event.ts);
   }
 
-  let readableSource = "dm";
-  if (!isDM && botToken) {
-    readableSource = await resolveChannelName(event.channel, botToken);
-  }
-
-  const initiator: Initiator = {
-    source: "slack",
-    readableSource,
-    userId: event.user,
-    channel: event.channel,
-    threadTs: threadTs,
-  };
-
   runTask({
     prompt,
     sessionId,
@@ -187,7 +174,6 @@ async function handleAIMessage(event: SlackEvent, isDM: boolean) {
     worktreePath,
     maxTurns: DEFAULT_MAX_TURNS,
     maxBudgetUsd: DEFAULT_MAX_BUDGET_USD,
-    initiator,
     stream: slackStream
       ? {
           onTextDelta: (text) => void slackStream!.appendText(text),
@@ -247,27 +233,6 @@ async function handleAIMessage(event: SlackEvent, isDM: boolean) {
         }
       }
     });
-}
-
-async function resolveChannelName(channel: string, botToken: string): Promise<string> {
-  try {
-    const res = await fetch(
-      `https://slack.com/api/conversations.info?${new URLSearchParams({ channel })}`,
-      { headers: { Authorization: `Bearer ${botToken}` } },
-    );
-    const data = (await res.json()) as {
-      ok: boolean;
-      channel?: { name?: string };
-      error?: string;
-    };
-    if (data.ok && data.channel?.name) {
-      return `#${data.channel.name}`;
-    }
-    console.error("[slack-events] conversations.info failed:", data.error);
-  } catch (err) {
-    console.error("[slack-events] resolveChannelName error:", err);
-  }
-  return channel;
 }
 
 async function fetchThreadContext(
