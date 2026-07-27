@@ -22,7 +22,7 @@ export interface TaskResult {
 export interface StreamCallbacks {
   onTextDelta?: (text: string) => void;
   onToolStart?: (toolName: string) => void;
-  onComplete?: () => void;
+  onComplete?: () => void | Promise<void>;
 }
 
 export interface RunTaskOptions {
@@ -187,6 +187,6 @@ export async function runTask({
 
     throw new Error("Agent stream ended without result");
   } finally {
-    streamCallbacks?.onComplete?.();
+    await streamCallbacks?.onComplete?.();
   }
 }

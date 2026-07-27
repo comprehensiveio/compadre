@@ -37,6 +37,8 @@ interface SlackEvent {
   bot_id?: string;
   channel: string;
   user?: string;
+  user_team?: string;
+  team?: string;
   text: string;
   ts: string;
   thread_ts?: string;
@@ -73,7 +75,9 @@ slackEventsRoutes.post("/slack/events", async (c) => {
   if (payload.type === "event_callback") {
     const event = payload.event;
     if (event && typeof event === "object") {
-      handleEvent(event as SlackEvent).catch((err) =>
+      const teamId =
+        typeof payload.team_id === "string" ? payload.team_id : undefined;
+      handleEvent(event as SlackEvent, teamId).catch((err) =>
         console.error("[slack-events] unhandled error in handleEvent:", err),
       );
     }
@@ -82,7 +86,7 @@ slackEventsRoutes.post("/slack/events", async (c) => {
   return c.json({ ok: true });
 });
 
-async function handleEvent(event: SlackEvent) {
+async function handleEvent(event: SlackEvent, teamId?: string) {
   if (event.type !== "message") return;
   if (event.subtype || event.bot_id) return;
   if (isDuplicate(event.ts)) return;
@@ -100,7 +104,7 @@ async function handleEvent(event: SlackEvent) {
   }
 
   if (isDM || isMention) {
-    handleAIMessage(event, isDM).catch((err) =>
+    handleAIMessage(event, isDM, teamId).catch((err) =>
       console.error("[slack-events] unhandled error in handleAIMessage:", err),
     );
   }
@@ -110,7 +114,11 @@ function buildSlackThreadUrl(channel: string, threadTs: string): string {
   return `https://comprehensiveio.slack.com/archives/${channel}/p${threadTs.replace(".", "")}`;
 }
 
-async function handleAIMessage(event: SlackEvent, isDM: boolean) {
+async function handleAIMessage(
+  event: SlackEvent,
+  isDM: boolean,
+  teamId?: string,
+) {
   const botToken = process.env.SLACK_BOT_TOKEN;
   const threadTs = event.thread_ts || event.ts;
 
@@ -167,13 +175,17 @@ async function handleAIMessage(event: SlackEvent, isDM: boolean) {
       channel: event.channel,
       threadTs,
       botToken,
-      enableStatus: isDM,
+      recipientUserId: event.user,
+      recipientTeamId: event.user_team || event.team || teamId,
     });
   }
 
   // In non-DM contexts, use a reaction to indicate processing
   if (!isDM && slackStream) {
     await slackStream.addReaction("compadre-thinking", event.ts);
+  }
+  if (slackStream) {
+    await slackStream.setStatus("is thinking...");
   }
 
   runTask({
@@ -187,10 +199,12 @@ async function handleAIMessage(event: SlackEvent, isDM: boolean) {
       ? {
           onTextDelta: (text) => void slackStream!.appendText(text),
           onToolStart: (name) =>
-            void slackStream!.setStatus(humanizeToolName(name) + "..."),
-          onComplete: () => {
-            void slackStream!.stopStream();
-            void slackStream!.clearStatus();
+            void slackStream!.setStatus(
+              `is ${humanizeToolName(name).toLowerCase()}...`,
+            ),
+          onComplete: async () => {
+            await slackStream!.stopStream();
+            await slackStream!.clearStatus();
           },
         }
       : undefined,

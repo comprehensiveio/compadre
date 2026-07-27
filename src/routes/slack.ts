@@ -35,6 +35,7 @@ slackRoutes.post("/slack", async (c) => {
   const channel = body.channel as string | undefined;
   const threadTs = body.threadTs as string | undefined;
   const userId = body.userId as string | undefined;
+  const teamId = body.teamId as string | undefined;
   const sentChannelName =
     typeof body.channelName === "string" ? body.channelName : undefined;
 
@@ -66,7 +67,14 @@ slackRoutes.post("/slack", async (c) => {
 
   let slackStream: SlackStream | undefined;
   if (threadTs && botToken) {
-    slackStream = new SlackStream({ channel, threadTs, botToken });
+    slackStream = new SlackStream({
+      channel,
+      threadTs,
+      botToken,
+      recipientUserId: userId,
+      recipientTeamId: teamId,
+    });
+    void slackStream.setStatus("is thinking...");
   }
 
   // Fire and forget — respond 202 immediately
@@ -80,10 +88,13 @@ slackRoutes.post("/slack", async (c) => {
     stream: slackStream
       ? {
           onTextDelta: (text) => void slackStream!.appendText(text),
-          onToolStart: (name) => void slackStream!.setStatus(humanizeToolName(name) + "..."),
-          onComplete: () => {
-            void slackStream!.stopStream();
-            void slackStream!.clearStatus();
+          onToolStart: (name) =>
+            void slackStream!.setStatus(
+              `is ${humanizeToolName(name).toLowerCase()}...`,
+            ),
+          onComplete: async () => {
+            await slackStream!.stopStream();
+            await slackStream!.clearStatus();
           },
         }
       : undefined,
