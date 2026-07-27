@@ -5,6 +5,7 @@ import { DEFAULT_MAX_TURNS, DEFAULT_MAX_BUDGET_USD } from "../config.js";
 import { getSlackSystemPrompt, getSlackStreamingSystemPrompt } from "../prompts/index.js";
 import { createWorktree, removeWorktree } from "../repo.js";
 import { getSession, setSession } from "../sessions.js";
+import { resolveSlackChannelName } from "../services/slack-context.js";
 import { SlackStream } from "../services/slack-stream.js";
 import { humanizeToolName } from "../services/tool-labels.js";
 import { verifySlackSignature } from "../services/slack-verify.js";
@@ -121,16 +122,23 @@ async function handleAIMessage(event: SlackEvent, isDM: boolean) {
   const worktreeId = existing?.worktreeId ?? crypto.randomUUID();
   const worktreePath = createWorktree(worktreeId);
 
-  // Fetch thread context when mentioned in an existing thread
-  let threadContext: string | null = null;
-  if (event.thread_ts && botToken) {
-    threadContext = await fetchThreadContext(
-      event.channel,
-      event.thread_ts,
-      event.ts,
-      botToken,
-    );
-  }
+  const [threadContext, channelName] = await Promise.all([
+    event.thread_ts && botToken
+      ? fetchThreadContext(
+          event.channel,
+          event.thread_ts,
+          event.ts,
+          botToken,
+        )
+      : null,
+    botToken
+      ? resolveSlackChannelName({
+          channel: event.channel,
+          userId: event.user,
+          botToken,
+        })
+      : null,
+  ]);
 
   const promptParts = ["User query:", messageText];
   if (threadContext) {
@@ -147,6 +155,7 @@ async function handleAIMessage(event: SlackEvent, isDM: boolean) {
     "",
     "Reply to:",
     `- channel: ${event.channel}`,
+    ...(channelName ? [`- channel_name: ${channelName}`] : []),
     `- thread_ts: ${threadTs} (reply in this thread)`,
     `- slack_thread_url: ${slackThreadUrl}`,
   );

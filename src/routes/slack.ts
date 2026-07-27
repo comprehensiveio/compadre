@@ -5,6 +5,7 @@ import { DEFAULT_MAX_TURNS, DEFAULT_MAX_BUDGET_USD } from "../config.js";
 import { getSlackSystemPrompt, getSlackStreamingSystemPrompt } from "../prompts/index.js";
 import { createWorktree, removeWorktree } from "../repo.js";
 import { getSession, setSession } from "../sessions.js";
+import { resolveSlackChannelName } from "../services/slack-context.js";
 import { SlackStream } from "../services/slack-stream.js";
 import { humanizeToolName } from "../services/tool-labels.js";
 
@@ -34,6 +35,8 @@ slackRoutes.post("/slack", async (c) => {
   const channel = body.channel as string | undefined;
   const threadTs = body.threadTs as string | undefined;
   const userId = body.userId as string | undefined;
+  const sentChannelName =
+    typeof body.channelName === "string" ? body.channelName : undefined;
 
   if (!channel) {
     return c.json({ error: "missing 'channel' field" }, 400);
@@ -45,12 +48,23 @@ slackRoutes.post("/slack", async (c) => {
   const worktreeId = existing?.worktreeId ?? crypto.randomUUID();
   const worktreePath = createWorktree(worktreeId);
 
-  const prompt = buildSlackPrompt({ message, channel, threadTs, userId });
+  const botToken = process.env.SLACK_BOT_TOKEN;
+  const channelName =
+    normalizeChannelName(sentChannelName) ||
+    (botToken
+      ? await resolveSlackChannelName({ channel, userId, botToken })
+      : undefined);
+  const prompt = buildSlackPrompt({
+    message,
+    channel,
+    channelName: channelName || undefined,
+    threadTs,
+    userId,
+  });
 
   console.log(`[slack] received from ${userId} in ${channel}: ${message.slice(0, 100)}`);
 
   let slackStream: SlackStream | undefined;
-  const botToken = process.env.SLACK_BOT_TOKEN;
   if (threadTs && botToken) {
     slackStream = new SlackStream({ channel, threadTs, botToken });
   }
@@ -105,11 +119,13 @@ function buildSlackThreadUrl(channel: string, threadTs: string): string {
 function buildSlackPrompt({
   message,
   channel,
+  channelName,
   threadTs,
   userId,
 }: {
   message: string;
   channel: string;
+  channelName?: string;
   threadTs?: string;
   userId?: string;
 }) {
@@ -118,10 +134,16 @@ function buildSlackPrompt({
     ``,
     `Reply to:`,
     `- channel: ${channel}`,
+    channelName ? `- channel_name: ${channelName}` : ``,
     threadTs ? `- thread_ts: ${threadTs} (reply in this thread)` : `- no thread (start a new message)`,
     threadTs ? `- slack_thread_url: ${buildSlackThreadUrl(channel, threadTs)}` : ``,
     ``,
     message,
   ];
   return lines.join("\n");
+}
+
+function normalizeChannelName(channelName?: string): string | undefined {
+  const normalized = channelName?.replace(/[\r\n]+/g, " ").trim();
+  return normalized || undefined;
 }
