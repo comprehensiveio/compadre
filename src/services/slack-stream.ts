@@ -1,3 +1,8 @@
+import {
+  SLACK_STREAM_CONTENT_LIMIT,
+  SLACK_TRUNCATION_NOTICE,
+} from "./slack-markdown.js";
+
 const SLACK_API = "https://slack.com/api";
 const FLUSH_INTERVAL_MS = 500;
 
@@ -35,6 +40,7 @@ export class SlackStream {
   private streamEnded = false;
   private buffer = "";
   private fullText = "";
+  private truncated = false;
   private flushTimer: ReturnType<typeof setTimeout> | null = null;
   private flushing: Promise<void> = Promise.resolve();
 
@@ -104,8 +110,16 @@ export class SlackStream {
   }
 
   appendText(text: string): void {
-    if (this.streamEnded) return;
-    this.buffer += text;
+    if (this.streamEnded || this.truncated || !text) return;
+
+    const currentLength = this.fullText.length + this.buffer.length;
+    const remaining = Math.max(0, SLACK_STREAM_CONTENT_LIMIT - currentLength);
+    this.buffer += text.slice(0, remaining);
+    if (text.length > remaining) {
+      this.buffer += SLACK_TRUNCATION_NOTICE;
+      this.truncated = true;
+    }
+
     if (!this.flushTimer) {
       this.flushTimer = setTimeout(() => {
         this.flushTimer = null;
@@ -216,7 +230,7 @@ export class SlackStream {
         const update = await this.call("chat.update", {
           channel: this.channel,
           ts: this.activeStreamTs,
-          text: this.fullText,
+          markdown_text: this.fullText,
         });
         if (update.ok) {
           this.deliveryMode = "updates";
@@ -231,7 +245,7 @@ export class SlackStream {
       await this.call("chat.update", {
         channel: this.channel,
         ts: this.activeStreamTs,
-        text: this.fullText,
+        markdown_text: this.fullText,
       });
     }
   }
@@ -240,7 +254,7 @@ export class SlackStream {
     const data = await this.call("chat.postMessage", {
       channel: this.channel,
       thread_ts: this.threadTs,
-      text: this.fullText,
+      markdown_text: this.fullText,
     });
     if (data.ok && typeof data.ts === "string") {
       this.activeStreamTs = data.ts;
@@ -254,14 +268,14 @@ export class SlackStream {
     const update = await this.call("chat.update", {
       channel: this.channel,
       ts: this.activeStreamTs,
-      text: this.fullText,
+      markdown_text: this.fullText,
     });
     if (update.ok) return "update-recovery";
 
     const post = await this.call("chat.postMessage", {
       channel: this.channel,
       thread_ts: this.threadTs,
-      text: this.fullText,
+      markdown_text: this.fullText,
     });
     return post.ok ? "post-recovery" : "failed";
   }

@@ -1,3 +1,5 @@
+import { truncateSlackMarkdown } from "./slack-markdown.js";
+
 const SLACK_API = "https://slack.com/api";
 const ENG_OPS_CHANNEL_ID = "C0B4Z6252M6";
 const DATADOG_AUTH_ALERT_INTERVAL_MS = 24 * 60 * 60 * 1000;
@@ -21,14 +23,7 @@ export async function alertDatadogRefreshTokenInvalid(
     return;
   }
 
-  const text = [
-    "Compadre needs a new Datadog MCP refresh token.",
-    "",
-    "Datadog returned `invalid_grant` while Compadre was refreshing the MCP OAuth token. Datadog MCP tools are disabled until `DATADOG_MCP_CLIENT_ID` and `DATADOG_MCP_REFRESH_TOKEN` are updated in Render and the service is restarted.",
-    "",
-    `Detected at: ${new Date(now).toISOString()}`,
-    ...(errorDetail ? ["", `Datadog response: ${errorDetail}`] : []),
-  ].join("\n");
+  const text = buildDatadogRefreshTokenInvalidAlert(errorDetail, new Date(now));
 
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), 10_000);
@@ -42,7 +37,7 @@ export async function alertDatadogRefreshTokenInvalid(
       },
       body: JSON.stringify({
         channel: ENG_OPS_CHANNEL_ID,
-        text,
+        markdown_text: text,
         unfurl_links: false,
         unfurl_media: false,
       }),
@@ -57,4 +52,18 @@ export async function alertDatadogRefreshTokenInvalid(
   } finally {
     clearTimeout(timeoutId);
   }
+}
+
+export function buildDatadogRefreshTokenInvalidAlert(
+  errorDetail?: string,
+  detectedAt: Date = new Date(),
+): string {
+  return truncateSlackMarkdown([
+    "Compadre needs a new Datadog MCP refresh token.",
+    "",
+    "Datadog returned `invalid_grant` while Compadre was refreshing the MCP OAuth token. Datadog MCP tools are disabled until `DATADOG_MCP_CLIENT_ID` and `DATADOG_MCP_REFRESH_TOKEN` are updated in Render and the service is restarted.",
+    "",
+    `Detected at: ${detectedAt.toISOString()}`,
+    ...(errorDetail ? ["", `Datadog response: ${errorDetail}`] : []),
+  ].join("\n"));
 }

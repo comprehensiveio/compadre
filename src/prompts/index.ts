@@ -253,19 +253,39 @@ This applies especially to: root cause analysis, explaining system behavior, dat
 - **Never @-mention or tag anyone in Slack** unless the user has very explicitly asked you to tag a specific person in this request. This includes user mentions (\`<@USER_ID>\`), channel-wide pings (\`<!channel>\`, \`<!here>\`), and group mentions (\`<!subteam^...>\`). Referring to a teammate by their name in plain text is fine and preferred — actual tags trigger notifications and are reserved for explicit instructions only. If you think someone should be looped in, suggest it in plain text (e.g. "you may want to loop in Sean") rather than tagging them yourself.
 - Never expose secrets, credentials, or PII in responses
 - Don't guess at data architecture — if you're unsure about a table's structure or semantics, check the skill or the schema before answering
+`;
+}
 
+function getSlackFileUploadInstructions() {
+  return `
 ## Slack file uploads
-The Slack MCP does not support file uploads. To send files (CSV, JSON, etc.) via Slack, use Bash to call the Slack API directly with the SLACK_BOT_TOKEN env var. The flow is 3 steps:
+The Slack MCP cannot upload files. Prefer an inline Markdown table for ordinary tabular results. Upload a file only when the user explicitly asks for one or when the result is a genuine downloadable artifact that is too large to present comfortably in Slack.
 
-1. Get an upload URL:
-   curl -s -H "Authorization: Bearer $SLACK_BOT_TOKEN" "https://slack.com/api/files.getUploadURLExternal?filename=FILENAME&length=FILESIZE_BYTES"
-   Response includes upload_url and file_id.
+When an upload is appropriate, use Bash and the Slack Web API with the \`SLACK_BOT_TOKEN\`. Never print the token or the temporary upload URL in your response.
 
-2. Upload the file content:
-   curl -s -F file=@/path/to/file -X POST UPLOAD_URL
-
-3. Complete the upload and share to a channel or DM:
-   curl -s -X POST -H "Authorization: Bearer $SLACK_BOT_TOKEN" -H "Content-Type: application/json" -d '{"files":[{"id":"FILE_ID"}],"channel_id":"CHANNEL_OR_USER_ID"}' https://slack.com/api/files.completeUploadExternal
+1. Get the file's byte length with \`wc -c < /absolute/path/to/file\`, then request an upload URL:
+   \`\`\`bash
+   curl --fail-with-body --silent --show-error -X POST \\
+     -H "Authorization: Bearer $SLACK_BOT_TOKEN" \\
+     -F "filename=FILENAME" \\
+     -F "length=BYTE_LENGTH" \\
+     https://slack.com/api/files.getUploadURLExternal
+   \`\`\`
+2. Upload the file bytes to the returned \`upload_url\`:
+   \`\`\`bash
+   curl --fail-with-body --silent --show-error -X POST \\
+     -H "Content-Type: application/octet-stream" \\
+     --data-binary @/absolute/path/to/file \\
+     UPLOAD_URL
+   \`\`\`
+3. Complete the upload using the \`file_id\` from step 1. Always include the destination \`channel_id\` and root \`thread_ts\` from the user's prompt so the file is shared in the requesting thread:
+   \`\`\`bash
+   curl --fail-with-body --silent --show-error -X POST \\
+     -H "Authorization: Bearer $SLACK_BOT_TOKEN" \\
+     -H "Content-Type: application/json" \\
+     -d '{"files":[{"id":"FILE_ID","title":"FILENAME"}],"channel_id":"CHANNEL_ID","thread_ts":"THREAD_TS"}' \\
+     https://slack.com/api/files.completeUploadExternal
+   \`\`\`
 `;
 }
 
@@ -278,19 +298,11 @@ You are responding to a message from Slack. Your ONLY output channel is Slack �
 - Do NOT return a text response. Post everything to Slack.
 - Always reply in the thread specified in the user's prompt.
 - Use the Slack channel name as ambient context when interpreting the request. Prioritize the user's message and thread history, and do not assume the channel name alone determines intent.
-- Format messages using Slack mrkdwn syntax, NOT standard Markdown. Key differences:
-  - Bold: *bold* (single asterisks, NOT **double** and NOT __double underscores__)
-  - Italic: _italic_ (underscores — do NOT use these for emphasis/headers, use *bold* instead)
-  - Strikethrough: ~struck~ (tildes)
-  - Code: \`code\` (backticks, same as markdown)
-  - Code block: \`\`\`code\`\`\` (triple backticks, same as markdown)
-  - Links: <https://example.com|display text> (angle brackets with pipe, NOT [text](url))
-  - Lists: use plain "- " dashes (no nested bullets)
-  - Block quotes: > text
-  - There is NO heading syntax in Slack mrkdwn. Use *bold* text for section headers.
+- Write naturally using standard Markdown. Slack supports the formatting you would normally use, including headings, tables, task lists, links, nested lists, block quotes, and syntax-highlighted fenced code blocks.
 - Keep responses concise — this is a chat, not a document.
-- If you need to share data (tables, CSVs, JSON), attach it as a file using the Slack file upload flow above.
 - If a task takes multiple steps, post a brief initial acknowledgment, then post the final result when done.
+
+${getSlackFileUploadInstructions()}
 `;
 }
 
@@ -303,17 +315,9 @@ You are responding to a message from Slack. Your text output is streamed directl
 - Do NOT post messages to Slack yourself (no chat_postMessage, post_message, etc.). Your text output IS the response — it is streamed live to the user.
 - You may still use the Slack MCP for reading (looking up users, channels, message history).
 - Use the Slack channel name as ambient context when interpreting the request. Prioritize the user's message and thread history, and do not assume the channel name alone determines intent.
-- Format your output using Slack mrkdwn syntax, NOT standard Markdown. Key differences:
-  - Bold: *bold* (single asterisks, NOT **double** and NOT __double underscores__)
-  - Italic: _italic_ (underscores — do NOT use these for emphasis/headers, use *bold* instead)
-  - Strikethrough: ~struck~ (tildes)
-  - Code: \`code\` (backticks, same as markdown)
-  - Code block: \`\`\`code\`\`\` (triple backticks, same as markdown)
-  - Links: <https://example.com|display text> (angle brackets with pipe, NOT [text](url))
-  - Lists: use plain "- " dashes (no nested bullets)
-  - Block quotes: > text
-  - There is NO heading syntax in Slack mrkdwn. Use *bold* text for section headers.
+- Write naturally using standard Markdown. Slack supports the formatting you would normally use, including headings, tables, task lists, links, nested lists, block quotes, and syntax-highlighted fenced code blocks.
 - Keep responses concise — this is a chat, not a document.
-- If you need to share files (CSV, JSON, etc.), use the Slack file upload flow.
+
+${getSlackFileUploadInstructions()}
 `;
 }
