@@ -7,7 +7,7 @@ AI operations agent for Comprehensive. Spawns headless Claude Code sessions via 
 | Server | Transport | What it does |
 |--------|-----------|-------------|
 | **Datadog** | HTTP (OAuth) | Logs, metrics, traces, APM, error tracking, incidents, monitors |
-| **Slack** | stdio (`@modelcontextprotocol/server-slack`) | Read/send messages via bot token |
+| **Slack** | stdio (built in) | Read Slack, send standard Markdown, and upload files via bot token |
 | **Linear** | HTTP | Issue tracking, project management |
 | **GitHub** | HTTP (Copilot MCP) | Repos, PRs, issues |
 | **Render** | HTTP (`mcp.render.com`) | Service management, deploys, logs |

@@ -13,12 +13,13 @@ test("keeps Slack upload instructions scoped to Slack prompts", () => {
     getSlackStreamingSystemPrompt("/tmp/test-repo"),
   ];
 
-  assert.doesNotMatch(basePrompt, /Slack file uploads/);
+  assert.doesNotMatch(basePrompt, /## Slack file uploads/);
+  assert.match(basePrompt, /standard Markdown/);
+  assert.match(basePrompt, /slack_upload_file/);
   for (const prompt of slackPrompts) {
     assert.match(prompt, /Prefer an inline Markdown table/);
     assert.match(prompt, /explicitly asks for one/);
-    assert.match(prompt, /files\.getUploadURLExternal/);
-    assert.match(prompt, /files\.completeUploadExternal/);
-    assert.match(prompt, /"thread_ts":"THREAD_TS"/);
+    assert.match(prompt, /slack_upload_file/);
+    assert.doesNotMatch(prompt, /curl/);
   }
 });

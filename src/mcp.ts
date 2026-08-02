@@ -5,7 +5,7 @@
  * Datadog uses OAuth refresh tokens (managed by src/auth/datadog.ts).
  * Jam uses its hosted HTTP MCP server with a PAT for headless server auth.
  * Google Workspace uses a bot-user OAuth refresh token cached for workspace-mcp.
- * Slack uses a bot token via the stdio-based MCP server.
+ * Slack uses a bot token via our stdio MCP server so writes use standard Markdown.
  * Postgres MCP runs as a stdio subprocess.
  * S3 MCP runs as a stdio subprocess for read-only S3 access.
  * Vitally MCP runs as a stdio subprocess for read-only Vitally access.
@@ -150,11 +150,14 @@ export async function buildMcpServers() {
 
   const servers: Record<string, McpServerConfig> = {
     slack: {
-      command: "npx",
-      args: ["-y", "@modelcontextprotocol/server-slack"],
+      command: "node",
+      args: [path.join(__dirname, "..", "dist", "mcp-servers", "slack.js")],
       env: {
         SLACK_BOT_TOKEN: env("SLACK_BOT_TOKEN"),
         SLACK_TEAM_ID: env("SLACK_TEAM_ID"),
+        ...(process.env.SLACK_CHANNEL_IDS
+          ? { SLACK_CHANNEL_IDS: process.env.SLACK_CHANNEL_IDS }
+          : {}),
       },
     },
 

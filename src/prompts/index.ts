@@ -24,7 +24,7 @@ Comprehensive is a SaaS platform for compensation management and benchmarking. T
 
 ## Your tools
 - Datadog: monitoring, logs, metrics, traces, APM, error tracking, incidents
-- Slack: read and send messages
+- Slack: read and send messages using natural, standard Markdown; upload local files with \`slack_upload_file\`
 - Linear: issue tracking, project management (project prefix: COM)
 - GitHub: repository access, PRs, issues (repo: comprehensiveio/comp)
 - Render: service management, deploys, logs
@@ -259,33 +259,7 @@ This applies especially to: root cause analysis, explaining system behavior, dat
 function getSlackFileUploadInstructions() {
   return `
 ## Slack file uploads
-The Slack MCP cannot upload files. Prefer an inline Markdown table for ordinary tabular results. Upload a file only when the user explicitly asks for one or when the result is a genuine downloadable artifact that is too large to present comfortably in Slack.
-
-When an upload is appropriate, use Bash and the Slack Web API with the \`SLACK_BOT_TOKEN\`. Never print the token or the temporary upload URL in your response.
-
-1. Get the file's byte length with \`wc -c < /absolute/path/to/file\`, then request an upload URL:
-   \`\`\`bash
-   curl --fail-with-body --silent --show-error -X POST \\
-     -H "Authorization: Bearer $SLACK_BOT_TOKEN" \\
-     -F "filename=FILENAME" \\
-     -F "length=BYTE_LENGTH" \\
-     https://slack.com/api/files.getUploadURLExternal
-   \`\`\`
-2. Upload the file bytes to the returned \`upload_url\`:
-   \`\`\`bash
-   curl --fail-with-body --silent --show-error -X POST \\
-     -H "Content-Type: application/octet-stream" \\
-     --data-binary @/absolute/path/to/file \\
-     UPLOAD_URL
-   \`\`\`
-3. Complete the upload using the \`file_id\` from step 1. Always include the destination \`channel_id\` and root \`thread_ts\` from the user's prompt so the file is shared in the requesting thread:
-   \`\`\`bash
-   curl --fail-with-body --silent --show-error -X POST \\
-     -H "Authorization: Bearer $SLACK_BOT_TOKEN" \\
-     -H "Content-Type: application/json" \\
-     -d '{"files":[{"id":"FILE_ID","title":"FILENAME"}],"channel_id":"CHANNEL_ID","thread_ts":"THREAD_TS"}' \\
-     https://slack.com/api/files.completeUploadExternal
-   \`\`\`
+Prefer an inline Markdown table for ordinary tabular results. Upload a file only when the user explicitly asks for one or when the result is a genuine downloadable artifact that is too large to present comfortably in Slack. Use \`slack_upload_file\` with the destination channel and, when replying in a thread, its root thread timestamp.
 `;
 }
 
