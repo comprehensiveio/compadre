@@ -15,11 +15,24 @@ import fs from "fs/promises";
 import os from "os";
 import path from "path";
 import { fileURLToPath } from "url";
-import type { McpServerConfig } from "@anthropic-ai/claude-agent-sdk";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DEFAULT_DATADOG_MCP_URL =
   "https://mcp.datadoghq.com/v1/mcp?toolsets=core,apm,llmobs";
+
+/** Provider-neutral subset used by both the Agent SDK and TanStack harnesses. */
+export type CompadreMcpServerConfig =
+  | {
+      type: "http" | "sse";
+      url: string;
+      headers?: Record<string, string>;
+    }
+  | {
+      command: string;
+      args?: string[];
+      env?: Record<string, string>;
+      cwd?: string;
+    };
 const GOOGLE_WORKSPACE_SCOPES = [
   "https://www.googleapis.com/auth/documents",
   "https://www.googleapis.com/auth/drive",
@@ -84,7 +97,7 @@ async function prepareGoogleWorkspaceCredentials(): Promise<string | null> {
   return credentialsDir;
 }
 
-function buildDatadogMcpServer(): McpServerConfig | null {
+function buildDatadogMcpServer(): CompadreMcpServerConfig | null {
   const accessToken = process.env.DATADOG_MCP_ACCESS_TOKEN;
 
   if (!accessToken) {
@@ -106,7 +119,7 @@ function buildDatadogMcpServer(): McpServerConfig | null {
   };
 }
 
-function buildCompMcpServer(): McpServerConfig | null {
+function buildCompMcpServer(): CompadreMcpServerConfig | null {
   const compAppUrl = process.env.COMP_APP_URL;
   const apiKey = process.env.COMPADRE_API_KEY;
 
@@ -134,7 +147,7 @@ export async function buildMcpServers() {
   const googleWorkspaceCredentialsDir =
     await prepareGoogleWorkspaceCredentials();
 
-  const servers: Record<string, McpServerConfig> = {
+  const servers: Record<string, CompadreMcpServerConfig> = {
     slack: {
       command: "node",
       args: [path.join(__dirname, "..", "dist", "mcp-servers", "slack.js")],

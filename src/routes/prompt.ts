@@ -1,9 +1,10 @@
-import crypto from "crypto";
 import { Hono } from "hono";
-import { runTask } from "../agent.js";
 import { DEFAULT_MAX_TURNS, DEFAULT_MAX_BUDGET_USD } from "../config.js";
-import { createWorktree, removeWorktree } from "../repo.js";
-import { getSession, setSession } from "../sessions.js";
+import {
+  configuredConversationRuntime,
+  runConversation,
+} from "../conversation.js";
+import { isAgentProvider } from "../tanstack/protocol.js";
 
 export const promptRoutes = new Hono();
 
@@ -28,18 +29,26 @@ promptRoutes.post("/prompt", async (c) => {
     return c.json({ error: "missing 'prompt' field" }, 400);
   }
 
-  const threadId = body.threadId as string | undefined;
-  let sessionId: string | undefined = (body.sessionId as string) ?? undefined;
-
-  let existingWorktreeId: string | undefined;
-  if (!sessionId && threadId) {
-    const existing = getSession(threadId);
-    sessionId = existing?.sessionId;
-    existingWorktreeId = existing?.worktreeId;
+  const threadId =
+    typeof body.threadId === "string" ? body.threadId : undefined;
+  const sessionId =
+    typeof body.sessionId === "string" ? body.sessionId : undefined;
+  const requestedProvider = body.provider;
+  if (requestedProvider !== undefined && !isAgentProvider(requestedProvider)) {
+    return c.json({ error: "provider must be 'claude-code' or 'codex'" }, 400);
   }
-
-  const worktreeId = existingWorktreeId ?? crypto.randomUUID();
-  const worktreePath = createWorktree(worktreeId);
+  if (requestedProvider && configuredConversationRuntime() !== "tanstack") {
+    return c.json(
+      { error: "provider selection requires COMPADRE_AGENT_RUNTIME=tanstack" },
+      400
+    );
+  }
+  if (sessionId && configuredConversationRuntime() === "tanstack") {
+    return c.json(
+      { error: "sessionId is legacy-only; use threadId with the TanStack runtime" },
+      400
+    );
+  }
 
   const async = body.async === true;
 
@@ -47,54 +56,40 @@ promptRoutes.post("/prompt", async (c) => {
 
   const taskOptions = {
     prompt,
+    threadId,
     sessionId,
-    worktreePath,
+    provider: isAgentProvider(requestedProvider)
+      ? requestedProvider
+      : undefined,
     maxTurns: (body.maxTurns as number) ?? DEFAULT_MAX_TURNS,
     maxBudgetUsd: (body.maxBudgetUsd as number) ?? DEFAULT_MAX_BUDGET_USD,
+    signal: async ? undefined : c.req.raw.signal,
   };
 
   if (async) {
-    runTask(taskOptions)
+    runConversation(taskOptions)
       .then((result) => {
-        if (threadId && result.sessionId) {
-          setSession(threadId, { sessionId: result.sessionId, worktreeId });
-        } else {
-          removeWorktree(worktreeId);
-        }
         console.log(
-          `[prompt] async completed: turns=${result.numTurns} cost=$${result.costUsd.toFixed(3)} duration=${result.durationMs}ms`
+          `[prompt] async completed: runtime=${result.runtime} provider=${result.provider} turns=${result.numTurns} cost=$${result.costUsd.toFixed(3)} duration=${result.durationMs}ms`
         );
       })
       .catch((err) => {
-        if (!threadId || !getSession(threadId)) {
-          removeWorktree(worktreeId);
-        }
         console.error("[prompt] async error:", err);
       });
     return c.json({ ok: true, message: "accepted" }, 202);
   }
 
-  try {
-    const result = await runTask(taskOptions);
-
-    if (threadId && result.sessionId) {
-      setSession(threadId, { sessionId: result.sessionId, worktreeId });
-    } else {
-      removeWorktree(worktreeId);
-    }
-
-    return c.json({
-      ok: true,
-      result: result.result,
-      sessionId: result.sessionId,
-      turns: result.numTurns,
-      cost: result.costUsd,
-      duration: result.durationMs,
-    });
-  } catch (err) {
-    if (!threadId || !getSession(threadId)) {
-      removeWorktree(worktreeId);
-    }
-    throw err;
-  }
+  const result = await runConversation(taskOptions);
+  return c.json({
+    ok: true,
+    result: result.result,
+    sessionId: result.sessionId,
+    runtime: result.runtime,
+    provider: result.provider,
+    model: result.model,
+    budgetEnforced: result.budgetEnforced,
+    turns: result.numTurns,
+    cost: result.costUsd,
+    duration: result.durationMs,
+  });
 });

@@ -1,6 +1,8 @@
 # Compadre
 
-AI operations agent for Comprehensive. Spawns headless Claude Code sessions via the [Claude Agent SDK](https://docs.anthropic.com/en/docs/claude-agent-sdk) with MCP access to our infrastructure.
+AI operations agent for Comprehensive. Slack and API requests can run through
+the legacy Claude Agent SDK or a provider-neutral TanStack AI runtime backed by
+Claude Code or Codex, with shared MCP access to our infrastructure.
 
 ## MCP Servers
 
@@ -21,6 +23,8 @@ The agent also gets all built-in Claude Code tools (Read, Grep, Glob, Bash, Edit
 ```
 GET  /health                 # Health check
 POST /prompt                 # Ad-hoc prompt (Bearer COMPADRE_API_KEY)
+POST /slack/events           # Primary signed Slack Events ingress
+POST /ag-ui                  # Optional authenticated AG-UI stream
 POST /webhook/:source        # Generic webhook (fire-and-forget)
 ```
 
@@ -46,11 +50,15 @@ See `.env.example` for the full list. Key notes:
 
 - **DATADOG_MCP_ACCESS_TOKEN**: A Datadog Service Access Token (recommended for the deployed service) or Personal Access Token. It is sent as a bearer token to Datadog's stable MCP endpoint; no API key or OAuth refresh token is required.
 - **DATADOG_MCP_URL**: Optional endpoint override for another Datadog site or toolset selection. Defaults to US1 with the `core`, `apm`, and `llmobs` toolsets.
-- **DD_LLMOBS_ENABLED / DD_LLMOBS_ML_APP**: Enable Datadog's automatic Claude Agent SDK instrumentation and attribute its agent, step, LLM, and tool spans to the `compadre` ML app.
+- **DD_SERVICE / DD_LLMOBS_ENABLED / DD_LLMOBS_ML_APP / DD_TRACE_OTEL_ENABLED**: Attribute legacy Claude SDK telemetry and TanStack's provider-neutral OpenTelemetry agent/model/tool spans to Compadre in Datadog. Compadre defaults these on at startup unless explicitly overridden.
+- **DD_METRICS_OTEL_ENABLED**: Export TanStack's GenAI token and duration histograms through `dd-trace`.
 - **SLACK_BOT_TOKEN**: `xoxb-*` token from the Compadre Slack app.
 - **GOOGLE_WORKSPACE_USER_EMAIL / GOOGLE_OAUTH_CLIENT_ID / GOOGLE_OAUTH_CLIENT_SECRET / GOOGLE_OAUTH_REFRESH_TOKEN**: OAuth credentials for the Compadre Google Workspace bot user. When set, Compadre enables Google Workspace tools through `workspace-mcp`.
 - **REPO_PATH**: Set to `/opt/render/repo` on Render (auto-cloned). Set to your local comp checkout for dev.
 - **COMPADRE_API_KEY**: Auth token for the API. Generate with `openssl rand -hex 32`.
+- **COMPADRE_AGENT_RUNTIME / COMPADRE_AGENT_PROVIDER**: Select the legacy or TanStack runtime and the Claude Code or Codex harness.
+- **COMPADRE_TANSTACK_SLACK_USER_IDS**: Optional comma-separated Slack user canary. Listed users use TanStack while everyone else remains on legacy.
+- **COMPADRE_TANSTACK_AI_ENABLED**: Expose the authenticated AG-UI endpoint without changing Slack routing.
 - **FABLE_MODEL**: Optional model ID used when a prompt includes `--fable`. Defaults to `claude-fable-5`; normal prompts use `DEFAULT_MODEL` or the built-in default.
 
 ## Deployment (Render)
@@ -66,9 +74,12 @@ On Render:
 ## Architecture
 
 ```
-HTTP request → Hono route → runTask() → Claude Agent SDK query()
-                                           ├── MCP servers (Datadog, Slack, Linear, GitHub, Render, Postgres)
-                                           └── Built-in tools (Read, Grep, Bash, etc.)
+Slack or /prompt → runConversation() ─┬→ legacy Claude Agent SDK
+                                     └→ TanStack AI ─┬→ Claude Code
+                                                     └→ Codex
+                                                           │
+                                  shared worktree, MCP, sessions, telemetry
 ```
 
-Each `runTask()` call spawns an independent Claude Code session. Sessions don't share state — the repo is reset to clean `main` between runs.
+Slack threads retain their worktree and provider-scoped native sessions in the
+current process. Postgres durability across restarts is deliberately deferred.
