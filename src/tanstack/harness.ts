@@ -4,6 +4,7 @@ import { claudeCodeText } from "@tanstack/ai-claude-code";
 import { codexText } from "@tanstack/ai-codex";
 import { withSandbox, type SandboxDefinition } from "@tanstack/ai-sandbox";
 import type { MCPClient } from "@tanstack/ai-mcp";
+import { withLocks } from "@tanstack/ai/locks";
 import {
   CODEX_MODEL,
   DEFAULT_MODEL,
@@ -12,16 +13,13 @@ import {
 import { resolveClaudeExecutable } from "./claude-executable.js";
 import { resolveCodexExecutable } from "./codex-executable.js";
 import {
+  configuredAgentProvider,
   isAgentProvider,
   type AgentProvider,
   type AguiChatParams,
 } from "./protocol.js";
 import { createHarnessTelemetryMiddleware } from "./telemetry.js";
-
-const SESSION_EVENTS: Record<AgentProvider, string> = {
-  "claude-code": "claude-code.session-id",
-  codex: "codex.session-id",
-};
+import { harnessLockStore } from "./thread-lock.js";
 
 const FABLE_FLAG_PATTERN = /--fable/g;
 
@@ -41,7 +39,6 @@ export const CLAUDE_DANGEROUS_PERMISSIONS = {
 export interface HarnessSelection {
   provider: AgentProvider;
   model: string;
-  sessionEvent: string;
 }
 
 export interface CreateHarnessStreamOptions {
@@ -147,19 +144,13 @@ export function messagesWithoutFableFlag(
   });
 }
 
-function defaultProvider(): AgentProvider {
-  return isAgentProvider(process.env.COMPADRE_AGENT_PROVIDER)
-    ? process.env.COMPADRE_AGENT_PROVIDER
-    : "claude-code";
-}
-
 export function resolveHarnessSelection(
   forwardedProps: Record<string, unknown>,
   messages: unknown
 ): HarnessSelection {
   const provider = isAgentProvider(forwardedProps.provider)
     ? forwardedProps.provider
-    : defaultProvider();
+    : configuredAgentProvider();
   const requestedModel = forwardedProps.model;
 
   let model: string;
@@ -175,7 +166,7 @@ export function resolveHarnessSelection(
     model = requestedModel === DEFAULT_MODEL ? requestedModel : DEFAULT_MODEL;
   }
 
-  return { provider, model, sessionEvent: SESSION_EVENTS[provider] };
+  return { provider, model };
 }
 
 function codexReasoningEffort(): "minimal" | "low" | "medium" | "high" {
@@ -216,7 +207,11 @@ export function createHarnessStream({
     systemPrompts: [systemPrompt],
     tools: mergeAgentTools([], params.tools),
     mcp: { clients },
-    middleware: [withSandbox(sandbox), ...telemetry],
+    middleware: [
+      withLocks(harnessLockStore),
+      withSandbox(sandbox),
+      ...telemetry,
+    ],
     threadId: params.threadId,
     runId: params.runId,
     parentRunId: params.parentRunId,

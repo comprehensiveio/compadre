@@ -170,7 +170,22 @@ export function removeWorktree(id: string): void {
  * Remove worktrees older than maxAgeMs. Called periodically to clean up
  * abandoned worktrees from crashed tasks or pruned sessions.
  */
-export function cleanupStaleWorktrees(maxAgeMs: number): void {
+export function isRemovableStaleWorktree(
+  worktreeId: string,
+  modifiedAt: number,
+  now: number,
+  maxAgeMs: number,
+  retainedWorktreeIds: ReadonlySet<string>
+): boolean {
+  return (
+    !retainedWorktreeIds.has(worktreeId) && now - modifiedAt > maxAgeMs
+  );
+}
+
+export function cleanupStaleWorktrees(
+  maxAgeMs: number,
+  retainedWorktreeIds: ReadonlySet<string> = new Set()
+): void {
   if (isLocalDev()) return;
   if (!existsSync(WORKTREES_DIR)) return;
 
@@ -186,7 +201,16 @@ export function cleanupStaleWorktrees(maxAgeMs: number): void {
     const entryPath = path.join(WORKTREES_DIR, entry);
     try {
       const stat = statSync(entryPath);
-      if (stat.isDirectory() && now - stat.mtimeMs > maxAgeMs) {
+      if (
+        stat.isDirectory() &&
+        isRemovableStaleWorktree(
+          entry,
+          stat.mtimeMs,
+          now,
+          maxAgeMs,
+          retainedWorktreeIds
+        )
+      ) {
         removeWorktree(entry);
         console.log(`[repo] cleaned up stale worktree: ${entry}`);
       }

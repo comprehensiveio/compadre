@@ -66,12 +66,10 @@ test("deletes an initialized thread for explicit lifecycle cleanup", async () =>
 
   const deleted = await store.delete("thread");
 
-  assert.deepEqual(deleted, {
-    worktreeId: "worktree",
-    sessions: { codex: "session" },
-    transcript: [],
-    lastProvider: "codex",
-  });
+  assert.equal(deleted?.worktreeId, "worktree");
+  assert.deepEqual(deleted?.sessions, { codex: "session" });
+  assert.deepEqual(deleted?.transcript, []);
+  assert.equal(deleted?.lastProvider, "codex");
   assert.equal(await store.delete("thread"), undefined);
 });
 
@@ -97,4 +95,23 @@ test("retains a bounded provider-neutral transcript", async () => {
     role: "assistant",
     content: "assistant-100",
   });
+});
+
+test("expires thread state and its worktree ownership together", async () => {
+  let now = 1_000;
+  const store = new InMemoryHarnessThreadStore(() => now);
+  await store.getOrCreate("stale", () => "worktree-stale");
+  await store.getOrCreate("active", () => "worktree-active");
+
+  now = 1_500;
+  await store.getOrCreate("active", () => "unused");
+  now = 2_100;
+
+  const expired = await store.deleteStale(1_000);
+
+  assert.deepEqual(expired.map((state) => state.worktreeId), ["worktree-stale"]);
+  assert.deepEqual(
+    [...(await store.worktreeIds())],
+    ["worktree-active"]
+  );
 });

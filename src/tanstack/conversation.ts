@@ -1,14 +1,19 @@
 import crypto from "node:crypto";
 import { EventType, type StreamChunk } from "@tanstack/ai";
-import { DEFAULT_MAX_TURNS } from "../config.js";
 import type { StreamCallbacks } from "../conversation.js";
 import { AssistantMessageAccumulator } from "./assistant-messages.js";
-import type { AgentProvider, AguiChatParams } from "./protocol.js";
+import {
+  boundedMaxTurns,
+  sessionIdFromChunk,
+  type AgentProvider,
+  type AguiChatParams,
+} from "./protocol.js";
 import { runAguiChat } from "./runtime.js";
 
 export interface HarnessConversationOptions {
   threadId: string;
   prompt: string;
+  transcriptUserMessage: string;
   provider?: AgentProvider;
   maxTurns?: number;
   signal?: AbortSignal;
@@ -31,20 +36,6 @@ interface ConsumeOptions {
   provider: AgentProvider;
   startedAt: number;
   stream?: StreamCallbacks;
-}
-
-function sessionIdFrom(chunk: StreamChunk): string | undefined {
-  if (
-    chunk.type !== EventType.CUSTOM ||
-    (chunk.name !== "claude-code.session-id" &&
-      chunk.name !== "codex.session-id") ||
-    typeof chunk.value !== "object" ||
-    chunk.value === null
-  ) {
-    return undefined;
-  }
-  const sessionId = (chunk.value as { sessionId?: unknown }).sessionId;
-  return typeof sessionId === "string" ? sessionId : undefined;
 }
 
 /**
@@ -70,7 +61,7 @@ export async function consumeHarnessConversation(
       if (chunk.model) model = chunk.model;
       assistantMessages.observe(chunk);
 
-      const nextSessionId = sessionIdFrom(chunk);
+      const nextSessionId = sessionIdFromChunk(chunk, options.provider);
       if (nextSessionId) sessionId = nextSessionId;
 
       if (chunk.type === EventType.TEXT_MESSAGE_START) {
@@ -128,12 +119,6 @@ export async function consumeHarnessConversation(
   }
 }
 
-function positiveMaxTurns(value: number | undefined): number {
-  return value !== undefined && Number.isInteger(value) && value > 0
-    ? Math.min(value, DEFAULT_MAX_TURNS)
-    : DEFAULT_MAX_TURNS;
-}
-
 function maxDurationMs(): number {
   const configured = Number(process.env.COMPADRE_AGENT_MAX_DURATION_MS);
   return Number.isFinite(configured) && configured > 0
@@ -165,16 +150,18 @@ export async function runHarnessConversation(
     tools: [],
     forwardedProps: {
       provider,
-      maxTurns: positiveMaxTurns(options.maxTurns),
+      maxTurns: boundedMaxTurns(options.maxTurns),
     },
     state: {},
+    context: [],
+    aguiContext: [],
   };
 
   try {
     const startedAt = Date.now();
     const chunks = await runAguiChat(params, abortController.signal, {
       systemPrompt: options.systemPrompt,
-      transcriptUserPrompt: options.prompt,
+      transcriptUserMessage: options.transcriptUserMessage,
     });
     return await consumeHarnessConversation(chunks, {
       provider,

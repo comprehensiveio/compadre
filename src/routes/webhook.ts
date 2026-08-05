@@ -1,9 +1,13 @@
 import { Hono } from "hono";
 import { runConversation } from "../conversation.js";
+import { requireCompadreApiKey } from "./auth.js";
 
 export const webhookRoutes = new Hono();
 
 webhookRoutes.post("/webhook/:source", async (c) => {
+  const authError = requireCompadreApiKey(c);
+  if (authError) return authError;
+
   const source = c.req.param("source");
 
   let body: Record<string, unknown>;

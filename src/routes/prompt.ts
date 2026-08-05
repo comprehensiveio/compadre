@@ -2,17 +2,13 @@ import { Hono } from "hono";
 import { DEFAULT_MAX_TURNS } from "../config.js";
 import { runConversation } from "../conversation.js";
 import { isAgentProvider } from "../tanstack/protocol.js";
+import { requireCompadreApiKey } from "./auth.js";
 
 export const promptRoutes = new Hono();
 
 promptRoutes.post("/prompt", async (c) => {
-  const apiKey = process.env.COMPADRE_API_KEY;
-  if (apiKey) {
-    const auth = c.req.header("Authorization");
-    if (auth !== `Bearer ${apiKey}`) {
-      return c.json({ error: "unauthorized" }, 401);
-    }
-  }
+  const authError = requireCompadreApiKey(c);
+  if (authError) return authError;
 
   let body: Record<string, unknown>;
   try {

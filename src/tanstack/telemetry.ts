@@ -19,6 +19,7 @@ import {
   type OtelSpanInfo,
 } from "@tanstack/ai/middlewares/otel";
 import type { HarnessSelection } from "./harness.js";
+import { sessionIdFromChunk } from "./protocol.js";
 
 interface HarnessToolRun {
   id: string;
@@ -61,22 +62,6 @@ function withNormalizedCost(chunk: StreamChunk): StreamChunk {
   return { ...chunk, usage: { ...chunk.usage, cost } };
 }
 
-function sessionIdFrom(
-  chunk: StreamChunk,
-  sessionEvent: string
-): string | undefined {
-  if (
-    chunk.type !== EventType.CUSTOM ||
-    chunk.name !== sessionEvent ||
-    typeof chunk.value !== "object" ||
-    chunk.value === null
-  ) {
-    return undefined;
-  }
-  const sessionId = (chunk.value as { sessionId?: unknown }).sessionId;
-  return typeof sessionId === "string" ? sessionId : undefined;
-}
-
 /**
  * Build telemetry at the TanStack lifecycle boundary. The first middleware
  * normalizes harness events; the second is TanStack's vendor-neutral OTel
@@ -109,7 +94,7 @@ export function createHarnessTelemetryMiddleware({
     name: "compadre-harness-events",
     onChunk(_ctx, originalChunk) {
       const chunk = withNormalizedCost(originalChunk);
-      sessionId ??= sessionIdFrom(chunk, selection.sessionEvent);
+      sessionId ??= sessionIdFromChunk(chunk, selection.provider);
       totalCostUsd ??= reportedCost(chunk);
 
       if (chunk.type === EventType.TOOL_CALL_START) {

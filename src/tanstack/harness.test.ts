@@ -28,7 +28,6 @@ test("defaults to the Claude Code harness", () => {
   assert.deepEqual(resolveHarnessSelection({}, userMessages("hello")), {
     provider: "claude-code",
     model: DEFAULT_MODEL,
-    sessionEvent: "claude-code.session-id",
   });
 });
 
@@ -46,7 +45,6 @@ test("selects Codex globally or per AG-UI request", () => {
     {
       provider: "codex",
       model: CODEX_MODEL,
-      sessionEvent: "codex.session-id",
     }
   );
 });
