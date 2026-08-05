@@ -25,20 +25,18 @@ const SESSION_EVENTS: Record<AgentProvider, string> = {
 
 const FABLE_FLAG_PATTERN = /--fable/g;
 
-const CLAUDE_ALLOWED_TOOLS = [
-  "Skill",
-  "Agent",
-  "TaskOutput",
-  "Read",
-  "Glob",
-  "Grep",
-  "Bash",
-  "Edit",
-  "Write",
-  "WebSearch",
-  "WebFetch",
-  "mcp__tanstack__*",
-];
+/** Trusted Compadre harnesses run non-interactively with no approval gates. */
+export const CODEX_DANGEROUS_PERMISSIONS = {
+  sandboxMode: "danger-full-access",
+  approvalPolicy: "never",
+  config: {
+    "mcp_servers.tanstack.default_tools_approval_mode": '"approve"',
+  },
+} as const;
+
+export const CLAUDE_DANGEROUS_PERMISSIONS = {
+  permissionMode: "bypassPermissions",
+} as const;
 
 export interface HarnessSelection {
   provider: AgentProvider;
@@ -233,8 +231,7 @@ export function createHarnessStream({
       ...shared,
       adapter: codexText(selection.model, {
         codexExecutable: resolveCodexExecutable(),
-        sandboxMode: "workspace-write",
-        approvalPolicy: "never",
+        ...CODEX_DANGEROUS_PERMISSIONS,
         networkAccessEnabled: true,
         webSearchMode: "live",
         modelReasoningEffort: codexReasoningEffort(),
@@ -253,10 +250,9 @@ export function createHarnessStream({
     ...shared,
     adapter: claudeCodeText(selection.model, {
       claudeExecutable: resolveClaudeExecutable(),
-      permissionMode: "bypassPermissions",
+      ...CLAUDE_DANGEROUS_PERMISSIONS,
       systemPromptMode: "replace",
       maxTurns,
-      allowedTools: CLAUDE_ALLOWED_TOOLS,
       env: {
         GIT_CEILING_DIRECTORIES: path.dirname(path.resolve(worktreePath)),
       },
