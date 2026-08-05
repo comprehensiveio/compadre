@@ -4,7 +4,9 @@ import type { StreamCallbacks } from "../conversation.js";
 import { AssistantMessageAccumulator } from "./assistant-messages.js";
 import {
   boundedMaxTurns,
+  providerForAgentProfile,
   sessionIdFromChunk,
+  type AgentProfile,
   type AgentProvider,
   type AguiChatParams,
 } from "./protocol.js";
@@ -15,6 +17,7 @@ export interface HarnessConversationOptions {
   prompt: string;
   transcriptUserMessage: string;
   provider?: AgentProvider;
+  profile?: AgentProfile;
   maxTurns?: number;
   signal?: AbortSignal;
   systemPrompt?: (worktreePath: string) => string;
@@ -129,7 +132,9 @@ function maxDurationMs(): number {
 export async function runHarnessConversation(
   options: HarnessConversationOptions
 ): Promise<HarnessConversationResult> {
-  const provider = options.provider ?? "claude-code";
+  const provider = options.profile
+    ? providerForAgentProfile(options.profile)
+    : options.provider ?? "claude-code";
   const runId = crypto.randomUUID();
   const abortController = new AbortController();
   const abort = () => abortController.abort(options.signal?.reason);
@@ -150,6 +155,7 @@ export async function runHarnessConversation(
     tools: [],
     forwardedProps: {
       provider,
+      ...(options.profile ? { profile: options.profile } : {}),
       maxTurns: boundedMaxTurns(options.maxTurns),
     },
     state: {},

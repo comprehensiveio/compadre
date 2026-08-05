@@ -60,7 +60,12 @@ See `.env.example` for the full list. Key notes:
 - **CODEX_API_KEY**: API key for the Codex CLI harness; a persisted Codex login is also supported for local development.
 - **COMPADRE_AGENT_PROVIDER**: Select the default Claude Code or Codex harness. `/prompt` and AG-UI callers may override it per request.
 - **COMPADRE_TANSTACK_AI_ENABLED**: Expose the authenticated AG-UI endpoint without changing Slack routing.
-- **FABLE_MODEL**: Optional model ID used when a prompt includes `--fable`. Defaults to `claude-fable-5`; normal prompts use `DEFAULT_MODEL` or the built-in default.
+- **FABLE_MODEL**: Optional model ID used by Slack's `--fable` routing profile. Defaults to `claude-fable-5`; normal Claude Code prompts use `DEFAULT_MODEL` or the built-in default.
+
+Slack messages can override the default for one turn with `--sol` or `--codex`
+for Codex, `--fable` for Fable through Claude Code, and `--claude-code` or `--cc`
+for the normal Claude Code model. Routing directives are removed before the
+agent prompt and conversation transcript are created.
 
 ## Deployment (Render)
 

@@ -8,12 +8,23 @@ import { DEFAULT_MAX_TURNS } from "../config.js";
 export const AGENT_PROVIDERS = ["claude-code", "codex"] as const;
 export type AgentProvider = (typeof AGENT_PROVIDERS)[number];
 
+export const AGENT_PROFILES = ["claude-code", "codex", "fable"] as const;
+export type AgentProfile = (typeof AGENT_PROFILES)[number];
+
 export type AguiChatParams = Awaited<
   ReturnType<typeof chatParamsFromRequestBody>
 >;
 
 export function isAgentProvider(value: unknown): value is AgentProvider {
   return AGENT_PROVIDERS.includes(value as AgentProvider);
+}
+
+export function isAgentProfile(value: unknown): value is AgentProfile {
+  return AGENT_PROFILES.includes(value as AgentProfile);
+}
+
+export function providerForAgentProfile(profile: AgentProfile): AgentProvider {
+  return profile === "codex" ? "codex" : "claude-code";
 }
 
 export function configuredAgentProvider(): AgentProvider {

@@ -40,6 +40,11 @@ Startup fails fast for an invalid provider. `/prompt` may select `provider` per
 request. Callers use the provider-neutral `threadId`; provider-native
 `sessionId` values are internal and cannot be supplied through `/prompt`.
 
+Slack callers may select a one-turn profile with `--sol`/`--codex`, `--fable`,
+or `--claude-code`/`--cc`. The route is explicit runtime metadata; its control
+token is removed before both the harness prompt and provider-neutral transcript.
+Conflicting profiles are rejected instead of relying on order or precedence.
+
 Both harnesses run non-interactively with approval prompts disabled. Claude
 uses `bypassPermissions`; Codex uses `danger-full-access`, `approvalPolicy:
 never`, and automatic MCP approval. This service therefore assumes its process,
@@ -53,8 +58,10 @@ turn count. Both harnesses share the hard wall-clock limit.
 Set `COMPADRE_TANSTACK_AI_ENABLED=true` to expose authenticated `POST /ag-ui`.
 It accepts a standard AG-UI `RunAgentInput` and returns a TanStack AG-UI SSE
 response. `forwardedProps.provider` may select `claude-code` or `codex`.
+`forwardedProps.profile` may select the allowlisted `claude-code`, `codex`, or
+`fable` profile.
 
-Only allowlisted provider, model, Fable, and max-turn fields affect the harness;
+Only allowlisted provider, profile, model, and max-turn fields affect the harness;
 arbitrary forwarded properties cannot replace adapters or tools.
 
 ## Verified behavior

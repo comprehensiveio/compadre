@@ -4,7 +4,10 @@ import {
 } from "@tanstack/ai";
 import { Hono } from "hono";
 import { runAguiChat } from "../tanstack/runtime.js";
-import { isAgentProvider } from "../tanstack/protocol.js";
+import {
+  isAgentProfile,
+  isAgentProvider,
+} from "../tanstack/protocol.js";
 import { requireCompadreApiKey } from "./auth.js";
 
 export const aguiRoutes = new Hono();
@@ -40,6 +43,17 @@ aguiRoutes.post("/ag-ui", async (c) => {
     return c.json(
       { error: "forwardedProps.provider must be 'claude-code' or 'codex'" },
       400
+    );
+  }
+
+  const requestedProfile = params.forwardedProps.profile;
+  if (requestedProfile !== undefined && !isAgentProfile(requestedProfile)) {
+    return c.json(
+      {
+        error:
+          "forwardedProps.profile must be 'claude-code', 'codex', or 'fable'",
+      },
+      400,
     );
   }
 

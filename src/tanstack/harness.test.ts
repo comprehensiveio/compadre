@@ -4,8 +4,6 @@ import { CODEX_MODEL, DEFAULT_MODEL, FABLE_MODEL } from "../config.js";
 import {
   CLAUDE_DANGEROUS_PERMISSIONS,
   CODEX_DANGEROUS_PERMISSIONS,
-  cleanFableControlText,
-  messagesWithoutFableFlag,
   resolveHarnessSelection,
 } from "./harness.js";
 
@@ -19,13 +17,9 @@ afterEach(() => {
   }
 });
 
-const userMessages = (content: string) => [
-  { id: "message-1", role: "user" as const, content },
-];
-
 test("defaults to the Claude Code harness", () => {
   delete process.env.COMPADRE_AGENT_PROVIDER;
-  assert.deepEqual(resolveHarnessSelection({}, userMessages("hello")), {
+  assert.deepEqual(resolveHarnessSelection({}), {
     provider: "claude-code",
     model: DEFAULT_MODEL,
   });
@@ -33,45 +27,45 @@ test("defaults to the Claude Code harness", () => {
 
 test("selects Codex globally or per AG-UI request", () => {
   process.env.COMPADRE_AGENT_PROVIDER = "codex";
-  assert.equal(
-    resolveHarnessSelection({}, userMessages("hello")).provider,
-    "codex"
-  );
+  assert.equal(resolveHarnessSelection({}).provider, "codex");
   assert.deepEqual(
-    resolveHarnessSelection(
-      { provider: "codex" },
-      userMessages("hello --fable")
-    ),
+    resolveHarnessSelection({ provider: "codex" }),
     {
       provider: "codex",
       model: CODEX_MODEL,
-    }
+    },
   );
 });
 
-test("keeps the existing Fable selection on the Claude harness", () => {
-  const messages = userMessages("investigate --fable\n\n\nnow");
-  assert.equal(
-    resolveHarnessSelection({}, messages).model,
-    FABLE_MODEL
-  );
-  assert.deepEqual(messagesWithoutFableFlag(messages), [
-    { id: "message-1", role: "user", content: "investigate\n\nnow" },
-  ]);
-  assert.equal(messages[0].content, "investigate --fable\n\n\nnow");
+test("selects Fable only through an explicit profile", () => {
+  process.env.COMPADRE_AGENT_PROVIDER = "codex";
+  assert.deepEqual(resolveHarnessSelection({ profile: "fable" }), {
+    provider: "claude-code",
+    model: FABLE_MODEL,
+  });
 });
 
-test("does not turn a Fable-only prompt into an empty message", () => {
-  assert.equal(cleanFableControlText("--fable"), "--fable");
+test("explicit Codex and Claude Code profiles override the configured default", () => {
+  process.env.COMPADRE_AGENT_PROVIDER = "claude-code";
+  assert.deepEqual(resolveHarnessSelection({ profile: "codex" }), {
+    provider: "codex",
+    model: CODEX_MODEL,
+  });
+
+  process.env.COMPADRE_AGENT_PROVIDER = "codex";
+  assert.deepEqual(resolveHarnessSelection({ profile: "claude-code" }), {
+    provider: "claude-code",
+    model: DEFAULT_MODEL,
+  });
 });
 
 test("rejects arbitrary model overrides", () => {
   assert.equal(
-    resolveHarnessSelection(
-      { provider: "codex", model: "surprise-model" },
-      userMessages("hello")
-    ).model,
-    CODEX_MODEL
+    resolveHarnessSelection({
+      provider: "codex",
+      model: "surprise-model",
+    }).model,
+    CODEX_MODEL,
   );
 });
 
