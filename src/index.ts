@@ -14,7 +14,6 @@ import { slackRoutes } from "./routes/slack.js";
 import { slackEventsRoutes } from "./routes/slack-events.js";
 import { webhookRoutes } from "./routes/webhook.js";
 import { ensureRepo, refreshRepo, cleanupStaleWorktrees } from "./repo.js";
-import { initDatadogAuth } from "./auth/datadog.js";
 
 const app = new Hono();
 
@@ -47,18 +46,6 @@ const REPO_REFRESH_INTERVAL_MS = 15 * 60 * 1000;
 const port = Number(process.env.PORT) || 3100;
 
 async function start() {
-  // Initialize Datadog OAuth token refresh
-  if (process.env.DATADOG_MCP_CLIENT_ID && process.env.DATADOG_MCP_REFRESH_TOKEN) {
-    initDatadogAuth({
-      clientId: process.env.DATADOG_MCP_CLIENT_ID,
-      refreshToken: process.env.DATADOG_MCP_REFRESH_TOKEN,
-    });
-  } else {
-    console.warn(
-      "[startup] Datadog MCP disabled: DATADOG_MCP_CLIENT_ID and DATADOG_MCP_REFRESH_TOKEN are not both configured"
-    );
-  }
-
   // Start the server first so Render sees the port binding
   serve({ fetch: app.fetch, port }, (info) => {
     console.log(`[agent] server running on port ${info.port}`);

@@ -2,7 +2,7 @@
  * MCP server configurations for the agent.
  *
  * HTTP-based MCPs use pre-obtained tokens via environment variables.
- * Datadog uses OAuth refresh tokens (managed by src/auth/datadog.ts).
+ * Datadog uses a service access token for headless server authentication.
  * Jam uses its hosted HTTP MCP server with a PAT for headless server auth.
  * Google Workspace uses a bot-user OAuth refresh token cached for workspace-mcp.
  * Slack uses a bot token via our stdio MCP server so writes use standard Markdown.
@@ -16,14 +16,10 @@ import os from "os";
 import path from "path";
 import { fileURLToPath } from "url";
 import type { McpServerConfig } from "@anthropic-ai/claude-agent-sdk";
-import {
-  getDatadogAccessToken,
-  getDatadogAuthDisabledReason,
-  isDatadogAuthConfigured,
-} from "./auth/datadog.js";
-import { alertDatadogRefreshTokenInvalid } from "./services/ops-alerts.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const DEFAULT_DATADOG_MCP_URL =
+  "https://mcp.datadoghq.com/v1/mcp?toolsets=core,apm,llmobs";
 const GOOGLE_WORKSPACE_SCOPES = [
   "https://www.googleapis.com/auth/documents",
   "https://www.googleapis.com/auth/drive",
@@ -34,8 +30,8 @@ const GOOGLE_WORKSPACE_SCOPES = [
   "https://www.googleapis.com/auth/tasks",
   "https://www.googleapis.com/auth/calendar",
 ];
-let lastDatadogDisabledLog: string | null = null;
 let hasLoggedCompDisabled = false;
+let hasLoggedDatadogDisabled = false;
 
 function env(key: string): string {
   const val = process.env[key];
@@ -88,35 +84,26 @@ async function prepareGoogleWorkspaceCredentials(): Promise<string | null> {
   return credentialsDir;
 }
 
-async function buildDatadogMcpServer(): Promise<McpServerConfig | null> {
-  if (!isDatadogAuthConfigured()) {
-    const reason = getDatadogAuthDisabledReason();
-    if (reason) {
-      void alertDatadogRefreshTokenInvalid(reason);
-    }
-    const message = reason
-      ? `[mcp] Datadog MCP disabled: ${reason}`
-      : "[mcp] Datadog MCP disabled: credentials are not configured";
-    if (message !== lastDatadogDisabledLog) {
-      console.warn(message);
-      lastDatadogDisabledLog = message;
+function buildDatadogMcpServer(): McpServerConfig | null {
+  const accessToken = process.env.DATADOG_MCP_ACCESS_TOKEN;
+
+  if (!accessToken) {
+    if (!hasLoggedDatadogDisabled) {
+      console.warn(
+        "[mcp] Datadog MCP disabled: DATADOG_MCP_ACCESS_TOKEN is not configured"
+      );
+      hasLoggedDatadogDisabled = true;
     }
     return null;
   }
 
-  try {
-    const datadogToken = await getDatadogAccessToken();
-    return {
-      type: "http" as const,
-      url: "https://mcp.datadoghq.com/api/unstable/mcp-server/mcp?toolsets=core,apm,error-tracking,llmobs",
-      headers: {
-        Authorization: `Bearer ${datadogToken}`,
-      },
-    };
-  } catch (err) {
-    console.error("[mcp] Datadog MCP disabled after auth failure:", err);
-    return null;
-  }
+  return {
+    type: "http" as const,
+    url: process.env.DATADOG_MCP_URL ?? DEFAULT_DATADOG_MCP_URL,
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+    },
+  };
 }
 
 function buildCompMcpServer(): McpServerConfig | null {
@@ -143,10 +130,9 @@ function buildCompMcpServer(): McpServerConfig | null {
 }
 
 export async function buildMcpServers() {
-  const [datadogServer, googleWorkspaceCredentialsDir] = await Promise.all([
-    buildDatadogMcpServer(),
-    prepareGoogleWorkspaceCredentials(),
-  ]);
+  const datadogServer = buildDatadogMcpServer();
+  const googleWorkspaceCredentialsDir =
+    await prepareGoogleWorkspaceCredentials();
 
   const servers: Record<string, McpServerConfig> = {
     slack: {

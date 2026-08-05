@@ -6,7 +6,7 @@ AI operations agent for Comprehensive. Spawns headless Claude Code sessions via 
 
 | Server | Transport | What it does |
 |--------|-----------|-------------|
-| **Datadog** | HTTP (OAuth) | Logs, metrics, traces, APM, error tracking, incidents, monitors |
+| **Datadog** | HTTP (service access token) | Logs, metrics, traces, APM, error tracking, incidents, monitors |
 | **Slack** | stdio (built in) | Read Slack, send standard Markdown, and upload files via bot token |
 | **Linear** | HTTP | Issue tracking, project management |
 | **GitHub** | HTTP (Copilot MCP) | Repos, PRs, issues |
@@ -44,7 +44,8 @@ curl -X POST http://localhost:3100/prompt \
 
 See `.env.example` for the full list. Key notes:
 
-- **DATADOG_MCP_CLIENT_ID / DATADOG_MCP_REFRESH_TOKEN**: OAuth credentials from Datadog MCP. The server auto-refreshes access tokens.
+- **DATADOG_MCP_ACCESS_TOKEN**: A Datadog Service Access Token (recommended for the deployed service) or Personal Access Token. It is sent as a bearer token to Datadog's stable MCP endpoint; no API key or OAuth refresh token is required.
+- **DATADOG_MCP_URL**: Optional endpoint override for another Datadog site or toolset selection. Defaults to US1 with the `core`, `apm`, and `llmobs` toolsets.
 - **DD_LLMOBS_ENABLED / DD_LLMOBS_ML_APP**: Enable Datadog's automatic Claude Agent SDK instrumentation and attribute its agent, step, LLM, and tool spans to the `compadre` ML app.
 - **SLACK_BOT_TOKEN**: `xoxb-*` token from the Compadre Slack app.
 - **GOOGLE_WORKSPACE_USER_EMAIL / GOOGLE_OAUTH_CLIENT_ID / GOOGLE_OAUTH_CLIENT_SECRET / GOOGLE_OAUTH_REFRESH_TOKEN**: OAuth credentials for the Compadre Google Workspace bot user. When set, Compadre enables Google Workspace tools through `workspace-mcp`.
