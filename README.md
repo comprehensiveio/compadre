@@ -1,8 +1,8 @@
 # Compadre
 
-AI operations agent for Comprehensive. Slack and API requests can run through
-the legacy Claude Agent SDK or a provider-neutral TanStack AI runtime backed by
-Claude Code or Codex, with shared MCP access to our infrastructure.
+AI operations agent for Comprehensive. Slack and API requests run through a
+provider-neutral TanStack AI runtime backed by Claude Code or Codex, with shared
+MCP access to our infrastructure.
 
 ## MCP Servers
 
@@ -50,14 +50,13 @@ See `.env.example` for the full list. Key notes:
 
 - **DATADOG_MCP_ACCESS_TOKEN**: A Datadog Service Access Token (recommended for the deployed service) or Personal Access Token. It is sent as a bearer token to Datadog's stable MCP endpoint; no API key or OAuth refresh token is required.
 - **DATADOG_MCP_URL**: Optional endpoint override for another Datadog site or toolset selection. Defaults to US1 with the `core`, `apm`, and `llmobs` toolsets.
-- **DD_SERVICE / DD_LLMOBS_ENABLED / DD_LLMOBS_ML_APP / DD_TRACE_OTEL_ENABLED**: Attribute legacy Claude SDK telemetry and TanStack's provider-neutral OpenTelemetry agent/model/tool spans to Compadre in Datadog. Compadre defaults these on at startup unless explicitly overridden.
+- **DD_SERVICE / DD_LLMOBS_ENABLED / DD_LLMOBS_ML_APP / DD_TRACE_OTEL_ENABLED**: Attribute TanStack's provider-neutral OpenTelemetry agent/model/tool spans to Compadre in Datadog. Compadre defaults these on at startup unless explicitly overridden.
 - **DD_METRICS_OTEL_ENABLED**: Export TanStack's GenAI token and duration histograms through `dd-trace`.
 - **SLACK_BOT_TOKEN**: `xoxb-*` token from the Compadre Slack app.
 - **GOOGLE_WORKSPACE_USER_EMAIL / GOOGLE_OAUTH_CLIENT_ID / GOOGLE_OAUTH_CLIENT_SECRET / GOOGLE_OAUTH_REFRESH_TOKEN**: OAuth credentials for the Compadre Google Workspace bot user. When set, Compadre enables Google Workspace tools through `workspace-mcp`.
 - **REPO_PATH**: Set to `/opt/render/repo` on Render (auto-cloned). Set to your local comp checkout for dev.
 - **COMPADRE_API_KEY**: Auth token for the API. Generate with `openssl rand -hex 32`.
-- **COMPADRE_AGENT_RUNTIME / COMPADRE_AGENT_PROVIDER**: Select the legacy or TanStack runtime and the Claude Code or Codex harness.
-- **COMPADRE_TANSTACK_SLACK_USER_IDS**: Optional comma-separated Slack user canary. Listed users use TanStack while everyone else remains on legacy.
+- **COMPADRE_AGENT_PROVIDER**: Select the default Claude Code or Codex harness. `/prompt` and AG-UI callers may override it per request.
 - **COMPADRE_TANSTACK_AI_ENABLED**: Expose the authenticated AG-UI endpoint without changing Slack routing.
 - **FABLE_MODEL**: Optional model ID used when a prompt includes `--fable`. Defaults to `claude-fable-5`; normal prompts use `DEFAULT_MODEL` or the built-in default.
 
@@ -74,11 +73,10 @@ On Render:
 ## Architecture
 
 ```
-Slack or /prompt → runConversation() ─┬→ legacy Claude Agent SDK
-                                     └→ TanStack AI ─┬→ Claude Code
-                                                     └→ Codex
-                                                           │
-                                  shared worktree, MCP, sessions, telemetry
+Slack, /prompt, or webhooks → runConversation() → TanStack AI ─┬→ Claude Code
+                                                              └→ Codex
+                                                                    │
+                                           shared worktree, MCP, sessions, telemetry
 ```
 
 Slack threads retain their worktree and provider-scoped native sessions in the

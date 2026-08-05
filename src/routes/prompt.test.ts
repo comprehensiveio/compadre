@@ -24,7 +24,7 @@ async function withEnv<T>(
 
 test("prompt route rejects invalid provider selection before starting a run", async () => {
   await withEnv(
-    { COMPADRE_API_KEY: "test", COMPADRE_AGENT_RUNTIME: "tanstack" },
+    { COMPADRE_API_KEY: "test" },
     async () => {
       const response = await promptRoutes.request("/prompt", {
         method: "POST",
@@ -40,9 +40,9 @@ test("prompt route rejects invalid provider selection before starting a run", as
   );
 });
 
-test("prompt route requires threadId instead of native sessionId on TanStack", async () => {
+test("prompt route requires threadId instead of native sessionId", async () => {
   await withEnv(
-    { COMPADRE_API_KEY: "test", COMPADRE_AGENT_RUNTIME: "tanstack" },
+    { COMPADRE_API_KEY: "test" },
     async () => {
       const response = await promptRoutes.request("/prompt", {
         method: "POST",

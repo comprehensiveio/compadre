@@ -1,10 +1,7 @@
-import crypto from "crypto";
 import { Hono } from "hono";
-import { runTask } from "../agent.js";
-import { DEFAULT_MAX_TURNS, DEFAULT_MAX_BUDGET_USD } from "../config.js";
+import { DEFAULT_MAX_TURNS } from "../config.js";
+import { runConversation } from "../conversation.js";
 import { getSlackSystemPrompt, getSlackStreamingSystemPrompt } from "../prompts/index.js";
-import { createWorktree, removeWorktree } from "../repo.js";
-import { getSession, setSession } from "../sessions.js";
 import { resolveSlackChannelName } from "../services/slack-context.js";
 import { SlackStream } from "../services/slack-stream.js";
 import { humanizeToolName } from "../services/tool-labels.js";
@@ -44,10 +41,6 @@ slackRoutes.post("/slack", async (c) => {
   }
 
   const threadKey = threadTs || `${channel}-${Date.now()}`;
-  const existing = getSession(threadKey);
-  const sessionId = existing?.sessionId;
-  const worktreeId = existing?.worktreeId ?? crypto.randomUUID();
-  const worktreePath = createWorktree(worktreeId);
 
   const botToken = process.env.SLACK_BOT_TOKEN;
   const channelName =
@@ -78,13 +71,14 @@ slackRoutes.post("/slack", async (c) => {
   }
 
   // Fire and forget — respond 202 immediately
-  runTask({
+  runConversation({
     prompt,
-    sessionId,
-    systemPrompt: slackStream ? getSlackStreamingSystemPrompt(worktreePath) : getSlackSystemPrompt(worktreePath),
-    worktreePath,
+    threadId: threadKey,
+    systemPrompt: (worktreePath) =>
+      slackStream
+        ? getSlackStreamingSystemPrompt(worktreePath)
+        : getSlackSystemPrompt(worktreePath),
     maxTurns: (body.maxTurns as number) ?? DEFAULT_MAX_TURNS,
-    maxBudgetUsd: (body.maxBudgetUsd as number) ?? DEFAULT_MAX_BUDGET_USD,
     stream: slackStream
       ? {
           onTextDelta: (text) => void slackStream!.appendText(text),
@@ -100,20 +94,12 @@ slackRoutes.post("/slack", async (c) => {
       : undefined,
   })
     .then(async (result) => {
-      if (result.sessionId) {
-        setSession(threadKey, { sessionId: result.sessionId, worktreeId });
-      } else {
-        removeWorktree(worktreeId);
-      }
       console.log(
-        `[slack] completed for ${userId}: turns=${result.numTurns} cost=$${result.costUsd.toFixed(3)} duration=${result.durationMs}ms`
+        `[slack] completed for ${userId}: provider=${result.provider} turns=${result.numTurns} cost=$${result.costUsd.toFixed(3)} duration=${result.durationMs}ms`
       );
     })
     .catch(async (err) => {
       console.error(`[slack] agent error for ${userId}:`, err);
-      if (!getSession(threadKey)) {
-        removeWorktree(worktreeId);
-      }
       if (slackStream) {
         await slackStream.stopStream();
         await slackStream.clearStatus();

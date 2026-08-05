@@ -51,7 +51,7 @@ const port = Number(process.env.PORT) || 3100;
 async function start() {
   const agent = validateConversationConfiguration();
   console.log(
-    `[agent] conversation runtime=${agent.runtime} provider=${agent.provider}`
+    `[agent] conversation provider=${agent.provider}`
   );
 
   // Start the server first so Render sees the port binding

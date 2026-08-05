@@ -18,22 +18,21 @@ function bundledPackageName(): string | undefined {
   if (!architecture) return undefined;
 
   if (process.platform === "darwin") {
-    return `@anthropic-ai/claude-agent-sdk-darwin-${architecture}`;
+    return `@anthropic-ai/claude-code-darwin-${architecture}`;
   }
   if (process.platform === "linux") {
-    return `@anthropic-ai/claude-agent-sdk-linux-${architecture}${
+    return `@anthropic-ai/claude-code-linux-${architecture}${
       usesMusl() ? "-musl" : ""
     }`;
   }
   if (process.platform === "win32") {
-    return `@anthropic-ai/claude-agent-sdk-win32-${architecture}`;
+    return `@anthropic-ai/claude-code-win32-${architecture}`;
   }
   return undefined;
 }
 
 /**
- * Reuse the native Claude Code binary already shipped by the Agent SDK. This
- * avoids adding another 250+ MB CLI distribution solely for the TanStack path.
+ * Resolve the native binary shipped by the official Claude Code package.
  */
 export function resolveClaudeExecutable(): string {
   if (process.env.CLAUDE_CODE_EXECUTABLE) {
