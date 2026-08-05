@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import { afterEach, test } from "node:test";
 import { CODEX_MODEL, DEFAULT_MODEL, FABLE_MODEL } from "../config.js";
 import {
+  CLAUDE_DANGEROUS_PERMISSIONS,
+  CODEX_DANGEROUS_PERMISSIONS,
   cleanFableControlText,
   messagesWithoutFableFlag,
   resolveHarnessSelection,
@@ -73,4 +75,18 @@ test("rejects arbitrary model overrides", () => {
     ).model,
     CODEX_MODEL
   );
+});
+
+test("runs both coding harnesses without tool approval gates", () => {
+  assert.deepEqual(CODEX_DANGEROUS_PERMISSIONS, {
+    sandboxMode: "danger-full-access",
+    approvalPolicy: "never",
+    config: {
+      "mcp_servers.tanstack.default_tools_approval_mode": '"approve"',
+    },
+  });
+  assert.deepEqual(CLAUDE_DANGEROUS_PERMISSIONS, {
+    permissionMode: "bypassPermissions",
+  });
+  assert.equal("allowedTools" in CLAUDE_DANGEROUS_PERMISSIONS, false);
 });
