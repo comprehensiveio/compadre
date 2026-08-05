@@ -2,6 +2,16 @@ import { createMCPClient, type MCPClient } from "@tanstack/ai-mcp";
 import { stdioTransport } from "@tanstack/ai-mcp/stdio";
 import { buildMcpServers } from "../mcp.js";
 
+export function mcpClientIdentity(name: string): {
+  name: string;
+  prefix: string;
+} {
+  return {
+    name: `compadre-${name}`,
+    prefix: name.replaceAll("-", "_"),
+  };
+}
+
 /**
  * Convert Compadre's existing Claude Agent SDK MCP configuration into host-side
  * TanStack MCP clients. The Claude Code adapter exposes these tools inside its
@@ -15,7 +25,7 @@ export async function buildTanStackMcpClients(): Promise<MCPClient[]> {
       try {
         if ("command" in config) {
           return await createMCPClient({
-            name: `compadre-${name}`,
+            ...mcpClientIdentity(name),
             transport: stdioTransport({
               command: config.command,
               args: config.args,
@@ -25,7 +35,7 @@ export async function buildTanStackMcpClients(): Promise<MCPClient[]> {
           });
         }
         return await createMCPClient({
-          name: `compadre-${name}`,
+          ...mcpClientIdentity(name),
           transport: {
             type: config.type,
             url: config.url,
