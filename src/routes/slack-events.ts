@@ -1,8 +1,7 @@
 import { Hono } from "hono";
-import { DEFAULT_MAX_TURNS, DEFAULT_MAX_BUDGET_USD } from "../config.js";
+import { DEFAULT_MAX_TURNS } from "../config.js";
 import {
   configuredAgentProvider,
-  conversationRuntimeForSlackUser,
   runConversation,
 } from "../conversation.js";
 import { getSlackSystemPrompt, getSlackStreamingSystemPrompt } from "../prompts/index.js";
@@ -185,21 +184,18 @@ async function handleAIMessage(
     await slackStream.setStatus("is thinking...");
   }
 
-  const runtime = conversationRuntimeForSlackUser(event.user);
   console.log(
-    `[slack-events] routing user=${event.user ?? "unknown"} runtime=${runtime}${runtime === "tanstack" ? ` provider=${configuredAgentProvider()}` : ""}`,
+    `[slack-events] routing user=${event.user ?? "unknown"} provider=${configuredAgentProvider()}`,
   );
 
   runConversation({
     prompt,
     threadId: threadKey,
-    runtime,
     systemPrompt: (worktreePath) =>
       slackStream
         ? getSlackStreamingSystemPrompt(worktreePath)
         : getSlackSystemPrompt(worktreePath),
     maxTurns: DEFAULT_MAX_TURNS,
-    maxBudgetUsd: DEFAULT_MAX_BUDGET_USD,
     stream: slackStream
       ? {
           onTextDelta: (text) => void slackStream!.appendText(text),
@@ -219,7 +215,7 @@ async function handleAIMessage(
         await slackStream.removeReaction("compadre-thinking", event.ts);
       }
       console.log(
-        `[slack-events] completed for ${event.user}: runtime=${result.runtime} provider=${result.provider} turns=${result.numTurns} cost=$${result.costUsd.toFixed(3)} duration=${result.durationMs}ms`,
+        `[slack-events] completed for ${event.user}: provider=${result.provider} turns=${result.numTurns} cost=$${result.costUsd.toFixed(3)} duration=${result.durationMs}ms`,
       );
     })
     .catch(async (err) => {

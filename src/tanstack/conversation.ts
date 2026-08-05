@@ -1,7 +1,7 @@
 import crypto from "node:crypto";
 import { EventType, type StreamChunk } from "@tanstack/ai";
 import { DEFAULT_MAX_TURNS } from "../config.js";
-import type { StreamCallbacks } from "../agent.js";
+import type { StreamCallbacks } from "../conversation.js";
 import { AssistantMessageAccumulator } from "./assistant-messages.js";
 import type { AgentProvider, AguiChatParams } from "./protocol.js";
 import { runAguiChat } from "./runtime.js";

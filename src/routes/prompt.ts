@@ -1,9 +1,6 @@
 import { Hono } from "hono";
-import { DEFAULT_MAX_TURNS, DEFAULT_MAX_BUDGET_USD } from "../config.js";
-import {
-  configuredConversationRuntime,
-  runConversation,
-} from "../conversation.js";
+import { DEFAULT_MAX_TURNS } from "../config.js";
+import { runConversation } from "../conversation.js";
 import { isAgentProvider } from "../tanstack/protocol.js";
 
 export const promptRoutes = new Hono();
@@ -37,15 +34,9 @@ promptRoutes.post("/prompt", async (c) => {
   if (requestedProvider !== undefined && !isAgentProvider(requestedProvider)) {
     return c.json({ error: "provider must be 'claude-code' or 'codex'" }, 400);
   }
-  if (requestedProvider && configuredConversationRuntime() !== "tanstack") {
+  if (sessionId) {
     return c.json(
-      { error: "provider selection requires COMPADRE_AGENT_RUNTIME=tanstack" },
-      400
-    );
-  }
-  if (sessionId && configuredConversationRuntime() === "tanstack") {
-    return c.json(
-      { error: "sessionId is legacy-only; use threadId with the TanStack runtime" },
+      { error: "sessionId is provider-native; use threadId" },
       400
     );
   }
@@ -57,12 +48,10 @@ promptRoutes.post("/prompt", async (c) => {
   const taskOptions = {
     prompt,
     threadId,
-    sessionId,
     provider: isAgentProvider(requestedProvider)
       ? requestedProvider
       : undefined,
     maxTurns: (body.maxTurns as number) ?? DEFAULT_MAX_TURNS,
-    maxBudgetUsd: (body.maxBudgetUsd as number) ?? DEFAULT_MAX_BUDGET_USD,
     signal: async ? undefined : c.req.raw.signal,
   };
 
@@ -70,7 +59,7 @@ promptRoutes.post("/prompt", async (c) => {
     runConversation(taskOptions)
       .then((result) => {
         console.log(
-          `[prompt] async completed: runtime=${result.runtime} provider=${result.provider} turns=${result.numTurns} cost=$${result.costUsd.toFixed(3)} duration=${result.durationMs}ms`
+          `[prompt] async completed: provider=${result.provider} turns=${result.numTurns} cost=$${result.costUsd.toFixed(3)} duration=${result.durationMs}ms`
         );
       })
       .catch((err) => {
@@ -84,10 +73,8 @@ promptRoutes.post("/prompt", async (c) => {
     ok: true,
     result: result.result,
     sessionId: result.sessionId,
-    runtime: result.runtime,
     provider: result.provider,
     model: result.model,
-    budgetEnforced: result.budgetEnforced,
     turns: result.numTurns,
     cost: result.costUsd,
     duration: result.durationMs,

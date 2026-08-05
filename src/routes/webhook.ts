@@ -1,5 +1,5 @@
 import { Hono } from "hono";
-import { runTask } from "../agent.js";
+import { runConversation } from "../conversation.js";
 
 export const webhookRoutes = new Hono();
 
@@ -26,7 +26,7 @@ Based on the source and payload, determine what action to take. For example:
 - GitHub PR: review the changes, post feedback
 - Linear update: check if any follow-up is needed`;
 
-  runTask({ prompt, maxTurns: 25, maxBudgetUsd: 1.5 }).catch((err) =>
+  runConversation({ prompt, maxTurns: 25 }).catch((err) =>
     console.error(`[webhook] ${source} task failed:`, err)
   );
 

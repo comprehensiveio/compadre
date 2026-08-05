@@ -138,7 +138,7 @@ test("publishes only the terminal Codex message to channel callers", async () =>
       {
         type: EventType.TEXT_MESSAGE_CONTENT,
         messageId: "final",
-        delta: "COMPADRE_AGENT_RUNTIME",
+        delta: "terminal answer",
         timestamp: 6,
       },
       {
@@ -164,8 +164,8 @@ test("publishes only the terminal Codex message to channel callers", async () =>
     }
   );
 
-  assert.equal(result.result, "COMPADRE_AGENT_RUNTIME");
-  assert.deepEqual(text, ["COMPADRE_AGENT_RUNTIME"]);
+  assert.equal(result.result, "terminal answer");
+  assert.deepEqual(text, ["terminal answer"]);
   assert.equal(result.numTurns, 2);
 });
 
