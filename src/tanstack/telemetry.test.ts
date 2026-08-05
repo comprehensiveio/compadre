@@ -75,7 +75,6 @@ test("emits GenAI spans, harness tool spans, usage, and provider cost", async ()
     selection: {
       provider: "claude-code",
       model: "claude-opus-5",
-      sessionEvent: "claude-code.session-id",
     },
     threadId: "thread-1",
     runId: "run-1",
@@ -183,7 +182,6 @@ test("identifies Codex as OpenAI and records cache and reasoning usage", async (
     selection: {
       provider: "codex",
       model: "gpt-5.6-sol",
-      sessionEvent: "codex.session-id",
     },
     threadId: "thread-codex",
     runId: "run-codex",

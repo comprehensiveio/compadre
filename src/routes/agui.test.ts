@@ -18,7 +18,7 @@ afterEach(() => {
   }
 });
 
-test("AG-UI route stays dark unless the spike is enabled", async () => {
+test("AG-UI route stays dark unless the endpoint is enabled", async () => {
   delete process.env.COMPADRE_TANSTACK_AI_ENABLED;
   const response = await aguiRoutes.request("/ag-ui", { method: "POST" });
   assert.equal(response.status, 404);

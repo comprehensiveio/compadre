@@ -13,9 +13,9 @@ Slack events ----\
 AG-UI clients ---------------------------> the same TanStack runtime
 ```
 
-`runConversation()` owns per-thread serialization, ephemeral-run cleanup,
-provider selection, wall-clock cancellation, stream callbacks, and result
-metrics. The TanStack runtime owns worktrees, provider-scoped native sessions,
+`runConversation()` owns ephemeral-run cleanup, provider selection, wall-clock
+cancellation, stream callbacks, and result metrics. The TanStack runtime owns
+per-thread serialization, worktrees, provider-scoped native sessions,
 provider-neutral transcript continuity, MCP clients, and telemetry.
 
 ## Configuration
@@ -71,8 +71,9 @@ arbitrary forwarded properties cannot replace adapters or tools.
   duration, error, and cost attributes to Datadog LLM Observability. Claude
   supplies provider-reported cost; Datadog estimates Codex cost from its model
   and token metadata.
-- One-shot worktrees and thread state are released; threaded conversations keep
-  their worktree and provider sessions for the life of the process.
+- One-shot worktrees and thread state are released immediately. Threaded
+  conversations keep their worktree and provider sessions while active;
+  maintenance expires both after one hour without access.
 
 ## Provider-neutral instructions
 
@@ -97,8 +98,10 @@ thread ID
 
 The durability milestone should combine a Postgres-backed thread store,
 TanStack persistence stores, a distributed `LockStore`, and durable/shared
-provider session plus worktree storage. Postgres alone cannot make native
-Claude/Codex session directories or git worktrees portable between hosts.
+provider session plus worktree storage. The current in-memory TanStack lock
+store serializes runs only within one process. Postgres alone cannot make
+native Claude/Codex session directories or git worktrees portable between
+hosts.
 
 ## Remaining considerations
 

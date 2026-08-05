@@ -1,4 +1,4 @@
-// Ensure nvm-managed node/npx are available to child processes (Claude Agent SDK)
+// Ensure nvm-managed Node binaries are available to coding harness processes.
 if (!process.env.PATH?.includes(process.execPath.replace(/\/node$/, ""))) {
   const nodeDir = process.execPath.replace(/\/node$/, "");
   process.env.PATH = `${nodeDir}:${process.env.PATH}`;
@@ -13,8 +13,14 @@ import { promptRoutes } from "./routes/prompt.js";
 import { slackEventsRoutes } from "./routes/slack-events.js";
 import { webhookRoutes } from "./routes/webhook.js";
 import { aguiRoutes } from "./routes/agui.js";
-import { ensureRepo, refreshRepo, cleanupStaleWorktrees } from "./repo.js";
+import {
+  cleanupStaleWorktrees,
+  ensureRepo,
+  refreshRepo,
+  removeWorktree,
+} from "./repo.js";
 import { validateConversationConfiguration } from "./conversation.js";
+import { harnessThreadStore } from "./tanstack/thread-state.js";
 
 const app = new Hono();
 
@@ -66,9 +72,21 @@ async function start() {
 
   // Periodic repo refresh and stale worktree cleanup
   const STALE_WORKTREE_MAX_AGE_MS = 60 * 60 * 1000; // 1 hour
-  setInterval(() => {
+  const maintainRepo = async () => {
     refreshRepo();
-    cleanupStaleWorktrees(STALE_WORKTREE_MAX_AGE_MS);
+    const expiredThreads = await harnessThreadStore.deleteStale(
+      STALE_WORKTREE_MAX_AGE_MS
+    );
+    for (const thread of expiredThreads) removeWorktree(thread.worktreeId);
+    cleanupStaleWorktrees(
+      STALE_WORKTREE_MAX_AGE_MS,
+      await harnessThreadStore.worktreeIds()
+    );
+  };
+  setInterval(() => {
+    void maintainRepo().catch((error) =>
+      console.error("[repo] maintenance failed:", error)
+    );
   }, REPO_REFRESH_INTERVAL_MS);
 }
 

@@ -5,6 +5,7 @@ export interface HarnessThreadState {
   sessions: Partial<Record<AgentProvider, string>>;
   transcript: HarnessTranscriptMessage[];
   lastProvider?: AgentProvider;
+  lastAccessedAt: number;
 }
 
 export interface HarnessTranscriptMessage {
@@ -35,27 +36,32 @@ export interface HarnessThreadStore {
     worktreeId: string
   ): Promise<boolean>;
   delete(threadId: string): Promise<HarnessThreadState | undefined>;
+  deleteStale(maxAgeMs: number): Promise<HarnessThreadState[]>;
+  worktreeIds(): Promise<Set<string>>;
 }
 
 export class InMemoryHarnessThreadStore implements HarnessThreadStore {
   private readonly states = new Map<string, HarnessThreadState>();
 
-  constructor(private readonly maxStates = 5000) {}
+  constructor(private readonly now: () => number = Date.now) {}
 
   async getOrCreate(
     threadId: string,
     createWorktreeId: () => string
   ): Promise<HarnessThreadState> {
     const existing = this.states.get(threadId);
-    if (existing) return existing;
+    if (existing) {
+      existing.lastAccessedAt = this.now();
+      return existing;
+    }
 
     const state: HarnessThreadState = {
       worktreeId: createWorktreeId(),
       sessions: {},
       transcript: [],
+      lastAccessedAt: this.now(),
     };
     this.states.set(threadId, state);
-    this.prune();
     return state;
   }
 
@@ -69,11 +75,12 @@ export class InMemoryHarnessThreadStore implements HarnessThreadStore {
       worktreeId,
       sessions: {},
       transcript: [],
+      lastAccessedAt: this.now(),
     };
     state.sessions[provider] = sessionId;
     state.lastProvider = provider;
+    state.lastAccessedAt = this.now();
     this.states.set(threadId, state);
-    this.prune();
   }
 
   async recordTurn(
@@ -86,6 +93,7 @@ export class InMemoryHarnessThreadStore implements HarnessThreadStore {
       worktreeId,
       sessions: {},
       transcript: [],
+      lastAccessedAt: this.now(),
     };
     state.transcript.push(
       { role: "user", content: userPrompt },
@@ -94,8 +102,8 @@ export class InMemoryHarnessThreadStore implements HarnessThreadStore {
     if (state.transcript.length > 200) {
       state.transcript.splice(0, state.transcript.length - 200);
     }
+    state.lastAccessedAt = this.now();
     this.states.set(threadId, state);
-    this.prune();
   }
 
   async deleteIfUninitialized(
@@ -120,14 +128,20 @@ export class InMemoryHarnessThreadStore implements HarnessThreadStore {
     return state;
   }
 
-  private prune(): void {
-    if (this.states.size <= this.maxStates) return;
-    const toDelete = this.states.size - this.maxStates;
-    const iterator = this.states.keys();
-    for (let index = 0; index < toDelete; index += 1) {
-      const key = iterator.next().value;
-      if (key !== undefined) this.states.delete(key);
+  async deleteStale(maxAgeMs: number): Promise<HarnessThreadState[]> {
+    const cutoff = this.now() - maxAgeMs;
+    const deleted: HarnessThreadState[] = [];
+    for (const [threadId, state] of this.states) {
+      if (state.lastAccessedAt <= cutoff) {
+        this.states.delete(threadId);
+        deleted.push(state);
+      }
     }
+    return deleted;
+  }
+
+  async worktreeIds(): Promise<Set<string>> {
+    return new Set([...this.states.values()].map((state) => state.worktreeId));
   }
 }
 

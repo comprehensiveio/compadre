@@ -13,8 +13,8 @@ process.env.DD_LLMOBS_ML_APP ??= "compadre";
 process.env.DD_TRACE_OTEL_ENABLED ??= "true";
 process.env.DD_METRICS_OTEL_ENABLED ??= "true";
 
-// Initialize tracing before loading application modules so ESM integrations,
-// including the Claude Agent SDK, can be auto-instrumented.
+// Initialize tracing before loading application modules so ESM integrations
+// and the provider-neutral TanStack runtime can be instrumented.
 const tracerInitializer = "dd-trace/initialize.mjs";
 await import(tracerInitializer);
 const { registerDatadogOpenTelemetry } = await import("./telemetry.js");

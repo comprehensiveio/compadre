@@ -13,10 +13,9 @@ export function mcpClientIdentity(name: string): {
 }
 
 /**
- * Convert Compadre's existing Claude Agent SDK MCP configuration into host-side
- * TanStack MCP clients. The Claude Code adapter exposes these tools inside its
- * sandbox through TanStack's MCP bridge, so the spike uses the same MCP sources
- * as the production agent rather than maintaining a second list.
+ * Convert Compadre's shared MCP configuration into host-side TanStack clients.
+ * TanStack exposes the same tool inventory to either coding harness, keeping
+ * integration configuration out of provider-specific branches.
  */
 export async function buildTanStackMcpClients(): Promise<MCPClient[]> {
   const servers = await buildMcpServers();

@@ -6,7 +6,6 @@ import {
   defineWorkspace,
 } from "@tanstack/ai-sandbox";
 import { localProcessSandbox } from "@tanstack/ai-sandbox-local-process";
-import { DEFAULT_MAX_TURNS } from "../config.js";
 import { getBaseSystemPrompt } from "../prompts/index.js";
 import { createWorktree, removeWorktree } from "../repo.js";
 import {
@@ -17,16 +16,24 @@ import {
 } from "./harness.js";
 import { buildTanStackMcpClients } from "./mcp.js";
 import { AssistantMessageAccumulator } from "./assistant-messages.js";
-import type { AguiChatParams } from "./protocol.js";
+import {
+  boundedMaxTurns,
+  sessionIdFromChunk,
+  type AguiChatParams,
+} from "./protocol.js";
 import {
   harnessThreadStore,
   resumableHarnessSession,
   type HarnessTranscriptMessage,
 } from "./thread-state.js";
+import {
+  harnessThreadRuns,
+  type ThreadRunLease,
+} from "./thread-lock.js";
 
 export interface AguiRuntimeOptions {
   systemPrompt?: (worktreePath: string) => string;
-  transcriptUserPrompt?: string;
+  transcriptUserMessage?: string;
 }
 
 /**
@@ -54,7 +61,7 @@ export function createHarnessSandbox(
       destroyOnComplete: false,
     },
     // Harness events already describe edits. Disable the extra filesystem
-    // watcher to avoid duplicate events and watcher overhead for this spike.
+    // watcher to avoid duplicate events and watcher overhead.
     fileEvents: false,
   });
 }
@@ -73,25 +80,6 @@ async function removeProjectionMarkers(worktreePath: string): Promise<void> {
   );
 }
 
-function positiveInteger(value: unknown, fallback: number): number {
-  return typeof value === "number" && Number.isInteger(value) && value > 0
-    ? Math.min(value, DEFAULT_MAX_TURNS)
-    : fallback;
-}
-
-function sessionIdFrom(
-  chunk: StreamChunk,
-  sessionEvent: string
-): string | undefined {
-  if (chunk.type !== EventType.CUSTOM || chunk.name !== sessionEvent) {
-    return undefined;
-  }
-  const value = chunk.value;
-  if (typeof value !== "object" || value === null) return undefined;
-  const sessionId = (value as { sessionId?: unknown }).sessionId;
-  return typeof sessionId === "string" ? sessionId : undefined;
-}
-
 async function* trackSession(
   stream: AsyncIterable<StreamChunk>,
   threadId: string,
@@ -101,7 +89,8 @@ async function* trackSession(
   hadProviderSession: boolean,
   abortSignal: AbortSignal | undefined,
   abortController: AbortController,
-  transcriptUserPrompt?: string
+  transcriptUserMessage: string | undefined,
+  runLease: ThreadRunLease
 ): AsyncIterable<StreamChunk> {
   const abort = () => abortController.abort(abortSignal?.reason);
   abortSignal?.addEventListener("abort", abort, { once: true });
@@ -111,7 +100,7 @@ async function* trackSession(
   try {
     for await (const chunk of stream) {
       assistantMessages.observe(chunk);
-      const sessionId = sessionIdFrom(chunk, selection.sessionEvent);
+      const sessionId = sessionIdFromChunk(chunk, selection.provider);
       if (sessionId) {
         capturedSessionId = sessionId;
         await harnessThreadStore.recordSession(
@@ -122,10 +111,10 @@ async function* trackSession(
         );
       }
       if (chunk.type === EventType.RUN_FINISHED) {
-        if (transcriptUserPrompt !== undefined) {
+        if (transcriptUserMessage !== undefined) {
           await harnessThreadStore.recordTurn(
             threadId,
-            transcriptUserPrompt,
+            transcriptUserMessage,
             assistantMessages.terminalText(),
             worktreeId
           );
@@ -136,14 +125,18 @@ async function* trackSession(
   } catch (error) {
     throw error;
   } finally {
-    await removeProjectionMarkers(worktreePath);
-    abortSignal?.removeEventListener("abort", abort);
-    if (
-      !capturedSessionId &&
-      !hadProviderSession &&
-      (await harnessThreadStore.deleteIfUninitialized(threadId, worktreeId))
-    ) {
-      removeWorktree(worktreeId);
+    try {
+      await removeProjectionMarkers(worktreePath);
+      abortSignal?.removeEventListener("abort", abort);
+      if (
+        !capturedSessionId &&
+        !hadProviderSession &&
+        (await harnessThreadStore.deleteIfUninitialized(threadId, worktreeId))
+      ) {
+        removeWorktree(worktreeId);
+      }
+    } finally {
+      await runLease.release();
     }
   }
 }
@@ -162,19 +155,36 @@ export function messagesForHarnessSession(
 }
 
 /**
- * Run one AG-UI request through a selected TanStack coding harness. This is an
- * opt-in spike: sessions are still process-local and worktree state remains on
- * local disk. Those are the explicit seams for the later Postgres milestone.
+ * Run one AG-UI request through a selected TanStack coding harness. Sessions
+ * remain process-local and worktree state remains on local disk; those are the
+ * explicit seams for the later Postgres milestone.
  */
 export async function runAguiChat(
   params: AguiChatParams,
   requestSignal?: AbortSignal,
   options: AguiRuntimeOptions = {}
 ): Promise<AsyncIterable<StreamChunk>> {
+  const runLease = await harnessThreadRuns.acquire(params.threadId);
+  try {
+    return await prepareAguiChat(params, requestSignal, options, runLease);
+  } catch (error) {
+    await runLease.release();
+    throw error;
+  }
+}
+
+async function prepareAguiChat(
+  params: AguiChatParams,
+  requestSignal: AbortSignal | undefined,
+  options: AguiRuntimeOptions,
+  runLease: ThreadRunLease
+): Promise<AsyncIterable<StreamChunk>> {
   const thread = await harnessThreadStore.getOrCreate(params.threadId, () =>
     crypto.randomUUID()
   );
-  const messagesWithTranscript = options.transcriptUserPrompt
+  const transcriptUserMessage = options.transcriptUserMessage;
+  const tracksTranscript = transcriptUserMessage !== undefined;
+  const messagesWithTranscript = tracksTranscript
     ? [...thread.transcript, ...params.messages]
     : params.messages;
   const selection = resolveHarnessSelection(
@@ -183,7 +193,7 @@ export async function runAguiChat(
   );
   const worktreeId = thread.worktreeId;
   const sessionId = resumableHarnessSession(thread, selection.provider);
-  const effectiveParams: AguiChatParams = options.transcriptUserPrompt
+  const effectiveParams: AguiChatParams = tracksTranscript
     ? {
         ...params,
         messages: messagesForHarnessSession(
@@ -194,16 +204,15 @@ export async function runAguiChat(
       }
     : params;
   const worktreePath = createWorktree(worktreeId);
-  const maxTurns = positiveInteger(
-    effectiveParams.forwardedProps.maxTurns,
-    DEFAULT_MAX_TURNS
-  );
+  const maxTurns = boundedMaxTurns(effectiveParams.forwardedProps.maxTurns);
   const model = selection.model;
   console.log(
     `[ag-ui] run=${params.runId} provider=${selection.provider} model=${model} resumed=${sessionId !== undefined}`
   );
   const abortController = new AbortController();
   if (requestSignal?.aborted) abortController.abort(requestSignal.reason);
+  const abortForLostLease = () => abortController.abort(runLease.signal.reason);
+  runLease.signal.addEventListener("abort", abortForLostLease, { once: true });
   const clients = await buildTanStackMcpClients().catch(async (error) => {
     if (
       await harnessThreadStore.deleteIfUninitialized(
@@ -246,7 +255,7 @@ export async function runAguiChat(
     throw error;
   }
 
-  return trackSession(
+  const tracked = trackSession(
     stream,
     params.threadId,
     selection,
@@ -255,10 +264,18 @@ export async function runAguiChat(
     sessionId !== undefined,
     requestSignal,
     abortController,
-    options.transcriptUserPrompt === undefined
-      ? undefined
-      : cleanFableControlText(options.transcriptUserPrompt)
+    tracksTranscript
+      ? cleanFableControlText(transcriptUserMessage)
+      : undefined,
+    runLease
   );
+  return (async function* () {
+    try {
+      yield* tracked;
+    } finally {
+      runLease.signal.removeEventListener("abort", abortForLostLease);
+    }
+  })();
 }
 
 /** Release process-local thread state and its worktree for one-shot callers. */

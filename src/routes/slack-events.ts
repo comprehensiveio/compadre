@@ -6,6 +6,7 @@ import {
 } from "../conversation.js";
 import { getSlackSystemPrompt, getSlackStreamingSystemPrompt } from "../prompts/index.js";
 import { resolveSlackChannelName } from "../services/slack-context.js";
+import { buildSlackAgentInput } from "../services/slack-prompt.js";
 import { SlackStream } from "../services/slack-stream.js";
 import { humanizeToolName } from "../services/tool-labels.js";
 import { verifySlackSignature } from "../services/slack-verify.js";
@@ -110,10 +111,6 @@ async function handleEvent(event: SlackEvent, teamId?: string) {
   }
 }
 
-function buildSlackThreadUrl(channel: string, threadTs: string): string {
-  return `https://comprehensiveio.slack.com/archives/${channel}/p${threadTs.replace(".", "")}`;
-}
-
 async function handleAIMessage(
   event: SlackEvent,
   isDM: boolean,
@@ -144,26 +141,14 @@ async function handleAIMessage(
       : null,
   ]);
 
-  const promptParts = ["User query:", messageText];
-  if (threadContext) {
-    promptParts.push(
-      "",
-      "Thread context (prior messages in this thread):",
-      threadContext,
-    );
-  }
-  const slackThreadUrl = buildSlackThreadUrl(event.channel, threadTs);
-  promptParts.push(
-    "",
-    `Slack message from user ${event.user || "unknown"}.`,
-    "",
-    "Reply to:",
-    `- channel: ${event.channel}`,
-    ...(channelName ? [`- channel_name: ${channelName}`] : []),
-    `- thread_ts: ${threadTs} (reply in this thread)`,
-    `- slack_thread_url: ${slackThreadUrl}`,
-  );
-  const prompt = promptParts.join("\n");
+  const { prompt, transcriptUserMessage } = buildSlackAgentInput({
+    messageText,
+    threadContext,
+    channel: event.channel,
+    channelName,
+    threadTs,
+    userId: event.user,
+  });
 
   let slackStream: SlackStream | undefined;
   if (botToken) {
@@ -190,6 +175,7 @@ async function handleAIMessage(
 
   runConversation({
     prompt,
+    transcriptUserMessage,
     threadId: threadKey,
     systemPrompt: (worktreePath) =>
       slackStream

@@ -16,7 +16,8 @@ MCP access to our infrastructure.
 | **Postgres** | stdio (`@modelcontextprotocol/server-postgres`) | Read-only database access |
 | **Google Workspace** | stdio (`workspace-mcp`) | Google Docs, Drive, Sheets, Slides, Forms, Tasks, and Calendar access as the Compadre bot user |
 
-The agent also gets all built-in Claude Code tools (Read, Grep, Glob, Bash, Edit, Write, WebSearch, WebFetch) with the comp repo cloned locally.
+Each harness gets its native coding tools plus the shared MCP tools above, with
+the comp repo cloned into a thread-scoped worktree.
 
 ## Endpoints
 
@@ -25,7 +26,7 @@ GET  /health                 # Health check
 POST /prompt                 # Ad-hoc prompt (Bearer COMPADRE_API_KEY)
 POST /slack/events           # Primary signed Slack Events ingress
 POST /ag-ui                  # Optional authenticated AG-UI stream
-POST /webhook/:source        # Generic webhook (fire-and-forget)
+POST /webhook/:source        # Generic webhook (Bearer COMPADRE_API_KEY)
 ```
 
 ## Local Dev
@@ -56,6 +57,7 @@ See `.env.example` for the full list. Key notes:
 - **GOOGLE_WORKSPACE_USER_EMAIL / GOOGLE_OAUTH_CLIENT_ID / GOOGLE_OAUTH_CLIENT_SECRET / GOOGLE_OAUTH_REFRESH_TOKEN**: OAuth credentials for the Compadre Google Workspace bot user. When set, Compadre enables Google Workspace tools through `workspace-mcp`.
 - **REPO_PATH**: Set to `/opt/render/repo` on Render (auto-cloned). Set to your local comp checkout for dev.
 - **COMPADRE_API_KEY**: Auth token for the API. Generate with `openssl rand -hex 32`.
+- **CODEX_API_KEY**: API key for the Codex CLI harness; a persisted Codex login is also supported for local development.
 - **COMPADRE_AGENT_PROVIDER**: Select the default Claude Code or Codex harness. `/prompt` and AG-UI callers may override it per request.
 - **COMPADRE_TANSTACK_AI_ENABLED**: Expose the authenticated AG-UI endpoint without changing Slack routing.
 - **FABLE_MODEL**: Optional model ID used when a prompt includes `--fable`. Defaults to `claude-fable-5`; normal prompts use `DEFAULT_MODEL` or the built-in default.
@@ -68,7 +70,8 @@ Google Workspace support uses `uvx` because `workspace-mcp` runs as a Python MCP
 
 On Render:
 - REPO_PATH defaults to `/opt/render/repo` (the agent clones comp there on startup)
-- The repo is refreshed every 15 minutes and reset to `main` before/after each agent session
+- The base repo is refreshed every 15 minutes
+- Threads get isolated git worktrees; inactive thread state and worktrees expire together after one hour
 
 ## Architecture
 
@@ -79,5 +82,7 @@ Slack, /prompt, or webhooks → runConversation() → TanStack AI ─┬→ Clau
                                            shared worktree, MCP, sessions, telemetry
 ```
 
-Slack threads retain their worktree and provider-scoped native sessions in the
-current process. Postgres durability across restarts is deliberately deferred.
+Slack threads retain their worktree, bounded neutral transcript, and
+provider-scoped native sessions in the current process. Runs on the same thread
+are serialized. Postgres durability and distributed locking across instances
+are deliberately deferred.

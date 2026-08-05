@@ -57,3 +57,10 @@ test("prompt route requires threadId instead of native sessionId", async () => {
     }
   );
 });
+
+test("prompt route fails closed when the API key is missing", async () => {
+  await withEnv({ COMPADRE_API_KEY: undefined }, async () => {
+    const response = await promptRoutes.request("/prompt", { method: "POST" });
+    assert.equal(response.status, 503);
+  });
+});

@@ -5,6 +5,7 @@ import {
 import { Hono } from "hono";
 import { runAguiChat } from "../tanstack/runtime.js";
 import { isAgentProvider } from "../tanstack/protocol.js";
+import { requireCompadreApiKey } from "./auth.js";
 
 export const aguiRoutes = new Hono();
 
@@ -15,16 +16,8 @@ function isEnabled(): boolean {
 aguiRoutes.post("/ag-ui", async (c) => {
   if (!isEnabled()) return c.notFound();
 
-  const apiKey = process.env.COMPADRE_API_KEY;
-  if (!apiKey) {
-    return c.json(
-      { error: "COMPADRE_API_KEY is required when the AG-UI spike is enabled" },
-      503
-    );
-  }
-  if (c.req.header("Authorization") !== `Bearer ${apiKey}`) {
-    return c.json({ error: "unauthorized" }, 401);
-  }
+  const authError = requireCompadreApiKey(c);
+  if (authError) return authError;
 
   let body: unknown;
   try {
