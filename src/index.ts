@@ -10,7 +10,6 @@ import { Hono } from "hono";
 import { logger } from "hono/logger";
 import { healthRoutes } from "./routes/health.js";
 import { promptRoutes } from "./routes/prompt.js";
-import { slackRoutes } from "./routes/slack.js";
 import { slackEventsRoutes } from "./routes/slack-events.js";
 import { webhookRoutes } from "./routes/webhook.js";
 import { aguiRoutes } from "./routes/agui.js";
@@ -38,7 +37,6 @@ app.onError((err, c) => {
 
 app.route("/", healthRoutes);
 app.route("/", promptRoutes);
-app.route("/", slackRoutes);
 app.route("/", slackEventsRoutes);
 app.route("/", webhookRoutes);
 app.route("/", aguiRoutes);

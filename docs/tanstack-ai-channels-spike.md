@@ -7,9 +7,8 @@ boundary and the TanStack AI harness runtime:
 
 ```text
 Slack events ----\
-/slack -----------+--> runConversation() --> TanStack AI --> Claude Code
-/prompt ----------+                                  \-----> Codex
-/webhook/:source -/
+/prompt -----------+--> runConversation() --> TanStack AI --> Claude Code
+/webhook/:source --/                                  \-----> Codex
 
 AG-UI clients ---------------------------> the same TanStack runtime
 ```
