@@ -13,7 +13,9 @@ import { promptRoutes } from "./routes/prompt.js";
 import { slackRoutes } from "./routes/slack.js";
 import { slackEventsRoutes } from "./routes/slack-events.js";
 import { webhookRoutes } from "./routes/webhook.js";
+import { aguiRoutes } from "./routes/agui.js";
 import { ensureRepo, refreshRepo, cleanupStaleWorktrees } from "./repo.js";
+import { validateConversationConfiguration } from "./conversation.js";
 
 const app = new Hono();
 
@@ -39,6 +41,7 @@ app.route("/", promptRoutes);
 app.route("/", slackRoutes);
 app.route("/", slackEventsRoutes);
 app.route("/", webhookRoutes);
+app.route("/", aguiRoutes);
 
 // Refresh the repo clone periodically (every 15 minutes)
 const REPO_REFRESH_INTERVAL_MS = 15 * 60 * 1000;
@@ -46,6 +49,11 @@ const REPO_REFRESH_INTERVAL_MS = 15 * 60 * 1000;
 const port = Number(process.env.PORT) || 3100;
 
 async function start() {
+  const agent = validateConversationConfiguration();
+  console.log(
+    `[agent] conversation runtime=${agent.runtime} provider=${agent.provider}`
+  );
+
   // Start the server first so Render sees the port binding
   serve({ fetch: app.fetch, port }, (info) => {
     console.log(`[agent] server running on port ${info.port}`);

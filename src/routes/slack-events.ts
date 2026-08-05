@@ -1,10 +1,11 @@
-import crypto from "crypto";
 import { Hono } from "hono";
-import { runTask } from "../agent.js";
 import { DEFAULT_MAX_TURNS, DEFAULT_MAX_BUDGET_USD } from "../config.js";
+import {
+  configuredAgentProvider,
+  conversationRuntimeForSlackUser,
+  runConversation,
+} from "../conversation.js";
 import { getSlackSystemPrompt, getSlackStreamingSystemPrompt } from "../prompts/index.js";
-import { createWorktree, removeWorktree } from "../repo.js";
-import { getSession, setSession } from "../sessions.js";
 import { resolveSlackChannelName } from "../services/slack-context.js";
 import { SlackStream } from "../services/slack-stream.js";
 import { humanizeToolName } from "../services/tool-labels.js";
@@ -125,10 +126,6 @@ async function handleAIMessage(
   const messageText = (event.text || "").replaceAll(`<@${SLACKBOT_USER_ID}>`, "").trim();
 
   const threadKey = threadTs;
-  const existing = getSession(threadKey);
-  const sessionId = existing?.sessionId;
-  const worktreeId = existing?.worktreeId ?? crypto.randomUUID();
-  const worktreePath = createWorktree(worktreeId);
 
   const [threadContext, channelName] = await Promise.all([
     event.thread_ts && botToken
@@ -188,11 +185,19 @@ async function handleAIMessage(
     await slackStream.setStatus("is thinking...");
   }
 
-  runTask({
+  const runtime = conversationRuntimeForSlackUser(event.user);
+  console.log(
+    `[slack-events] routing user=${event.user ?? "unknown"} runtime=${runtime}${runtime === "tanstack" ? ` provider=${configuredAgentProvider()}` : ""}`,
+  );
+
+  runConversation({
     prompt,
-    sessionId,
-    systemPrompt: slackStream ? getSlackStreamingSystemPrompt(worktreePath) : getSlackSystemPrompt(worktreePath),
-    worktreePath,
+    threadId: threadKey,
+    runtime,
+    systemPrompt: (worktreePath) =>
+      slackStream
+        ? getSlackStreamingSystemPrompt(worktreePath)
+        : getSlackSystemPrompt(worktreePath),
     maxTurns: DEFAULT_MAX_TURNS,
     maxBudgetUsd: DEFAULT_MAX_BUDGET_USD,
     stream: slackStream
@@ -210,26 +215,15 @@ async function handleAIMessage(
       : undefined,
   })
     .then(async (result) => {
-      if (result.sessionId) {
-        setSession(threadKey, { sessionId: result.sessionId, worktreeId });
-      } else {
-        // Only remove the worktree when there's no session to resume.
-        // Multi-turn conversations need the worktree preserved between turns
-        // so that commits and branches created in earlier turns persist.
-        removeWorktree(worktreeId);
-      }
       if (!isDM && slackStream) {
         await slackStream.removeReaction("compadre-thinking", event.ts);
       }
       console.log(
-        `[slack-events] completed for ${event.user}: turns=${result.numTurns} cost=$${result.costUsd.toFixed(3)} duration=${result.durationMs}ms`,
+        `[slack-events] completed for ${event.user}: runtime=${result.runtime} provider=${result.provider} turns=${result.numTurns} cost=$${result.costUsd.toFixed(3)} duration=${result.durationMs}ms`,
       );
     })
     .catch(async (err) => {
       console.error(`[slack-events] agent error for ${event.user}:`, err);
-      if (!getSession(threadKey)) {
-        removeWorktree(worktreeId);
-      }
       if (slackStream) {
         await slackStream.stopStream();
         await slackStream.clearStatus();
