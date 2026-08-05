@@ -6,6 +6,7 @@ import {
 import {
   configuredAgentProvider,
   validateAgentProviderConfiguration,
+  type AgentProfile,
   type AgentProvider,
 } from "./tanstack/protocol.js";
 import { releaseAguiThread } from "./tanstack/runtime.js";
@@ -21,6 +22,7 @@ export interface ConversationOptions {
   transcriptUserMessage?: string;
   threadId?: string;
   provider?: AgentProvider;
+  profile?: AgentProfile;
   maxTurns?: number;
   signal?: AbortSignal;
   systemPrompt?: (worktreePath: string) => string;
@@ -50,6 +52,7 @@ export function runConversation(
         transcriptUserMessage:
           options.transcriptUserMessage ?? options.prompt,
         provider: options.provider ?? configuredAgentProvider(),
+        profile: options.profile,
         maxTurns: options.maxTurns,
         signal: options.signal,
         systemPrompt: options.systemPrompt,

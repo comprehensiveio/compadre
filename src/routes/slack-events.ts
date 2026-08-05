@@ -6,8 +6,10 @@ import {
 } from "../conversation.js";
 import { getSlackSystemPrompt, getSlackStreamingSystemPrompt } from "../prompts/index.js";
 import { resolveSlackChannelName } from "../services/slack-context.js";
+import { parseAgentRouteDirective } from "../services/agent-routing.js";
 import { buildSlackAgentInput } from "../services/slack-prompt.js";
 import { SlackStream } from "../services/slack-stream.js";
+import { providerForAgentProfile } from "../tanstack/protocol.js";
 import { humanizeToolName } from "../services/tool-labels.js";
 import { verifySlackSignature } from "../services/slack-verify.js";
 
@@ -119,7 +121,22 @@ async function handleAIMessage(
   const botToken = process.env.SLACK_BOT_TOKEN;
   const threadTs = event.thread_ts || event.ts;
 
-  const messageText = (event.text || "").replaceAll(`<@${SLACKBOT_USER_ID}>`, "").trim();
+  const rawMessageText = (event.text || "")
+    .replaceAll(`<@${SLACKBOT_USER_ID}>`, "")
+    .trim();
+  const route = parseAgentRouteDirective(rawMessageText);
+  if (!route.ok) {
+    const errorStream = createSlackStream(event, threadTs, botToken, teamId);
+    if (errorStream) {
+      errorStream.appendText(route.error);
+      await errorStream.stopStream();
+    } else {
+      console.warn(`[slack-events] ${route.error}`);
+    }
+    return;
+  }
+
+  const { messageText, profile } = route;
 
   const threadKey = threadTs;
 
@@ -150,16 +167,7 @@ async function handleAIMessage(
     userId: event.user,
   });
 
-  let slackStream: SlackStream | undefined;
-  if (botToken) {
-    slackStream = new SlackStream({
-      channel: event.channel,
-      threadTs,
-      botToken,
-      recipientUserId: event.user,
-      recipientTeamId: event.user_team || event.team || teamId,
-    });
-  }
+  const slackStream = createSlackStream(event, threadTs, botToken, teamId);
 
   // In non-DM contexts, use a reaction to indicate processing
   if (!isDM && slackStream) {
@@ -170,13 +178,14 @@ async function handleAIMessage(
   }
 
   console.log(
-    `[slack-events] routing user=${event.user ?? "unknown"} provider=${configuredAgentProvider()}`,
+    `[slack-events] routing user=${event.user ?? "unknown"} provider=${profile ? providerForAgentProfile(profile) : configuredAgentProvider()} profile=${profile ?? "default"}`,
   );
 
   runConversation({
     prompt,
     transcriptUserMessage,
     threadId: threadKey,
+    profile,
     systemPrompt: (worktreePath) =>
       slackStream
         ? getSlackStreamingSystemPrompt(worktreePath)
@@ -232,6 +241,23 @@ async function handleAIMessage(
         }
       }
     });
+}
+
+function createSlackStream(
+  event: SlackEvent,
+  threadTs: string,
+  botToken: string | undefined,
+  teamId: string | undefined,
+): SlackStream | undefined {
+  return botToken
+    ? new SlackStream({
+        channel: event.channel,
+        threadTs,
+        botToken,
+        recipientUserId: event.user,
+        recipientTeamId: event.user_team || event.team || teamId,
+      })
+    : undefined;
 }
 
 async function fetchThreadContext(

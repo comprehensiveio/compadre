@@ -14,14 +14,14 @@ import { resolveClaudeExecutable } from "./claude-executable.js";
 import { resolveCodexExecutable } from "./codex-executable.js";
 import {
   configuredAgentProvider,
+  isAgentProfile,
   isAgentProvider,
+  providerForAgentProfile,
   type AgentProvider,
   type AguiChatParams,
 } from "./protocol.js";
 import { createHarnessTelemetryMiddleware } from "./telemetry.js";
 import { harnessLockStore } from "./thread-lock.js";
-
-const FABLE_FLAG_PATTERN = /--fable/g;
 
 /** Trusted Compadre harnesses run non-interactively with no approval gates. */
 export const CODEX_DANGEROUS_PERMISSIONS = {
@@ -54,113 +54,23 @@ export interface CreateHarnessStreamOptions {
   systemPrompt: string;
 }
 
-function textFromMessage(message: unknown): string {
-  if (typeof message !== "object" || message === null) return "";
-  const record = message as {
-    role?: unknown;
-    content?: unknown;
-    parts?: unknown;
-  };
-  if (record.role !== "user") return "";
-  if (typeof record.content === "string") return record.content;
-
-  const blocks = Array.isArray(record.content)
-    ? record.content
-    : Array.isArray(record.parts)
-      ? record.parts
-      : [];
-  return blocks
-    .map((block) => {
-      if (typeof block !== "object" || block === null) return "";
-      const text = (block as { text?: unknown }).text;
-      return typeof text === "string" ? text : "";
-    })
-    .join("\n");
-}
-
-function hasFableFlag(messages: unknown): boolean {
-  return (
-    Array.isArray(messages) &&
-    [...messages]
-      .reverse()
-      .some((message) => textFromMessage(message).includes("--fable"))
-  );
-}
-
-export function cleanFableControlText(text: string): string {
-  if (!text.includes("--fable")) return text;
-  const cleaned = text
-    .replace(FABLE_FLAG_PATTERN, "")
-    .replace(/[ \t]+\n/g, "\n")
-    .replace(/\n{3,}/g, "\n\n")
-    .trim();
-  return cleaned || text;
-}
-
-function cleanTextBlocks(blocks: unknown[]): unknown[] {
-  let changed = false;
-  const cleaned = blocks.map((block) => {
-    if (typeof block !== "object" || block === null) return block;
-    const record = block as { text?: unknown };
-    if (typeof record.text !== "string" || !record.text.includes("--fable")) {
-      return block;
-    }
-    changed = true;
-    return { ...record, text: cleanFableControlText(record.text) };
-  });
-  return changed ? cleaned : blocks;
-}
-
-/** Remove the model-selection control flag before either harness sees it. */
-export function messagesWithoutFableFlag(
-  messages: AguiChatParams["messages"]
-): AguiChatParams["messages"] {
-  return messages.map((message) => {
-    const record = message as unknown as {
-      role?: unknown;
-      content?: unknown;
-      parts?: unknown;
-    };
-    if (record.role !== "user") return message;
-    if (typeof record.content === "string") {
-      return {
-        ...record,
-        content: cleanFableControlText(record.content),
-      } as typeof message;
-    }
-    if (Array.isArray(record.content)) {
-      return {
-        ...record,
-        content: cleanTextBlocks(record.content),
-      } as typeof message;
-    }
-    if (Array.isArray(record.parts)) {
-      return {
-        ...record,
-        parts: cleanTextBlocks(record.parts),
-      } as typeof message;
-    }
-    return message;
-  });
-}
-
 export function resolveHarnessSelection(
   forwardedProps: Record<string, unknown>,
-  messages: unknown
 ): HarnessSelection {
-  const provider = isAgentProvider(forwardedProps.provider)
-    ? forwardedProps.provider
-    : configuredAgentProvider();
+  const profile = isAgentProfile(forwardedProps.profile)
+    ? forwardedProps.profile
+    : undefined;
+  const provider = profile
+    ? providerForAgentProfile(profile)
+    : isAgentProvider(forwardedProps.provider)
+      ? forwardedProps.provider
+      : configuredAgentProvider();
   const requestedModel = forwardedProps.model;
 
   let model: string;
   if (provider === "codex") {
     model = requestedModel === CODEX_MODEL ? requestedModel : CODEX_MODEL;
-  } else if (
-    forwardedProps.fable === true ||
-    hasFableFlag(messages) ||
-    requestedModel === FABLE_MODEL
-  ) {
+  } else if (profile === "fable" || requestedModel === FABLE_MODEL) {
     model = FABLE_MODEL;
   } else {
     model = requestedModel === DEFAULT_MODEL ? requestedModel : DEFAULT_MODEL;
@@ -203,7 +113,7 @@ export function createHarnessStream({
     worktreeId,
   });
   const shared = {
-    messages: messagesWithoutFableFlag(params.messages),
+    messages: params.messages,
     systemPrompts: [systemPrompt],
     tools: mergeAgentTools([], params.tools),
     mcp: { clients },

@@ -76,3 +76,25 @@ test("AG-UI route rejects an unknown harness provider", async () => {
   });
   assert.equal(response.status, 400);
 });
+
+test("AG-UI route rejects an unknown agent profile", async () => {
+  process.env.COMPADRE_TANSTACK_AI_ENABLED = "true";
+  process.env.COMPADRE_API_KEY = "test-key";
+  const response = await aguiRoutes.request("/ag-ui", {
+    method: "POST",
+    headers: {
+      Authorization: "Bearer test-key",
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      threadId: "thread-1",
+      runId: "run-1",
+      messages: [{ id: "message-1", role: "user", content: "hello" }],
+      tools: [],
+      context: [],
+      forwardedProps: { profile: "unknown" },
+      state: {},
+    }),
+  });
+  assert.equal(response.status, 400);
+});

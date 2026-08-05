@@ -9,7 +9,6 @@ import { localProcessSandbox } from "@tanstack/ai-sandbox-local-process";
 import { getBaseSystemPrompt } from "../prompts/index.js";
 import { createWorktree, removeWorktree } from "../repo.js";
 import {
-  cleanFableControlText,
   createHarnessStream,
   resolveHarnessSelection,
   type HarnessSelection,
@@ -184,13 +183,7 @@ async function prepareAguiChat(
   );
   const transcriptUserMessage = options.transcriptUserMessage;
   const tracksTranscript = transcriptUserMessage !== undefined;
-  const messagesWithTranscript = tracksTranscript
-    ? [...thread.transcript, ...params.messages]
-    : params.messages;
-  const selection = resolveHarnessSelection(
-    params.forwardedProps,
-    messagesWithTranscript
-  );
+  const selection = resolveHarnessSelection(params.forwardedProps);
   const worktreeId = thread.worktreeId;
   const sessionId = resumableHarnessSession(thread, selection.provider);
   const effectiveParams: AguiChatParams = tracksTranscript
@@ -264,9 +257,7 @@ async function prepareAguiChat(
     sessionId !== undefined,
     requestSignal,
     abortController,
-    tracksTranscript
-      ? cleanFableControlText(transcriptUserMessage)
-      : undefined,
+    tracksTranscript ? transcriptUserMessage : undefined,
     runLease
   );
   return (async function* () {
