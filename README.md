@@ -91,6 +91,5 @@ Slack, /prompt, or webhooks → runConversation() → TanStack AI ─┬→ Clau
 Slack threads retain their worktree, bounded neutral transcript, and
 provider-scoped native sessions in the current process. Runs on the same thread
 are serialized, and the single 2 GiB service runs only one coding harness at a
-time. The runtime aborts at 95% container memory by default and reconciles stale
-Slack reactions after a restart. Postgres durability and distributed locking
-across instances are deliberately deferred.
+time. The runtime reconciles stale Slack reactions after a restart. Postgres
+durability and distributed locking across instances are deliberately deferred.
