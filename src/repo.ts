@@ -12,23 +12,56 @@ import path from "path";
 import { LocalProcessHandle } from "@tanstack/ai-sandbox-local-process";
 import { REPO_PATH } from "./config.js";
 
-function git(...args: string[]) {
-  execFileSync("git", args, { stdio: "inherit" });
+function gitEnvironment(): NodeJS.ProcessEnv {
+  const pat = process.env.GITHUB_PERSONAL_ACCESS_TOKEN;
+  if (!pat) return process.env;
+
+  // Keep credentials out of command arguments, exception messages, process
+  // listings, and the persisted origin URL. Git reads this one-command config
+  // only from the child environment.
+  const authorization = Buffer.from(`x-access-token:${pat}`).toString("base64");
+  const configuredCount = Number.parseInt(process.env.GIT_CONFIG_COUNT ?? "0", 10);
+  const index = Number.isInteger(configuredCount) && configuredCount >= 0
+    ? configuredCount
+    : 0;
+  return {
+    ...process.env,
+    GIT_CONFIG_COUNT: String(index + 1),
+    [`GIT_CONFIG_KEY_${index}`]: "http.extraHeader",
+    [`GIT_CONFIG_VALUE_${index}`]: `Authorization: Basic ${authorization}`,
+    GIT_TERMINAL_PROMPT: "0",
+  };
 }
 
-function getRepoUrl() {
-  const base =
-    process.env.GITHUB_REPO_URL ||
-    "https://github.com/comprehensiveio/comp.git";
-  const pat = process.env.GITHUB_PERSONAL_ACCESS_TOKEN;
-  if (pat && base.startsWith("https://")) {
-    return base.replace("https://", `https://x-access-token:${pat}@`);
-  }
-  return base;
+function git(...args: string[]) {
+  execFileSync("git", args, {
+    env: gitEnvironment(),
+    stdio: "inherit",
+  });
+}
+
+export function configuredRepositoryUrl(
+  env: NodeJS.ProcessEnv = process.env,
+): string {
+  return (
+    env.GITHUB_REPO_URL ||
+    "https://github.com/comprehensiveio/comp.git"
+  );
 }
 
 function getRepoBranch() {
   return process.env.REPO_BRANCH || "main";
+}
+
+export function configuredRepositorySeedPath(): string {
+  return (
+    process.env.COMPADRE_REPO_SEED_PATH ||
+    path.resolve(".workflow-cache", "comp.git")
+  );
+}
+
+function hasRepositorySeed(seedPath: string): boolean {
+  return existsSync(path.join(seedPath, "HEAD"));
 }
 
 function gitOutput(cwd: string, ...args: string[]): string {
@@ -94,19 +127,100 @@ export function ensureRepo() {
     return;
   }
 
-  const repoUrl = getRepoUrl();
+  const repoUrl = configuredRepositoryUrl();
   const branch = getRepoBranch();
+  const seedPath = configuredRepositorySeedPath();
 
   if (existsSync(`${REPO_PATH}/.git`)) {
     console.log("[repo] pulling latest changes");
+    // Older Compadre versions embedded the PAT in this URL. Always rewrite it
+    // to the credential-free configured URL before any network operation.
+    git("-C", REPO_PATH, "remote", "set-url", "origin", repoUrl);
     git("-C", REPO_PATH, "fetch", "origin", branch);
+    git("-C", REPO_PATH, "reset", "--hard", `origin/${branch}`);
+  } else if (hasRepositorySeed(seedPath)) {
+    console.log(`[repo] cloning repository from image seed at ${seedPath}`);
+    git(
+      "clone",
+      "--local",
+      // Keep the editable checkout independent from the immutable image seed.
+      // The bounded copy is still substantially faster than a network clone.
+      "--no-hardlinks",
+      "--single-branch",
+      "--branch",
+      branch,
+      seedPath,
+      REPO_PATH,
+    );
+    git("-C", REPO_PATH, "remote", "set-url", "origin", repoUrl);
+    try {
+      git("-C", REPO_PATH, "fetch", "--depth", "1", "origin", branch);
+    } catch (error) {
+      console.warn(
+        "[repo] seeded repository could not fetch the latest revision; using the image revision",
+        error,
+      );
+    }
     git("-C", REPO_PATH, "reset", "--hard", `origin/${branch}`);
   } else {
     console.log("[repo] cloning repository");
-    git("clone", "--depth", "1", "--branch", branch, repoUrl, REPO_PATH);
+    git(
+      "clone",
+      "--depth",
+      "1",
+      "--filter=blob:none",
+      "--single-branch",
+      "--branch",
+      branch,
+      repoUrl,
+      REPO_PATH,
+    );
   }
 
   installBranchGuards();
+}
+
+/**
+ * Populate the immutable repository seed that is packaged into the Workflow
+ * image. This runs during the Workflow build, never on the request path.
+ */
+export function prepareRepositorySeed(
+  seedPath = configuredRepositorySeedPath(),
+): string {
+  const repoUrl = configuredRepositoryUrl();
+  const branch = getRepoBranch();
+  mkdirSync(path.dirname(seedPath), { recursive: true });
+
+  if (hasRepositorySeed(seedPath)) {
+    console.log(`[repo-seed] refreshing ${seedPath}`);
+    git("--git-dir", seedPath, "remote", "set-url", "origin", repoUrl);
+    git(
+      "--git-dir",
+      seedPath,
+      "fetch",
+      "--depth",
+      "1",
+      "origin",
+      `+refs/heads/${branch}:refs/heads/${branch}`,
+    );
+  } else {
+    console.log(`[repo-seed] cloning ${repoUrl} into ${seedPath}`);
+    git(
+      "clone",
+      "--bare",
+      "--depth",
+      "1",
+      "--filter=blob:none",
+      "--single-branch",
+      "--branch",
+      branch,
+      repoUrl,
+      seedPath,
+    );
+  }
+
+  git("--git-dir", seedPath, "symbolic-ref", "HEAD", `refs/heads/${branch}`);
+  return seedPath;
 }
 
 export function refreshRepo() {

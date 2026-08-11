@@ -12,7 +12,22 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import test from "node:test";
-import { isRemovableStaleWorktree, prepareWorktree } from "./repo.js";
+import {
+  configuredRepositoryUrl,
+  isRemovableStaleWorktree,
+  prepareWorktree,
+} from "./repo.js";
+
+test("keeps GitHub credentials out of the configured repository URL", () => {
+  const token = "secret-token";
+  const url = configuredRepositoryUrl({
+    GITHUB_REPO_URL: "https://github.com/comprehensiveio/comp.git",
+    GITHUB_PERSONAL_ACCESS_TOKEN: token,
+  });
+
+  assert.equal(url, "https://github.com/comprehensiveio/comp.git");
+  assert.equal(url.includes(token), false);
+});
 
 test("removes only stale worktrees that have no live thread owner", () => {
   const retained = new Set(["active"]);

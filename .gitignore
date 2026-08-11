@@ -3,3 +3,4 @@ dist/
 .env.local
 .sessions/
 datadog-mcp-creds.json
+.workflow-cache/

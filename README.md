@@ -83,6 +83,44 @@ On Render:
 - Threads get isolated git worktrees; inactive thread state and worktrees expire together after one hour
 - One isolated worktree is prepared while the harness is idle so a new thread normally avoids dependency installation on its request path; incoming user work preempts that preparation
 
+### Ephemeral agent Workflow spike
+
+The repository also registers two opt-in Render Workflow tasks:
+
+- `probeAgentRuntime` measures Workflow and repository startup without calling a model.
+- `runAgent` executes one existing TanStack AI agent turn on an isolated 4 GB task instance.
+
+They are deliberately not connected to Slack yet. Task retries are disabled
+until Slack and GitHub side effects have durable idempotency, and provider
+session/worktree reuse remains a separate persistence milestone.
+
+Use these commands for local Workflow development with Render CLI 2.12 or
+newer:
+
+```bash
+# Terminal 1
+render workflows dev -- npm run workflow:dev
+
+# Terminal 2
+RENDER_USE_LOCAL_DEV=true npm run workflow:probe
+RENDER_USE_LOCAL_DEV=true npm run workflow:agent -- "Reply with only: hi"
+```
+
+Configure the Workflow service with:
+
+```text
+Build: npm install && npm run build && npm run workflow:seed-repo
+Start: npm run workflow:start
+```
+
+The build command clones a shallow bare `comp` repository into the cached
+Workflow image. Each task creates its editable checkout from that immutable
+local seed and fetches only the latest GitHub delta. If the seed is missing,
+the runtime falls back to a partial shallow clone. The Workflow needs the same
+agent/MCP environment group as the web service plus a valid
+`GITHUB_PERSONAL_ACCESS_TOKEN`; the credential is passed through Git's child
+process environment and is never stored in the origin URL.
+
 ## Architecture
 
 ```
