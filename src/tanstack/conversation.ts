@@ -11,7 +11,6 @@ import {
   type AguiChatParams,
 } from "./protocol.js";
 import { runAguiChat } from "./runtime.js";
-import { startMemoryPressureWatchdog } from "./memory-pressure.js";
 
 export interface HarnessConversationOptions {
   threadId: string;
@@ -148,7 +147,6 @@ export async function runHarnessConversation(
     );
   }, maxDurationMs());
   timer.unref();
-  const stopMemoryWatchdog = startMemoryPressureWatchdog(abortController);
 
   const params: AguiChatParams = {
     messages: [{ role: "user", content: options.prompt }],
@@ -178,7 +176,6 @@ export async function runHarnessConversation(
     });
   } finally {
     clearTimeout(timer);
-    stopMemoryWatchdog();
     options.signal?.removeEventListener("abort", abort);
   }
 }
