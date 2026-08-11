@@ -9,6 +9,7 @@ import {
   ensureRepo,
 } from "../repo.js";
 import { releaseAguiThread } from "../tanstack/runtime.js";
+import { getSlackStreamingSystemPrompt } from "../prompts/index.js";
 
 export const agentWorkflowInputSchema = z.object({
   runId: z.string().trim().min(1).optional(),
@@ -18,6 +19,7 @@ export const agentWorkflowInputSchema = z.object({
   provider: z.enum(["claude-code", "codex"]).optional(),
   profile: z.enum(["claude-code", "codex", "fable"]).optional(),
   maxTurns: z.number().int().positive().optional(),
+  responseMode: z.enum(["default", "slack-streaming"]).optional(),
 });
 
 export type AgentWorkflowInput = z.infer<typeof agentWorkflowInputSchema>;
@@ -110,6 +112,10 @@ export async function executeAgentWorkflow(
       provider: input.provider,
       profile: input.profile,
       maxTurns: input.maxTurns,
+      systemPrompt:
+        input.responseMode === "slack-streaming"
+          ? (worktreePath) => getSlackStreamingSystemPrompt(worktreePath)
+          : undefined,
       stream: {
         onTextDelta: () => {
           firstActivityAt ??= dependencies.now();

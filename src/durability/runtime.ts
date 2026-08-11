@@ -37,10 +37,18 @@ export async function createAgentRunDurability(
   if (backend === null) return null;
   if (backend === "memory") {
     const runs = new InMemoryRunStore();
+    const streams = new Map<string, StreamDurability<string>>();
     return {
       backend,
       runs,
-      stream: (runId) => memoryStream({ runId }),
+      stream: (runId) => {
+        let stream = streams.get(runId);
+        if (!stream) {
+          stream = memoryStream({ runId });
+          streams.set(runId, stream);
+        }
+        return stream;
+      },
       close: async () => undefined,
     };
   }

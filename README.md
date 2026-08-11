@@ -92,9 +92,12 @@ The repository also registers two opt-in Render Workflow tasks:
 - `runAgent` executes one existing TanStack AI agent turn on an isolated 4 GB task instance.
 - `probeAgentDurability` verifies a saved run through the same Postgres replay adapter without returning its message content.
 
-They are deliberately not connected to Slack yet. Task retries are disabled
-until Slack and GitHub side effects have durable idempotency, and provider
-session/worktree reuse remains a separate persistence milestone.
+Slack remains on the persistent runner by default. The same channel-neutral
+conversation interface can be switched to the Workflow producer with
+`COMPADRE_SLACK_WORKFLOW_ENABLED=true` after the relay has been verified. Task
+retries remain disabled until Slack and GitHub side effects have durable
+idempotency, and provider session/worktree reuse remains a separate persistence
+milestone.
 
 Use these commands for local Workflow development with Render CLI 2.12 or
 newer:
@@ -133,6 +136,15 @@ database-free unless `COMPADRE_DURABILITY_BACKEND=memory` is selected. The
 deployed Workflow sets the backend to `postgres`; every AG-UI chunk is persisted
 before the existing Compadre consumer observes it, and can be replayed later by
 the Slack delivery gateway.
+
+The relay has a database-free local mode: set
+`COMPADRE_DURABILITY_BACKEND=memory`, `COMPADRE_WORKFLOW_RUNNER=local`, and
+`COMPADRE_WORKFLOW_RELAY_ENABLED=true`. `POST /workflow-runs` starts an
+in-process run and `GET /workflow-runs/:runId/events?offset=-1` serves its
+resumable AG-UI stream. A deployed relay switches only the runner to `render`
+and the durability backend to `postgres`; the HTTP and event contracts stay
+the same. Slack consumes that identical durable log through the existing
+`SlackStream`; it never depends on a live connection to the Workflow task.
 
 ## Architecture
 

@@ -77,7 +77,9 @@ test("persists and replays a TanStack AG-UI run through the memory adapter", asy
   assert.deepEqual(replayed, chunks);
   assert.equal((await durability.runs.get("memory-run"))?.status, "completed");
 
-  const snapshot = await durability.stream("memory-run").snapshot();
+  const independentlyResolvedStream = durability.stream("memory-run");
+  assert.equal(independentlyResolvedStream, durability.stream("memory-run"));
+  const snapshot = await independentlyResolvedStream.snapshot();
   assert.deepEqual(snapshot.map((entry) => entry.chunk), chunks);
 });
 
