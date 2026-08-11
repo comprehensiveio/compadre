@@ -69,3 +69,22 @@ test("does not retry ordinary background failures", async () => {
   );
   assert.equal(runs, 1);
 });
+
+test("stops retrying when the caller cancels between attempts", async () => {
+  const abortController = new AbortController();
+  const cancellation = new Error("caller cancelled");
+  let runs = 0;
+
+  await assert.rejects(
+    retryBackgroundPreemptions(
+      async () => {
+        runs += 1;
+        throw new BackgroundCapacityPreemptedError();
+      },
+      () => abortController.abort(cancellation),
+      abortController.signal,
+    ),
+    (error) => error === cancellation,
+  );
+  assert.equal(runs, 1);
+});

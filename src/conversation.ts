@@ -51,6 +51,7 @@ export async function retryBackgroundPreemptions<T>(
   onPreempted: (attempt: number) => void | Promise<void> = async () => {
     await delay(100);
   },
+  signal?: AbortSignal,
 ): Promise<T> {
   let attempt = 0;
   while (true) {
@@ -58,8 +59,10 @@ export async function retryBackgroundPreemptions<T>(
       return await task();
     } catch (error) {
       if (!(error instanceof BackgroundCapacityPreemptedError)) throw error;
+      if (signal?.aborted) throw signal.reason;
       attempt += 1;
       await onPreempted(attempt);
+      if (signal?.aborted) throw signal.reason;
     }
   }
 }
@@ -85,12 +88,16 @@ export function runConversation(
         capacityPriority: options.capacityPriority,
       });
       if (!options.retryOnBackgroundPreemption) return await execute();
-      return await retryBackgroundPreemptions(execute, async (attempt) => {
-        console.warn(
-          `[conversation] background run preempted; retrying attempt=${attempt}`,
-        );
-        await delay(100);
-      });
+      return await retryBackgroundPreemptions(
+        execute,
+        async (attempt) => {
+          console.warn(
+            `[conversation] background run preempted; retrying attempt=${attempt}`,
+          );
+          await delay(100);
+        },
+        options.signal,
+      );
     } finally {
       if (ephemeral) await releaseAguiThread(threadId);
     }
