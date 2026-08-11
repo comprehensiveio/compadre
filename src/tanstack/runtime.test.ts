@@ -26,7 +26,7 @@ async function fixtureWorktree(script: string): Promise<string> {
   return worktreePath;
 }
 
-test("prepares a fresh worktree before a harness can use it", async () => {
+test("starts a harness without blocking on dependency preparation", async () => {
   const worktreePath = await fixtureWorktree(
     "printf prepared > .compadre-worktree-ready"
   );
@@ -35,28 +35,9 @@ test("prepares a fresh worktree before a harness can use it", async () => {
 
   try {
     await sandbox.ensure(context);
-    assert.equal(
-      await readFile(
-        path.join(worktreePath, ".compadre-worktree-ready"),
-        "utf8"
-      ),
-      "prepared"
-    );
-  } finally {
-    await sandbox.destroy(context);
-    await rm(worktreePath, { recursive: true, force: true });
-  }
-});
-
-test("does not start a harness when worktree preparation fails", async () => {
-  const worktreePath = await fixtureWorktree("exit 17");
-  const sandbox = createHarnessSandbox("failed", worktreePath);
-  const context = { threadId: "thread-failed", runId: "run-failed" };
-
-  try {
     await assert.rejects(
-      sandbox.ensure(context),
-      /setup step failed: scripts\/worktree-up\.sh --hook \(exit 17\)/
+      readFile(path.join(worktreePath, ".compadre-worktree-ready"), "utf8"),
+      { code: "ENOENT" },
     );
   } finally {
     await sandbox.destroy(context);

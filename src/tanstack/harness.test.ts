@@ -4,6 +4,7 @@ import { CODEX_MODEL, DEFAULT_MODEL, FABLE_MODEL } from "../config.js";
 import {
   CLAUDE_DANGEROUS_PERMISSIONS,
   CODEX_DANGEROUS_PERMISSIONS,
+  harnessEnvironment,
   resolveHarnessSelection,
 } from "./harness.js";
 
@@ -81,4 +82,11 @@ test("runs both coding harnesses without tool approval gates", () => {
     permissionMode: "bypassPermissions",
   });
   assert.equal("allowedTools" in CLAUDE_DANGEROUS_PERMISSIONS, false);
+});
+
+test("marks Compadre harness startup as dependency-lazy", () => {
+  assert.deepEqual(harnessEnvironment("/tmp/worktrees/example"), {
+    COMPADRE_SKIP_WORKTREE_SETUP: "1",
+    GIT_CEILING_DIRECTORIES: "/tmp/worktrees",
+  });
 });

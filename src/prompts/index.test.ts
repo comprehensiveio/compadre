@@ -41,3 +41,11 @@ test("applies the concise response contract to every harness prompt", () => {
     assert.match(prompt, /correctness, safety, or a decision requires it/);
   }
 });
+
+test("teaches harnesses to prepare dependencies only when needed", () => {
+  const prompt = getBaseSystemPrompt("/tmp/test-repo");
+
+  assert.match(prompt, /worktree may intentionally start before dependencies/);
+  assert.match(prompt, /scripts\/worktree-up\.sh --hook/);
+  assert.match(prompt, /Reading, searching, editing, and git do not require setup/);
+});

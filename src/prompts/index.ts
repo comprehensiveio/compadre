@@ -50,6 +50,7 @@ Important:
 - This is NOT the repo you are running inside of. You are running inside the compadre ops-agent repo. The comp monorepo is a separate clone at \`${repoPath}\`.
 - All file paths for Read, Edit, Write, Glob, Grep should be relative to or within \`${repoPath}\`.
 - For Bash commands, always \`cd ${repoPath}\` first or use absolute paths, since shell cwd may reset between commands.
+- A newly allocated worktree may intentionally start before dependencies are installed. Reading, searching, editing, and git do not require setup. Before running tests, typechecks, dev servers, generators, or other commands that load repository packages, run \`scripts/worktree-up.sh --hook\` once. This command is idempotent and prepared worktrees complete it immediately.
 
 ## CRITICAL: All git commands MUST target the comp repo
 NEVER run bare \`git\` commands. ALWAYS use \`git -C ${repoPath}\` for every git operation. Without \`-C\`, git will operate on the compadre agent repo (wrong repo) and silently corrupt your workflow.
