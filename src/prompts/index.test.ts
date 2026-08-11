@@ -23,3 +23,21 @@ test("keeps Slack upload instructions scoped to Slack prompts", () => {
     assert.doesNotMatch(prompt, /curl/);
   }
 });
+
+test("applies the concise response contract to every harness prompt", () => {
+  const prompts = [
+    getBaseSystemPrompt("/tmp/test-repo"),
+    getSlackSystemPrompt("/tmp/test-repo"),
+    getSlackStreamingSystemPrompt("/tmp/test-repo"),
+  ];
+
+  for (const prompt of prompts) {
+    assert.match(prompt, /Lead with the outcome or conclusion/);
+    assert.match(prompt, /smallest complete answer/);
+    assert.match(prompt, /result, files changed, verification/);
+    assert.match(prompt, /Do not add a preamble/);
+    assert.match(prompt, /at most five bullets/);
+    assert.match(prompt, /Keep progress updates to one short sentence/);
+    assert.match(prompt, /correctness, safety, or a decision requires it/);
+  }
+});
