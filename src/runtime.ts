@@ -45,16 +45,10 @@ export function configureBundledWorkflowRuntime(
   runtimeRoot = path.resolve(WORKFLOW_RUNTIME_RELATIVE_PATH),
 ): boolean {
   const binDir = path.join(runtimeRoot, "bin");
-  if (
-    !existsSync(path.join(binDir, "uvx")) ||
-    !existsSync(path.join(binDir, "workspace-mcp"))
-  ) {
+  if (!existsSync(path.join(binDir, "workspace-mcp"))) {
     return false;
   }
 
-  process.env.UV_TOOL_DIR ??= path.join(runtimeRoot, "tools");
-  process.env.UV_TOOL_BIN_DIR ??= binDir;
-  process.env.UV_CACHE_DIR ??= path.join(runtimeRoot, "cache");
   process.env.WORKSPACE_MCP_EXECUTABLE ??= path.join(
     binDir,
     "workspace-mcp",
@@ -64,10 +58,10 @@ export function configureBundledWorkflowRuntime(
 }
 
 export function ensureRuntimeDependencies() {
-  configureBundledWorkflowRuntime();
+  const hasBundledWorkspaceMcp = configureBundledWorkflowRuntime();
   prependPath(path.join(os.homedir(), ".local", "bin"));
 
-  if (!hasGoogleWorkspaceConfig() || hasUvx()) {
+  if (!hasGoogleWorkspaceConfig() || hasBundledWorkspaceMcp || hasUvx()) {
     return;
   }
 

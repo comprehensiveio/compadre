@@ -109,7 +109,7 @@ RENDER_USE_LOCAL_DEV=true npm run workflow:agent -- "Reply with only: hi"
 Configure the Workflow service with:
 
 ```text
-Build: npm install && npm run build && npm run workflow:prepare-runtime && npm run workflow:seed-repo
+Build: npm ci && npm run build && npm run workflow:prepare-runtime && npm run workflow:seed-repo
 Start: npm run workflow:start
 ```
 

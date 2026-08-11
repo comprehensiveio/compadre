@@ -41,6 +41,12 @@ execFileSync(
   { env: toolEnvironment, stdio: "inherit" },
 );
 
+// Task instances invoke the installed executable directly. Exclude the build
+// resolver and its package cache from the immutable Workflow image.
+rmSync(cacheDir, { recursive: true, force: true });
+rmSync(path.join(binDir, "uv"), { force: true });
+rmSync(path.join(binDir, "uvx"), { force: true });
+
 console.log(
   JSON.stringify({
     event: "workflow.runtime-prepared",
