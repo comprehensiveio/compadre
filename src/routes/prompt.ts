@@ -49,6 +49,8 @@ promptRoutes.post("/prompt", async (c) => {
       : undefined,
     maxTurns: (body.maxTurns as number) ?? DEFAULT_MAX_TURNS,
     signal: async ? undefined : c.req.raw.signal,
+    capacityPriority: async ? ("background" as const) : ("foreground" as const),
+    retryOnBackgroundPreemption: async,
   };
 
   if (async) {

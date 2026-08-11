@@ -1,4 +1,4 @@
-import { execFile, execFileSync } from "child_process";
+import { execFileSync } from "child_process";
 import {
   chmodSync,
   existsSync,
@@ -9,10 +9,8 @@ import {
   writeFileSync,
 } from "fs";
 import path from "path";
-import { promisify } from "util";
+import { LocalProcessHandle } from "@tanstack/ai-sandbox-local-process";
 import { REPO_PATH } from "./config.js";
-
-const execFileAsync = promisify(execFile);
 
 function git(...args: string[]) {
   execFileSync("git", args, { stdio: "inherit" });
@@ -187,13 +185,29 @@ export function createWorktree(id: string): string {
  * This is also used off the request path to populate the prepared-worktree
  * cache. The sandbox repeats the idempotent check when it claims the worktree.
  */
-export async function prepareWorktree(worktreePath: string): Promise<void> {
-  const setupScript = path.join(worktreePath, "scripts", "worktree-up.sh");
-  await execFileAsync(setupScript, ["--hook"], {
-    cwd: worktreePath,
-    env: process.env,
-    maxBuffer: 16 * 1024 * 1024,
+export async function prepareWorktree(
+  worktreePath: string,
+  signal?: AbortSignal,
+): Promise<void> {
+  if (signal?.aborted) throw signal.reason;
+  const handle = new LocalProcessHandle({
+    root: worktreePath,
+    removeOnDestroy: false,
+    forkFactory: () => Promise.reject(new Error("worktree setup cannot fork")),
   });
+  try {
+    const result = await handle.process.exec("scripts/worktree-up.sh --hook", {
+      signal,
+    });
+    if (signal?.aborted) throw signal.reason;
+    if (result.exitCode !== 0) {
+      throw new Error(
+        `worktree setup exited with code ${result.exitCode}: ${result.stderr.slice(-1_000)}`,
+      );
+    }
+  } finally {
+    await handle.destroy();
+  }
 }
 
 /**

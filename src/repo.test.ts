@@ -1,7 +1,16 @@
 import assert from "node:assert/strict";
-import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import {
+  access,
+  chmod,
+  mkdir,
+  mkdtemp,
+  readFile,
+  rm,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { setTimeout as delay } from "node:timers/promises";
 import test from "node:test";
 import { isRemovableStaleWorktree, prepareWorktree } from "./repo.js";
 
@@ -42,6 +51,34 @@ test("prepares a worktree through its checked-in setup script", async () => {
       await readFile(path.join(worktreePath, ".prepared-by-pool"), "utf8"),
       "prepared",
     );
+  } finally {
+    await rm(worktreePath, { recursive: true, force: true });
+  }
+});
+
+test("aborting worktree preparation terminates its subprocess tree", async () => {
+  const worktreePath = await mkdtemp(
+    path.join(tmpdir(), "compadre-abort-worktree-"),
+  );
+  const scriptsPath = path.join(worktreePath, "scripts");
+  await mkdir(scriptsPath);
+  const scriptPath = path.join(scriptsPath, "worktree-up.sh");
+  await writeFile(
+    scriptPath,
+    "#!/bin/sh\n(sleep 0.4; printf leaked > .leaked-child) &\nwait\n",
+  );
+  await chmod(scriptPath, 0o755);
+  const abortController = new AbortController();
+
+  try {
+    const preparation = prepareWorktree(worktreePath, abortController.signal);
+    setTimeout(
+      () => abortController.abort(new Error("foreground requested")),
+      25,
+    );
+    await assert.rejects(preparation, /foreground requested/);
+    await delay(500);
+    await assert.rejects(access(path.join(worktreePath, ".leaked-child")));
   } finally {
     await rm(worktreePath, { recursive: true, force: true });
   }

@@ -7,7 +7,10 @@ import {
   worktreeRevision,
 } from "../repo.js";
 import { PREPARED_WORKTREE_TARGET } from "../config.js";
-import { harnessRunCapacity, type ThreadRunLease } from "./thread-lock.js";
+import {
+  harnessRunCapacity,
+  type BackgroundCapacityResult,
+} from "./thread-lock.js";
 
 export interface PreparedWorktree {
   id: string;
@@ -18,11 +21,13 @@ export interface PreparedWorktree {
 export interface PreparedWorktreePoolDependencies {
   createId(): string;
   create(id: string): string;
-  prepare(path: string): Promise<void>;
+  prepare(path: string, signal: AbortSignal): Promise<void>;
   remove(id: string): void;
   currentRevision(): string | undefined;
   revision(path: string): string | undefined;
-  acquireCapacity(): Promise<ThreadRunLease>;
+  runWithBackgroundCapacity<T>(
+    task: (signal: AbortSignal) => Promise<T>,
+  ): Promise<BackgroundCapacityResult<T>>;
 }
 
 export interface PreparedWorktreePoolOptions {
@@ -151,44 +156,53 @@ export class PreparedWorktreePool {
 
   private async fill(): Promise<void> {
     while (this.ready.length < this.targetSize) {
-      const lease = await this.dependencies.acquireCapacity();
-      const id = this.dependencies.createId();
-      const startedAt = Date.now();
-      let path: string | undefined;
-      try {
-        // Re-check after acquiring capacity: another refill may have completed
-        // while this low-priority job was waiting behind an agent run.
-        if (this.ready.length >= this.targetSize) return;
+      const result = await this.dependencies.runWithBackgroundCapacity(
+        async (signal) => {
+          const id = this.dependencies.createId();
+          const startedAt = Date.now();
+          let path: string | undefined;
+          try {
+            // Re-check after acquiring capacity: another refill may have
+            // completed while this job was waiting behind an agent run.
+            if (this.ready.length >= this.targetSize) return "full" as const;
 
-        path = this.dependencies.create(id);
-        await this.dependencies.prepare(path);
-        const revision = this.dependencies.revision(path);
-        const currentRevision = this.dependencies.currentRevision();
-        if (
-          revision === undefined ||
-          (currentRevision !== undefined && revision !== currentRevision)
-        ) {
-          throw new Error(
-            `prepared revision ${revision ?? "unknown"} does not match current ${currentRevision ?? "unknown"}`,
-          );
-        }
+            path = this.dependencies.create(id);
+            await this.dependencies.prepare(path, signal);
+            const revision = this.dependencies.revision(path);
+            const currentRevision = this.dependencies.currentRevision();
+            if (
+              revision === undefined ||
+              (currentRevision !== undefined && revision !== currentRevision)
+            ) {
+              throw new Error(
+                `prepared revision ${revision ?? "unknown"} does not match current ${currentRevision ?? "unknown"}`,
+              );
+            }
 
-        this.ready.push({ id, path, revision });
-        console.log(
-          `[worktree-pool] ready worktree=${id} revision=${revision} duration=${Date.now() - startedAt}ms ready=${this.ready.length}`,
-        );
-      } catch (error) {
-        if (path !== undefined) this.dependencies.remove(id);
-        const message = error instanceof Error ? error.message : String(error);
-        console.warn(
-          `[worktree-pool] preparation failed worktree=${id} duration=${Date.now() - startedAt}ms: ${message}`,
-        );
-        // Fail open and wait for a later scheduled/maintenance refill rather
-        // than spinning on a broken repository or setup script.
+            this.ready.push({ id, path, revision });
+            console.log(
+              `[worktree-pool] ready worktree=${id} revision=${revision} duration=${Date.now() - startedAt}ms ready=${this.ready.length}`,
+            );
+            return "ready" as const;
+          } catch (error) {
+            if (path !== undefined) this.dependencies.remove(id);
+            if (signal.aborted) throw error;
+            const message =
+              error instanceof Error ? error.message : String(error);
+            console.warn(
+              `[worktree-pool] preparation failed worktree=${id} duration=${Date.now() - startedAt}ms: ${message}`,
+            );
+            // Fail open and wait for a later maintenance refill rather than
+            // spinning on a broken repository or setup script.
+            return "failed" as const;
+          }
+        },
+      );
+      if (result.status === "preempted") {
+        console.log("[worktree-pool] yielded preparation to waiting agent run");
         return;
-      } finally {
-        await lease.release();
       }
+      if (result.value !== "ready") return;
     }
   }
 }
@@ -202,6 +216,7 @@ export const harnessPreparedWorktrees = new PreparedWorktreePool({
     remove: removeWorktree,
     currentRevision: currentRepoRevision,
     revision: worktreeRevision,
-    acquireCapacity: () => harnessRunCapacity.acquire("global"),
+    runWithBackgroundCapacity: (task) =>
+      harnessRunCapacity.runBackground(task),
   },
 });

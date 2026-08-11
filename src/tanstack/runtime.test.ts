@@ -3,10 +3,16 @@ import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
+import { EventType, type StreamChunk } from "@tanstack/ai";
 import {
   createHarnessSandbox,
+  guardBackgroundPreemption,
   messagesForHarnessSession,
 } from "./runtime.js";
+import {
+  BackgroundCapacityPreemptedError,
+  type ThreadRunLease,
+} from "./thread-lock.js";
 
 async function fixtureWorktree(script: string): Promise<string> {
   const worktreePath = await mkdtemp(
@@ -73,4 +79,52 @@ test("replays the neutral transcript only when starting a fresh provider session
     messagesForHarnessSession(current, transcript, "native-session"),
     current
   );
+});
+
+test("preserves typed preemption when an aborted provider ends silently", async () => {
+  const abortController = new AbortController();
+  const lease: ThreadRunLease = {
+    signal: abortController.signal,
+    release: async () => undefined,
+  };
+  async function* interrupted(): AsyncIterable<StreamChunk> {
+    abortController.abort(new BackgroundCapacityPreemptedError());
+  }
+
+  await assert.rejects(
+    async () => {
+      for await (const _chunk of guardBackgroundPreemption(
+        interrupted(),
+        lease,
+      )) {
+        // No chunks are expected.
+      }
+    },
+    BackgroundCapacityPreemptedError,
+  );
+});
+
+test("does not retry a run that completed before background preemption", async () => {
+  const abortController = new AbortController();
+  const lease: ThreadRunLease = {
+    signal: abortController.signal,
+    release: async () => undefined,
+  };
+  const finished: StreamChunk = {
+    type: EventType.RUN_FINISHED,
+    timestamp: 1,
+    threadId: "thread",
+    runId: "run",
+  };
+  async function* completed(): AsyncIterable<StreamChunk> {
+    yield finished;
+    abortController.abort(new BackgroundCapacityPreemptedError());
+  }
+  const chunks: StreamChunk[] = [];
+
+  for await (const chunk of guardBackgroundPreemption(completed(), lease)) {
+    chunks.push(chunk);
+  }
+
+  assert.deepEqual(chunks, [finished]);
 });
