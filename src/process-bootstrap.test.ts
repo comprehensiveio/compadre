@@ -42,7 +42,9 @@ test("uses a baked checkout only for an ephemeral process", async () => {
   await mkdir(path.join(repositoryPath, ".git"), { recursive: true });
 
   try {
-    const environment: NodeJS.ProcessEnv = {};
+    const environment: NodeJS.ProcessEnv = {
+      REPO_PATH: "/opt/render/repo",
+    };
     configureEphemeralRepositoryEnvironment(
       { ephemeral: true },
       environment,
@@ -50,6 +52,19 @@ test("uses a baked checkout only for an ephemeral process", async () => {
     );
     assert.equal(environment.REPO_PATH, repositoryPath);
     assert.equal(environment.COMPADRE_SINGLE_USE_REPOSITORY, "true");
+
+    const overriddenEnvironment: NodeJS.ProcessEnv = {
+      COMPADRE_WORKFLOW_REPO_PATH: "/custom/workflow/repository",
+    };
+    configureEphemeralRepositoryEnvironment(
+      { ephemeral: true },
+      overriddenEnvironment,
+      processRoot,
+    );
+    assert.equal(
+      overriddenEnvironment.REPO_PATH,
+      "/custom/workflow/repository",
+    );
 
     const persistentEnvironment: NodeJS.ProcessEnv = {};
     configureEphemeralRepositoryEnvironment(

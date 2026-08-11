@@ -44,7 +44,11 @@ export function configureEphemeralRepositoryEnvironment(
   );
   if (!existsSync(path.join(repositoryPath, ".git"))) return;
 
-  environment.REPO_PATH ??= repositoryPath;
+  // The shared environment group also serves the persistent web process and
+  // may define its durable REPO_PATH. A Workflow needs its own explicit
+  // override because that persistent path is not present in task instances.
+  environment.REPO_PATH =
+    environment.COMPADRE_WORKFLOW_REPO_PATH ?? repositoryPath;
   environment.COMPADRE_SINGLE_USE_REPOSITORY ??= "true";
 }
 

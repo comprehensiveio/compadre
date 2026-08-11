@@ -121,7 +121,9 @@ baked checkout is missing, the runtime falls back to a partial shallow clone.
 The Workflow needs the same
 agent/MCP environment group as the web service plus a valid
 `GITHUB_PERSONAL_ACCESS_TOKEN`; the credential is passed through Git's child
-process environment and is never stored in the origin URL.
+process environment and is never stored in the origin URL. A shared
+`REPO_PATH` is intentionally replaced by the baked checkout for Workflow tasks;
+set `COMPADRE_WORKFLOW_REPO_PATH` only if the Workflow needs a different path.
 
 ## Architecture
 
