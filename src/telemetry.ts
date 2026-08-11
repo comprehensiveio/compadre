@@ -8,6 +8,8 @@ let openTelemetryProvider:
     }
   | undefined;
 
+const WORKFLOW_TELEMETRY_DRAIN_MS = 250;
+
 /** Route OpenTelemetry API instrumentation through the already-configured Datadog tracer. */
 export function registerDatadogOpenTelemetry(): void {
   if (openTelemetryRegistered) return;
@@ -34,7 +36,17 @@ export async function flushDatadogOpenTelemetry(
   let timeout: NodeJS.Timeout | undefined;
   try {
     await Promise.race([
-      forceFlush.call(openTelemetryProvider),
+      (async () => {
+        // LLMObs uses a separate writer from APM traces. Both public flush
+        // methods initiate asynchronous Agent requests but do not await their
+        // network callbacks, so keep the ephemeral process alive briefly after
+        // asking both writers to drain.
+        ddTrace.llmobs.flush();
+        await forceFlush.call(openTelemetryProvider);
+        await new Promise<void>((resolve) =>
+          setTimeout(resolve, WORKFLOW_TELEMETRY_DRAIN_MS),
+        );
+      })(),
       new Promise<never>((_, reject) => {
         timeout = setTimeout(
           () => reject(new Error(`Datadog flush timed out after ${timeoutMs}ms`)),
