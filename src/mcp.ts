@@ -142,6 +142,19 @@ function buildCompMcpServer(): CompadreMcpServerConfig | null {
   };
 }
 
+/** Keep the database secret out of the subprocess command line. */
+export function buildPostgresMcpServer(
+  databaseUrl: string,
+): CompadreMcpServerConfig {
+  return {
+    command: "node",
+    args: [
+      path.join(__dirname, "..", "dist", "mcp-servers", "postgres.js"),
+    ],
+    env: { READONLY_DATABASE_URL: databaseUrl },
+  };
+}
+
 export async function buildMcpServers() {
   const datadogServer = buildDatadogMcpServer();
   const googleWorkspaceCredentialsDir =
@@ -203,14 +216,9 @@ export async function buildMcpServers() {
   }
 
   if (process.env.READONLY_DATABASE_URL) {
-    servers.postgres = {
-      command: "npx",
-      args: [
-        "-y",
-        "@modelcontextprotocol/server-postgres",
-        process.env.READONLY_DATABASE_URL,
-      ],
-    };
+    servers.postgres = buildPostgresMcpServer(
+      process.env.READONLY_DATABASE_URL,
+    );
   }
 
   if (process.env.AWS_ACCESS_KEY_ID && process.env.AWS_SECRET_ACCESS_KEY) {
@@ -226,10 +234,12 @@ export async function buildMcpServers() {
   }
 
   if (googleWorkspaceCredentialsDir) {
+    const workspaceMcpExecutable =
+      process.env.WORKSPACE_MCP_EXECUTABLE ?? "uvx";
     servers.google_workspace = {
-      command: "uvx",
+      command: workspaceMcpExecutable,
       args: [
-        "workspace-mcp",
+        ...(workspaceMcpExecutable === "uvx" ? ["workspace-mcp"] : []),
         "--single-user",
         "--tools",
         "docs",

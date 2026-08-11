@@ -5,6 +5,7 @@ import {
   type AgentWorkflowResult,
   type RepositoryProbeResult,
 } from "./agent-run.js";
+import { withWorkflowTelemetry } from "./telemetry.js";
 
 const NO_RETRIES = {
   maxRetries: 0,
@@ -21,7 +22,9 @@ export const probeAgentRuntime = task(
     retry: NO_RETRIES,
   },
   async function probeAgentRuntime(): Promise<RepositoryProbeResult> {
-    return executeRepositoryProbe();
+    return withWorkflowTelemetry("probeAgentRuntime", () =>
+      executeRepositoryProbe(),
+    );
   },
 );
 
@@ -36,6 +39,8 @@ export const runAgent = task(
     retry: NO_RETRIES,
   },
   async function runAgent(input: unknown): Promise<AgentWorkflowResult> {
-    return executeAgentWorkflow(input);
+    return withWorkflowTelemetry("runAgent", () =>
+      executeAgentWorkflow(input),
+    );
   },
 );

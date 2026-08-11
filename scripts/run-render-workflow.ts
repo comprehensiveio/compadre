@@ -1,5 +1,6 @@
 import dotenv from "dotenv";
 import { Render } from "@renderinc/sdk";
+import { waitForTaskRun } from "../src/render-workflows.js";
 
 dotenv.config({ path: ".env.local", quiet: true });
 
@@ -38,7 +39,7 @@ console.log(
   }),
 );
 
-const result = await run.get();
+const result = await waitForTaskRun(render.workflows, run.taskRunId);
 console.log(
   JSON.stringify({
     event: "workflow.finished",

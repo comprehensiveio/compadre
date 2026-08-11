@@ -1,0 +1,68 @@
+import type { TaskRunDetails } from "@renderinc/sdk/workflows";
+
+const TERMINAL_STATUSES = new Set([
+  "completed",
+  "succeeded",
+  "failed",
+  "canceled",
+]);
+
+export interface TaskRunReader {
+  getTaskRun(taskRunId: string): Promise<TaskRunDetails>;
+}
+
+export interface WaitForTaskRunOptions {
+  pollIntervalMs?: number;
+  timeoutMs?: number;
+  signal?: AbortSignal;
+  now?: () => number;
+  sleep?: (durationMs: number, signal?: AbortSignal) => Promise<void>;
+}
+
+function defaultSleep(durationMs: number, signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(signal.reason ?? new Error("Task run wait aborted"));
+      return;
+    }
+    const timeout = setTimeout(() => {
+      signal?.removeEventListener("abort", abort);
+      resolve();
+    }, durationMs);
+    const abort = () => {
+      clearTimeout(timeout);
+      signal?.removeEventListener("abort", abort);
+      reject(signal?.reason ?? new Error("Task run wait aborted"));
+    };
+    signal?.addEventListener("abort", abort, { once: true });
+  });
+}
+
+/** Poll because the SDK's one-shot event stream can miss a terminal event. */
+export async function waitForTaskRun(
+  reader: TaskRunReader,
+  taskRunId: string,
+  options: WaitForTaskRunOptions = {},
+): Promise<TaskRunDetails> {
+  const pollIntervalMs = options.pollIntervalMs ?? 1_000;
+  const timeoutMs = options.timeoutMs ?? 30 * 60 * 1_000;
+  const now = options.now ?? Date.now;
+  const sleep = options.sleep ?? defaultSleep;
+  const startedAt = now();
+
+  while (true) {
+    if (options.signal?.aborted) {
+      throw options.signal.reason ?? new Error("Task run wait aborted");
+    }
+    const run = await reader.getTaskRun(taskRunId);
+    if (TERMINAL_STATUSES.has(run.status)) return run;
+
+    const elapsedMs = now() - startedAt;
+    if (elapsedMs >= timeoutMs) {
+      throw new Error(
+        `Timed out waiting for Workflow task ${taskRunId} after ${elapsedMs}ms (last status: ${run.status})`,
+      );
+    }
+    await sleep(Math.min(pollIntervalMs, timeoutMs - elapsedMs), options.signal);
+  }
+}

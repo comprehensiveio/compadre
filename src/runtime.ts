@@ -1,6 +1,12 @@
 import { execFileSync } from "child_process";
+import { existsSync } from "fs";
 import os from "os";
 import path from "path";
+
+const WORKFLOW_RUNTIME_RELATIVE_PATH = path.join(
+  ".workflow-cache",
+  "runtime",
+);
 
 function prependPath(dir: string) {
   const parts = (process.env.PATH ?? "").split(path.delimiter);
@@ -30,7 +36,35 @@ function hasUvx() {
   }
 }
 
+/**
+ * Prefer dependencies baked into the Workflow image. The uv tool directories
+ * match the build-time configuration, while the MCP subprocess invokes the
+ * installed workspace-mcp executable directly with no runtime resolution.
+ */
+export function configureBundledWorkflowRuntime(
+  runtimeRoot = path.resolve(WORKFLOW_RUNTIME_RELATIVE_PATH),
+): boolean {
+  const binDir = path.join(runtimeRoot, "bin");
+  if (
+    !existsSync(path.join(binDir, "uvx")) ||
+    !existsSync(path.join(binDir, "workspace-mcp"))
+  ) {
+    return false;
+  }
+
+  process.env.UV_TOOL_DIR ??= path.join(runtimeRoot, "tools");
+  process.env.UV_TOOL_BIN_DIR ??= binDir;
+  process.env.UV_CACHE_DIR ??= path.join(runtimeRoot, "cache");
+  process.env.WORKSPACE_MCP_EXECUTABLE ??= path.join(
+    binDir,
+    "workspace-mcp",
+  );
+  prependPath(binDir);
+  return true;
+}
+
 export function ensureRuntimeDependencies() {
+  configureBundledWorkflowRuntime();
   prependPath(path.join(os.homedir(), ".local", "bin"));
 
   if (!hasGoogleWorkspaceConfig() || hasUvx()) {
