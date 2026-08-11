@@ -5,6 +5,10 @@ import {
   type AgentWorkflowResult,
   type RepositoryProbeResult,
 } from "./agent-run.js";
+import {
+  executeDurabilityProbe,
+  type DurabilityProbeResult,
+} from "./durability-probe.js";
 import { withWorkflowTelemetry } from "./telemetry.js";
 
 const NO_RETRIES = {
@@ -41,6 +45,23 @@ export const runAgent = task(
   async function runAgent(input: unknown): Promise<AgentWorkflowResult> {
     return withWorkflowTelemetry("runAgent", () =>
       executeAgentWorkflow(input),
+    );
+  },
+);
+
+/** Internal diagnostic that proves a completed AG-UI run can be replayed. */
+export const probeAgentDurability = task(
+  {
+    name: "probeAgentDurability",
+    plan: "starter",
+    timeoutSeconds: 300,
+    retry: NO_RETRIES,
+  },
+  async function probeAgentDurability(
+    input: unknown,
+  ): Promise<DurabilityProbeResult> {
+    return withWorkflowTelemetry("probeAgentDurability", () =>
+      executeDurabilityProbe(input),
     );
   },
 );

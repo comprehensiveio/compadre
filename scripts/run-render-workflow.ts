@@ -6,9 +6,13 @@ import { waitForTaskRun } from "../src/render-workflows.js";
 dotenv.config({ path: ".env.local", quiet: true });
 
 const taskName = process.argv[2];
-if (taskName !== "probeAgentRuntime" && taskName !== "runAgent") {
+if (
+  taskName !== "probeAgentRuntime" &&
+  taskName !== "runAgent" &&
+  taskName !== "probeAgentDurability"
+) {
   throw new Error(
-    "usage: run-render-workflow.ts probeAgentRuntime | runAgent [prompt]",
+    "usage: run-render-workflow.ts probeAgentRuntime | runAgent [prompt] | probeAgentDurability <runId> [expectedText]",
   );
 }
 
@@ -17,10 +21,14 @@ const workflowSlug =
 const taskSlug = `${workflowSlug}/${taskName}`;
 const useLocalDev = process.env.RENDER_USE_LOCAL_DEV === "true";
 const render = new Render({ useLocalDev });
-const input =
-  taskName === "probeAgentRuntime"
-    ? []
-    : [
+const input = (() => {
+  if (taskName === "probeAgentRuntime") return [];
+  if (taskName === "probeAgentDurability") {
+    const runId = process.argv[3]?.trim();
+    if (!runId) throw new Error("probeAgentDurability requires a runId");
+    return [{ runId, expectedText: process.argv[4] }];
+  }
+  return [
         {
           runId: crypto.randomUUID(),
           prompt:
@@ -29,6 +37,7 @@ const input =
           maxTurns: 1,
         },
       ];
+})();
 
 const startedAt = Date.now();
 const run = await render.workflows.startTask(taskSlug, input);
@@ -37,7 +46,7 @@ console.log(
     event: "workflow.started",
     taskSlug,
     taskRunId: run.taskRunId,
-    runId: taskName === "runAgent" ? input[0]?.runId : undefined,
+    runId: taskName === "probeAgentRuntime" ? undefined : input[0]?.runId,
     local: useLocalDev,
   }),
 );

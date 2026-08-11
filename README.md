@@ -90,6 +90,7 @@ The repository also registers two opt-in Render Workflow tasks:
 
 - `probeAgentRuntime` measures Workflow and repository startup without calling a model.
 - `runAgent` executes one existing TanStack AI agent turn on an isolated 4 GB task instance.
+- `probeAgentDurability` verifies a saved run through the same Postgres replay adapter without returning its message content.
 
 They are deliberately not connected to Slack yet. Task retries are disabled
 until Slack and GitHub side effects have durable idempotency, and provider
