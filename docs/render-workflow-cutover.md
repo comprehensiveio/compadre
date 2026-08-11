@@ -66,6 +66,11 @@ npm run workflow:relay-probe -- "Reply with exactly: deployed relay works"
 The probe reports launch, first event, text, completion, and reconnect timing.
 It never prints response text or credentials.
 
+The persistent relay exports through the existing Datadog Agent. Ephemeral
+Workflow tasks have no colocated Agent, so they use Datadog's agentless OTLP
+trace intake with `dd-otlp-source=llmobs`. Both use `DD_ENV=workflow-spike` in
+the playground. Production must replace that environment tag during cutover.
+
 ## Delivery and failure semantics
 
 - The Workflow persists each AG-UI event before the relay observes it.

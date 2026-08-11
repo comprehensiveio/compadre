@@ -75,7 +75,7 @@ export async function initializeCompadreProcess(
   const tracerInitializer = "dd-trace/initialize.mjs";
   await import(tracerInitializer);
   const { registerDatadogOpenTelemetry } = await import("./telemetry.js");
-  registerDatadogOpenTelemetry();
+  registerDatadogOpenTelemetry({ ephemeral: options.ephemeral });
 
   // Ensure nvm-managed Node binaries are available to coding harnesses.
   const nodeDir = path.dirname(process.execPath);
