@@ -3,9 +3,19 @@ import test from "node:test";
 import { EventType, type StreamChunk } from "@tanstack/ai";
 import {
   AgentProcessSupervisor,
+  DEFAULT_AGENT_TREE_MEMORY_MB,
+  DEFAULT_CGROUP_MEMORY_HEADROOM_MB,
   parseProcessTable,
   processTree,
 } from "./process-supervisor.js";
+
+test("reserves 768 MiB on a 4 GiB service for non-agent memory", () => {
+  assert.equal(DEFAULT_CGROUP_MEMORY_HEADROOM_MB, 768);
+  assert.equal(
+    DEFAULT_AGENT_TREE_MEMORY_MB + DEFAULT_CGROUP_MEMORY_HEADROOM_MB,
+    4_096,
+  );
+});
 
 async function collect(stream: AsyncIterable<StreamChunk>) {
   const chunks: StreamChunk[] = [];
@@ -61,6 +71,9 @@ test("aborts a run when its process tree exceeds the configured limit", async ()
       { pid: 11, ppid: 10, rssBytes: 500, name: "pnpm" },
     ],
     readHostMemory: async () => ({ usageBytes: 2_000, limitBytes: 10_000 }),
+    onMemorySample: () => {
+      throw new Error("telemetry unavailable");
+    },
     logger: {
       log: () => undefined,
       warn: (message) => warnings.push(String(message)),
@@ -73,6 +86,39 @@ test("aborts a run when its process tree exceeds the configured limit", async ()
   assert.equal(abortController.signal.aborted, true);
   assert.equal(supervisor.limitError?.reason, "process-tree");
   assert.match(warnings.join("\n"), /10:node/);
+  assert.match(warnings.join("\n"), /memory observer failed/);
+  supervisor.stop();
+});
+
+test("reports process-tree and host memory samples", async () => {
+  const samples: Array<{
+    treeRssBytes: number;
+    hostUsageBytes?: number;
+    hostLimitBytes?: number;
+  }> = [];
+  const supervisor = new AgentProcessSupervisor({
+    runId: "sample-run",
+    abortController: new AbortController(),
+    treeLimitBytes: 10_000,
+    cgroupHeadroomBytes: 1_000,
+    sampleIntervalMs: 60_000,
+    readProcesses: async () => [
+      { pid: 10, ppid: 1, rssBytes: 600, name: "node" },
+      { pid: 11, ppid: 10, rssBytes: 500, name: "pnpm" },
+    ],
+    readHostMemory: async () => ({ usageBytes: 2_000, limitBytes: 10_000 }),
+    onMemorySample: (sample) => samples.push(sample),
+    logger: { log: () => undefined, warn: () => undefined },
+  });
+
+  supervisor.trackRoot(10);
+  await supervisor.sample();
+
+  assert.deepEqual(samples.at(-1), {
+    treeRssBytes: 1_100,
+    hostUsageBytes: 2_000,
+    hostLimitBytes: 10_000,
+  });
   supervisor.stop();
 });
 

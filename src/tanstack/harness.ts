@@ -90,6 +90,19 @@ function codexReasoningEffort(): "minimal" | "low" | "medium" | "high" {
 }
 
 /**
+ * Identify Compadre-owned harnesses to repository hooks. Dependency setup is
+ * kept off the startup path and remains available explicitly to the agent.
+ */
+export function harnessEnvironment(
+  worktreePath: string,
+): Record<string, string> {
+  return {
+    COMPADRE_SKIP_WORKTREE_SETUP: "1",
+    GIT_CEILING_DIRECTORIES: path.dirname(path.resolve(worktreePath)),
+  };
+}
+
+/**
  * The only provider-specific branch in the AG-UI runtime. Everything outside
  * this function—transport, worktrees, MCP, sessions, cancellation, and
  * observability—is shared between harnesses.
@@ -140,9 +153,7 @@ export function createHarnessStream({
         networkAccessEnabled: true,
         webSearchMode: "live",
         modelReasoningEffort: codexReasoningEffort(),
-        env: {
-          GIT_CEILING_DIRECTORIES: path.dirname(path.resolve(worktreePath)),
-        },
+        env: harnessEnvironment(worktreePath),
       }),
       modelOptions: {
         modelReasoningEffort: codexReasoningEffort(),
@@ -158,9 +169,7 @@ export function createHarnessStream({
       ...CLAUDE_DANGEROUS_PERMISSIONS,
       systemPromptMode: "replace",
       maxTurns,
-      env: {
-        GIT_CEILING_DIRECTORIES: path.dirname(path.resolve(worktreePath)),
-      },
+      env: harnessEnvironment(worktreePath),
     }),
     modelOptions: {
       maxTurns,

@@ -5,6 +5,9 @@ import { EventType, type StreamChunk } from "@tanstack/ai";
 
 const execFileAsync = promisify(execFile);
 const MIB = 1024 * 1024;
+export const DEFAULT_CGROUP_MEMORY_HEADROOM_MB = 768;
+export const DEFAULT_AGENT_TREE_MEMORY_MB =
+  4_096 - DEFAULT_CGROUP_MEMORY_HEADROOM_MB;
 
 export interface ProcessMemoryEntry {
   pid: number;
@@ -18,6 +21,12 @@ export interface HostMemorySnapshot {
   limitBytes?: number;
 }
 
+export interface AgentMemorySample {
+  treeRssBytes: number;
+  hostUsageBytes?: number;
+  hostLimitBytes?: number;
+}
+
 export interface AgentProcessSupervisorOptions {
   runId: string;
   abortController: AbortController;
@@ -27,6 +36,7 @@ export interface AgentProcessSupervisorOptions {
   logIntervalMs?: number;
   readProcesses?: () => Promise<ProcessMemoryEntry[]>;
   readHostMemory?: () => Promise<HostMemorySnapshot>;
+  onMemorySample?: (sample: AgentMemorySample) => void;
   logger?: Pick<Console, "log" | "warn">;
 }
 
@@ -231,6 +241,18 @@ export class AgentProcessSupervisor {
         hostMemory.limitBytes === undefined
           ? undefined
           : Math.max(0, hostMemory.limitBytes - this.options.cgroupHeadroomBytes);
+      try {
+        this.options.onMemorySample?.({
+          treeRssBytes: treeBytes,
+          hostUsageBytes: hostMemory.usageBytes,
+          hostLimitBytes: hostMemory.limitBytes,
+        });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        this.logger.warn(
+          `[process-supervisor] run=${this.options.runId} memory observer failed: ${message}`,
+        );
+      }
 
       if (treeBytes >= this.options.treeLimitBytes) {
         this.trip(
@@ -316,6 +338,7 @@ export function createAgentProcessSupervisor(
   runId: string,
   abortController: AbortController,
   env: NodeJS.ProcessEnv = process.env,
+  onMemorySample?: (sample: AgentMemorySample) => void,
 ): AgentProcessSupervisor {
   return new AgentProcessSupervisor({
     runId,
@@ -323,12 +346,13 @@ export function createAgentProcessSupervisor(
     treeLimitBytes: configuredMib(
       env,
       "COMPADRE_AGENT_TREE_MEMORY_MB",
-      2_560,
+      DEFAULT_AGENT_TREE_MEMORY_MB,
     ),
     cgroupHeadroomBytes: configuredMib(
       env,
       "COMPADRE_CGROUP_MEMORY_HEADROOM_MB",
-      768,
+      DEFAULT_CGROUP_MEMORY_HEADROOM_MB,
     ),
+    onMemorySample,
   });
 }

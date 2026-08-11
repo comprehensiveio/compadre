@@ -38,6 +38,10 @@ import {
   type AgentProcessSupervisor,
 } from "./process-supervisor.js";
 import { superviseSandboxProvider } from "./supervised-provider.js";
+import {
+  HarnessRunTelemetry,
+  type WorktreeSource,
+} from "./runtime-telemetry.js";
 
 export interface AguiRuntimeOptions {
   systemPrompt?: (worktreePath: string) => string;
@@ -50,11 +54,7 @@ interface ActiveRunLeases {
   thread: ThreadRunLease;
 }
 
-/**
- * Build the provider-neutral workspace boundary shared by every coding
- * harness. The comp repo's setup script is intentionally idempotent and also
- * remains wired to Claude's SessionStart hook for non-Compadre callers.
- */
+/** Build the provider-neutral workspace boundary shared by every harness. */
 export function createHarnessSandbox(
   worktreeId: string,
   worktreePath: string,
@@ -73,7 +73,6 @@ export function createHarnessSandbox(
       : localProvider,
     workspace: defineWorkspace({
       source: { type: "local", path: worktreePath },
-      setup: ["scripts/worktree-up.sh --hook"],
     }),
     lifecycle: {
       reuse: "thread",
@@ -220,24 +219,45 @@ export async function runAguiChat(
   requestSignal?: AbortSignal,
   options: AguiRuntimeOptions = {}
 ): Promise<AsyncIterable<StreamChunk>> {
-  const threadLease = await harnessThreadRuns.acquire(params.threadId);
+  const selection = resolveHarnessSelection(params.forwardedProps);
+  const telemetry = new HarnessRunTelemetry({
+    selection,
+    threadId: params.threadId,
+    runId: params.runId,
+  });
+  let threadLease: ThreadRunLease | undefined;
   let capacityLease: ThreadRunLease | undefined;
   try {
+    threadLease = await telemetry.phase("queue.thread", () =>
+      harnessThreadRuns.acquire(params.threadId),
+    );
     capacityLease =
       options.capacityPriority === "background"
-        ? await harnessRunCapacity.acquireBackground()
-        : await harnessRunCapacity.acquireForeground();
+        ? await telemetry.phase("queue.capacity", () =>
+            harnessRunCapacity.acquireBackground(),
+          )
+        : await telemetry.phase("queue.capacity", () =>
+            harnessRunCapacity.acquireForeground(),
+          );
     if (!capacityLease) throw new BackgroundCapacityPreemptedError();
-    return await prepareAguiChat(params, requestSignal, options, {
-      capacity: capacityLease,
-      thread: threadLease,
-    });
+    return await prepareAguiChat(
+      params,
+      requestSignal,
+      options,
+      {
+        capacity: capacityLease,
+        thread: threadLease,
+      },
+      selection,
+      telemetry,
+    );
   } catch (error) {
     await Promise.allSettled([
       capacityLease?.release(),
-      threadLease.release(),
+      threadLease?.release(),
     ]);
     harnessPreparedWorktrees.scheduleRefill();
+    telemetry.end(error);
     throw error;
   }
 }
@@ -246,7 +266,9 @@ async function prepareAguiChat(
   params: AguiChatParams,
   requestSignal: AbortSignal | undefined,
   options: AguiRuntimeOptions,
-  runLeases: ActiveRunLeases
+  runLeases: ActiveRunLeases,
+  selection: HarnessSelection,
+  telemetry: HarnessRunTelemetry,
 ): Promise<AsyncIterable<StreamChunk>> {
   const abortController = new AbortController();
   const abortSources = [
@@ -270,23 +292,28 @@ async function prepareAguiChat(
   }
 
   const preparationStartedAt = Date.now();
-  let worktreeSource: "existing" | "prepared" | "on-demand" = "existing";
-  const thread = await harnessThreadStore.getOrCreate(
-    params.threadId,
-    () => {
-      const prepared = harnessPreparedWorktrees.claim();
-      if (prepared) {
-        worktreeSource = "prepared";
-        return prepared.id;
-      }
-      worktreeSource = "on-demand";
-      return crypto.randomUUID();
-    },
-  );
+  let worktreeSource: WorktreeSource = "existing";
+  const allocation = await telemetry.phase("worktree.allocate", async () => {
+    const thread = await harnessThreadStore.getOrCreate(
+      params.threadId,
+      () => {
+        const prepared = harnessPreparedWorktrees.claim();
+        if (prepared) {
+          worktreeSource = "prepared";
+          return prepared.id;
+        }
+        worktreeSource = "on-demand";
+        return crypto.randomUUID();
+      },
+    );
+    const worktreeId = thread.worktreeId;
+    const worktreePath = createWorktree(worktreeId);
+    telemetry.setWorktree(worktreeId, worktreeSource);
+    return { thread, worktreeId, worktreePath };
+  });
+  const { thread, worktreeId, worktreePath } = allocation;
   const transcriptUserMessage = options.transcriptUserMessage;
   const tracksTranscript = transcriptUserMessage !== undefined;
-  const selection = resolveHarnessSelection(params.forwardedProps);
-  const worktreeId = thread.worktreeId;
   const sessionId = resumableHarnessSession(thread, selection.provider);
   const effectiveParams: AguiChatParams = tracksTranscript
     ? {
@@ -298,7 +325,6 @@ async function prepareAguiChat(
         ),
       }
     : params;
-  const worktreePath = createWorktree(worktreeId);
   console.log(
     `[ag-ui] run=${params.runId} worktree=${worktreeId} source=${worktreeSource} allocation=${Date.now() - preparationStartedAt}ms`,
   );
@@ -308,11 +334,16 @@ async function prepareAguiChat(
     `[ag-ui] run=${params.runId} provider=${selection.provider} model=${model} resumed=${sessionId !== undefined}`
   );
   const mcpStartedAt = Date.now();
-  const clients = await buildTanStackMcpClients().catch(async (error) => {
+  let clients: Awaited<ReturnType<typeof buildTanStackMcpClients>>;
+  try {
+    clients = await telemetry.phase("mcp.initialize", () =>
+      buildTanStackMcpClients(),
+    );
+  } catch (error) {
     removeAbortListeners();
     await discardPreparation(params.threadId, worktreeId);
     throw backgroundPreemptionReason(runLeases.capacity) ?? error;
-  });
+  }
   console.log(
     `[ag-ui] run=${params.runId} mcp-ready=${Date.now() - mcpStartedAt}ms clients=${clients.length}`,
   );
@@ -325,6 +356,13 @@ async function prepareAguiChat(
   const processSupervisor = createAgentProcessSupervisor(
     params.runId,
     abortController,
+    process.env,
+    (sample) =>
+      telemetry.observeMemory(
+        sample.treeRssBytes,
+        sample.hostUsageBytes,
+        sample.hostLimitBytes,
+      ),
   );
   const sandbox = createHarnessSandbox(
     worktreeId,
@@ -334,19 +372,21 @@ async function prepareAguiChat(
 
   let stream: AsyncIterable<StreamChunk>;
   try {
-    stream = createHarnessStream({
-      selection,
-      params: effectiveParams,
-      sessionId,
-      worktreePath,
-      worktreeId,
-      maxTurns,
-      clients,
-      sandbox,
-      abortController,
-      systemPrompt:
-        options.systemPrompt?.(worktreePath) ?? getBaseSystemPrompt(worktreePath),
-    });
+    stream = await telemetry.phase("stream.initialize", async () =>
+      createHarnessStream({
+        selection,
+        params: effectiveParams,
+        sessionId,
+        worktreePath,
+        worktreeId,
+        maxTurns,
+        clients,
+        sandbox,
+        abortController,
+        systemPrompt:
+          options.systemPrompt?.(worktreePath) ?? getBaseSystemPrompt(worktreePath),
+      }),
+    );
   } catch (error) {
     processSupervisor.stop();
     removeAbortListeners();
@@ -366,11 +406,15 @@ async function prepareAguiChat(
   );
   return (async function* () {
     let firstEvent = true;
+    let failure: unknown;
+    const guarded = guardBackgroundPreemption(tracked, runLeases.capacity);
+    const iterator = guarded[Symbol.asyncIterator]();
     try {
-      for await (const chunk of guardBackgroundPreemption(
-        tracked,
-        runLeases.capacity,
-      )) {
+      while (true) {
+        const next = await telemetry.inContext(() => iterator.next());
+        if (next.done) break;
+        const chunk = next.value;
+        telemetry.observe(chunk);
         if (firstEvent) {
           firstEvent = false;
           console.log(
@@ -379,7 +423,15 @@ async function prepareAguiChat(
         }
         yield chunk;
       }
+    } catch (error) {
+      failure = error;
+      throw error;
     } finally {
+      try {
+        await telemetry.inContext(() => iterator.return?.());
+      } catch (error) {
+        failure ??= error;
+      }
       processSupervisor.stop();
       removeAbortListeners();
       await Promise.allSettled(clients.map((client) => client.close()));
@@ -387,6 +439,7 @@ async function prepareAguiChat(
         Object.values(runLeases).map((lease) => lease.release()),
       );
       harnessPreparedWorktrees.scheduleRefill();
+      telemetry.end(failure);
     }
   })();
 }
