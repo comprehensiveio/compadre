@@ -14,6 +14,7 @@ test("flushes a successful Workflow root span after ending it", async () => {
     spanProcessors: [new SimpleSpanProcessor(exporter)],
   });
   let flushed = false;
+  const metrics: unknown[][] = [];
 
   const result = await withWorkflowTelemetry(
     "runAgent",
@@ -21,6 +22,11 @@ test("flushes a successful Workflow root span after ending it", async () => {
     {
       tracer: provider.getTracer("workflow-test"),
       flush: async () => void (flushed = true),
+      now: (() => {
+        const values = [100, 175];
+        return () => values.shift() ?? 175;
+      })(),
+      recordMetrics: (...args) => void metrics.push(args),
     },
   );
 
@@ -30,6 +36,7 @@ test("flushes a successful Workflow root span after ending it", async () => {
   assert.equal(span.name, "compadre.workflow.run");
   assert.equal(span.status.code, SpanStatusCode.OK);
   assert.equal(span.attributes["workflow.task.name"], "runAgent");
+  assert.deepEqual(metrics, [["runAgent", "success", 75]]);
   await provider.shutdown();
 });
 
@@ -39,6 +46,7 @@ test("marks a failed Workflow span and still flushes", async () => {
     spanProcessors: [new SimpleSpanProcessor(exporter)],
   });
   let flushed = false;
+  const metrics: unknown[][] = [];
 
   await assert.rejects(
     withWorkflowTelemetry(
@@ -49,6 +57,11 @@ test("marks a failed Workflow span and still flushes", async () => {
       {
         tracer: provider.getTracer("workflow-error-test"),
         flush: async () => void (flushed = true),
+        now: (() => {
+          const values = [200, 240];
+          return () => values.shift() ?? 240;
+        })(),
+        recordMetrics: (...args) => void metrics.push(args),
       },
     ),
     /probe failed/,
@@ -58,5 +71,6 @@ test("marks a failed Workflow span and still flushes", async () => {
   const span = exporter.getFinishedSpans()[0];
   assert.equal(span.status.code, SpanStatusCode.ERROR);
   assert.match(span.status.message ?? "", /probe failed/);
+  assert.deepEqual(metrics, [["probeAgentRuntime", "error", 40]]);
   await provider.shutdown();
 });

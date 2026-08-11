@@ -22,6 +22,26 @@ export function registerDatadogOpenTelemetry(): void {
   openTelemetryRegistered = true;
 }
 
+export type WorkflowMetricStatus = "success" | "error";
+
+/** Emit unsampled task-level signals suitable for reliability alerts and SLOs. */
+export function recordWorkflowMetrics(
+  taskName: string,
+  status: WorkflowMetricStatus,
+  durationMs: number,
+): void {
+  const tags = {
+    task: taskName,
+    status,
+  };
+  ddTrace.dogstatsd.increment("compadre.workflow.runs", 1, tags);
+  ddTrace.dogstatsd.distribution(
+    "compadre.workflow.duration_ms",
+    durationMs,
+    tags,
+  );
+}
+
 /**
  * Flush buffered spans before an ephemeral Workflow process is deprovisioned.
  * Telemetry is observational, so a slow/unavailable exporter must never change
@@ -42,6 +62,7 @@ export async function flushDatadogOpenTelemetry(
         // network callbacks, so keep the ephemeral process alive briefly after
         // asking both writers to drain.
         ddTrace.llmobs.flush();
+        ddTrace.dogstatsd.flush();
         await forceFlush.call(openTelemetryProvider);
         await new Promise<void>((resolve) =>
           setTimeout(resolve, WORKFLOW_TELEMETRY_DRAIN_MS),

@@ -4,11 +4,21 @@ import {
   trace,
   type Tracer,
 } from "@opentelemetry/api";
-import { flushDatadogOpenTelemetry } from "../telemetry.js";
+import {
+  flushDatadogOpenTelemetry,
+  recordWorkflowMetrics,
+  type WorkflowMetricStatus,
+} from "../telemetry.js";
 
 export interface WorkflowTelemetryDependencies {
   tracer?: Tracer;
   flush?: () => Promise<void>;
+  now?: () => number;
+  recordMetrics?: (
+    taskName: string,
+    status: WorkflowMetricStatus,
+    durationMs: number,
+  ) => void;
 }
 
 function errorMessage(error: unknown): string {
@@ -23,6 +33,10 @@ export async function withWorkflowTelemetry<T>(
 ): Promise<T> {
   const tracer = dependencies.tracer ?? trace.getTracer("compadre.workflow");
   const flush = dependencies.flush ?? flushDatadogOpenTelemetry;
+  const now = dependencies.now ?? Date.now;
+  const recordMetrics = dependencies.recordMetrics ?? recordWorkflowMetrics;
+  const startedAt = now();
+  let metricStatus: WorkflowMetricStatus = "success";
 
   try {
     return await tracer.startActiveSpan(
@@ -40,6 +54,7 @@ export async function withWorkflowTelemetry<T>(
           span.setStatus({ code: SpanStatusCode.OK });
           return result;
         } catch (error) {
+          metricStatus = "error";
           span.recordException(error instanceof Error ? error : String(error));
           span.setStatus({
             code: SpanStatusCode.ERROR,
@@ -52,6 +67,11 @@ export async function withWorkflowTelemetry<T>(
       },
     );
   } finally {
+    try {
+      recordMetrics(taskName, metricStatus, now() - startedAt);
+    } catch (error) {
+      console.warn("[telemetry] Workflow metrics failed", error);
+    }
     await flush();
   }
 }
