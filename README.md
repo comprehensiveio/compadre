@@ -54,6 +54,7 @@ See `.env.example` for the full list. Key notes:
 - **DD_SERVICE / DD_LLMOBS_ENABLED / DD_LLMOBS_ML_APP / DD_TRACE_OTEL_ENABLED**: Attribute TanStack's provider-neutral OpenTelemetry agent/model/tool spans to Compadre in Datadog. Compadre defaults these on at startup unless explicitly overridden.
 - **DD_METRICS_OTEL_ENABLED**: Export TanStack's GenAI token and duration histograms through `dd-trace`.
 - **SLACK_BOT_TOKEN**: `xoxb-*` token from the Compadre Slack app.
+- The Slack bot needs `reactions:read` in addition to `reactions:write` so a restarted instance can replace interrupted `compadre-thinking` reactions with `compadre-failure`.
 - **GOOGLE_WORKSPACE_USER_EMAIL / GOOGLE_OAUTH_CLIENT_ID / GOOGLE_OAUTH_CLIENT_SECRET / GOOGLE_OAUTH_REFRESH_TOKEN**: OAuth credentials for the Compadre Google Workspace bot user. When set, Compadre enables Google Workspace tools through `workspace-mcp`.
 - **REPO_PATH**: Set to `/opt/render/repo` on Render (auto-cloned). Set to your local comp checkout for dev.
 - **COMPADRE_API_KEY**: Auth token for the API. Generate with `openssl rand -hex 32`.
@@ -89,5 +90,7 @@ Slack, /prompt, or webhooks → runConversation() → TanStack AI ─┬→ Clau
 
 Slack threads retain their worktree, bounded neutral transcript, and
 provider-scoped native sessions in the current process. Runs on the same thread
-are serialized. Postgres durability and distributed locking across instances
-are deliberately deferred.
+are serialized, and the single 2 GiB service runs only one coding harness at a
+time. The runtime aborts at 95% container memory by default and reconciles stale
+Slack reactions after a restart. Postgres durability and distributed locking
+across instances are deliberately deferred.

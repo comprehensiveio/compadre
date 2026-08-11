@@ -26,6 +26,7 @@ import {
   type HarnessTranscriptMessage,
 } from "./thread-state.js";
 import {
+  harnessRunCapacity,
   harnessThreadRuns,
   type ThreadRunLease,
 } from "./thread-lock.js";
@@ -88,8 +89,7 @@ async function* trackSession(
   hadProviderSession: boolean,
   abortSignal: AbortSignal | undefined,
   abortController: AbortController,
-  transcriptUserMessage: string | undefined,
-  runLease: ThreadRunLease
+  transcriptUserMessage: string | undefined
 ): AsyncIterable<StreamChunk> {
   const abort = () => abortController.abort(abortSignal?.reason);
   abortSignal?.addEventListener("abort", abort, { once: true });
@@ -124,18 +124,14 @@ async function* trackSession(
   } catch (error) {
     throw error;
   } finally {
-    try {
-      await removeProjectionMarkers(worktreePath);
-      abortSignal?.removeEventListener("abort", abort);
-      if (
-        !capturedSessionId &&
-        !hadProviderSession &&
-        (await harnessThreadStore.deleteIfUninitialized(threadId, worktreeId))
-      ) {
-        removeWorktree(worktreeId);
-      }
-    } finally {
-      await runLease.release();
+    await removeProjectionMarkers(worktreePath);
+    abortSignal?.removeEventListener("abort", abort);
+    if (
+      !capturedSessionId &&
+      !hadProviderSession &&
+      (await harnessThreadStore.deleteIfUninitialized(threadId, worktreeId))
+    ) {
+      removeWorktree(worktreeId);
     }
   }
 }
@@ -163,11 +159,19 @@ export async function runAguiChat(
   requestSignal?: AbortSignal,
   options: AguiRuntimeOptions = {}
 ): Promise<AsyncIterable<StreamChunk>> {
-  const runLease = await harnessThreadRuns.acquire(params.threadId);
+  const threadLease = await harnessThreadRuns.acquire(params.threadId);
+  let capacityLease: ThreadRunLease | undefined;
   try {
-    return await prepareAguiChat(params, requestSignal, options, runLease);
+    capacityLease = await harnessRunCapacity.acquire("global");
+    return await prepareAguiChat(params, requestSignal, options, [
+      capacityLease,
+      threadLease,
+    ]);
   } catch (error) {
-    await runLease.release();
+    await Promise.allSettled([
+      capacityLease?.release(),
+      threadLease.release(),
+    ]);
     throw error;
   }
 }
@@ -176,7 +180,7 @@ async function prepareAguiChat(
   params: AguiChatParams,
   requestSignal: AbortSignal | undefined,
   options: AguiRuntimeOptions,
-  runLease: ThreadRunLease
+  runLeases: ThreadRunLease[]
 ): Promise<AsyncIterable<StreamChunk>> {
   const thread = await harnessThreadStore.getOrCreate(params.threadId, () =>
     crypto.randomUUID()
@@ -204,8 +208,13 @@ async function prepareAguiChat(
   );
   const abortController = new AbortController();
   if (requestSignal?.aborted) abortController.abort(requestSignal.reason);
-  const abortForLostLease = () => abortController.abort(runLease.signal.reason);
-  runLease.signal.addEventListener("abort", abortForLostLease, { once: true });
+  const abortForLostLease = (lease: ThreadRunLease) => () =>
+    abortController.abort(lease.signal.reason);
+  const leaseAbortListeners = runLeases.map((lease) => {
+    const listener = abortForLostLease(lease);
+    lease.signal.addEventListener("abort", listener, { once: true });
+    return { lease, listener };
+  });
   const clients = await buildTanStackMcpClients().catch(async (error) => {
     if (
       await harnessThreadStore.deleteIfUninitialized(
@@ -257,14 +266,17 @@ async function prepareAguiChat(
     sessionId !== undefined,
     requestSignal,
     abortController,
-    tracksTranscript ? transcriptUserMessage : undefined,
-    runLease
+    tracksTranscript ? transcriptUserMessage : undefined
   );
   return (async function* () {
     try {
       yield* tracked;
     } finally {
-      runLease.signal.removeEventListener("abort", abortForLostLease);
+      for (const { lease, listener } of leaseAbortListeners) {
+        lease.signal.removeEventListener("abort", listener);
+      }
+      await Promise.allSettled(clients.map((client) => client.close()));
+      await Promise.allSettled(runLeases.map((lease) => lease.release()));
     }
   })();
 }
