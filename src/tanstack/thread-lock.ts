@@ -52,3 +52,7 @@ export class ThreadRunCoordinator {
 
 export const harnessLockStore = new InMemoryLockStore();
 export const harnessThreadRuns = new ThreadRunCoordinator(harnessLockStore);
+/** The 2 GiB service can safely host only one coding harness process tree. */
+export const harnessRunCapacity = new ThreadRunCoordinator(
+  new InMemoryLockStore(),
+);

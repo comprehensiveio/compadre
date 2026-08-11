@@ -20,6 +20,7 @@ import {
   removeWorktree,
 } from "./repo.js";
 import { validateConversationConfiguration } from "./conversation.js";
+import { recoverStaleSlackRuns } from "./services/slack-run-recovery.js";
 import { harnessThreadStore } from "./tanstack/thread-state.js";
 
 const app = new Hono();
@@ -49,6 +50,7 @@ app.route("/", aguiRoutes);
 
 // Refresh the repo clone periodically (every 15 minutes)
 const REPO_REFRESH_INTERVAL_MS = 15 * 60 * 1000;
+const SLACK_RECOVERY_DELAY_MS = 15_000;
 
 const port = Number(process.env.PORT) || 3100;
 
@@ -61,6 +63,15 @@ async function start() {
   // Start the server first so Render sees the port binding
   serve({ fetch: app.fetch, port }, (info) => {
     console.log(`[agent] server running on port ${info.port}`);
+    const botToken = process.env.SLACK_BOT_TOKEN;
+    if (botToken) {
+      const recoveryTimer = setTimeout(() => {
+        void recoverStaleSlackRuns({ botToken }).catch((error) =>
+          console.error("[slack-recovery] recovery failed:", error),
+        );
+      }, SLACK_RECOVERY_DELAY_MS);
+      recoveryTimer.unref();
+    }
   });
 
   // Clone or update the repo in the background (can be slow)
