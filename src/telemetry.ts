@@ -11,6 +11,7 @@ import {
 
 let openTelemetryRegistered = false;
 let agentlessOpenTelemetryRegistered = false;
+let registeredTelemetryMode: DatadogTelemetryMode | undefined;
 let openTelemetryProvider:
   | {
       register(): void;
@@ -24,6 +25,8 @@ export interface DatadogOpenTelemetryOptions {
   ephemeral?: boolean;
   environment?: NodeJS.ProcessEnv;
 }
+
+export type DatadogTelemetryMode = "agent" | "agentless";
 
 export function datadogOtlpTracesEndpoint(
   environment: NodeJS.ProcessEnv = process.env,
@@ -73,13 +76,17 @@ function createAgentlessWorkflowProvider(
  */
 export function registerDatadogOpenTelemetry(
   options: DatadogOpenTelemetryOptions = {},
-): void {
-  if (openTelemetryRegistered) return;
+): DatadogTelemetryMode {
+  if (openTelemetryRegistered && registeredTelemetryMode) {
+    return registeredTelemetryMode;
+  }
   const environment = options.environment ?? process.env;
   const apiKey = environment.DD_API_KEY?.trim();
+  const mode: DatadogTelemetryMode =
+    options.ephemeral && apiKey ? "agentless" : "agent";
   const provider =
-    options.ephemeral && apiKey
-      ? createAgentlessWorkflowProvider(environment, apiKey)
+    mode === "agentless"
+      ? createAgentlessWorkflowProvider(environment, apiKey as string)
       : (new ddTrace.TracerProvider() as {
           register(): void;
           forceFlush?(): Promise<void>;
@@ -90,8 +97,10 @@ export function registerDatadogOpenTelemetry(
   };
   registeredProvider.register();
   openTelemetryProvider = registeredProvider;
-  agentlessOpenTelemetryRegistered = provider instanceof NodeTracerProvider;
+  agentlessOpenTelemetryRegistered = mode === "agentless";
+  registeredTelemetryMode = mode;
   openTelemetryRegistered = true;
+  return mode;
 }
 
 export type WorkflowMetricStatus = "success" | "error";

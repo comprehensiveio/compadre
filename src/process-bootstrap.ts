@@ -85,7 +85,15 @@ export async function initializeCompadreProcess(
     await import(tracerInitializer);
   }
   const { registerDatadogOpenTelemetry } = await import("./telemetry.js");
-  registerDatadogOpenTelemetry({ ephemeral: options.ephemeral });
+  const telemetryMode = registerDatadogOpenTelemetry({
+    ephemeral: options.ephemeral,
+  });
+  if (options.ephemeral) {
+    console.info("[telemetry] Workflow provider selected", {
+      mode: telemetryMode,
+      apiKeyConfigured: Boolean(process.env.DD_API_KEY?.trim()),
+    });
+  }
 
   // Ensure nvm-managed Node binaries are available to coding harnesses.
   const nodeDir = path.dirname(process.execPath);
