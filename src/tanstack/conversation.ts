@@ -11,9 +11,14 @@ import {
   type AguiChatParams,
 } from "./protocol.js";
 import { runAguiChat } from "./runtime.js";
+import {
+  captureDurableRun,
+  getConfiguredAgentRunDurability,
+} from "../durability/runtime.js";
 import type { RunCapacityPriority } from "./thread-lock.js";
 
 export interface HarnessConversationOptions {
+  runId?: string;
   threadId: string;
   prompt: string;
   transcriptUserMessage: string;
@@ -27,6 +32,7 @@ export interface HarnessConversationOptions {
 }
 
 export interface HarnessConversationResult {
+  runId: string;
   result: string;
   sessionId: string;
   provider: AgentProvider;
@@ -38,6 +44,7 @@ export interface HarnessConversationResult {
 }
 
 interface ConsumeOptions {
+  runId: string;
   provider: AgentProvider;
   startedAt: number;
   stream?: StreamCallbacks;
@@ -107,6 +114,7 @@ export async function consumeHarnessConversation(
     if (!finished) throw new Error("Agent stream ended without a terminal event");
 
     return {
+      runId: options.runId,
       result:
         options.provider === "codex"
           ? assistantMessages.terminalText()
@@ -137,7 +145,7 @@ export async function runHarnessConversation(
   const provider = options.profile
     ? providerForAgentProfile(options.profile)
     : options.provider ?? "claude-code";
-  const runId = crypto.randomUUID();
+  const runId = options.runId ?? crypto.randomUUID();
   const abortController = new AbortController();
   const abort = () => abortController.abort(options.signal?.reason);
   options.signal?.addEventListener("abort", abort, { once: true });
@@ -167,12 +175,25 @@ export async function runHarnessConversation(
 
   try {
     const startedAt = Date.now();
+    // Durability is a required production capability when configured. Resolve
+    // it before allocating a worktree or starting a harness so a database
+    // outage cannot leave an unconsumed agent stream and its resources behind.
+    const durability = await getConfiguredAgentRunDurability();
     const chunks = await runAguiChat(params, abortController.signal, {
       systemPrompt: options.systemPrompt,
       transcriptUserMessage: options.transcriptUserMessage,
       capacityPriority: options.capacityPriority,
     });
-    return await consumeHarnessConversation(chunks, {
+    const consumableChunks = durability
+      ? captureDurableRun(chunks, {
+          runId,
+          threadId: options.threadId,
+          signal: abortController.signal,
+          durability,
+        })
+      : chunks;
+    return await consumeHarnessConversation(consumableChunks, {
+      runId,
       provider,
       startedAt,
       stream: options.stream,

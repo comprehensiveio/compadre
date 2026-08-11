@@ -11,6 +11,7 @@ import {
 import { releaseAguiThread } from "../tanstack/runtime.js";
 
 export const agentWorkflowInputSchema = z.object({
+  runId: z.string().trim().min(1).optional(),
   prompt: z.string().trim().min(1),
   transcriptUserMessage: z.string().optional(),
   threadId: z.string().trim().min(1).optional(),
@@ -101,6 +102,7 @@ export async function executeAgentWorkflow(
 
   try {
     const result = await dependencies.runConversation({
+      runId: input.runId,
       prompt: input.prompt,
       transcriptUserMessage:
         input.transcriptUserMessage ?? input.prompt,

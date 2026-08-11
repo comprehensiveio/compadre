@@ -8,6 +8,7 @@ import {
 } from "./agent-run.js";
 
 const conversationResult: ConversationResult = {
+  runId: "run-1",
   result: "hi",
   sessionId: "session-1",
   provider: "codex",

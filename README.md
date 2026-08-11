@@ -53,6 +53,7 @@ See `.env.example` for the full list. Key notes:
 - **DATADOG_MCP_URL**: Optional endpoint override for another Datadog site or toolset selection. Defaults to US1 with the `core`, `apm`, and `llmobs` toolsets.
 - **DD_SERVICE / DD_LLMOBS_ENABLED / DD_LLMOBS_ML_APP / DD_TRACE_OTEL_ENABLED**: Attribute TanStack's provider-neutral OpenTelemetry agent/model/tool spans to Compadre in Datadog. Compadre defaults these on at startup unless explicitly overridden.
 - **DD_METRICS_OTEL_ENABLED**: Export TanStack's GenAI token and duration histograms through `dd-trace`.
+- **COMPADRE_DURABILITY_BACKEND / COMPADRE_DURABILITY_DATABASE_URL**: Persist TanStack run lifecycle records and ordered AG-UI delivery events. The default is off, `memory` enables database-free local replay, and deployed Workflows use `postgres` with a dedicated URL.
 - **SLACK_BOT_TOKEN**: `xoxb-*` token from the Compadre Slack app.
 - The Slack bot needs `reactions:read` in addition to `reactions:write` so a restarted instance can replace interrupted `compadre-thinking` reactions with `compadre-failure`.
 - **GOOGLE_WORKSPACE_USER_EMAIL / GOOGLE_OAUTH_CLIENT_ID / GOOGLE_OAUTH_CLIENT_SECRET / GOOGLE_OAUTH_REFRESH_TOKEN**: OAuth credentials for the Compadre Google Workspace bot user. When set, Compadre enables Google Workspace tools through `workspace-mcp`.
@@ -124,6 +125,13 @@ agent/MCP environment group as the web service plus a valid
 process environment and is never stored in the origin URL. A shared
 `REPO_PATH` is intentionally replaced by the baked checkout for Workflow tasks;
 set `COMPADRE_WORKFLOW_REPO_PATH` only if the Workflow needs a different path.
+
+Workflow run and delivery durability uses TanStack's `RunStore`,
+`StreamDurability`, and `RunController` contracts. Local development remains
+database-free unless `COMPADRE_DURABILITY_BACKEND=memory` is selected. The
+deployed Workflow sets the backend to `postgres`; every AG-UI chunk is persisted
+before the existing Compadre consumer observes it, and can be replayed later by
+the Slack delivery gateway.
 
 ## Architecture
 

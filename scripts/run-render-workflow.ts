@@ -1,4 +1,5 @@
 import dotenv from "dotenv";
+import crypto from "node:crypto";
 import { Render } from "@renderinc/sdk";
 import { waitForTaskRun } from "../src/render-workflows.js";
 
@@ -21,6 +22,7 @@ const input =
     ? []
     : [
         {
+          runId: crypto.randomUUID(),
           prompt:
             process.argv.slice(3).join(" ").trim() ||
             "Reply with only: hi",
@@ -35,6 +37,7 @@ console.log(
     event: "workflow.started",
     taskSlug,
     taskRunId: run.taskRunId,
+    runId: taskName === "runAgent" ? input[0]?.runId : undefined,
     local: useLocalDev,
   }),
 );
