@@ -90,6 +90,9 @@ test("keeps startup phases under one coarse agent trace", async () => {
   assert.equal(firstText.parentSpanContext?.spanId, root.spanContext().spanId);
   assert.equal(firstEvent.attributes["compadre.milestone.reached"], true);
   assert.equal(firstText.attributes["compadre.milestone.reached"], true);
+  assert.equal(root.attributes["gen_ai.operation.name"], "invoke_agent");
+  assert.equal(root.attributes["gen_ai.provider.name"], "anthropic");
+  assert.equal(root.attributes["gen_ai.conversation.id"], "thread-1");
   assert.equal(root.attributes["worktree.source"], "on-demand");
   assert.equal(root.attributes["compadre.agent.duration_ms"], 40);
   assert.equal(root.attributes["memory.process_tree.peak_rss_bytes"], 1_024);

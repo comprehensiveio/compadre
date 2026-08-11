@@ -47,7 +47,7 @@ The isolated test stack is in Render project `compadre`, environment
 `workflow-spike`:
 
 - Relay: `compadre-workflow-relay-spike`
-- Workflow: `compadre-agent-postgres-spike-v2`
+- Workflow: `compadre-agent-postgres-spike-v3`
 - Database: `compadre-agent-spike-db`
 
 The Workflow API is currently workspace-scoped rather than environment-scoped.
@@ -69,7 +69,9 @@ It never prints response text or credentials.
 The persistent relay exports through the existing Datadog Agent. Ephemeral
 Workflow tasks have no colocated Agent, so they use Datadog's agentless OTLP
 trace intake with `dd-otlp-source=llmobs`. Both use `DD_ENV=workflow-spike` in
-the playground. Production must replace that environment tag during cutover.
+the playground. A verified Workflow trace includes the task root, agent root,
+startup phases, memory high-water marks, provider/model, and the deployed Git
+revision. Production must replace that environment tag during cutover.
 
 ## Delivery and failure semantics
 

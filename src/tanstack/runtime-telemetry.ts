@@ -80,6 +80,10 @@ export class HarnessRunTelemetry {
         "agui.thread_id": threadId,
         "agui.run_id": runId,
         "agent.provider": selection.provider,
+        "gen_ai.operation.name": "invoke_agent",
+        "gen_ai.conversation.id": threadId,
+        "gen_ai.provider.name":
+          selection.provider === "codex" ? "openai" : "anthropic",
         "gen_ai.request.model": selection.model,
       },
     });
