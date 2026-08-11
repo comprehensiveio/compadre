@@ -1,7 +1,18 @@
-import { execFileSync } from "child_process";
-import { existsSync, writeFileSync, mkdirSync, chmodSync, readdirSync, statSync, rmSync } from "fs";
+import { execFile, execFileSync } from "child_process";
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "fs";
 import path from "path";
+import { promisify } from "util";
 import { REPO_PATH } from "./config.js";
+
+const execFileAsync = promisify(execFile);
 
 function git(...args: string[]) {
   execFileSync("git", args, { stdio: "inherit" });
@@ -20,6 +31,13 @@ function getRepoUrl() {
 
 function getRepoBranch() {
   return process.env.REPO_BRANCH || "main";
+}
+
+function gitOutput(cwd: string, ...args: string[]): string {
+  return execFileSync("git", ["-C", cwd, ...args], {
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "pipe"],
+  }).trim();
 }
 
 function isLocalDev() {
@@ -109,6 +127,24 @@ export function refreshRepo() {
 
 const WORKTREES_DIR = path.resolve(REPO_PATH, "..", "comp-worktrees");
 
+/** Commit new worktrees are expected to start from. */
+export function currentRepoRevision(): string | undefined {
+  try {
+    return gitOutput(REPO_PATH, "rev-parse", `origin/${getRepoBranch()}`);
+  } catch {
+    return undefined;
+  }
+}
+
+/** Commit currently checked out in one thread worktree. */
+export function worktreeRevision(worktreePath: string): string | undefined {
+  try {
+    return gitOutput(worktreePath, "rev-parse", "HEAD");
+  } catch {
+    return undefined;
+  }
+}
+
 /**
  * Create a git worktree for isolated agent work.
  * Returns the absolute path to the worktree directory.
@@ -144,6 +180,20 @@ export function createWorktree(id: string): string {
   git("-C", REPO_PATH, "worktree", "add", worktreePath, "--detach", `origin/${branch}`);
   console.log(`[repo] created worktree: ${worktreePath}`);
   return worktreePath;
+}
+
+/**
+ * Bring a worktree to the same validated state required by a harness session.
+ * This is also used off the request path to populate the prepared-worktree
+ * cache. The sandbox repeats the idempotent check when it claims the worktree.
+ */
+export async function prepareWorktree(worktreePath: string): Promise<void> {
+  const setupScript = path.join(worktreePath, "scripts", "worktree-up.sh");
+  await execFileAsync(setupScript, ["--hook"], {
+    cwd: worktreePath,
+    env: process.env,
+    maxBuffer: 16 * 1024 * 1024,
+  });
 }
 
 /**

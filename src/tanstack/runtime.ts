@@ -30,6 +30,7 @@ import {
   harnessThreadRuns,
   type ThreadRunLease,
 } from "./thread-lock.js";
+import { harnessPreparedWorktrees } from "./prepared-worktrees.js";
 
 export interface AguiRuntimeOptions {
   systemPrompt?: (worktreePath: string) => string;
@@ -172,6 +173,7 @@ export async function runAguiChat(
       capacityLease?.release(),
       threadLease.release(),
     ]);
+    harnessPreparedWorktrees.scheduleRefill();
     throw error;
   }
 }
@@ -182,8 +184,19 @@ async function prepareAguiChat(
   options: AguiRuntimeOptions,
   runLeases: ThreadRunLease[]
 ): Promise<AsyncIterable<StreamChunk>> {
-  const thread = await harnessThreadStore.getOrCreate(params.threadId, () =>
-    crypto.randomUUID()
+  const preparationStartedAt = Date.now();
+  let worktreeSource: "existing" | "prepared" | "on-demand" = "existing";
+  const thread = await harnessThreadStore.getOrCreate(
+    params.threadId,
+    () => {
+      const prepared = harnessPreparedWorktrees.claim();
+      if (prepared) {
+        worktreeSource = "prepared";
+        return prepared.id;
+      }
+      worktreeSource = "on-demand";
+      return crypto.randomUUID();
+    },
   );
   const transcriptUserMessage = options.transcriptUserMessage;
   const tracksTranscript = transcriptUserMessage !== undefined;
@@ -201,6 +214,9 @@ async function prepareAguiChat(
       }
     : params;
   const worktreePath = createWorktree(worktreeId);
+  console.log(
+    `[ag-ui] run=${params.runId} worktree=${worktreeId} source=${worktreeSource} allocation=${Date.now() - preparationStartedAt}ms`,
+  );
   const maxTurns = boundedMaxTurns(effectiveParams.forwardedProps.maxTurns);
   const model = selection.model;
   console.log(
@@ -215,6 +231,7 @@ async function prepareAguiChat(
     lease.signal.addEventListener("abort", listener, { once: true });
     return { lease, listener };
   });
+  const mcpStartedAt = Date.now();
   const clients = await buildTanStackMcpClients().catch(async (error) => {
     if (
       await harnessThreadStore.deleteIfUninitialized(
@@ -226,6 +243,9 @@ async function prepareAguiChat(
     }
     throw error;
   });
+  console.log(
+    `[ag-ui] run=${params.runId} mcp-ready=${Date.now() - mcpStartedAt}ms clients=${clients.length}`,
+  );
 
   const sandbox = createHarnessSandbox(worktreeId, worktreePath);
 
@@ -269,14 +289,24 @@ async function prepareAguiChat(
     tracksTranscript ? transcriptUserMessage : undefined
   );
   return (async function* () {
+    let firstEvent = true;
     try {
-      yield* tracked;
+      for await (const chunk of tracked) {
+        if (firstEvent) {
+          firstEvent = false;
+          console.log(
+            `[ag-ui] run=${params.runId} first-event=${Date.now() - preparationStartedAt}ms`,
+          );
+        }
+        yield chunk;
+      }
     } finally {
       for (const { lease, listener } of leaseAbortListeners) {
         lease.signal.removeEventListener("abort", listener);
       }
       await Promise.allSettled(clients.map((client) => client.close()));
       await Promise.allSettled(runLeases.map((lease) => lease.release()));
+      harnessPreparedWorktrees.scheduleRefill();
     }
   })();
 }

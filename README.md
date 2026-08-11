@@ -57,6 +57,7 @@ See `.env.example` for the full list. Key notes:
 - The Slack bot needs `reactions:read` in addition to `reactions:write` so a restarted instance can replace interrupted `compadre-thinking` reactions with `compadre-failure`.
 - **GOOGLE_WORKSPACE_USER_EMAIL / GOOGLE_OAUTH_CLIENT_ID / GOOGLE_OAUTH_CLIENT_SECRET / GOOGLE_OAUTH_REFRESH_TOKEN**: OAuth credentials for the Compadre Google Workspace bot user. When set, Compadre enables Google Workspace tools through `workspace-mcp`.
 - **REPO_PATH**: Set to `/opt/render/repo` on Render (auto-cloned). Set to your local comp checkout for dev.
+- **COMPADRE_PREPARED_WORKTREES**: Number of fully initialized, unclaimed worktrees kept ready for new threads. Defaults to `1` and is bounded to `0-2`; set to `0` to disable prewarming.
 - **COMPADRE_API_KEY**: Auth token for the API. Generate with `openssl rand -hex 32`.
 - **CODEX_API_KEY**: API key for the Codex CLI harness; a persisted Codex login is also supported for local development.
 - **COMPADRE_AGENT_PROVIDER**: Select the default Claude Code or Codex harness. `/prompt` and AG-UI callers may override it per request.
@@ -78,6 +79,7 @@ On Render:
 - REPO_PATH defaults to `/opt/render/repo` (the agent clones comp there on startup)
 - The base repo is refreshed every 15 minutes
 - Threads get isolated git worktrees; inactive thread state and worktrees expire together after one hour
+- One isolated worktree is prepared while the harness is idle so a new thread normally avoids dependency installation on its request path
 
 ## Architecture
 
