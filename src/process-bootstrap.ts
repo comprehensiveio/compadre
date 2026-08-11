@@ -85,7 +85,7 @@ export async function initializeCompadreProcess(
     await import(tracerInitializer);
   }
   const { registerDatadogOpenTelemetry } = await import("./telemetry.js");
-  const telemetryMode = registerDatadogOpenTelemetry({
+  const telemetryMode = await registerDatadogOpenTelemetry({
     ephemeral: options.ephemeral,
   });
   if (options.ephemeral) {

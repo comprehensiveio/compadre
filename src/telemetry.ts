@@ -1,4 +1,3 @@
-import ddTrace from "dd-trace";
 import { OTLPTraceExporter } from "@opentelemetry/exporter-trace-otlp-proto";
 import { resourceFromAttributes } from "@opentelemetry/resources";
 import { BatchSpanProcessor } from "@opentelemetry/sdk-trace-base";
@@ -12,6 +11,9 @@ import {
 let openTelemetryRegistered = false;
 let agentlessOpenTelemetryRegistered = false;
 let registeredTelemetryMode: DatadogTelemetryMode | undefined;
+let datadogAgent:
+  | (typeof import("dd-trace"))["default"]
+  | undefined;
 let openTelemetryProvider:
   | {
       register(): void;
@@ -74,9 +76,9 @@ function createAgentlessWorkflowProvider(
  * Persistent services use their nearby Datadog Agent. Ephemeral Render
  * Workflow tasks send OTLP directly because no Agent lives with the task.
  */
-export function registerDatadogOpenTelemetry(
+export async function registerDatadogOpenTelemetry(
   options: DatadogOpenTelemetryOptions = {},
-): DatadogTelemetryMode {
+): Promise<DatadogTelemetryMode> {
   if (openTelemetryRegistered && registeredTelemetryMode) {
     return registeredTelemetryMode;
   }
@@ -84,13 +86,25 @@ export function registerDatadogOpenTelemetry(
   const apiKey = environment.DD_API_KEY?.trim();
   const mode: DatadogTelemetryMode =
     options.ephemeral && apiKey ? "agentless" : "agent";
-  const provider =
-    mode === "agentless"
-      ? createAgentlessWorkflowProvider(environment, apiKey as string)
-      : (new ddTrace.TracerProvider() as {
-          register(): void;
-          forceFlush?(): Promise<void>;
-        });
+  let provider:
+    | NodeTracerProvider
+    | {
+        register(): void;
+        forceFlush?(): Promise<void>;
+      };
+  if (mode === "agentless") {
+    // Do not load dd-trace in an ephemeral task. Its OpenTelemetry bridge
+    // replaces the SDK provider even without initialize.mjs, which makes the
+    // direct exporter attempt to flush an Agent-backed provider.
+    provider = createAgentlessWorkflowProvider(environment, apiKey as string);
+  } else {
+    const { default: ddTrace } = await import("dd-trace");
+    datadogAgent = ddTrace;
+    provider = new ddTrace.TracerProvider() as {
+      register(): void;
+      forceFlush?(): Promise<void>;
+    };
+  }
   const registeredProvider = provider as {
     register(): void;
     forceFlush?(): Promise<void>;
@@ -114,12 +128,13 @@ export function recordWorkflowMetrics(
   // The task root span carries the same status and duration in agentless mode.
   // DogStatsD requires a colocated Agent, which Render Workflow tasks lack.
   if (agentlessOpenTelemetryRegistered) return;
+  if (!datadogAgent) return;
   const tags = {
     task: taskName,
     status,
   };
-  ddTrace.dogstatsd.increment("compadre.workflow.runs", 1, tags);
-  ddTrace.dogstatsd.distribution(
+  datadogAgent.dogstatsd.increment("compadre.workflow.runs", 1, tags);
+  datadogAgent.dogstatsd.distribution(
     "compadre.workflow.duration_ms",
     durationMs,
     tags,
@@ -145,9 +160,9 @@ export async function flushDatadogOpenTelemetry(
         // methods initiate asynchronous Agent requests but do not await their
         // network callbacks, so keep the ephemeral process alive briefly after
         // asking both writers to drain.
-        if (!agentlessOpenTelemetryRegistered) {
-          ddTrace.llmobs.flush();
-          ddTrace.dogstatsd.flush();
+        if (!agentlessOpenTelemetryRegistered && datadogAgent) {
+          datadogAgent.llmobs.flush();
+          datadogAgent.dogstatsd.flush();
         }
         await forceFlush.call(openTelemetryProvider);
         await new Promise<void>((resolve) =>
