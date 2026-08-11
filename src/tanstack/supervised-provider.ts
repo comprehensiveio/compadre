@@ -8,13 +8,9 @@ function superviseHandle(
   onSpawn: (pid: number) => void,
 ): SandboxHandle {
   return {
-    id: handle.id,
-    provider: handle.provider,
-    workspaceRoot: handle.workspaceRoot,
-    capabilities: handle.capabilities,
-    fs: handle.fs,
-    git: handle.git,
+    ...handle,
     process: {
+      ...handle.process,
       exec: (command, options) => handle.process.exec(command, options),
       spawn: async (command, options) => {
         const spawned = await handle.process.spawn(command, options);
@@ -22,8 +18,6 @@ function superviseHandle(
         return spawned;
       },
     },
-    ports: handle.ports,
-    env: handle.env,
     ...(handle.snapshot
       ? { snapshot: (label?: string) => handle.snapshot!(label) }
       : {}),

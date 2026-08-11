@@ -1,4 +1,5 @@
 import crypto from "node:crypto";
+import { setTimeout as delay } from "node:timers/promises";
 import {
   runHarnessConversation,
   type HarnessConversationResult,
@@ -10,7 +11,10 @@ import {
   type AgentProvider,
 } from "./tanstack/protocol.js";
 import { releaseAguiThread } from "./tanstack/runtime.js";
-import type { RunCapacityPriority } from "./tanstack/thread-lock.js";
+import {
+  BackgroundCapacityPreemptedError,
+  type RunCapacityPriority,
+} from "./tanstack/thread-lock.js";
 
 export interface StreamCallbacks {
   onTextDelta?: (text: string) => void;
@@ -29,6 +33,7 @@ export interface ConversationOptions {
   systemPrompt?: (worktreePath: string) => string;
   stream?: StreamCallbacks;
   capacityPriority?: RunCapacityPriority;
+  retryOnBackgroundPreemption?: boolean;
 }
 
 export type ConversationResult = HarnessConversationResult;
@@ -41,6 +46,24 @@ export function validateConversationConfiguration(): {
   return validateAgentProviderConfiguration();
 }
 
+export async function retryBackgroundPreemptions<T>(
+  task: () => Promise<T>,
+  onPreempted: (attempt: number) => void | Promise<void> = async () => {
+    await delay(100);
+  },
+): Promise<T> {
+  let attempt = 0;
+  while (true) {
+    try {
+      return await task();
+    } catch (error) {
+      if (!(error instanceof BackgroundCapacityPreemptedError)) throw error;
+      attempt += 1;
+      await onPreempted(attempt);
+    }
+  }
+}
+
 export function runConversation(
   options: ConversationOptions
 ): Promise<ConversationResult> {
@@ -48,7 +71,7 @@ export function runConversation(
   const threadId = options.threadId ?? `prompt-${crypto.randomUUID()}`;
   const run = async () => {
     try {
-      return await runHarnessConversation({
+      const execute = () => runHarnessConversation({
         threadId,
         prompt: options.prompt,
         transcriptUserMessage:
@@ -60,6 +83,13 @@ export function runConversation(
         systemPrompt: options.systemPrompt,
         stream: options.stream,
         capacityPriority: options.capacityPriority,
+      });
+      if (!options.retryOnBackgroundPreemption) return await execute();
+      return await retryBackgroundPreemptions(execute, async (attempt) => {
+        console.warn(
+          `[conversation] background run preempted; retrying attempt=${attempt}`,
+        );
+        await delay(100);
       });
     } finally {
       if (ephemeral) await releaseAguiThread(threadId);

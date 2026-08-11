@@ -13,6 +13,24 @@ async function collect(stream: AsyncIterable<StreamChunk>) {
   return chunks;
 }
 
+async function trippedCgroupSupervisor(): Promise<AgentProcessSupervisor> {
+  const supervisor = new AgentProcessSupervisor({
+    runId: "cgroup-run",
+    abortController: new AbortController(),
+    treeLimitBytes: 10_000,
+    cgroupHeadroomBytes: 1_000,
+    sampleIntervalMs: 60_000,
+    readProcesses: async () => [
+      { pid: 10, ppid: 1, rssBytes: 100, name: "claude" },
+    ],
+    readHostMemory: async () => ({ usageBytes: 9_500, limitBytes: 10_000 }),
+    logger: { log: () => undefined, warn: () => undefined },
+  });
+  supervisor.trackRoot(10);
+  await supervisor.sample();
+  return supervisor;
+}
+
 test("parses safe process names and selects descendants", () => {
   const entries = parseProcessTable(`
     10 1 100 node
@@ -59,21 +77,7 @@ test("aborts a run when its process tree exceeds the configured limit", async ()
 });
 
 test("surfaces a supervised abort as one terminal AG-UI error", async () => {
-  const abortController = new AbortController();
-  const supervisor = new AgentProcessSupervisor({
-    runId: "cgroup-run",
-    abortController,
-    treeLimitBytes: 10_000,
-    cgroupHeadroomBytes: 1_000,
-    sampleIntervalMs: 60_000,
-    readProcesses: async () => [
-      { pid: 10, ppid: 1, rssBytes: 100, name: "claude" },
-    ],
-    readHostMemory: async () => ({ usageBytes: 9_500, limitBytes: 10_000 }),
-    logger: { log: () => undefined, warn: () => undefined },
-  });
-  supervisor.trackRoot(10);
-  await supervisor.sample();
+  const supervisor = await trippedCgroupSupervisor();
 
   async function* failedProvider(): AsyncIterable<StreamChunk> {
     yield {
@@ -85,12 +89,40 @@ test("surfaces a supervised abort as one terminal AG-UI error", async () => {
 
   const chunks = await collect(supervisor.guard(failedProvider(), "test-model"));
   assert.equal(chunks.length, 1);
-  assert.equal(chunks[0]!.type, EventType.RUN_ERROR);
-  assert.equal(chunks[0]!.code, "AGENT_MEMORY_LIMIT");
-  assert.match(
-    chunks[0]!.type === EventType.RUN_ERROR ? chunks[0]!.message : "",
-    /service-cgroup/,
+  const chunk = chunks[0]!;
+  assert.ok(chunk.type === EventType.RUN_ERROR);
+  assert.equal(chunk.code, "AGENT_MEMORY_LIMIT");
+  assert.match(chunk.message, /service-cgroup/);
+  supervisor.stop();
+});
+
+test("replaces an aborted provider exception with one memory error", async () => {
+  const supervisor = await trippedCgroupSupervisor();
+
+  async function* abortedProvider(): AsyncIterable<StreamChunk> {
+    throw new Error("process aborted");
+  }
+
+  const chunks = await collect(
+    supervisor.guard(abortedProvider(), "test-model"),
   );
+  assert.equal(chunks.length, 1);
+  assert.equal(chunks[0]!.type, EventType.RUN_ERROR);
+  supervisor.stop();
+});
+
+test("appends a memory error when an aborted provider ends silently", async () => {
+  const supervisor = await trippedCgroupSupervisor();
+
+  async function* silentProvider(): AsyncIterable<StreamChunk> {
+    return;
+  }
+
+  const chunks = await collect(
+    supervisor.guard(silentProvider(), "test-model"),
+  );
+  assert.equal(chunks.length, 1);
+  assert.equal(chunks[0]!.type, EventType.RUN_ERROR);
   supervisor.stop();
 });
 

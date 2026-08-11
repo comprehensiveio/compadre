@@ -2,8 +2,10 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   configuredAgentProvider,
+  retryBackgroundPreemptions,
   validateConversationConfiguration,
 } from "./conversation.js";
+import { BackgroundCapacityPreemptedError } from "./tanstack/thread-lock.js";
 
 function withEnv(name: string, value: string | undefined, run: () => void): void {
   const previous = process.env[name];
@@ -33,4 +35,37 @@ test("fails fast for an invalid harness provider", () => {
   withEnv("COMPADRE_AGENT_PROVIDER", "other", () => {
     assert.throws(validateConversationConfiguration, /COMPADRE_AGENT_PROVIDER/);
   });
+});
+
+test("retries typed background preemption until the task succeeds", async () => {
+  let runs = 0;
+  const attempts: number[] = [];
+
+  const result = await retryBackgroundPreemptions(
+    async () => {
+      runs += 1;
+      if (runs < 3) throw new BackgroundCapacityPreemptedError();
+      return "completed";
+    },
+    (attempt) => {
+      attempts.push(attempt);
+    },
+  );
+
+  assert.equal(result, "completed");
+  assert.equal(runs, 3);
+  assert.deepEqual(attempts, [1, 2]);
+});
+
+test("does not retry ordinary background failures", async () => {
+  let runs = 0;
+
+  await assert.rejects(
+    retryBackgroundPreemptions(async () => {
+      runs += 1;
+      throw new Error("provider failed");
+    }),
+    /provider failed/,
+  );
+  assert.equal(runs, 1);
 });

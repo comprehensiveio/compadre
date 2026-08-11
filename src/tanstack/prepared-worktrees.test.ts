@@ -8,6 +8,8 @@ import {
 function fixtureDependencies(options: {
   prepare?: (path: string, signal: AbortSignal) => Promise<void>;
   currentRevision?: () => string | undefined;
+  abortController?: AbortController;
+  preemptBeforeStart?: boolean;
 }) {
   const events: string[] = [];
   const revisions = new Map<string, string>();
@@ -30,10 +32,20 @@ function fixtureDependencies(options: {
     runWithBackgroundCapacity: async (task) => {
       events.push("capacity:acquire");
       try {
-        return {
-          status: "completed" as const,
-          value: await task(new AbortController().signal),
-        };
+        if (options.preemptBeforeStart) {
+          return { status: "preempted" as const };
+        }
+        const signal =
+          options.abortController?.signal ?? new AbortController().signal;
+        try {
+          return { status: "completed" as const, value: await task(signal) };
+        } catch (error) {
+          if (signal.aborted) {
+            events.push("capacity:preempted");
+            return { status: "preempted" as const };
+          }
+          throw error;
+        }
       } finally {
         events.push("capacity:release");
       }
@@ -142,4 +154,34 @@ test("coalesces concurrent refill requests", async () => {
     events.filter((event) => event.startsWith("create:")).length,
     1,
   );
+});
+
+test("does not start preparation when background capacity is preempted", async () => {
+  const { dependencies, events } = fixtureDependencies({
+    preemptBeforeStart: true,
+  });
+  const pool = new PreparedWorktreePool({ targetSize: 1, dependencies });
+
+  await pool.refill();
+
+  assert.deepEqual(events, ["capacity:acquire", "capacity:release"]);
+  assert.equal(pool.claim(), undefined);
+});
+
+test("removes partial worktrees when preparation is aborted", async () => {
+  const abortController = new AbortController();
+  const { dependencies, events } = fixtureDependencies({
+    abortController,
+    prepare: async (_path, signal) => {
+      abortController.abort(new Error("foreground requested"));
+      throw signal.reason;
+    },
+  });
+  const pool = new PreparedWorktreePool({ targetSize: 1, dependencies });
+
+  await pool.refill();
+
+  assert.ok(events.includes("remove:prepared-1"));
+  assert.ok(events.includes("capacity:preempted"));
+  assert.equal(pool.claim(), undefined);
 });

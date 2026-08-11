@@ -45,6 +45,11 @@ export interface AguiRuntimeOptions {
   capacityPriority?: RunCapacityPriority;
 }
 
+interface ActiveRunLeases {
+  capacity: ThreadRunLease;
+  thread: ThreadRunLease;
+}
+
 /**
  * Build the provider-neutral workspace boundary shared by every coding
  * harness. The comp repo's setup script is intentionally idempotent and also
@@ -159,6 +164,52 @@ export function messagesForHarnessSession(
   return sessionId ? current : [...transcript, ...current];
 }
 
+async function discardPreparation(
+  threadId: string,
+  worktreeId: string,
+  clients: ReadonlyArray<{ close(): Promise<void> }> = [],
+): Promise<void> {
+  await Promise.allSettled(clients.map((client) => client.close()));
+  if (await harnessThreadStore.deleteIfUninitialized(threadId, worktreeId)) {
+    removeWorktree(worktreeId);
+  }
+}
+
+function backgroundPreemptionReason(
+  lease: ThreadRunLease,
+): BackgroundCapacityPreemptedError | undefined {
+  return lease.signal.aborted &&
+    lease.signal.reason instanceof BackgroundCapacityPreemptedError
+    ? lease.signal.reason
+    : undefined;
+}
+
+export async function* guardBackgroundPreemption(
+  stream: AsyncIterable<StreamChunk>,
+  capacityLease: ThreadRunLease,
+): AsyncIterable<StreamChunk> {
+  let sawTerminal = false;
+  try {
+    for await (const chunk of stream) {
+      const preemption = backgroundPreemptionReason(capacityLease);
+      if (!sawTerminal && preemption) throw preemption;
+      if (
+        chunk.type === EventType.RUN_ERROR ||
+        chunk.type === EventType.RUN_FINISHED
+      ) {
+        sawTerminal = true;
+      }
+      yield chunk;
+    }
+  } catch (error) {
+    throw (
+      (!sawTerminal && backgroundPreemptionReason(capacityLease)) ?? error
+    );
+  }
+  const preemption = backgroundPreemptionReason(capacityLease);
+  if (!sawTerminal && preemption) throw preemption;
+}
+
 /**
  * Run one AG-UI request through a selected TanStack coding harness. Sessions
  * remain process-local and worktree state remains on local disk; those are the
@@ -177,10 +228,10 @@ export async function runAguiChat(
         ? await harnessRunCapacity.acquireBackground()
         : await harnessRunCapacity.acquireForeground();
     if (!capacityLease) throw new BackgroundCapacityPreemptedError();
-    return await prepareAguiChat(params, requestSignal, options, [
-      capacityLease,
-      threadLease,
-    ]);
+    return await prepareAguiChat(params, requestSignal, options, {
+      capacity: capacityLease,
+      thread: threadLease,
+    });
   } catch (error) {
     await Promise.allSettled([
       capacityLease?.release(),
@@ -195,12 +246,12 @@ async function prepareAguiChat(
   params: AguiChatParams,
   requestSignal: AbortSignal | undefined,
   options: AguiRuntimeOptions,
-  runLeases: ThreadRunLease[]
+  runLeases: ActiveRunLeases
 ): Promise<AsyncIterable<StreamChunk>> {
   const abortController = new AbortController();
   const abortSources = [
     ...(requestSignal ? [requestSignal] : []),
-    ...runLeases.map((lease) => lease.signal),
+    ...Object.values(runLeases).map((lease) => lease.signal),
   ];
   const abortListeners = abortSources.map((signal) => {
     const listener = () => abortController.abort(signal.reason);
@@ -258,30 +309,16 @@ async function prepareAguiChat(
   );
   const mcpStartedAt = Date.now();
   const clients = await buildTanStackMcpClients().catch(async (error) => {
-    if (
-      await harnessThreadStore.deleteIfUninitialized(
-        params.threadId,
-        worktreeId
-      )
-    ) {
-      removeWorktree(worktreeId);
-    }
-    throw error;
+    removeAbortListeners();
+    await discardPreparation(params.threadId, worktreeId);
+    throw backgroundPreemptionReason(runLeases.capacity) ?? error;
   });
   console.log(
     `[ag-ui] run=${params.runId} mcp-ready=${Date.now() - mcpStartedAt}ms clients=${clients.length}`,
   );
   if (abortController.signal.aborted) {
     removeAbortListeners();
-    await Promise.allSettled(clients.map((client) => client.close()));
-    if (
-      await harnessThreadStore.deleteIfUninitialized(
-        params.threadId,
-        worktreeId
-      )
-    ) {
-      removeWorktree(worktreeId);
-    }
+    await discardPreparation(params.threadId, worktreeId, clients);
     throw abortController.signal.reason;
   }
 
@@ -313,16 +350,8 @@ async function prepareAguiChat(
   } catch (error) {
     processSupervisor.stop();
     removeAbortListeners();
-    await Promise.allSettled(clients.map((client) => client.close()));
-    if (
-      await harnessThreadStore.deleteIfUninitialized(
-        params.threadId,
-        worktreeId
-      )
-    ) {
-      removeWorktree(worktreeId);
-    }
-    throw error;
+    await discardPreparation(params.threadId, worktreeId, clients);
+    throw backgroundPreemptionReason(runLeases.capacity) ?? error;
   }
 
   const supervised = processSupervisor.guard(stream, model);
@@ -338,7 +367,10 @@ async function prepareAguiChat(
   return (async function* () {
     let firstEvent = true;
     try {
-      for await (const chunk of tracked) {
+      for await (const chunk of guardBackgroundPreemption(
+        tracked,
+        runLeases.capacity,
+      )) {
         if (firstEvent) {
           firstEvent = false;
           console.log(
@@ -351,7 +383,9 @@ async function prepareAguiChat(
       processSupervisor.stop();
       removeAbortListeners();
       await Promise.allSettled(clients.map((client) => client.close()));
-      await Promise.allSettled(runLeases.map((lease) => lease.release()));
+      await Promise.allSettled(
+        Object.values(runLeases).map((lease) => lease.release()),
+      );
       harnessPreparedWorktrees.scheduleRefill();
     }
   })();

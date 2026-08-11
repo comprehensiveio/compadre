@@ -107,3 +107,16 @@ test("background capacity preserves non-preemption failures", async () => {
     /setup failed/,
   );
 });
+
+test("background capacity returns successful values and releases its lease", async () => {
+  const capacity = new RunCapacityCoordinator(
+    new ThreadRunCoordinator(new InMemoryLockStore()),
+  );
+
+  assert.deepEqual(await capacity.runBackground(async () => "ready"), {
+    status: "completed",
+    value: "ready",
+  });
+  const foreground = await capacity.acquireForeground();
+  await foreground.release();
+});

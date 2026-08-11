@@ -34,6 +34,7 @@ Based on the source and payload, determine what action to take. For example:
     prompt,
     maxTurns: 25,
     capacityPriority: "background",
+    retryOnBackgroundPreemption: true,
   }).catch((err) =>
     console.error(`[webhook] ${source} task failed:`, err)
   );

@@ -57,10 +57,9 @@ export class ThreadRunCoordinator {
   }
 }
 
-export interface BackgroundCapacityResult<T> {
-  status: "completed" | "preempted";
-  value?: T;
-}
+export type BackgroundCapacityResult<T> =
+  | { status: "completed"; value: T }
+  | { status: "preempted" };
 
 export type RunCapacityPriority = "foreground" | "background";
 

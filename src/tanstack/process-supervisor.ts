@@ -101,15 +101,20 @@ export function processTree(
   entries: ProcessMemoryEntry[],
   rootPids: ReadonlySet<number>,
 ): ProcessMemoryEntry[] {
+  const children = new Map<number, number[]>();
+  for (const entry of entries) {
+    const siblings = children.get(entry.ppid);
+    if (siblings) siblings.push(entry.pid);
+    else children.set(entry.ppid, [entry.pid]);
+  }
+
   const descendants = new Set(rootPids);
-  let changed = true;
-  while (changed) {
-    changed = false;
-    for (const entry of entries) {
-      if (!descendants.has(entry.pid) && descendants.has(entry.ppid)) {
-        descendants.add(entry.pid);
-        changed = true;
-      }
+  const pending = [...rootPids];
+  while (pending.length > 0) {
+    for (const child of children.get(pending.pop()!) ?? []) {
+      if (descendants.has(child)) continue;
+      descendants.add(child);
+      pending.push(child);
     }
   }
   return entries.filter((entry) => descendants.has(entry.pid));
@@ -210,7 +215,6 @@ export class AgentProcessSupervisor {
       timestamp: Date.now(),
       message: error.message,
       code: error.code,
-      error: { message: error.message, code: error.code },
     };
   }
 
