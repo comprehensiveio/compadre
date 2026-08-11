@@ -98,14 +98,19 @@ export function repositoryNeedsFetch(
   return localRevision !== remoteRevision;
 }
 
-function refreshExistingRepository(repoUrl: string, branch: string): void {
-  git("-C", REPO_PATH, "remote", "set-url", "origin", repoUrl);
+export function refreshExistingRepository(
+  repoPath: string,
+  repoUrl: string,
+  branch: string,
+  singleUse = process.env.COMPADRE_SINGLE_USE_REPOSITORY === "true",
+): void {
+  git("-C", repoPath, "remote", "set-url", "origin", repoUrl);
 
   let needsFetch = true;
-  if (process.env.COMPADRE_SINGLE_USE_REPOSITORY === "true") {
+  if (singleUse) {
     try {
       needsFetch = repositoryNeedsFetch(
-        gitOutput(REPO_PATH, "rev-parse", `origin/${branch}`),
+        gitOutput(repoPath, "rev-parse", `origin/${branch}`),
         remoteBranchRevision(repoUrl, branch),
       );
     } catch (error) {
@@ -117,8 +122,8 @@ function refreshExistingRepository(repoUrl: string, branch: string): void {
   }
 
   if (needsFetch) {
-    git("-C", REPO_PATH, "fetch", "origin", branch);
-    git("-C", REPO_PATH, "reset", "--hard", `origin/${branch}`);
+    git("-C", repoPath, "fetch", "origin", branch);
+    git("-C", repoPath, "reset", "--hard", `origin/${branch}`);
   } else {
     console.log(`[repo] baked checkout already matches origin/${branch}`);
   }
@@ -198,7 +203,7 @@ export function ensureRepo() {
     console.log("[repo] pulling latest changes");
     // Older Compadre versions embedded the PAT in this URL. Always rewrite it
     // to the credential-free configured URL before any network operation.
-    refreshExistingRepository(repoUrl, branch);
+    refreshExistingRepository(REPO_PATH, repoUrl, branch);
   } else if (hasRepositorySeed(seedPath)) {
     console.log(`[repo] cloning repository from image seed at ${seedPath}`);
     git(

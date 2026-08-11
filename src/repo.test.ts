@@ -19,6 +19,7 @@ import {
   isRemovableStaleWorktree,
   prepareRepositorySeed,
   prepareWorktree,
+  refreshExistingRepository,
   repositoryNeedsFetch,
   usesRepositoryAsWorktree,
 } from "./repo.js";
@@ -111,6 +112,33 @@ test("builds a self-contained editable Workflow repository", async () => {
       (await execFile("git", ["-C", seedPath, "rev-parse", "--is-shallow-repository"]))
         .stdout.trim(),
       "true",
+    );
+
+    await writeFile(path.join(sourcePath, "README.md"), "new remote contents\n");
+    await execFile("git", ["add", "README.md"], { cwd: sourcePath });
+    await execFile(
+      "git",
+      [
+        "-c",
+        "user.name=Compadre Test",
+        "-c",
+        "user.email=compadre@example.com",
+        "commit",
+        "-m",
+        "remote update",
+      ],
+      { cwd: sourcePath },
+    );
+
+    refreshExistingRepository(
+      seedPath,
+      `file://${sourcePath}`,
+      "main",
+      true,
+    );
+    assert.equal(
+      await readFile(path.join(seedPath, "README.md"), "utf8"),
+      "new remote contents\n",
     );
   } finally {
     if (previousUrl === undefined) delete process.env.GITHUB_REPO_URL;
