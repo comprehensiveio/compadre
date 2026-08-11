@@ -6,6 +6,7 @@ import test from "node:test";
 import {
   configureEphemeralRepositoryEnvironment,
   configureTelemetryEnvironment,
+  usesAgentlessWorkflowTelemetry,
 } from "./process-bootstrap.js";
 
 test("configures Workflow processes for immediate trace export", () => {
@@ -28,6 +29,21 @@ test("does not change persistent process batching or deployment overrides", () =
   };
   configureTelemetryEnvironment({ ephemeral: true }, overriddenEnvironment);
   assert.equal(overriddenEnvironment.DD_TRACE_FLUSH_INTERVAL, "500");
+});
+
+test("uses exactly one direct telemetry provider in ephemeral Workflows", () => {
+  assert.equal(
+    usesAgentlessWorkflowTelemetry(
+      { ephemeral: true },
+      { DD_API_KEY: "test-key" },
+    ),
+    true,
+  );
+  assert.equal(
+    usesAgentlessWorkflowTelemetry({}, { DD_API_KEY: "test-key" }),
+    false,
+  );
+  assert.equal(usesAgentlessWorkflowTelemetry({ ephemeral: true }, {}), false);
 });
 
 test("uses a baked checkout only for an ephemeral process", async () => {

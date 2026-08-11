@@ -10,6 +10,7 @@ import {
 } from "@opentelemetry/semantic-conventions";
 
 let openTelemetryRegistered = false;
+let agentlessOpenTelemetryRegistered = false;
 let openTelemetryProvider:
   | {
       register(): void;
@@ -89,6 +90,7 @@ export function registerDatadogOpenTelemetry(
   };
   registeredProvider.register();
   openTelemetryProvider = registeredProvider;
+  agentlessOpenTelemetryRegistered = provider instanceof NodeTracerProvider;
   openTelemetryRegistered = true;
 }
 
@@ -100,6 +102,9 @@ export function recordWorkflowMetrics(
   status: WorkflowMetricStatus,
   durationMs: number,
 ): void {
+  // The task root span carries the same status and duration in agentless mode.
+  // DogStatsD requires a colocated Agent, which Render Workflow tasks lack.
+  if (agentlessOpenTelemetryRegistered) return;
   const tags = {
     task: taskName,
     status,
@@ -131,8 +136,10 @@ export async function flushDatadogOpenTelemetry(
         // methods initiate asynchronous Agent requests but do not await their
         // network callbacks, so keep the ephemeral process alive briefly after
         // asking both writers to drain.
-        ddTrace.llmobs.flush();
-        ddTrace.dogstatsd.flush();
+        if (!agentlessOpenTelemetryRegistered) {
+          ddTrace.llmobs.flush();
+          ddTrace.dogstatsd.flush();
+        }
         await forceFlush.call(openTelemetryProvider);
         await new Promise<void>((resolve) =>
           setTimeout(resolve, WORKFLOW_TELEMETRY_DRAIN_MS),

@@ -52,6 +52,13 @@ export function configureEphemeralRepositoryEnvironment(
   environment.COMPADRE_SINGLE_USE_REPOSITORY ??= "true";
 }
 
+export function usesAgentlessWorkflowTelemetry(
+  { ephemeral = false }: CompadreProcessOptions = {},
+  environment: NodeJS.ProcessEnv = process.env,
+): boolean {
+  return ephemeral && Boolean(environment.DD_API_KEY?.trim());
+}
+
 /**
  * Initialize the shared process environment before loading application or
  * workflow modules. Keeping this boundary common prevents the web service and
@@ -70,10 +77,13 @@ export async function initializeCompadreProcess(
   // deployment to override or explicitly disable each Datadog feature.
   configureTelemetryEnvironment(options);
 
-  // Initialize tracing before loading application modules so ESM integrations
-  // and the provider-neutral TanStack runtime can be instrumented.
-  const tracerInitializer = "dd-trace/initialize.mjs";
-  await import(tracerInitializer);
+  // Persistent processes use dd-trace auto-instrumentation with their nearby
+  // Agent. An ephemeral Workflow has no Agent and must register only the direct
+  // OTLP provider; registering both produces incompatible mixed span objects.
+  if (!usesAgentlessWorkflowTelemetry(options)) {
+    const tracerInitializer = "dd-trace/initialize.mjs";
+    await import(tracerInitializer);
+  }
   const { registerDatadogOpenTelemetry } = await import("./telemetry.js");
   registerDatadogOpenTelemetry({ ephemeral: options.ephemeral });
 
