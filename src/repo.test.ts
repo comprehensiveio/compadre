@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { execFile as execFileCallback } from "node:child_process";
 import {
   access,
   chmod,
@@ -12,11 +13,15 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import test from "node:test";
+import { promisify } from "node:util";
 import {
   configuredRepositoryUrl,
   isRemovableStaleWorktree,
+  prepareRepositorySeed,
   prepareWorktree,
 } from "./repo.js";
+
+const execFile = promisify(execFileCallback);
 
 test("keeps GitHub credentials out of the configured repository URL", () => {
   const token = "secret-token";
@@ -45,6 +50,57 @@ test("removes only stale worktrees that have no live thread owner", () => {
     isRemovableStaleWorktree("recent", 9_000, now, 5_000, retained),
     false
   );
+});
+
+test("builds a self-contained repository seed", async () => {
+  const testRoot = await mkdtemp(path.join(tmpdir(), "compadre-repo-seed-"));
+  const sourcePath = path.join(testRoot, "source");
+  const seedPath = path.join(testRoot, "seed.git");
+  const checkoutPath = path.join(testRoot, "checkout");
+  const previousUrl = process.env.GITHUB_REPO_URL;
+  const previousBranch = process.env.REPO_BRANCH;
+
+  try {
+    await mkdir(sourcePath);
+    await execFile("git", ["init", "--initial-branch", "main"], {
+      cwd: sourcePath,
+    });
+    await writeFile(path.join(sourcePath, "README.md"), "seed contents\n");
+    await execFile("git", ["add", "README.md"], { cwd: sourcePath });
+    await execFile(
+      "git",
+      [
+        "-c",
+        "user.name=Compadre Test",
+        "-c",
+        "user.email=compadre@example.com",
+        "commit",
+        "-m",
+        "seed",
+      ],
+      { cwd: sourcePath },
+    );
+
+    process.env.GITHUB_REPO_URL = `file://${sourcePath}`;
+    process.env.REPO_BRANCH = "main";
+    prepareRepositorySeed(seedPath);
+
+    await execFile(
+      "git",
+      ["clone", "--no-local", "--branch", "main", seedPath, checkoutPath],
+      { env: { ...process.env, GIT_NO_LAZY_FETCH: "1" } },
+    );
+    assert.equal(
+      await readFile(path.join(checkoutPath, "README.md"), "utf8"),
+      "seed contents\n",
+    );
+  } finally {
+    if (previousUrl === undefined) delete process.env.GITHUB_REPO_URL;
+    else process.env.GITHUB_REPO_URL = previousUrl;
+    if (previousBranch === undefined) delete process.env.REPO_BRANCH;
+    else process.env.REPO_BRANCH = previousBranch;
+    await rm(testRoot, { recursive: true, force: true });
+  }
 });
 
 test("prepares a worktree through its checked-in setup script", async () => {

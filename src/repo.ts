@@ -142,10 +142,10 @@ export function ensureRepo() {
     console.log(`[repo] cloning repository from image seed at ${seedPath}`);
     git(
       "clone",
-      "--local",
-      // Keep the editable checkout independent from the immutable image seed.
-      // The bounded copy is still substantially faster than a network clone.
-      "--no-hardlinks",
+      // A shallow bare repository cannot use Git's local-clone optimization.
+      // Force the local transport so the checkout remains independent from the
+      // immutable image seed and works across Render filesystem boundaries.
+      "--no-local",
       "--single-branch",
       "--branch",
       branch,
@@ -191,35 +191,27 @@ export function prepareRepositorySeed(
   const branch = getRepoBranch();
   mkdirSync(path.dirname(seedPath), { recursive: true });
 
-  if (hasRepositorySeed(seedPath)) {
-    console.log(`[repo-seed] refreshing ${seedPath}`);
-    git("--git-dir", seedPath, "remote", "set-url", "origin", repoUrl);
-    git(
-      "--git-dir",
-      seedPath,
-      "fetch",
-      "--depth",
-      "1",
-      "origin",
-      `+refs/heads/${branch}:refs/heads/${branch}`,
-    );
-  } else {
-    console.log(`[repo-seed] cloning ${repoUrl} into ${seedPath}`);
-    git(
-      "clone",
-      "--bare",
-      "--depth",
-      "1",
-      "--filter=blob:none",
-      "--single-branch",
-      "--branch",
-      branch,
-      repoUrl,
-      seedPath,
-    );
-  }
+  // Always recreate the seed. An older partial clone may look healthy while
+  // silently relying on its promisor remote for omitted objects. Once Render
+  // packages the build output, those lazy fetches are unavailable and runtime
+  // checkout fails. A full (but shallow) clone is self-contained.
+  rmSync(seedPath, { recursive: true, force: true });
+  console.log(`[repo-seed] cloning ${repoUrl} into ${seedPath}`);
+  git(
+    "clone",
+    "--bare",
+    "--depth",
+    "1",
+    "--single-branch",
+    "--branch",
+    branch,
+    repoUrl,
+    seedPath,
+  );
 
   git("--git-dir", seedPath, "symbolic-ref", "HEAD", `refs/heads/${branch}`);
+  // Fail the build instead of publishing an incomplete runtime seed.
+  git("--git-dir", seedPath, "fsck", "--full", "--no-dangling");
   return seedPath;
 }
 
