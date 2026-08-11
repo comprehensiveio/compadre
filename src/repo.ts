@@ -74,6 +74,56 @@ function gitOutput(cwd: string, ...args: string[]): string {
   }).trim();
 }
 
+function remoteBranchRevision(repoUrl: string, branch: string): string {
+  const output = execFileSync(
+    "git",
+    ["ls-remote", "--exit-code", repoUrl, `refs/heads/${branch}`],
+    {
+      encoding: "utf8",
+      env: gitEnvironment(),
+      stdio: ["ignore", "pipe", "pipe"],
+    },
+  ).trim();
+  const revision = output.split(/\s+/, 1)[0];
+  if (!/^[a-f0-9]{40,64}$/i.test(revision)) {
+    throw new Error(`Git returned an invalid revision for ${branch}`);
+  }
+  return revision;
+}
+
+export function repositoryNeedsFetch(
+  localRevision: string,
+  remoteRevision: string,
+): boolean {
+  return localRevision !== remoteRevision;
+}
+
+function refreshExistingRepository(repoUrl: string, branch: string): void {
+  git("-C", REPO_PATH, "remote", "set-url", "origin", repoUrl);
+
+  let needsFetch = true;
+  if (process.env.COMPADRE_SINGLE_USE_REPOSITORY === "true") {
+    try {
+      needsFetch = repositoryNeedsFetch(
+        gitOutput(REPO_PATH, "rev-parse", `origin/${branch}`),
+        remoteBranchRevision(repoUrl, branch),
+      );
+    } catch (error) {
+      console.warn(
+        "[repo] could not compare baked checkout with the remote; fetching",
+        error,
+      );
+    }
+  }
+
+  if (needsFetch) {
+    git("-C", REPO_PATH, "fetch", "origin", branch);
+  } else {
+    console.log(`[repo] baked checkout already matches origin/${branch}`);
+  }
+  git("-C", REPO_PATH, "reset", "--hard", `origin/${branch}`);
+}
+
 function isLocalDev() {
   return REPO_PATH.includes("/Users/");
 }
@@ -148,9 +198,7 @@ export function ensureRepo() {
     console.log("[repo] pulling latest changes");
     // Older Compadre versions embedded the PAT in this URL. Always rewrite it
     // to the credential-free configured URL before any network operation.
-    git("-C", REPO_PATH, "remote", "set-url", "origin", repoUrl);
-    git("-C", REPO_PATH, "fetch", "origin", branch);
-    git("-C", REPO_PATH, "reset", "--hard", `origin/${branch}`);
+    refreshExistingRepository(repoUrl, branch);
   } else if (hasRepositorySeed(seedPath)) {
     console.log(`[repo] cloning repository from image seed at ${seedPath}`);
     git(

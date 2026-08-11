@@ -19,6 +19,7 @@ import {
   isRemovableStaleWorktree,
   prepareRepositorySeed,
   prepareWorktree,
+  repositoryNeedsFetch,
   usesRepositoryAsWorktree,
 } from "./repo.js";
 
@@ -62,6 +63,12 @@ test("uses the base checkout directly only for local or single-use tasks", () =>
   );
   assert.equal(usesRepositoryAsWorktree("/Users/test/comp", {}), true);
   assert.equal(usesRepositoryAsWorktree("/opt/render/repo", {}), false);
+});
+
+test("fetches only when the baked and remote revisions differ", () => {
+  const revision = "a".repeat(40);
+  assert.equal(repositoryNeedsFetch(revision, revision), false);
+  assert.equal(repositoryNeedsFetch(revision, "b".repeat(40)), true);
 });
 
 test("builds a self-contained editable Workflow repository", async () => {
