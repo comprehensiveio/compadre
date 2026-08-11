@@ -113,10 +113,12 @@ Build: npm ci && npm run build && npm run workflow:prepare-runtime && npm run wo
 Start: npm run workflow:start
 ```
 
-The build command clones a shallow bare `comp` repository into the cached
-Workflow image. Each task creates its editable checkout from that immutable
-local seed and fetches only the latest GitHub delta. If the seed is missing,
-the runtime falls back to a partial shallow clone. The Workflow needs the same
+The build command clones a shallow editable `comp` repository into the cached
+Workflow image. Because Render gives each task its own disposable instance,
+the task uses that checkout directly and fetches only the latest GitHub delta.
+The persistent service continues to use isolated per-thread worktrees. If the
+baked checkout is missing, the runtime falls back to a partial shallow clone.
+The Workflow needs the same
 agent/MCP environment group as the web service plus a valid
 `GITHUB_PERSONAL_ACCESS_TOKEN`; the credential is passed through Git's child
 process environment and is never stored in the origin URL.

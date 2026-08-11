@@ -1,3 +1,4 @@
+import { existsSync } from "node:fs";
 import path from "node:path";
 import dotenv from "dotenv";
 import { ensureRuntimeDependencies } from "./runtime.js";
@@ -26,6 +27,27 @@ export function configureTelemetryEnvironment(
   }
 }
 
+export function configureEphemeralRepositoryEnvironment(
+  { ephemeral = false }: CompadreProcessOptions,
+  environment: NodeJS.ProcessEnv = process.env,
+  processRoot = process.cwd(),
+): void {
+  if (!ephemeral) return;
+
+  // Render starts every Workflow task in its own instance. A checkout baked
+  // into that instance is therefore already an isolated, disposable worktree;
+  // cloning it into /tmp and creating a second git worktree only repeats I/O.
+  const repositoryPath = path.resolve(
+    processRoot,
+    ".workflow-cache",
+    "repository",
+  );
+  if (!existsSync(path.join(repositoryPath, ".git"))) return;
+
+  environment.REPO_PATH ??= repositoryPath;
+  environment.COMPADRE_SINGLE_USE_REPOSITORY ??= "true";
+}
+
 /**
  * Initialize the shared process environment before loading application or
  * workflow modules. Keeping this boundary common prevents the web service and
@@ -37,6 +59,7 @@ export async function initializeCompadreProcess(
 ): Promise<void> {
   dotenv.config({ path: ".env.local" });
   ensureRuntimeDependencies();
+  configureEphemeralRepositoryEnvironment(options);
 
   // These defaults must be present before dd-trace initializes. They enable
   // the OpenTelemetry bridge used by TanStack AI while still allowing a

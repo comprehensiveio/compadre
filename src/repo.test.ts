@@ -19,6 +19,7 @@ import {
   isRemovableStaleWorktree,
   prepareRepositorySeed,
   prepareWorktree,
+  usesRepositoryAsWorktree,
 } from "./repo.js";
 
 const execFile = promisify(execFileCallback);
@@ -52,11 +53,21 @@ test("removes only stale worktrees that have no live thread owner", () => {
   );
 });
 
-test("builds a self-contained repository seed", async () => {
+test("uses the base checkout directly only for local or single-use tasks", () => {
+  assert.equal(
+    usesRepositoryAsWorktree("/opt/render/repo", {
+      COMPADRE_SINGLE_USE_REPOSITORY: "true",
+    }),
+    true,
+  );
+  assert.equal(usesRepositoryAsWorktree("/Users/test/comp", {}), true);
+  assert.equal(usesRepositoryAsWorktree("/opt/render/repo", {}), false);
+});
+
+test("builds a self-contained editable Workflow repository", async () => {
   const testRoot = await mkdtemp(path.join(tmpdir(), "compadre-repo-seed-"));
   const sourcePath = path.join(testRoot, "source");
-  const seedPath = path.join(testRoot, "seed.git");
-  const checkoutPath = path.join(testRoot, "checkout");
+  const seedPath = path.join(testRoot, "repository");
   const previousUrl = process.env.GITHUB_REPO_URL;
   const previousBranch = process.env.REPO_BRANCH;
 
@@ -85,14 +96,14 @@ test("builds a self-contained repository seed", async () => {
     process.env.REPO_BRANCH = "main";
     prepareRepositorySeed(seedPath);
 
-    await execFile(
-      "git",
-      ["clone", "--no-local", "--branch", "main", seedPath, checkoutPath],
-      { env: { ...process.env, GIT_NO_LAZY_FETCH: "1" } },
+    assert.equal(
+      await readFile(path.join(seedPath, "README.md"), "utf8"),
+      "seed contents\n",
     );
     assert.equal(
-      await readFile(path.join(checkoutPath, "README.md"), "utf8"),
-      "seed contents\n",
+      (await execFile("git", ["-C", seedPath, "rev-parse", "--is-shallow-repository"]))
+        .stdout.trim(),
+      "true",
     );
   } finally {
     if (previousUrl === undefined) delete process.env.GITHUB_REPO_URL;

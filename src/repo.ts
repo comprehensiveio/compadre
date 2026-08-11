@@ -56,12 +56,15 @@ function getRepoBranch() {
 export function configuredRepositorySeedPath(): string {
   return (
     process.env.COMPADRE_REPO_SEED_PATH ||
-    path.resolve(".workflow-cache", "comp.git")
+    path.resolve(".workflow-cache", "repository")
   );
 }
 
 function hasRepositorySeed(seedPath: string): boolean {
-  return existsSync(path.join(seedPath, "HEAD"));
+  return (
+    existsSync(path.join(seedPath, ".git")) ||
+    existsSync(path.join(seedPath, "HEAD"))
+  );
 }
 
 function gitOutput(cwd: string, ...args: string[]): string {
@@ -73,6 +76,16 @@ function gitOutput(cwd: string, ...args: string[]): string {
 
 function isLocalDev() {
   return REPO_PATH.includes("/Users/");
+}
+
+export function usesRepositoryAsWorktree(
+  repoPath = REPO_PATH,
+  environment: NodeJS.ProcessEnv = process.env,
+) {
+  return (
+    repoPath.includes("/Users/") ||
+    environment.COMPADRE_SINGLE_USE_REPOSITORY === "true"
+  );
 }
 
 const PROTECTED_BRANCHES = ["main", "master", "prod", "production"];
@@ -191,15 +204,14 @@ export function prepareRepositorySeed(
   const branch = getRepoBranch();
   mkdirSync(path.dirname(seedPath), { recursive: true });
 
-  // Always recreate the seed. An older partial clone may look healthy while
-  // silently relying on its promisor remote for omitted objects. Once Render
-  // packages the build output, those lazy fetches are unavailable and runtime
-  // checkout fails. A full (but shallow) clone is self-contained.
+  // Always recreate the checkout. It is both a self-contained shallow seed
+  // and the editable worktree used directly by an isolated Workflow task.
+  // Avoid partial clones: their lazy object fetches are not reliable once
+  // Render packages the build output into a task image.
   rmSync(seedPath, { recursive: true, force: true });
-  console.log(`[repo-seed] cloning ${repoUrl} into ${seedPath}`);
+  console.log(`[repo-seed] cloning editable ${repoUrl} into ${seedPath}`);
   git(
     "clone",
-    "--bare",
     "--depth",
     "1",
     "--single-branch",
@@ -209,9 +221,8 @@ export function prepareRepositorySeed(
     seedPath,
   );
 
-  git("--git-dir", seedPath, "symbolic-ref", "HEAD", `refs/heads/${branch}`);
   // Fail the build instead of publishing an incomplete runtime seed.
-  git("--git-dir", seedPath, "fsck", "--full", "--no-dangling");
+  git("-C", seedPath, "fsck", "--full", "--no-dangling");
   return seedPath;
 }
 
@@ -256,7 +267,7 @@ export function worktreeRevision(worktreePath: string): string | undefined {
  * Idempotent — if the worktree path already exists, returns it as-is.
  */
 export function createWorktree(id: string): string {
-  if (isLocalDev()) return REPO_PATH;
+  if (usesRepositoryAsWorktree()) return REPO_PATH;
 
   const worktreePath = path.join(WORKTREES_DIR, id);
   if (existsSync(worktreePath)) {
@@ -320,7 +331,7 @@ export async function prepareWorktree(
  * Remove a git worktree by id. Silently ignores errors.
  */
 export function removeWorktree(id: string): void {
-  if (isLocalDev()) return;
+  if (usesRepositoryAsWorktree()) return;
 
   const worktreePath = path.join(WORKTREES_DIR, id);
   try {
@@ -356,7 +367,7 @@ export function cleanupStaleWorktrees(
   maxAgeMs: number,
   retainedWorktreeIds: ReadonlySet<string> = new Set()
 ): void {
-  if (isLocalDev()) return;
+  if (usesRepositoryAsWorktree()) return;
   if (!existsSync(WORKTREES_DIR)) return;
 
   const now = Date.now();
