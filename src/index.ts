@@ -22,6 +22,7 @@ import {
 import { validateConversationConfiguration } from "./conversation.js";
 import { recoverStaleSlackRuns } from "./services/slack-run-recovery.js";
 import { harnessThreadStore } from "./tanstack/thread-state.js";
+import { harnessPreparedWorktrees } from "./tanstack/prepared-worktrees.js";
 
 const app = new Hono();
 
@@ -77,6 +78,9 @@ async function start() {
   // Clone or update the repo in the background (can be slow)
   try {
     ensureRepo();
+    void harnessPreparedWorktrees.refill().catch((error) =>
+      console.error("[worktree-pool] startup refill failed:", error),
+    );
   } catch (err) {
     console.error("[startup] repo setup failed — agent will have no codebase access:", err);
   }
@@ -85,14 +89,17 @@ async function start() {
   const STALE_WORKTREE_MAX_AGE_MS = 60 * 60 * 1000; // 1 hour
   const maintainRepo = async () => {
     refreshRepo();
+    harnessPreparedWorktrees.reconcile();
+    harnessPreparedWorktrees.scheduleRefill();
     const expiredThreads = await harnessThreadStore.deleteStale(
       STALE_WORKTREE_MAX_AGE_MS
     );
     for (const thread of expiredThreads) removeWorktree(thread.worktreeId);
-    cleanupStaleWorktrees(
-      STALE_WORKTREE_MAX_AGE_MS,
-      await harnessThreadStore.worktreeIds()
-    );
+    const retainedWorktreeIds = await harnessThreadStore.worktreeIds();
+    for (const worktreeId of harnessPreparedWorktrees.worktreeIds()) {
+      retainedWorktreeIds.add(worktreeId);
+    }
+    cleanupStaleWorktrees(STALE_WORKTREE_MAX_AGE_MS, retainedWorktreeIds);
   };
   setInterval(() => {
     void maintainRepo().catch((error) =>
