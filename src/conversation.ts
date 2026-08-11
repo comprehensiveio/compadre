@@ -10,6 +10,7 @@ import {
   type AgentProvider,
 } from "./tanstack/protocol.js";
 import { releaseAguiThread } from "./tanstack/runtime.js";
+import type { RunCapacityPriority } from "./tanstack/thread-lock.js";
 
 export interface StreamCallbacks {
   onTextDelta?: (text: string) => void;
@@ -27,6 +28,7 @@ export interface ConversationOptions {
   signal?: AbortSignal;
   systemPrompt?: (worktreePath: string) => string;
   stream?: StreamCallbacks;
+  capacityPriority?: RunCapacityPriority;
 }
 
 export type ConversationResult = HarnessConversationResult;
@@ -57,6 +59,7 @@ export function runConversation(
         signal: options.signal,
         systemPrompt: options.systemPrompt,
         stream: options.stream,
+        capacityPriority: options.capacityPriority,
       });
     } finally {
       if (ephemeral) await releaseAguiThread(threadId);

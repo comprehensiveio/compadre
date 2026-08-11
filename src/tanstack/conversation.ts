@@ -11,6 +11,7 @@ import {
   type AguiChatParams,
 } from "./protocol.js";
 import { runAguiChat } from "./runtime.js";
+import type { RunCapacityPriority } from "./thread-lock.js";
 
 export interface HarnessConversationOptions {
   threadId: string;
@@ -22,6 +23,7 @@ export interface HarnessConversationOptions {
   signal?: AbortSignal;
   systemPrompt?: (worktreePath: string) => string;
   stream?: StreamCallbacks;
+  capacityPriority?: RunCapacityPriority;
 }
 
 export interface HarnessConversationResult {
@@ -168,6 +170,7 @@ export async function runHarnessConversation(
     const chunks = await runAguiChat(params, abortController.signal, {
       systemPrompt: options.systemPrompt,
       transcriptUserMessage: options.transcriptUserMessage,
+      capacityPriority: options.capacityPriority,
     });
     return await consumeHarnessConversation(chunks, {
       provider,

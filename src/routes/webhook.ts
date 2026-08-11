@@ -30,7 +30,11 @@ Based on the source and payload, determine what action to take. For example:
 - GitHub PR: review the changes, post feedback
 - Linear update: check if any follow-up is needed`;
 
-  runConversation({ prompt, maxTurns: 25 }).catch((err) =>
+  runConversation({
+    prompt,
+    maxTurns: 25,
+    capacityPriority: "background",
+  }).catch((err) =>
     console.error(`[webhook] ${source} task failed:`, err)
   );
 

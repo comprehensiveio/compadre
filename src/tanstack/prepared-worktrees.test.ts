@@ -6,7 +6,7 @@ import {
 } from "./prepared-worktrees.js";
 
 function fixtureDependencies(options: {
-  prepare?: (path: string) => Promise<void>;
+  prepare?: (path: string, signal: AbortSignal) => Promise<void>;
   currentRevision?: () => string | undefined;
 }) {
   const events: string[] = [];
@@ -20,21 +20,23 @@ function fixtureDependencies(options: {
       events.push(`create:${id}`);
       return path;
     },
-    prepare: async (path) => {
+    prepare: async (path, signal) => {
       events.push(`prepare:${path}`);
-      await options.prepare?.(path);
+      await options.prepare?.(path, signal);
     },
     remove: (id) => events.push(`remove:${id}`),
     currentRevision: options.currentRevision ?? (() => "revision-a"),
     revision: (path) => revisions.get(path),
-    acquireCapacity: async () => {
+    runWithBackgroundCapacity: async (task) => {
       events.push("capacity:acquire");
-      return {
-        signal: new AbortController().signal,
-        release: async () => {
-          events.push("capacity:release");
-        },
-      };
+      try {
+        return {
+          status: "completed" as const,
+          value: await task(new AbortController().signal),
+        };
+      } finally {
+        events.push("capacity:release");
+      }
     },
   };
   return { dependencies, events };
