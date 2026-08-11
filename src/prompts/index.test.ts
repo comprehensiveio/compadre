@@ -6,7 +6,7 @@ import {
   getSlackSystemPrompt,
 } from "./index.js";
 
-test("keeps Slack upload instructions scoped to Slack prompts", () => {
+test("keeps Slack workspace persistence and upload instructions scoped to Slack prompts", () => {
   const basePrompt = getBaseSystemPrompt("/tmp/test-repo");
   const slackPrompts = [
     getSlackSystemPrompt("/tmp/test-repo"),
@@ -14,9 +14,15 @@ test("keeps Slack upload instructions scoped to Slack prompts", () => {
   ];
 
   assert.doesNotMatch(basePrompt, /## Slack file uploads/);
+  assert.doesNotMatch(basePrompt, /## Workspace persistence between Slack messages/);
   assert.match(basePrompt, /standard Markdown/);
   assert.match(basePrompt, /slack_upload_file/);
   for (const prompt of slackPrompts) {
+    assert.match(prompt, /local workspace is temporary/);
+    assert.match(prompt, /commit and push them/);
+    assert.match(prompt, /upload the meaningful output to the current Slack thread/);
+    assert.match(prompt, /cannot safely preserve required work/);
+    assert.match(prompt, /Do not upload secrets/);
     assert.match(prompt, /Prefer an inline Markdown table/);
     assert.match(prompt, /explicitly asks for one/);
     assert.match(prompt, /slack_upload_file/);

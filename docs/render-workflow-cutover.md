@@ -73,6 +73,45 @@ the playground. A verified Workflow trace includes the task root, agent root,
 startup phases, memory high-water marks, provider/model, and the deployed Git
 revision. Production must replace that environment tag during cutover.
 
+## Immediate post-cutover: canonical thread memory
+
+> **Temporary implementation plan:** Delete this section after canonical
+> thread memory and workspace-state persistence are implemented, tested, and
+> documented in their permanent architecture or operations documentation.
+
+Keep the initial cutover on the existing Slack-history behavior. After the
+Workflow topology is stable, make server-side TanStack persistence the
+canonical history for each Slack `thread_ts`; Slack remains a supplemental
+source for ambient human messages that arrived while Compadre was not tagged.
+
+For each mention, the relay should:
+
+1. Acquire a distributed lock for the Slack thread, then reload state after the
+   lock is held.
+2. Load the bounded provider-neutral transcript, rolling summary, provider
+   session references, and workspace/artifact references from Postgres.
+3. Fetch Slack messages newer than the stored Slack checkpoint, preserving
+   author, timestamp, and order. Deduplicate them by Slack event/message ID.
+4. Supply that Slack delta as supplemental channel context rather than copying
+   the entire Slack thread into the canonical transcript.
+5. Persist the accepted user turn, terminal assistant turn, derived memory,
+   artifact references, and the new Slack checkpoint after the run.
+
+The existing durable AG-UI run log remains the detailed audit record for tool
+calls, intermediate messages, usage, and errors. Do not replay every raw event
+into future model context; retrieve details from that log only when relevant.
+Provider-native session IDs are an optimization, never the source of truth, so
+switching between Claude Code and Codex can always fall back to the neutral
+transcript.
+
+Thread history does not make filesystem state durable. The initial contract is
+deliberately explicit: source changes needed by a later request go to a Git
+branch or PR, and meaningful non-repository artifacts go to the Slack thread.
+The Slack prompt warns that local-only state is disposable. A managed durable
+sandbox can replace this contract later if usage justifies it; do not build a
+custom workspace snapshot system for the initial cutover. Canonical thread
+memory remains useful independently of that future filesystem enhancement.
+
 ## Delivery and failure semantics
 
 - The Workflow persists each AG-UI event before the relay observes it.
