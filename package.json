@@ -14,6 +14,7 @@
     "workflow:probe": "tsx scripts/run-render-workflow.ts probeAgentRuntime",
     "workflow:agent": "tsx scripts/run-render-workflow.ts runAgent",
     "workflow:durability": "tsx scripts/run-render-workflow.ts probeAgentDurability",
+    "workflow:relay-probe": "tsx scripts/probe-workflow-relay.ts",
     "benchmark:cold-start": "tsx scripts/benchmark-cold-start.ts",
     "typecheck": "tsc --noEmit",
     "test": "tsx --test src/*.test.ts src/**/*.test.ts"

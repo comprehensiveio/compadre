@@ -26,6 +26,8 @@ GET  /health                 # Health check
 POST /prompt                 # Ad-hoc prompt (Bearer COMPADRE_API_KEY)
 POST /slack/events           # Primary signed Slack Events ingress
 POST /ag-ui                  # Optional authenticated AG-UI stream
+POST /workflow-runs          # Optional durable Workflow launcher
+GET  /workflow-runs/:id/events # Resumable AG-UI event stream
 POST /webhook/:source        # Generic webhook (Bearer COMPADRE_API_KEY)
 ```
 
@@ -86,7 +88,7 @@ On Render:
 
 ### Ephemeral agent Workflow spike
 
-The repository also registers two opt-in Render Workflow tasks:
+The repository also registers three opt-in Render Workflow tasks:
 
 - `probeAgentRuntime` measures Workflow and repository startup without calling a model.
 - `runAgent` executes one existing TanStack AI agent turn on an isolated 4 GB task instance.
@@ -145,14 +147,17 @@ resumable AG-UI stream. A deployed relay switches only the runner to `render`
 and the durability backend to `postgres`; the HTTP and event contracts stay
 the same. Slack consumes that identical durable log through the existing
 `SlackStream`; it never depends on a live connection to the Workflow task.
+See [the Render Workflow cutover runbook](docs/render-workflow-cutover.md) for
+the deployed topology, repeatable probe, failure semantics, and cutover steps.
 
 ## Architecture
 
-```
-Slack, /prompt, or webhooks → runConversation() → TanStack AI ─┬→ Claude Code
-                                                              └→ Codex
-                                                                    │
-                                           shared worktree, MCP, sessions, telemetry
+```text
+Slack / HTTP -> persistent relay -> Render Workflow -> Claude Code or Codex
+                       |                  |
+                       +---- Postgres <---+
+                       |
+                       +-> Slack stream
 ```
 
 Slack threads retain their worktree, bounded neutral transcript, and
@@ -160,5 +165,6 @@ provider-scoped native sessions in the current process. Runs on the same thread
 are serialized, and the service runs only one coding harness at a time. A
 run-scoped supervisor records safe PID/RSS telemetry and aborts the harness
 process group before it can exhaust the service cgroup. The runtime reconciles
-stale Slack reactions after a restart. Postgres durability and distributed
-locking across instances are deliberately deferred.
+stale Slack reactions after a restart. Postgres stores run lifecycle and
+ordered AG-UI delivery events; distributed tool-side-effect locking and exact
+Slack message continuation remain deliberately deferred.
