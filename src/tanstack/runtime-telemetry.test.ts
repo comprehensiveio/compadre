@@ -1,5 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import {
+  SpanStatusCode,
+  type Attributes,
+  type Histogram,
+  type Meter,
+} from "@opentelemetry/api";
 import { EventType } from "@tanstack/ai";
 import {
   BasicTracerProvider,
@@ -8,18 +14,37 @@ import {
 } from "@opentelemetry/sdk-trace-base";
 import { HarnessRunTelemetry } from "./runtime-telemetry.js";
 
+interface MetricRecord {
+  name: string;
+  attributes?: Attributes;
+}
+
+function capturingMeter(records: MetricRecord[]): Meter {
+  return {
+    createHistogram(name) {
+      return {
+        record(_value, attributes) {
+          records.push({ name, attributes });
+        },
+      } as Histogram;
+    },
+  } as Meter;
+}
+
 test("keeps startup phases under one coarse agent trace", async () => {
   const exporter = new InMemorySpanExporter();
   const provider = new BasicTracerProvider({
     spanProcessors: [new SimpleSpanProcessor(exporter)],
   });
   const tracer = provider.getTracer("compadre-runtime-test");
+  const metricRecords: MetricRecord[] = [];
   let now = 1_000;
   const telemetry = new HarnessRunTelemetry({
     selection: { provider: "claude-code", model: "claude-opus-5" },
     threadId: "thread-1",
     runId: "run-1",
     tracer,
+    meter: capturingMeter(metricRecords),
     now: () => now,
   });
 
@@ -77,6 +102,21 @@ test("keeps startup phases under one coarse agent trace", async () => {
       ["first_text", 30],
     ],
   );
+  assert.deepEqual(
+    new Set(metricRecords.map((record) => record.name)),
+    new Set([
+      "compadre.agent.phase.duration",
+      "compadre.agent.milestone.duration",
+      "compadre.agent.run.duration",
+      "compadre.agent.memory.usage",
+    ]),
+  );
+  for (const record of metricRecords) {
+    assert.equal(record.attributes?.threadId, undefined);
+    assert.equal(record.attributes?.runId, undefined);
+    assert.equal(record.attributes?.["agui.thread_id"], undefined);
+    assert.equal(record.attributes?.["agui.run_id"], undefined);
+  }
 
   await provider.shutdown();
 });
@@ -109,8 +149,9 @@ test("marks the agent run and failing phase as errors", async () => {
   );
   assert.ok(root);
   assert.ok(capacity);
-  assert.equal(root.status.code, 2);
-  assert.equal(capacity.status.code, 2);
+  assert.equal(root.status.code, SpanStatusCode.ERROR);
+  assert.equal(capacity.status.code, SpanStatusCode.ERROR);
+  assert.equal(root.attributes["memory.process_tree.peak_rss_bytes"], undefined);
 
   await provider.shutdown();
 });

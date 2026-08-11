@@ -231,14 +231,11 @@ export async function runAguiChat(
     threadLease = await telemetry.phase("queue.thread", () =>
       harnessThreadRuns.acquire(params.threadId),
     );
-    capacityLease =
+    capacityLease = await telemetry.phase("queue.capacity", () =>
       options.capacityPriority === "background"
-        ? await telemetry.phase("queue.capacity", () =>
-            harnessRunCapacity.acquireBackground(),
-          )
-        : await telemetry.phase("queue.capacity", () =>
-            harnessRunCapacity.acquireForeground(),
-          );
+        ? harnessRunCapacity.acquireBackground()
+        : harnessRunCapacity.acquireForeground(),
+    );
     if (!capacityLease) throw new BackgroundCapacityPreemptedError();
     return await prepareAguiChat(
       params,
@@ -307,8 +304,8 @@ async function prepareAguiChat(
       },
     );
     const worktreeId = thread.worktreeId;
-    const worktreePath = createWorktree(worktreeId);
     telemetry.setWorktree(worktreeId, worktreeSource);
+    const worktreePath = createWorktree(worktreeId);
     return { thread, worktreeId, worktreePath };
   });
   const { thread, worktreeId, worktreePath } = allocation;

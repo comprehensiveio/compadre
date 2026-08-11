@@ -8,7 +8,7 @@ const configuredMaxTurns = Number(
   process.env.COMPADRE_BENCHMARK_MAX_TURNS ?? 1,
 );
 const maxTurns =
-  Number.isFinite(configuredMaxTurns) && configuredMaxTurns > 0
+  Number.isFinite(configuredMaxTurns) && configuredMaxTurns >= 1
     ? Math.floor(configuredMaxTurns)
     : 1;
 const startedAt = Date.now();

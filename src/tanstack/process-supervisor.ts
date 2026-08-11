@@ -5,9 +5,10 @@ import { EventType, type StreamChunk } from "@tanstack/ai";
 
 const execFileAsync = promisify(execFile);
 const MIB = 1024 * 1024;
+export const DEFAULT_SERVICE_MEMORY_MB = 4_096;
 export const DEFAULT_CGROUP_MEMORY_HEADROOM_MB = 768;
 export const DEFAULT_AGENT_TREE_MEMORY_MB =
-  4_096 - DEFAULT_CGROUP_MEMORY_HEADROOM_MB;
+  DEFAULT_SERVICE_MEMORY_MB - DEFAULT_CGROUP_MEMORY_HEADROOM_MB;
 
 export interface ProcessMemoryEntry {
   pid: number;
@@ -36,7 +37,7 @@ export interface AgentProcessSupervisorOptions {
   logIntervalMs?: number;
   readProcesses?: () => Promise<ProcessMemoryEntry[]>;
   readHostMemory?: () => Promise<HostMemorySnapshot>;
-  onMemorySample?: (sample: AgentMemorySample) => void;
+  onMemorySample?: (sample: AgentMemorySample) => void | Promise<void>;
   logger?: Pick<Console, "log" | "warn">;
 }
 
@@ -241,24 +242,28 @@ export class AgentProcessSupervisor {
         hostMemory.limitBytes === undefined
           ? undefined
           : Math.max(0, hostMemory.limitBytes - this.options.cgroupHeadroomBytes);
+      const treeThreshold =
+        cgroupThreshold === undefined
+          ? this.options.treeLimitBytes
+          : Math.min(this.options.treeLimitBytes, cgroupThreshold);
       try {
-        this.options.onMemorySample?.({
+        const observation = this.options.onMemorySample?.({
           treeRssBytes: treeBytes,
           hostUsageBytes: hostMemory.usageBytes,
           hostLimitBytes: hostMemory.limitBytes,
         });
+        if (observation) {
+          void observation.catch((error) => this.logObserverFailure(error));
+        }
       } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        this.logger.warn(
-          `[process-supervisor] run=${this.options.runId} memory observer failed: ${message}`,
-        );
+        this.logObserverFailure(error);
       }
 
-      if (treeBytes >= this.options.treeLimitBytes) {
+      if (treeBytes >= treeThreshold) {
         this.trip(
           "process-tree",
           treeBytes,
-          this.options.treeLimitBytes,
+          treeThreshold,
           tree,
           hostMemory,
         );
@@ -292,6 +297,13 @@ export class AgentProcessSupervisor {
         `[process-supervisor] run=${this.options.runId} sample failed: ${message}`,
       );
     }
+  }
+
+  private logObserverFailure(error: unknown): void {
+    const message = error instanceof Error ? error.message : String(error);
+    this.logger.warn(
+      `[process-supervisor] run=${this.options.runId} memory observer failed: ${message}`,
+    );
   }
 
   private trip(
@@ -334,15 +346,13 @@ function configuredMib(
   return Number.isFinite(value) && value > 0 ? value * MIB : fallback * MIB;
 }
 
-export function createAgentProcessSupervisor(
-  runId: string,
-  abortController: AbortController,
-  env: NodeJS.ProcessEnv = process.env,
-  onMemorySample?: (sample: AgentMemorySample) => void,
-): AgentProcessSupervisor {
-  return new AgentProcessSupervisor({
-    runId,
-    abortController,
+export function configuredAgentMemoryLimits(
+  env: NodeJS.ProcessEnv,
+): Pick<
+  AgentProcessSupervisorOptions,
+  "treeLimitBytes" | "cgroupHeadroomBytes"
+> {
+  return {
     treeLimitBytes: configuredMib(
       env,
       "COMPADRE_AGENT_TREE_MEMORY_MB",
@@ -353,6 +363,19 @@ export function createAgentProcessSupervisor(
       "COMPADRE_CGROUP_MEMORY_HEADROOM_MB",
       DEFAULT_CGROUP_MEMORY_HEADROOM_MB,
     ),
+  };
+}
+
+export function createAgentProcessSupervisor(
+  runId: string,
+  abortController: AbortController,
+  env: NodeJS.ProcessEnv = process.env,
+  onMemorySample?: (sample: AgentMemorySample) => void | Promise<void>,
+): AgentProcessSupervisor {
+  return new AgentProcessSupervisor({
+    runId,
+    abortController,
+    ...configuredAgentMemoryLimits(env),
     onMemorySample,
   });
 }

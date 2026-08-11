@@ -259,10 +259,12 @@ export class HarnessRunTelemetry {
       "compadre.agent.duration_ms",
       finishedAt - this.startedAt,
     );
-    this.runSpan.setAttribute(
-      "memory.process_tree.peak_rss_bytes",
-      this.peakTreeRssBytes,
-    );
+    if (this.peakTreeRssBytes > 0) {
+      this.runSpan.setAttribute(
+        "memory.process_tree.peak_rss_bytes",
+        this.peakTreeRssBytes,
+      );
+    }
     if (this.peakHostUsageBytes > 0) {
       this.runSpan.setAttribute(
         "memory.cgroup.peak_usage_bytes",
