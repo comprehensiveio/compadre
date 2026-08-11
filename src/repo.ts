@@ -118,10 +118,10 @@ function refreshExistingRepository(repoUrl: string, branch: string): void {
 
   if (needsFetch) {
     git("-C", REPO_PATH, "fetch", "origin", branch);
+    git("-C", REPO_PATH, "reset", "--hard", `origin/${branch}`);
   } else {
     console.log(`[repo] baked checkout already matches origin/${branch}`);
   }
-  git("-C", REPO_PATH, "reset", "--hard", `origin/${branch}`);
 }
 
 function isLocalDev() {
