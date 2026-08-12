@@ -1,3 +1,4 @@
+import crypto from "node:crypto";
 import type { ModelMessage } from "@tanstack/ai";
 import {
   defineAIPersistence,
@@ -21,9 +22,24 @@ export async function createChannelConversationPersistence(
   const canonicalHistory = await persistence.stores.messages.loadThread(
     options.threadId,
   );
+  const currentProviderMessage = options.providerMessages.at(-1);
+  if (!currentProviderMessage) {
+    throw new Error(
+      "Channel conversation persistence requires a provider message",
+    );
+  }
+  // Downstream middleware may remove old provider-bound messages (notably the
+  // sandbox's recorded tool history), so the original prefix length is not a
+  // stable turn boundary. Model message IDs survive those transforms and are
+  // ignored by providers.
+  const turnBoundaryId = `compadre-channel-turn:${crypto.randomUUID()}`;
+  const providerMessages = [
+    ...options.providerMessages.slice(0, -1),
+    { ...currentProviderMessage, id: turnBoundaryId },
+  ];
   const providerPrefix = options.resumesNativeSession
-    ? options.providerMessages
-    : [...canonicalHistory, ...options.providerMessages];
+    ? providerMessages
+    : [...canonicalHistory, ...providerMessages];
   const canonicalPendingTurn: ModelMessage = {
     role: "user",
     content: options.transcriptUserMessage,
@@ -42,7 +58,15 @@ export async function createChannelConversationPersistence(
         await persistence.stores.messages.saveThread(threadId, nextMessages);
         return;
       }
-      const completedCurrentTurn = nextMessages.slice(providerPrefix.length);
+      const turnBoundaryIndex = nextMessages.findIndex(
+        (message) => message.id === turnBoundaryId,
+      );
+      if (turnBoundaryIndex < 0) {
+        throw new Error(
+          `Channel turn boundary was removed before persisting thread ${threadId}`,
+        );
+      }
+      const completedCurrentTurn = nextMessages.slice(turnBoundaryIndex + 1);
       await persistence.stores.messages.saveThread(threadId, [
         ...canonicalHistory,
         canonicalPendingTurn,
