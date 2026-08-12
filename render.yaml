@@ -1,0 +1,13 @@
+services:
+  - type: web
+    name: compadre-relay
+    runtime: node
+    region: oregon
+    plan: starter
+    buildCommand: npm ci --include=dev && npm run build
+    preDeployCommand: npm run db:migrate
+    startCommand: npm start
+    healthCheckPath: /health
+    autoDeployTrigger: commit
+    previews:
+      generation: off

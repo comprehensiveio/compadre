@@ -97,7 +97,15 @@ new schema changes should be made through Drizzle migrations.
 
 ## Deployment (Render)
 
-Native Node.js service. Build: `npm install && npm run build`, Start: `npm start`.
+Native Node.js service. Build: `npm ci --include=dev && npm run build`, Start: `npm start`.
+
+The active `compadre-relay` Web Service is declared in [`render.yaml`](render.yaml).
+Render runs `npm run db:migrate` as its pre-deploy command, so migrations finish
+before a newly built version can receive traffic. Existing environment variables
+are intentionally omitted from the Blueprint: Render preserves them when the
+Blueprint is linked, without putting secret values in Git. Linking the repository
+to the Blueprint is a one-time Render setup; subsequent service configuration
+changes and deploys sync from `main`.
 
 Google Workspace support uses `uvx` because `workspace-mcp` runs as a Python MCP server. `npm start` installs `uvx` at startup when Google Workspace env vars are present and `uvx` is not already available.
 
