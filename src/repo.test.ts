@@ -16,6 +16,7 @@ import test from "node:test";
 import { promisify } from "node:util";
 import {
   configuredRepositoryUrl,
+  gitEnvironment,
   isRemovableStaleWorktree,
   prepareRepositorySeed,
   prepareWorktree,
@@ -35,6 +36,36 @@ test("keeps GitHub credentials out of the configured repository URL", () => {
 
   assert.equal(url, "https://github.com/comprehensiveio/comp.git");
   assert.equal(url.includes(token), false);
+});
+
+test("scopes Git credentials to the configured HTTP origin", () => {
+  const environment = gitEnvironment({
+    GITHUB_REPO_URL: "https://github.example/owner/repo.git",
+    GITHUB_PERSONAL_ACCESS_TOKEN: "secret-token",
+  });
+
+  assert.equal(environment.GIT_CONFIG_COUNT, "2");
+  assert.equal(
+    environment.GIT_CONFIG_KEY_0,
+    "http.https://github.example/.extraHeader",
+  );
+  assert.equal(
+    environment.GIT_CONFIG_KEY_1,
+    "http.https://github.example/.followRedirects",
+  );
+  assert.equal(environment.GIT_CONFIG_VALUE_1, "false");
+  assert.match(environment.GIT_CONFIG_VALUE_0 ?? "", /^Authorization: Basic /);
+});
+
+test("does not attach HTTP credentials to a file repository", () => {
+  const environment = gitEnvironment({
+    GITHUB_REPO_URL: "file:///tmp/repository",
+    GITHUB_PERSONAL_ACCESS_TOKEN: "secret-token",
+  });
+
+  assert.equal(environment.GIT_CONFIG_COUNT, undefined);
+  assert.equal(environment.GIT_CONFIG_KEY_0, undefined);
+  assert.equal(environment.GIT_TERMINAL_PROMPT, "0");
 });
 
 test("removes only stale worktrees that have no live thread owner", () => {

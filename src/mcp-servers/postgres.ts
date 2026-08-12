@@ -15,6 +15,11 @@ import {
   ReadResourceRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
 import pg from "pg";
+import Cursor from "pg-cursor";
+
+const QUERY_BATCH_SIZE = 100;
+const QUERY_ROW_LIMIT = 1_000;
+const QUERY_SERIALIZED_BYTE_LIMIT = 1_000_000;
 
 const databaseUrl = process.env.READONLY_DATABASE_URL;
 if (!databaseUrl) {
@@ -98,16 +103,51 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
   }
 
   const client = await pool.connect();
+  let cursor: Cursor<Record<string, unknown>> | undefined;
   try {
     await client.query("BEGIN TRANSACTION READ ONLY");
-    const result = await client.query(sql);
+    cursor = client.query(new Cursor<Record<string, unknown>>(sql));
+    const rows: Record<string, unknown>[] = [];
+    let serializedBytes = 2;
+    let truncated = false;
+
+    while (rows.length < QUERY_ROW_LIMIT) {
+      const batch = await cursor.read(
+        Math.min(QUERY_BATCH_SIZE, QUERY_ROW_LIMIT - rows.length),
+      );
+      if (batch.length === 0) break;
+      for (const row of batch) {
+        const rowBytes = Buffer.byteLength(JSON.stringify(row), "utf8") + 1;
+        if (serializedBytes + rowBytes > QUERY_SERIALIZED_BYTE_LIMIT) {
+          truncated = true;
+          break;
+        }
+        rows.push(row);
+        serializedBytes += rowBytes;
+      }
+      if (truncated) break;
+      if (batch.length < QUERY_BATCH_SIZE) break;
+      if (rows.length === QUERY_ROW_LIMIT) truncated = true;
+    }
+
     return {
       content: [
-        { type: "text" as const, text: JSON.stringify(result.rows, null, 2) },
+        { type: "text" as const, text: JSON.stringify(rows, null, 2) },
+        ...(truncated
+          ? [
+              {
+                type: "text" as const,
+                text: `Result truncated at ${QUERY_ROW_LIMIT} rows or ${QUERY_SERIALIZED_BYTE_LIMIT} serialized bytes. Add filters or LIMIT to inspect a smaller result.`,
+              },
+            ]
+          : []),
       ],
       isError: false,
     };
   } finally {
+    await cursor?.close().catch((error) =>
+      console.warn("[postgres-mcp] could not close query cursor", error),
+    );
     try {
       await client.query("ROLLBACK");
     } catch (error) {

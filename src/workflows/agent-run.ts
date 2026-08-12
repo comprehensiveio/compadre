@@ -102,6 +102,7 @@ export async function executeAgentWorkflow(
   const agentStartedAt = dependencies.now();
   let firstActivityAt: number | undefined;
 
+  let operationError: unknown;
   try {
     const result = await dependencies.runConversation({
       runId: input.runId,
@@ -147,7 +148,18 @@ export async function executeAgentWorkflow(
       ...workflowResult.timings,
     });
     return workflowResult;
+  } catch (error) {
+    operationError = error;
+    throw error;
   } finally {
-    await dependencies.releaseThread(threadId);
+    try {
+      await dependencies.releaseThread(threadId);
+    } catch (error) {
+      if (operationError === undefined) throw error;
+      console.warn("[workflow-agent] thread cleanup failed", {
+        threadId,
+        error,
+      });
+    }
   }
 }

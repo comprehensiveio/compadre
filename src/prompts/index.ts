@@ -280,6 +280,7 @@ function getSlackFileUploadInstructions() {
 The local workspace is temporary and may be recreated from the repository for the next Slack message, even within the same thread. Never imply that uncommitted edits, generated files, or other local-only state will still exist on a later turn.
 
 Before finishing work that a later message may need:
+- Inspect repository changes before committing. Never commit or push secrets, credentials, \`.env*\` files, or secret-bearing diffs. If you cannot verify the diff safely, stop without pushing and explain what is needed.
 - For source changes, commit and push them to the appropriate Git branch or PR.
 - For generated or non-repository artifacts, upload the meaningful output to the current Slack thread and identify it clearly in your response.
 - If you cannot safely preserve required work, explicitly tell the user what will be lost and what action is needed.

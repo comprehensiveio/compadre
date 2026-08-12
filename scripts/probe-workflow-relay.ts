@@ -15,16 +15,32 @@ if (!relayUrl || !apiKey) {
 
 const authorization = { Authorization: `Bearer ${apiKey}` };
 const startedAt = Date.now();
+const probeTimeoutMs = Number(
+  process.env.COMPADRE_WORKFLOW_PROBE_TIMEOUT_MS ?? 10 * 60 * 1_000,
+);
+if (!Number.isFinite(probeTimeoutMs) || probeTimeoutMs <= 0) {
+  throw new Error("COMPADRE_WORKFLOW_PROBE_TIMEOUT_MS must be positive");
+}
 
 function report(value: Record<string, unknown>): void {
   console.log(JSON.stringify(value));
+}
+
+function boundedFetch(
+  input: string | URL,
+  init: RequestInit = {},
+): Promise<Response> {
+  return fetch(input, {
+    ...init,
+    signal: AbortSignal.timeout(probeTimeoutMs),
+  });
 }
 
 async function readEvents(
   url: string,
   headers: Record<string, string> = {},
 ): Promise<ProbeEvent[]> {
-  const response = await fetch(url, {
+  const response = await boundedFetch(url, {
     headers: { ...authorization, ...headers },
   });
   if (!response.ok || !response.body) {
@@ -36,41 +52,44 @@ async function readEvents(
   const events: ProbeEvent[] = [];
   let buffer = "";
 
-  while (true) {
-    const { done, value } = await reader.read();
-    buffer += decoder.decode(value ?? new Uint8Array(), { stream: !done });
-    let separator: number;
-    while ((separator = buffer.indexOf("\n\n")) !== -1) {
-      const block = buffer.slice(0, separator);
-      buffer = buffer.slice(separator + 2);
-      let id = "";
-      let data = "";
-      for (const line of block.split("\n")) {
-        if (line.startsWith("id:")) id = line.slice(3).trim();
-        if (line.startsWith("data:")) data += line.slice(5).trim();
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      buffer += decoder.decode(value ?? new Uint8Array(), { stream: !done });
+      let separator: number;
+      while ((separator = buffer.indexOf("\n\n")) !== -1) {
+        const block = buffer.slice(0, separator);
+        buffer = buffer.slice(separator + 2);
+        let id = "";
+        let data = "";
+        for (const line of block.split("\n")) {
+          if (line.startsWith("id:")) id = line.slice(3).trim();
+          if (line.startsWith("data:")) data += line.slice(5).trim();
+        }
+        if (!id || !data) continue;
+        const chunk = JSON.parse(data) as { type?: string; delta?: unknown };
+        const event: ProbeEvent = {
+          id,
+          type: chunk.type ?? "unknown",
+          atMs: Date.now() - startedAt,
+          ...(typeof chunk.delta === "string"
+            ? { deltaLength: chunk.delta.length }
+            : {}),
+        };
+        events.push(event);
+        if (event.type === "RUN_FINISHED" || event.type === "RUN_ERROR") {
+          return events;
+        }
       }
-      if (!id || !data) continue;
-      const chunk = JSON.parse(data) as { type?: string; delta?: unknown };
-      const event: ProbeEvent = {
-        id,
-        type: chunk.type ?? "unknown",
-        atMs: Date.now() - startedAt,
-        ...(typeof chunk.delta === "string"
-          ? { deltaLength: chunk.delta.length }
-          : {}),
-      };
-      events.push(event);
-      if (event.type === "RUN_FINISHED" || event.type === "RUN_ERROR") {
-        await reader.cancel();
-        return events;
-      }
+      if (done) return events;
     }
-    if (done) return events;
+  } finally {
+    await reader.cancel().catch(() => undefined);
   }
 }
 
 const healthStarted = Date.now();
-const health = await fetch(`${relayUrl}/health`);
+const health = await boundedFetch(`${relayUrl}/health`);
 report({
   phase: "health",
   status: health.status,
@@ -81,7 +100,7 @@ if (!health.ok) throw new Error(`Relay health check returned ${health.status}`);
 const prompt =
   process.argv.slice(2).join(" ") || "Reply with exactly: relay works";
 const launchStarted = Date.now();
-const response = await fetch(`${relayUrl}/workflow-runs`, {
+const response = await boundedFetch(`${relayUrl}/workflow-runs`, {
   method: "POST",
   headers: { ...authorization, "Content-Type": "application/json" },
   body: JSON.stringify({ prompt, maxTurns: 3 }),

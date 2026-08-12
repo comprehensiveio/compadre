@@ -94,7 +94,57 @@ test("starts a local durable run and serves resumable AG-UI events", async (t) =
     `/workflow-runs/route-run/events?offset=${encodeURIComponent(firstOffset)}`,
     { headers: { Authorization: "Bearer test-key" } },
   );
+  assert.equal(resumed.status, 200);
   const resumedText = await resumed.text();
   assert.doesNotMatch(resumedText, /"type":"RUN_STARTED"/);
   assert.match(resumedText, /"delta":"hello"/);
+});
+
+test("terminalizes fire-and-tail runs when the Workflow task fails", async (t) => {
+  const previousApiKey = process.env.COMPADRE_API_KEY;
+  process.env.COMPADRE_API_KEY = "test-key";
+  t.after(() => {
+    if (previousApiKey === undefined) delete process.env.COMPADRE_API_KEY;
+    else process.env.COMPADRE_API_KEY = previousApiKey;
+  });
+
+  const durability = await createAgentRunDurability({
+    COMPADRE_DURABILITY_BACKEND: "memory",
+  });
+  assert.ok(durability);
+  const app = new Hono();
+  app.route(
+    "/",
+    createWorkflowRunRoutes({
+      enabled: () => true,
+      getDurability: async () => durability,
+      createId: () => "failed-route-run",
+      getLauncher: () => ({
+        async start() {
+          return { taskRunId: "failed-task" };
+        },
+        async wait() {
+          throw new Error("Render task was killed");
+        },
+      }),
+    }),
+  );
+
+  const started = await app.request("/workflow-runs", {
+    method: "POST",
+    headers: {
+      Authorization: "Bearer test-key",
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ prompt: "hello" }),
+  });
+  assert.equal(started.status, 202);
+  await new Promise<void>((resolve) => setImmediate(resolve));
+
+  assert.equal(
+    (await durability.runs.get("failed-route-run"))?.status,
+    "failed",
+  );
+  const snapshot = await durability.stream("failed-route-run").snapshot();
+  assert.equal(snapshot.at(-1)?.chunk.type, EventType.RUN_ERROR);
 });

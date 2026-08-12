@@ -113,4 +113,7 @@ test("fails promptly when the Workflow task dies before opening a log", async ()
     ),
     /failed during startup/,
   );
+  assert.equal((await durability.runs.get("missing-log"))?.status, "failed");
+  const snapshot = await durability.stream("missing-log").snapshot();
+  assert.equal(snapshot.at(-1)?.chunk.type, EventType.RUN_ERROR);
 });

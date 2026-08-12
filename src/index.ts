@@ -24,6 +24,7 @@ import { validateConversationConfiguration } from "./conversation.js";
 import { recoverStaleSlackRuns } from "./services/slack-run-recovery.js";
 import { harnessThreadStore } from "./tanstack/thread-state.js";
 import { harnessPreparedWorktrees } from "./tanstack/prepared-worktrees.js";
+import { validateRelayOnlyConfiguration } from "./services/conversation-runner.js";
 
 const app = new Hono();
 
@@ -58,6 +59,7 @@ const SLACK_RECOVERY_DELAY_MS = 15_000;
 const port = Number(process.env.PORT) || 3100;
 
 async function start() {
+  validateRelayOnlyConfiguration();
   const relayOnly = process.env.COMPADRE_RELAY_ONLY === "true";
   if (!relayOnly) {
     const agent = validateConversationConfiguration();

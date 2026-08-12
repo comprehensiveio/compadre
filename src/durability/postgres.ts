@@ -88,7 +88,7 @@ function sslForConnectionString(
   try {
     const hostname = new URL(connectionString).hostname;
     return hostname.endsWith(".render.com")
-      ? { rejectUnauthorized: false }
+      ? { rejectUnauthorized: true }
       : undefined;
   } catch {
     return undefined;
@@ -138,8 +138,17 @@ function createRunStore(pool: pg.Pool): RunStore {
         [input.runId, input.threadId, status, input.startedAt],
       );
       const row = result.rows[0];
-      if (!row) throw new Error(`Could not create or load run ${input.runId}`);
-      return rowToRun(row);
+      if (row) return rowToRun(row);
+
+      // ON CONFLICT can wait for a concurrent insert that was invisible to
+      // this statement's snapshot. Read again in a fresh statement.
+      const existing = await pool.query<RunRow>(
+        "SELECT * FROM compadre_ai_runs WHERE run_id = $1",
+        [input.runId],
+      );
+      const found = existing.rows[0];
+      if (!found) throw new Error(`Could not create or load run ${input.runId}`);
+      return rowToRun(found);
     },
 
     async update(runId, patch) {
@@ -347,7 +356,31 @@ function createStreamDurability(
           "SELECT closed_at FROM compadre_ai_streams WHERE run_id = $1",
           [runId],
         );
-        if (stream.rows[0]?.closed_at) return;
+        if (stream.rows[0]?.closed_at) {
+          // An append that acquired the stream row lock before close() can
+          // commit between the first event read and the closed_at read. Once
+          // closed_at is visible no later append can succeed, so this final
+          // read establishes a reliable end-of-stream boundary.
+          while (true) {
+            const finalEvents = await pool.query<EventRow>(
+              `SELECT sequence, chunk
+               FROM compadre_ai_stream_events
+               WHERE run_id = $1 AND sequence > $2
+               ORDER BY sequence ASC
+               LIMIT 250`,
+              [runId, cursor],
+            );
+            for (const row of finalEvents.rows) {
+              const sequence = asSafeNumber(row.sequence, "stream sequence");
+              cursor = sequence;
+              yield {
+                offset: encodeOffset(runId, sequence),
+                chunk: row.chunk,
+              };
+            }
+            if (finalEvents.rows.length < 250) return;
+          }
+        }
         await abortableDelay(pollIntervalMs, signal);
       }
     },
@@ -382,15 +415,18 @@ export async function createPostgresAgentRunDurability(
   options: PostgresDurabilityOptions,
 ): Promise<PostgresAgentRunDurability> {
   const ownsPool = options.pool === undefined;
-  const pool =
-    options.pool ??
-    new pg.Pool({
+  const pool = options.pool ?? new pg.Pool({
       connectionString: options.connectionString,
       ssl: sslForConnectionString(options.connectionString),
       max: 4,
       allowExitOnIdle: true,
       application_name: "compadre-durability",
     });
+  if (ownsPool) {
+    pool.on("error", (error) => {
+      console.error("[durability] idle Postgres connection failed", error);
+    });
+  }
   await ensurePostgresDurabilitySchema(pool);
   const pollIntervalMs = options.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS;
   return {

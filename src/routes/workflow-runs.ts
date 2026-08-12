@@ -5,7 +5,9 @@ import {
 } from "@tanstack/ai";
 import { Hono } from "hono";
 import { z } from "zod";
+import { agentWorkflowInputSchema } from "../workflows/agent-run.js";
 import {
+  failOpenDurableRun,
   getConfiguredAgentRunDurability,
   type AgentRunDurability,
 } from "../durability/runtime.js";
@@ -15,14 +17,8 @@ import {
 } from "../services/workflow-run-launcher.js";
 import { requireCompadreApiKey } from "./auth.js";
 
-const workflowRunInputSchema = z.object({
-  runId: z.string().trim().min(1).optional(),
-  prompt: z.string().trim().min(1),
-  transcriptUserMessage: z.string().optional(),
-  threadId: z.string().trim().min(1).optional(),
-  provider: z.enum(["claude-code", "codex"]).optional(),
-  profile: z.enum(["claude-code", "codex", "fable"]).optional(),
-  maxTurns: z.number().int().positive().optional(),
+const workflowRunInputSchema = agentWorkflowInputSchema.omit({
+  responseMode: true,
 });
 
 export interface WorkflowRunRouteDependencies {
@@ -48,7 +44,13 @@ function resumableAdapter(
   const offset =
     request.headers.get("Last-Event-ID") ||
     new URL(request.url).searchParams.get("offset");
-  return { ...stream, resumeFrom: () => offset };
+  return {
+    resumeFrom: () => offset,
+    append: (chunks) => stream.append(chunks),
+    read: (streamOffset, signal) => stream.read(streamOffset, signal),
+    close: () => stream.close(),
+    snapshot: () => stream.snapshot(),
+  };
 }
 
 export function createWorkflowRunRoutes(
@@ -83,11 +85,35 @@ export function createWorkflowRunRoutes(
     // Resolve the stream before launching so a local in-process producer and
     // relay are guaranteed to share the same memory adapter instance.
     durability.stream(runId);
-    const started = await dependencies.getLauncher().start({
-      ...input,
+    await durability.runs.createOrResume({
       runId,
       threadId,
+      startedAt: Date.now(),
     });
+    const launcher = dependencies.getLauncher();
+    let started: Awaited<ReturnType<WorkflowRunLauncher["start"]>>;
+    try {
+      started = await launcher.start({
+        ...input,
+        runId,
+        threadId,
+      });
+    } catch (error) {
+      await failOpenDurableRun(durability, runId, error);
+      throw error;
+    }
+    if (launcher.wait) {
+      void launcher.wait(started.taskRunId).catch(async (error) => {
+        try {
+          await failOpenDurableRun(durability, runId, error);
+        } catch (finalizationError) {
+          console.error("[workflow-route] failure finalization failed", {
+            runId,
+            error: finalizationError,
+          });
+        }
+      });
+    }
     return c.json(
       {
         runId,

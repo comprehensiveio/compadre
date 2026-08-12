@@ -74,3 +74,25 @@ test("marks a failed Workflow span and still flushes", async () => {
   assert.deepEqual(metrics, [["probeAgentRuntime", "error", 40]]);
   await provider.shutdown();
 });
+
+test("does not let telemetry flush failures replace the operation result", async () => {
+  const exporter = new InMemorySpanExporter();
+  const provider = new BasicTracerProvider({
+    spanProcessors: [new SimpleSpanProcessor(exporter)],
+  });
+
+  const result = await withWorkflowTelemetry(
+    "runAgent",
+    async () => "completed",
+    {
+      tracer: provider.getTracer("workflow-flush-test"),
+      flush: async () => {
+        throw new Error("export unavailable");
+      },
+      recordMetrics: () => undefined,
+    },
+  );
+
+  assert.equal(result, "completed");
+  await provider.shutdown();
+});

@@ -42,7 +42,12 @@ export function configureEphemeralRepositoryEnvironment(
     ".workflow-cache",
     "repository",
   );
-  if (!existsSync(path.join(repositoryPath, ".git"))) return;
+  if (!existsSync(path.join(repositoryPath, ".git"))) {
+    console.warn("[workflow-repo] baked checkout is missing", {
+      repositoryPath,
+    });
+    return;
+  }
 
   // The shared environment group also serves the persistent web process and
   // may define its durable REPO_PATH. A Workflow needs its own explicit

@@ -59,3 +59,47 @@ test("times out with the last observed status", async () => {
     /Timed out.*last status: running/,
   );
 });
+
+test("tolerates bounded transient task-status read failures", async () => {
+  let attempts = 0;
+  const result = await waitForTaskRun(
+    {
+      getTaskRun: async () => {
+        attempts += 1;
+        if (attempts < 3) throw new Error("temporary Render API failure");
+        return run("completed");
+      },
+    },
+    "run-1",
+    { sleep: async () => undefined },
+  );
+
+  assert.equal(result.status, "completed");
+  assert.equal(attempts, 3);
+});
+
+test("fails after the configured consecutive task-status read limit", async () => {
+  await assert.rejects(
+    waitForTaskRun(
+      {
+        getTaskRun: async () => {
+          throw new Error("Render API unavailable");
+        },
+      },
+      "run-1",
+      { maxConsecutiveReadErrors: 1, sleep: async () => undefined },
+    ),
+    /Render API unavailable/,
+  );
+});
+
+test("honors aborts before polling", async () => {
+  const controller = new AbortController();
+  controller.abort(new Error("probe canceled"));
+  await assert.rejects(
+    waitForTaskRun({ getTaskRun: async () => run("running") }, "run-1", {
+      signal: controller.signal,
+    }),
+    /probe canceled/,
+  );
+});

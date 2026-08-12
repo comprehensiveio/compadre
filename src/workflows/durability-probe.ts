@@ -1,6 +1,10 @@
 import crypto from "node:crypto";
 import { z } from "zod";
-import type { StreamChunk } from "@tanstack/ai";
+import {
+  EventType,
+  isTerminalRunStatus,
+  type StreamChunk,
+} from "@tanstack/ai";
 import {
   getConfiguredAgentRunDurability,
   type AgentRunDurability,
@@ -36,7 +40,7 @@ const defaultDependencies: DurabilityProbeDependencies = {
 
 function textFrom(chunks: StreamChunk[]): string {
   return chunks
-    .filter((chunk) => chunk.type === "TEXT_MESSAGE_CONTENT")
+    .filter((chunk) => chunk.type === EventType.TEXT_MESSAGE_CONTENT)
     .map((chunk) => chunk.delta)
     .join("");
 }
@@ -58,10 +62,18 @@ export async function executeDurabilityProbe(
 
   const run = await durability.runs.get(input.runId);
   if (!run) throw new Error(`Durable run ${input.runId} was not found`);
+  if (!isTerminalRunStatus(run.status)) {
+    throw new Error(
+      `Durable run ${input.runId} is ${run.status}; replay requires a terminal run`,
+    );
+  }
 
   const snapshot = await durability.stream(input.runId).snapshot();
   const replay: typeof snapshot = [];
-  for await (const entry of durability.stream(input.runId).read("-1")) {
+  const replaySignal = AbortSignal.timeout(60_000);
+  for await (const entry of durability
+    .stream(input.runId)
+    .read("-1", replaySignal)) {
     replay.push(entry);
   }
 

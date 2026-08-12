@@ -1,5 +1,7 @@
 import {
+  EventType,
   InMemoryRunStore,
+  isTerminalRunStatus,
   memoryStream,
   type RunStore,
   type StreamChunk,
@@ -18,6 +20,7 @@ export interface AgentRunDurability {
 }
 
 let configuredDurability: Promise<AgentRunDurability | null> | undefined;
+const MAX_RETAINED_MEMORY_STREAMS = 100;
 
 export function configuredDurabilityBackend(
   environment: NodeJS.ProcessEnv = process.env,
@@ -38,13 +41,33 @@ export async function createAgentRunDurability(
   if (backend === "memory") {
     const runs = new InMemoryRunStore();
     const streams = new Map<string, StreamDurability<string>>();
+    const completedStreamIds: string[] = [];
     return {
       backend,
       runs,
       stream: (runId) => {
         let stream = streams.get(runId);
         if (!stream) {
-          stream = memoryStream({ runId });
+          const underlying = memoryStream({ runId });
+          let closed = false;
+          stream = {
+            resumeFrom: () => underlying.resumeFrom(),
+            append: (chunks) => underlying.append(chunks),
+            read: (offset, signal) => underlying.read(offset, signal),
+            snapshot: () => underlying.snapshot(),
+            close: async () => {
+              await underlying.close();
+              if (closed) return;
+              closed = true;
+              completedStreamIds.push(runId);
+              while (
+                completedStreamIds.length > MAX_RETAINED_MEMORY_STREAMS
+              ) {
+                const expired = completedStreamIds.shift();
+                if (expired) streams.delete(expired);
+              }
+            },
+          };
           streams.set(runId, stream);
         }
         return stream;
@@ -64,7 +87,15 @@ export async function createAgentRunDurability(
 }
 
 export function getConfiguredAgentRunDurability(): Promise<AgentRunDurability | null> {
-  configuredDurability ??= createAgentRunDurability();
+  if (!configuredDurability) {
+    const initialization = createAgentRunDurability().catch((error) => {
+      if (configuredDurability === initialization) {
+        configuredDurability = undefined;
+      }
+      throw error;
+    });
+    configuredDurability = initialization;
+  }
   return configuredDurability;
 }
 
@@ -101,6 +132,56 @@ export function captureDurableRun(
       await handle.done;
     }
   })();
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+/** Terminalize a durable run when its external Workflow process dies. */
+export async function failOpenDurableRun(
+  durability: AgentRunDurability,
+  runId: string,
+  error: unknown,
+  now: () => number = Date.now,
+): Promise<void> {
+  const run = await durability.runs.get(runId);
+  if (!run) throw new Error(`Cannot fail unknown durable run ${runId}`);
+
+  const stream = durability.stream(runId);
+  if (!isTerminalRunStatus(run.status)) {
+    const message = errorMessage(error);
+    try {
+      await stream.append([
+        {
+          type: EventType.RUN_ERROR,
+          message,
+          code: "WORKFLOW_TASK_FAILED",
+          timestamp: now(),
+        },
+      ]);
+    } catch (appendError) {
+      console.warn("[durability] could not append Workflow failure event", {
+        runId,
+        error: appendError,
+      });
+    }
+
+    try {
+      await durability.runs.update(runId, {
+        status: "failed",
+        finishedAt: now(),
+        error: { message, code: "WORKFLOW_TASK_FAILED" },
+      });
+    } finally {
+      await stream.close();
+    }
+    return;
+  }
+
+  // A task can be terminal while its producer was killed between updating the
+  // run record and closing the log. close() is idempotent for both backends.
+  await stream.close();
 }
 
 export function resetConfiguredAgentRunDurabilityForTests(): void {

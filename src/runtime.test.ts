@@ -44,3 +44,29 @@ test("ignores incomplete baked runtimes", () => {
     rmSync(runtimeRoot, { recursive: true, force: true });
   }
 });
+
+test("replaces a blank Workspace MCP override with the baked executable", () => {
+  const runtimeRoot = mkdtempSync(
+    path.join(os.tmpdir(), "compadre-workflow-runtime-"),
+  );
+  const binDir = path.join(runtimeRoot, "bin");
+  mkdirSync(binDir);
+  writeFileSync(path.join(binDir, "workspace-mcp"), "");
+  const previousExecutable = process.env.WORKSPACE_MCP_EXECUTABLE;
+
+  try {
+    process.env.WORKSPACE_MCP_EXECUTABLE = "   ";
+    assert.equal(configureBundledWorkflowRuntime(runtimeRoot), true);
+    assert.equal(
+      process.env.WORKSPACE_MCP_EXECUTABLE,
+      path.join(binDir, "workspace-mcp"),
+    );
+  } finally {
+    if (previousExecutable === undefined) {
+      delete process.env.WORKSPACE_MCP_EXECUTABLE;
+    } else {
+      process.env.WORKSPACE_MCP_EXECUTABLE = previousExecutable;
+    }
+    rmSync(runtimeRoot, { recursive: true, force: true });
+  }
+});

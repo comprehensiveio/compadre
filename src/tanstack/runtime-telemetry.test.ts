@@ -152,6 +152,7 @@ test("marks the agent run and failing phase as errors", async () => {
   );
   assert.ok(root);
   assert.ok(capacity);
+  assert.equal(root.attributes["gen_ai.provider.name"], "openai");
   assert.equal(root.status.code, SpanStatusCode.ERROR);
   assert.equal(capacity.status.code, SpanStatusCode.ERROR);
   assert.equal(root.attributes["memory.process_tree.peak_rss_bytes"], undefined);

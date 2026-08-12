@@ -110,6 +110,23 @@ test("agent workflow releases ephemeral thread state after a failure", async () 
   assert.deepEqual(released, ["workflow-generated-id"]);
 });
 
+test("preserves the agent error when thread cleanup also fails", async () => {
+  await assert.rejects(
+    executeAgentWorkflow(
+      { prompt: "fail" },
+      dependencies({
+        runConversation: async () => {
+          throw new Error("agent failed");
+        },
+        releaseThread: async () => {
+          throw new Error("cleanup failed");
+        },
+      }),
+    ),
+    /agent failed/,
+  );
+});
+
 test("agent workflow rejects malformed task input before starting work", async () => {
   let ensured = false;
   await assert.rejects(

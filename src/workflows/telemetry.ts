@@ -72,6 +72,10 @@ export async function withWorkflowTelemetry<T>(
     } catch (error) {
       console.warn("[telemetry] Workflow metrics failed", error);
     }
-    await flush();
+    try {
+      await flush();
+    } catch (error) {
+      console.warn("[telemetry] Workflow telemetry flush failed", error);
+    }
   }
 }

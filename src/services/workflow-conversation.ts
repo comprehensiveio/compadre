@@ -5,7 +5,10 @@ import type {
   ConversationResult,
 } from "../conversation.js";
 import { configuredAgentProvider } from "../conversation.js";
-import { getConfiguredAgentRunDurability } from "../durability/runtime.js";
+import {
+  failOpenDurableRun,
+  getConfiguredAgentRunDurability,
+} from "../durability/runtime.js";
 import {
   consumeHarnessConversation,
 } from "../tanstack/conversation.js";
@@ -51,17 +54,28 @@ export async function runWorkflowConversation(
   const startedAt = dependencies.now();
   const stream = durability.stream(runId);
   const launcher = dependencies.getLauncher();
-  const task = await launcher.start({
+  await durability.runs.createOrResume({
     runId,
     threadId,
-    prompt: options.prompt,
-    transcriptUserMessage:
-      options.transcriptUserMessage ?? options.prompt,
-    provider: options.provider,
-    profile: options.profile,
-    maxTurns: options.maxTurns,
-    responseMode: options.stream ? "slack-streaming" : "default",
+    startedAt,
   });
+  let task: Awaited<ReturnType<WorkflowRunLauncher["start"]>>;
+  try {
+    task = await launcher.start({
+      runId,
+      threadId,
+      prompt: options.prompt,
+      transcriptUserMessage:
+        options.transcriptUserMessage ?? options.prompt,
+      provider: options.provider,
+      profile: options.profile,
+      maxTurns: options.maxTurns,
+      responseMode: options.stream ? "slack-streaming" : "default",
+    });
+  } catch (error) {
+    await failOpenDurableRun(durability, runId, error, dependencies.now);
+    throw error;
+  }
 
   const abortController = new AbortController();
   const abort = () => abortController.abort(options.signal?.reason);
@@ -75,7 +89,20 @@ export async function runWorkflowConversation(
   const monitoredFailure = launcher.wait
     ? launcher.wait(task.taskRunId, abortController.signal).then(
         () => new Promise<never>(() => undefined),
-        (error) => {
+        async (error) => {
+          try {
+            await failOpenDurableRun(
+              durability,
+              runId,
+              error,
+              dependencies.now,
+            );
+          } catch (finalizationError) {
+            console.error("[workflow-relay] failure finalization failed", {
+              runId,
+              error: finalizationError,
+            });
+          }
           abortController.abort(error);
           throw error;
         },

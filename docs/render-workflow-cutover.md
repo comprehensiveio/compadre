@@ -131,19 +131,26 @@ memory remains useful independently of that future filesystem enhancement.
 
 1. Create a paid production Postgres instance in the `compadre` project. The
    free playground database expires and is not a production dependency.
-2. Create the production Workflow and relay from one reviewed commit. Set both
-   to the same Postgres URL and production secrets.
+2. Create the production Workflow, relay, and Postgres in the same Render
+   region from one reviewed commit. Use Postgres's internal URL. Keep Render
+   environment network isolation disabled: the workspace-scoped Workflow API
+   cannot reach the private database when that isolation is enabled. Scope the
+   environment group to the production project environment, protect that
+   environment, and use a least-privilege database role as compensating
+   controls. The Postgres IP allow-list restricts external access only; private
+   connections bypass it.
 3. Set `DD_SERVICE=compadre` and the established production `DD_ENV` on the
    production resources. Do not carry over `DD_ENV=workflow-spike`.
-4. Leave `COMPADRE_SLACK_WORKFLOW_ENABLED=false`; run health, durability, agent,
-   streaming, reconnect, and forced-failure probes.
-5. Enable `COMPADRE_SLACK_WORKFLOW_ENABLED=true` on the new relay and test a
-   controlled Slack thread.
-6. Move the Compadre custom domain (or update the Slack Events Request URL) to
+4. Set `COMPADRE_SLACK_WORKFLOW_ENABLED=true` on the relay-only service, then
+   run private Postgres connectivity, health, durability, agent, streaming,
+   reconnect, and forced-failure probes. The new relay receives no production
+   Slack traffic until the next step.
+5. Move the Compadre custom domain (or update the Slack Events Request URL) to
    the new relay. DNS alone is sufficient only when Slack already targets that
    custom hostname.
-7. Observe successful Slack completions and failure signaling, then suspend the
-   old service. Keep rollback available by restoring the prior hostname or
-   Slack Request URL.
+6. Test a controlled Slack thread through the production Slack ingress and
+   observe successful completion and failure signaling.
+7. Suspend the old service. Keep rollback available by restoring the prior
+   hostname or Slack Request URL.
 
-The old persistent service remains unchanged until steps 5–7.
+The old persistent service remains unchanged until step 7.

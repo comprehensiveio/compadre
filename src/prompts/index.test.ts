@@ -20,6 +20,8 @@ test("keeps Slack workspace persistence and upload instructions scoped to Slack 
   for (const prompt of slackPrompts) {
     assert.match(prompt, /local workspace is temporary/);
     assert.match(prompt, /commit and push them/);
+    assert.match(prompt, /Never commit or push secrets/);
+    assert.match(prompt, /stop without pushing/);
     assert.match(prompt, /upload the meaningful output to the current Slack thread/);
     assert.match(prompt, /cannot safely preserve required work/);
     assert.match(prompt, /Do not upload secrets/);

@@ -12,23 +12,32 @@ import path from "path";
 import { LocalProcessHandle } from "@tanstack/ai-sandbox-local-process";
 import { REPO_PATH } from "./config.js";
 
-function gitEnvironment(): NodeJS.ProcessEnv {
-  const pat = process.env.GITHUB_PERSONAL_ACCESS_TOKEN;
-  if (!pat) return process.env;
+export function gitEnvironment(
+  environment: NodeJS.ProcessEnv = process.env,
+): NodeJS.ProcessEnv {
+  const pat = environment.GITHUB_PERSONAL_ACCESS_TOKEN;
+  if (!pat) return environment;
+
+  const repository = new URL(configuredRepositoryUrl(environment));
+  if (repository.protocol !== "http:" && repository.protocol !== "https:") {
+    return { ...environment, GIT_TERMINAL_PROMPT: "0" };
+  }
 
   // Keep credentials out of command arguments, exception messages, process
   // listings, and the persisted origin URL. Git reads this one-command config
   // only from the child environment.
   const authorization = Buffer.from(`x-access-token:${pat}`).toString("base64");
-  const configuredCount = Number.parseInt(process.env.GIT_CONFIG_COUNT ?? "0", 10);
+  const configuredCount = Number.parseInt(environment.GIT_CONFIG_COUNT ?? "0", 10);
   const index = Number.isInteger(configuredCount) && configuredCount >= 0
     ? configuredCount
     : 0;
   return {
-    ...process.env,
-    GIT_CONFIG_COUNT: String(index + 1),
-    [`GIT_CONFIG_KEY_${index}`]: "http.extraHeader",
+    ...environment,
+    GIT_CONFIG_COUNT: String(index + 2),
+    [`GIT_CONFIG_KEY_${index}`]: `http.${repository.origin}/.extraHeader`,
     [`GIT_CONFIG_VALUE_${index}`]: `Authorization: Basic ${authorization}`,
+    [`GIT_CONFIG_KEY_${index + 1}`]: `http.${repository.origin}/.followRedirects`,
+    [`GIT_CONFIG_VALUE_${index + 1}`]: "false",
     GIT_TERMINAL_PROMPT: "0",
   };
 }

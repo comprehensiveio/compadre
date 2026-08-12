@@ -93,3 +93,24 @@ test("uses a baked checkout only for an ephemeral process", async () => {
     await rm(processRoot, { recursive: true, force: true });
   }
 });
+
+test("warns when an ephemeral image has no baked checkout", async (t) => {
+  const processRoot = await mkdtemp(
+    path.join(tmpdir(), "compadre-missing-repository-"),
+  );
+  const warnings: unknown[][] = [];
+  t.mock.method(console, "warn", (...args: unknown[]) => void warnings.push(args));
+
+  try {
+    const environment: NodeJS.ProcessEnv = {};
+    configureEphemeralRepositoryEnvironment(
+      { ephemeral: true },
+      environment,
+      processRoot,
+    );
+    assert.equal(environment.REPO_PATH, undefined);
+    assert.match(String(warnings[0]?.[0]), /baked checkout is missing/);
+  } finally {
+    await rm(processRoot, { recursive: true, force: true });
+  }
+});

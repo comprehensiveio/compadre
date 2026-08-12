@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { EventType, type StreamChunk } from "@tanstack/ai";
+import pg from "pg";
 import { createPostgresAgentRunDurability } from "./postgres.js";
 import { captureDurableRun } from "./runtime.js";
 
@@ -11,9 +12,11 @@ test(
   { skip: connectionString ? false : "set COMPADRE_TEST_DATABASE_URL" },
   async () => {
     assert.ok(connectionString);
+    const pool = new pg.Pool({ connectionString });
     const durability = await createPostgresAgentRunDurability({
       connectionString,
       pollIntervalMs: 10,
+      pool,
     });
     const nonce = crypto.randomUUID();
     const runId = `postgres-run-${nonce}`;
@@ -31,6 +34,21 @@ test(
         status: "failed",
       });
       assert.deepEqual(resumed, original);
+
+      const concurrentRunId = `postgres-concurrent-${nonce}`;
+      const concurrent = await Promise.all(
+        Array.from({ length: 8 }, (_, index) =>
+          durability.runs.createOrResume({
+            runId: concurrentRunId,
+            threadId: `thread-${index}`,
+            startedAt: index,
+          }),
+        ),
+      );
+      assert.equal(
+        concurrent.every((record) => record.runId === concurrentRunId),
+        true,
+      );
 
       await durability.runs.update(runId, {
         sandboxKey: "sandbox",
@@ -85,6 +103,24 @@ test(
         chunks,
       );
 
+      const liveRunId = `postgres-live-${nonce}`;
+      await durability.runs.createOrResume({
+        runId: liveRunId,
+        threadId,
+        startedAt: 2,
+      });
+      const liveStream = durability.stream(liveRunId);
+      const liveReplay = (async () => {
+        const replayed: StreamChunk[] = [];
+        for await (const entry of liveStream.read("-1")) {
+          replayed.push(entry.chunk);
+        }
+        return replayed;
+      })();
+      await liveStream.append(chunks);
+      await liveStream.close();
+      assert.deepEqual(await liveReplay, chunks);
+
       const drivenRunId = `postgres-driven-${nonce}`;
       const drivenChunks: StreamChunk[] = [
         {
@@ -127,6 +163,15 @@ test(
       );
     } finally {
       await durability.close();
+      await pool.query(
+        "DELETE FROM compadre_ai_streams WHERE run_id LIKE $1",
+        [`%${nonce}`],
+      );
+      await pool.query(
+        "DELETE FROM compadre_ai_runs WHERE run_id LIKE $1",
+        [`%${nonce}`],
+      );
+      await pool.end();
     }
   },
 );

@@ -113,3 +113,21 @@ test("turns a producer exception into a durable RUN_ERROR", async () => {
     /producer exploded/,
   );
 });
+
+test("bounds retained completed memory streams", async () => {
+  const durability = await createAgentRunDurability({
+    COMPADRE_DURABILITY_BACKEND: "memory",
+  });
+  assert.ok(durability);
+  const first = durability.stream("memory-0");
+
+  for (let index = 0; index <= 100; index += 1) {
+    await durability.stream(`memory-${index}`).close();
+  }
+
+  assert.notEqual(durability.stream("memory-0"), first);
+  assert.equal(
+    durability.stream("memory-100"),
+    durability.stream("memory-100"),
+  );
+});

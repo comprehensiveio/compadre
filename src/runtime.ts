@@ -49,10 +49,9 @@ export function configureBundledWorkflowRuntime(
     return false;
   }
 
-  process.env.WORKSPACE_MCP_EXECUTABLE ??= path.join(
-    binDir,
-    "workspace-mcp",
-  );
+  if (!process.env.WORKSPACE_MCP_EXECUTABLE?.trim()) {
+    process.env.WORKSPACE_MCP_EXECUTABLE = path.join(binDir, "workspace-mcp");
+  }
   prependPath(binDir);
   return true;
 }

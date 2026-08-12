@@ -1,6 +1,9 @@
 import crypto from "node:crypto";
 import { Render } from "@renderinc/sdk";
-import { waitForTaskRun } from "../render-workflows.js";
+import {
+  isTaskRunSuccessful,
+  waitForTaskRun,
+} from "../render-workflows.js";
 import type { AgentWorkflowInput } from "../workflows/agent-run.js";
 import { executeAgentWorkflow } from "../workflows/agent-run.js";
 
@@ -32,7 +35,7 @@ export function createRenderWorkflowRunLauncher({
     },
     async wait(taskRunId, signal) {
       const result = await waitForTaskRun(render.workflows, taskRunId, { signal });
-      if (result.status !== "completed" && result.status !== "succeeded") {
+      if (!isTaskRunSuccessful(result.status)) {
         throw new Error(
           `Render Workflow task ${taskRunId} ended with status ${result.status}`,
         );
@@ -61,16 +64,15 @@ export function createLocalWorkflowRunLauncher(
       // a caller only wants fire-and-tail behavior through the HTTP route.
       void completion.catch(() => undefined);
       completions.set(taskRunId, completion);
+      void completion
+        .catch(() => undefined)
+        .finally(() => completions.delete(taskRunId));
       return { taskRunId };
     },
     async wait(taskRunId) {
       const completion = completions.get(taskRunId);
       if (!completion) throw new Error(`Unknown local Workflow task ${taskRunId}`);
-      try {
-        await completion;
-      } finally {
-        completions.delete(taskRunId);
-      }
+      await completion;
     },
   };
 }

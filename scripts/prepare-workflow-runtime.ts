@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { mkdirSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, rmSync } from "node:fs";
 import path from "node:path";
 
 const UV_VERSION = "0.12.3";
@@ -8,6 +8,7 @@ const runtimeRoot = path.resolve(".workflow-cache", "runtime");
 const binDir = path.join(runtimeRoot, "bin");
 const toolDir = path.join(runtimeRoot, "tools");
 const cacheDir = path.join(runtimeRoot, "cache");
+const uvInstaller = path.join(runtimeRoot, "install-uv.sh");
 
 rmSync(runtimeRoot, { recursive: true, force: true });
 mkdirSync(binDir, { recursive: true });
@@ -18,10 +19,24 @@ const installEnvironment = {
   UV_NO_MODIFY_PATH: "1",
 };
 execFileSync(
-  "sh",
-  ["-c", `curl -LsSf https://astral.sh/uv/${UV_VERSION}/install.sh | sh`],
-  { env: installEnvironment, stdio: "inherit" },
+  "curl",
+  [
+    "-LsSf",
+    `https://astral.sh/uv/${UV_VERSION}/install.sh`,
+    "-o",
+    uvInstaller,
+  ],
+  { stdio: "inherit" },
 );
+execFileSync("sh", [uvInstaller], {
+  env: installEnvironment,
+  stdio: "inherit",
+});
+rmSync(uvInstaller, { force: true });
+
+if (!existsSync(path.join(binDir, "uv"))) {
+  throw new Error(`uv ${UV_VERSION} was not installed into ${binDir}`);
+}
 
 const toolEnvironment = {
   ...process.env,

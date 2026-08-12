@@ -1,7 +1,10 @@
 import dotenv from "dotenv";
 import crypto from "node:crypto";
 import { Render } from "@renderinc/sdk";
-import { waitForTaskRun } from "../src/render-workflows.js";
+import {
+  isTaskRunSuccessful,
+  waitForTaskRun,
+} from "../src/render-workflows.js";
 
 dotenv.config({ path: ".env.local", quiet: true });
 
@@ -63,6 +66,6 @@ console.log(
   }),
 );
 
-if (result.status !== "completed" && result.status !== "succeeded") {
+if (!isTaskRunSuccessful(result.status)) {
   process.exitCode = 1;
 }

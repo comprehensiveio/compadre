@@ -52,3 +52,24 @@ test("proves an ordered durable replay without returning message content", async
   assert.equal(result.expectedTextMatches, true);
   assert.equal("replayedText" in result, false);
 });
+
+test("rejects an active run instead of tailing it indefinitely", async () => {
+  const runId = "active-run";
+  const runs = new InMemoryRunStore();
+  const stream = memoryStream({ runId });
+  const durability: AgentRunDurability = {
+    backend: "memory",
+    runs,
+    stream: () => stream,
+    close: async () => undefined,
+  };
+  await runs.createOrResume({ runId, threadId: "thread", startedAt: 1 });
+
+  await assert.rejects(
+    executeDurabilityProbe(
+      { runId },
+      { getDurability: async () => durability },
+    ),
+    /replay requires a terminal run/,
+  );
+});
