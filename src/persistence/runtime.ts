@@ -14,23 +14,9 @@ export interface ThreadPersistenceRuntime {
 
 let configuredRuntime: Promise<ThreadPersistenceRuntime | null> | undefined;
 
-export function isThreadPersistenceEnabled(
-  environment: NodeJS.ProcessEnv = process.env,
-): boolean {
-  return environment.COMPADRE_THREAD_PERSISTENCE_ENABLED === "true";
-}
-
-export async function createThreadPersistenceRuntime(
-  environment: NodeJS.ProcessEnv = process.env,
-): Promise<ThreadPersistenceRuntime | null> {
-  if (!isThreadPersistenceEnabled(environment)) return null;
-
+export async function createThreadPersistenceRuntime(): Promise<ThreadPersistenceRuntime | null> {
   const durability = await getConfiguredAgentRunDurability();
-  if (!durability) {
-    throw new Error(
-      "Thread persistence requires COMPADRE_DURABILITY_BACKEND=memory or postgres",
-    );
-  }
+  if (!durability) return null;
 
   if (durability.backend === "memory") {
     return {
@@ -61,6 +47,16 @@ export function getConfiguredThreadPersistence(): Promise<ThreadPersistenceRunti
     configuredRuntime = initialization;
   }
   return configuredRuntime;
+}
+
+export async function getRequiredThreadPersistence(): Promise<ThreadPersistenceRuntime> {
+  const runtime = await getConfiguredThreadPersistence();
+  if (!runtime) {
+    throw new Error(
+      "Thread persistence requires COMPADRE_DURABILITY_BACKEND=memory or postgres",
+    );
+  }
+  return runtime;
 }
 
 export function resetConfiguredThreadPersistenceForTests(): void {

@@ -26,7 +26,7 @@ aguiRoutes.get("/ag-ui", async (c) => {
 
   const threadPersistence = await getConfiguredThreadPersistence();
   if (!threadPersistence) {
-    return c.json({ error: "thread persistence is not enabled" }, 503);
+    return c.json({ error: "thread persistence requires durability" }, 503);
   }
   return reconstructChat(threadPersistence.persistence, c.req.raw, {
     // The shared API key is currently the authorization boundary for all

@@ -13,7 +13,10 @@ import {
 import { localProcessSandbox } from "@tanstack/ai-sandbox-local-process";
 import { getBaseSystemPrompt } from "../prompts/index.js";
 import { createChannelConversationPersistence } from "../persistence/conversation.js";
-import { getConfiguredThreadPersistence } from "../persistence/runtime.js";
+import {
+  getConfiguredThreadPersistence,
+  getRequiredThreadPersistence,
+} from "../persistence/runtime.js";
 import { createWorktree, removeWorktree } from "../repo.js";
 import {
   createHarnessStream,
@@ -55,6 +58,7 @@ export interface AguiRuntimeOptions {
   systemPrompt?: (worktreePath: string) => string;
   transcriptUserMessage?: string;
   capacityPriority?: RunCapacityPriority;
+  /** False only for generated one-off threads; true requires durability. */
   persistThread?: boolean;
 }
 
@@ -241,7 +245,9 @@ export async function runAguiChat(
 ): Promise<AsyncIterable<StreamChunk>> {
   const threadPersistence = options.persistThread === false
     ? null
-    : await getConfiguredThreadPersistence();
+    : options.persistThread === true
+      ? await getRequiredThreadPersistence()
+      : await getConfiguredThreadPersistence();
   const selection = resolveHarnessSelection(params.forwardedProps);
   const telemetry = new HarnessRunTelemetry({
     selection,
