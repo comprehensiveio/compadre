@@ -1,12 +1,12 @@
 import assert from "node:assert/strict";
 import { afterEach, test } from "node:test";
+import { resetConfiguredAgentRunDurabilityForTests } from "../durability/runtime.js";
 import { resetConfiguredThreadPersistenceForTests } from "../persistence/runtime.js";
 import { aguiRoutes } from "./agui.js";
 
 const originalEnabled = process.env.COMPADRE_TANSTACK_AI_ENABLED;
 const originalApiKey = process.env.COMPADRE_API_KEY;
-const originalPersistenceEnabled =
-  process.env.COMPADRE_THREAD_PERSISTENCE_ENABLED;
+const originalDurabilityBackend = process.env.COMPADRE_DURABILITY_BACKEND;
 
 afterEach(() => {
   if (originalEnabled === undefined) {
@@ -19,11 +19,12 @@ afterEach(() => {
   } else {
     process.env.COMPADRE_API_KEY = originalApiKey;
   }
-  if (originalPersistenceEnabled === undefined) {
-    delete process.env.COMPADRE_THREAD_PERSISTENCE_ENABLED;
+  if (originalDurabilityBackend === undefined) {
+    delete process.env.COMPADRE_DURABILITY_BACKEND;
   } else {
-    process.env.COMPADRE_THREAD_PERSISTENCE_ENABLED = originalPersistenceEnabled;
+    process.env.COMPADRE_DURABILITY_BACKEND = originalDurabilityBackend;
   }
+  resetConfiguredAgentRunDurabilityForTests();
   resetConfiguredThreadPersistenceForTests();
 });
 
@@ -40,16 +41,16 @@ test("AG-UI route requires an API key when enabled", async () => {
   assert.equal(response.status, 503);
 });
 
-test("AG-UI hydration reports when server persistence is disabled", async () => {
+test("AG-UI hydration reports when durability is not configured", async () => {
   process.env.COMPADRE_TANSTACK_AI_ENABLED = "true";
   process.env.COMPADRE_API_KEY = "test-key";
-  delete process.env.COMPADRE_THREAD_PERSISTENCE_ENABLED;
+  delete process.env.COMPADRE_DURABILITY_BACKEND;
   const response = await aguiRoutes.request("/ag-ui?threadId=thread-1", {
     headers: { Authorization: "Bearer test-key" },
   });
   assert.equal(response.status, 503);
   assert.deepEqual(await response.json(), {
-    error: "thread persistence is not enabled",
+    error: "thread persistence requires durability",
   });
 });
 
