@@ -1,3 +1,4 @@
+import { setTimeout as delay } from "node:timers/promises";
 import {
   defineAIPersistence,
   defineInterruptStore,
@@ -199,25 +200,89 @@ export async function validatePostgresChatPersistenceSchema(
   ]);
 }
 
+const DEFAULT_LOCK_ACQUIRE_TIMEOUT_MS = 20 * 60 * 1000;
+const DEFAULT_LOCK_POLL_INTERVAL_MS = 100;
+
+export class PostgresLockAcquireTimeoutError extends Error {
+  constructor(readonly key: string, readonly timeoutMs: number) {
+    super(`Timed out acquiring Postgres lock ${key} after ${timeoutMs}ms`);
+    this.name = "PostgresLockAcquireTimeoutError";
+  }
+}
+
 /** PostgreSQL advisory locks are process-independent and connection-scoped. */
 export class PostgresLockStore implements LockStore {
-  constructor(private readonly pool: pg.Pool) {}
+  constructor(
+    private readonly pool: pg.Pool,
+    private readonly options: {
+      acquireTimeoutMs?: number;
+      pollIntervalMs?: number;
+    } = {},
+  ) {}
+
+  private async connectBefore(
+    deadline: number,
+    key: string,
+    acquireTimeoutMs: number,
+  ): Promise<pg.PoolClient> {
+    const connection = this.pool.connect();
+    const remainingMs = deadline - Date.now();
+    if (remainingMs <= 0) {
+      void connection.then((client) => client.release()).catch(() => undefined);
+      throw new PostgresLockAcquireTimeoutError(key, acquireTimeoutMs);
+    }
+    let timeout: ReturnType<typeof setTimeout> | undefined;
+    try {
+      return await Promise.race([
+        connection,
+        new Promise<never>((_resolve, reject) => {
+          timeout = setTimeout(
+            () => reject(new PostgresLockAcquireTimeoutError(key, acquireTimeoutMs)),
+            remainingMs,
+          );
+        }),
+      ]);
+    } catch (error) {
+      // A timed-out pool checkout may still resolve later. Return that client
+      // immediately so the timeout path cannot leak a pool slot.
+      void connection.then((client) => client.release()).catch(() => undefined);
+      throw error;
+    } finally {
+      if (timeout) clearTimeout(timeout);
+    }
+  }
 
   async withLock<T>(
     key: string,
     fn: (signal: AbortSignal) => Promise<T>,
   ): Promise<T> {
-    const client = await this.pool.connect();
+    const acquireTimeoutMs =
+      this.options.acquireTimeoutMs ?? DEFAULT_LOCK_ACQUIRE_TIMEOUT_MS;
+    const pollIntervalMs =
+      this.options.pollIntervalMs ?? DEFAULT_LOCK_POLL_INTERVAL_MS;
+    const deadline = Date.now() + acquireTimeoutMs;
+    const client = await this.connectBefore(deadline, key, acquireTimeoutMs);
     const abortController = new AbortController();
     const onConnectionError = (error: Error) => abortController.abort(error);
     client.on("error", onConnectionError);
     let locked = false;
     try {
-      await client.query(
-        "SELECT pg_advisory_lock(hashtextextended($1, 0))",
-        [key],
-      );
-      locked = true;
+      while (!locked) {
+        if (Date.now() >= deadline) {
+          throw new PostgresLockAcquireTimeoutError(key, acquireTimeoutMs);
+        }
+        const result = await client.query<{ acquired: boolean }>(
+          "SELECT pg_try_advisory_lock(hashtextextended($1, 0)) AS acquired",
+          [key],
+        );
+        locked = result.rows[0]?.acquired === true;
+        if (locked) break;
+        const remainingMs = deadline - Date.now();
+        if (remainingMs <= 0) {
+          throw new PostgresLockAcquireTimeoutError(key, acquireTimeoutMs);
+        }
+        await delay(Math.min(pollIntervalMs, remainingMs));
+      }
       if (abortController.signal.aborted) {
         throw abortController.signal.reason;
       }

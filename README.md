@@ -102,11 +102,12 @@ Native Node.js service. Build: `npm ci --include=dev && npm run build`, Start: `
 
 The active `compadre-relay` Web Service is declared in [`render.yaml`](render.yaml).
 Render runs `npm run db:migrate` as its pre-deploy command, so migrations finish
-before a newly built version can receive traffic. Existing environment variables
-are intentionally omitted from the Blueprint: Render preserves them when the
-Blueprint is linked, without putting secret values in Git. Linking the repository
-to the Blueprint is a one-time Render setup; subsequent service configuration
-changes and deploys sync from `main`.
+before a newly built version can receive traffic. Secret environment variables
+are either omitted from the Blueprint or declared with `sync: false`; Render
+preserves their existing dashboard values during Blueprint updates without
+putting those values in Git. Linking the repository to the Blueprint is a one-time
+Render setup; subsequent service configuration changes and deploys sync from
+`main`.
 
 Google Workspace support uses `uvx` because `workspace-mcp` runs as a Python MCP server. `npm start` installs `uvx` at startup when Google Workspace env vars are present and `uvx` is not already available.
 
@@ -190,12 +191,13 @@ Slack / HTTP -> persistent relay -> Render Workflow -> Claude Code or Codex
                        +-> Slack stream
 ```
 
-With thread persistence enabled, PostgreSQL is the canonical source for the
-provider-neutral transcript and TanStack run/interrupt state. Provider-native
-sessions and worktrees remain process-local optimizations; after a restart or
-provider switch the runtime reconstructs context from the neutral transcript.
-Runs on the same thread are serialized across processes with PostgreSQL
-advisory locks, and each process runs only one coding harness at a time. A
+With thread persistence enabled, the configured persistence backend is the
+canonical source for the provider-neutral transcript and TanStack run/interrupt
+state. Production uses PostgreSQL for restart durability and cross-process
+advisory locking; memory mode is process-local and provides neither guarantee.
+Provider-native sessions and worktrees remain process-local optimizations; after
+a restart or provider switch the PostgreSQL runtime reconstructs context from
+the neutral transcript. Each process runs only one coding harness at a time. A
 run-scoped supervisor records safe PID/RSS telemetry and aborts the harness
 process group before it can exhaust the service cgroup. The runtime reconciles
 stale Slack reactions after a restart. Postgres stores run lifecycle and

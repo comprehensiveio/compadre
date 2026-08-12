@@ -19,6 +19,7 @@ export interface AgentRunDurability {
   runs: RunStore;
   stream(runId: string): StreamDurability<string>;
   pool?: pg.Pool;
+  lockPool?: pg.Pool;
   database?: CompadreDatabase;
   close(): Promise<void>;
 }

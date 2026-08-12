@@ -47,6 +47,7 @@ export interface PostgresAgentRunDurability {
   runs: RunStore;
   stream(runId: string): StreamDurability<string>;
   pool: pg.Pool;
+  lockPool: pg.Pool;
   database: CompadreDatabase;
   close(): Promise<void>;
 }
@@ -460,14 +461,34 @@ export async function createPostgresAgentRunDurability(
     }
     throw error;
   }
+  // Advisory locks hold a connection for the complete critical section. Keep
+  // them off the query pool so queued turns cannot starve run/message writes.
+  const lockPool = ownsPool
+    ? createPool({
+        connectionString: options.connectionString,
+        ssl: sslForConnectionString(options.connectionString),
+        max: 4,
+        allowExitOnIdle: true,
+        application_name: "compadre-thread-locks",
+      })
+    : pool;
+  if (lockPool !== pool) {
+    lockPool.on("error", (error) => {
+      console.error("[persistence] idle Postgres lock connection failed", error);
+    });
+  }
   const pollIntervalMs = options.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS;
   return {
     runs: createPostgresRunStore(db),
     stream: (runId) => createStreamDurability(db, runId, pollIntervalMs),
     pool,
+    lockPool,
     database: db,
     close: async () => {
-      if (ownsPool) await pool.end();
+      if (!ownsPool) return;
+      await Promise.all(
+        [...new Set([pool, lockPool])].map((ownedPool) => ownedPool.end()),
+      );
     },
   };
 }

@@ -10,6 +10,10 @@ services:
     healthCheckPath: /health
     autoDeployTrigger: commit
     envVars:
+      - key: COMPADRE_DURABILITY_BACKEND
+        value: postgres
+      - key: COMPADRE_DURABILITY_DATABASE_URL
+        sync: false
       - key: COMPADRE_THREAD_PERSISTENCE_ENABLED
         value: "true"
     previews:

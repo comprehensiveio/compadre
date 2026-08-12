@@ -39,7 +39,7 @@ export async function createThreadPersistenceRuntime(
     };
   }
 
-  if (!durability.database || !durability.pool) {
+  if (!durability.database || !durability.lockPool) {
     throw new Error("Postgres durability did not expose its database resources");
   }
   await validatePostgresChatPersistenceSchema(durability.database);
@@ -48,7 +48,7 @@ export async function createThreadPersistenceRuntime(
       durability.database,
       durability.runs,
     ),
-    locks: new PostgresLockStore(durability.pool),
+    locks: new PostgresLockStore(durability.lockPool),
   };
 }
 

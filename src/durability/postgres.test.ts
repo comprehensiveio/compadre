@@ -1,12 +1,14 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { setImmediate as waitForImmediate } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 import { EventType, type StreamChunk } from "@tanstack/ai";
 import { migrate } from "drizzle-orm/node-postgres/migrator";
 import pg from "pg";
 import { createDatabase } from "../db/client.js";
-import { PostgresLockStore } from "../persistence/postgres.js";
+import {
+  PostgresLockAcquireTimeoutError,
+  PostgresLockStore,
+} from "../persistence/postgres.js";
 import { createPostgresAgentRunDurability } from "./postgres.js";
 import { captureDurableRun } from "./runtime.js";
 
@@ -218,8 +220,21 @@ test(
       const secondHolding = locks.withLock(lockKey, async () => {
         secondAcquired = true;
       });
-      await waitForImmediate();
+      const blocked = await Promise.race([
+        secondHolding.then(() => "acquired" as const),
+        new Promise<"blocked">((resolve) =>
+          setTimeout(() => resolve("blocked"), 250),
+        ),
+      ]);
+      assert.equal(blocked, "blocked");
       assert.equal(secondAcquired, false);
+      await assert.rejects(
+        new PostgresLockStore(pool, {
+          acquireTimeoutMs: 50,
+          pollIntervalMs: 10,
+        }).withLock(lockKey, async () => undefined),
+        PostgresLockAcquireTimeoutError,
+      );
       releaseFirst();
       await Promise.all([firstHolding, secondHolding]);
       assert.equal(secondAcquired, true);
