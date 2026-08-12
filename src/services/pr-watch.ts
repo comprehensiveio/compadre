@@ -2,6 +2,7 @@ import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import pg from "pg";
 import { REPO_PATH } from "../config.js";
+import { gitEnvironment } from "../repo.js";
 import { SlackClient } from "./slack-client.js";
 
 const REPOSITORY = "comprehensiveio/comp";
@@ -156,6 +157,7 @@ async function git(args: string[], input?: string): Promise<string> {
   return new Promise((resolve, reject) => {
     const child = spawn("git", args, {
       cwd: REPO_PATH,
+      env: gitEnvironment(),
       stdio: ["pipe", "pipe", "pipe"],
     });
     const stdout: Buffer[] = [];
