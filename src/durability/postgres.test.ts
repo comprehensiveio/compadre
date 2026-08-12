@@ -1,17 +1,21 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
 import { EventType, type StreamChunk } from "@tanstack/ai";
+import { migrate } from "drizzle-orm/node-postgres/migrator";
 import pg from "pg";
+import { createDatabase } from "../db/client.js";
 import { createPostgresAgentRunDurability } from "./postgres.js";
 import { captureDurableRun } from "./runtime.js";
 
 const connectionString = process.env.COMPADRE_TEST_DATABASE_URL;
+const migrationsFolder = fileURLToPath(new URL("../../drizzle", import.meta.url));
 
 test("closes an owned pool when schema initialization fails", async () => {
   let ended = false;
   const pool = {
     on: () => pool,
-    connect: async () => {
+    query: async () => {
       throw new Error("schema connection failed");
     },
     end: async () => {
@@ -25,7 +29,14 @@ test("closes an owned pool when schema initialization fails", async () => {
       connectionString: "postgresql://localhost/test",
       poolFactory: () => pool,
     }),
-    /schema connection failed/,
+    (error: unknown) => {
+      assert.ok(error instanceof Error);
+      assert.match(
+        `${error.message}\n${String(error.cause)}`,
+        /schema connection failed/,
+      );
+      return true;
+    },
   );
   assert.equal(ended, true);
 });
@@ -36,6 +47,7 @@ test(
   async () => {
     assert.ok(connectionString);
     const pool = new pg.Pool({ connectionString });
+    await migrate(createDatabase(pool), { migrationsFolder });
     const durability = await createPostgresAgentRunDurability({
       connectionString,
       pollIntervalMs: 10,

@@ -1,7 +1,13 @@
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
+import { and, asc, eq, lte, sql } from "drizzle-orm";
 import pg from "pg";
 import { REPO_PATH } from "../config.js";
+import {
+  createDatabase,
+  type CompadreDatabase,
+} from "../db/client.js";
+import { pullRequestWatches } from "../db/schema.js";
 import { gitEnvironment } from "../repo.js";
 import { SlackClient } from "./slack-client.js";
 
@@ -9,6 +15,7 @@ const REPOSITORY = "comprehensiveio/comp";
 const DEFAULT_INTERVAL_MS = 2 * 60 * 1000;
 const RENDER_SERVICE_CACHE_MS = 10 * 60 * 1000;
 const STALE_DELIVERY_MS = 10 * 60 * 1000;
+const RECONCILE_BATCH_SIZE = 100;
 const HTTP_TIMEOUT_MS = 15 * 1000;
 const PATCH_SCAN_COMMIT_LIMIT = 500;
 const RENDER_PROJECT_NAME = "CM";
@@ -40,14 +47,33 @@ interface PullRequestCommit {
   sha: string;
 }
 
-interface WatchRow {
-  id: string;
-  pr_number: number;
-  pr_url: string;
-  slack_team_id: string;
-  slack_channel_id: string;
-  slack_thread_ts: string;
-  matched_prod_commit: string | null;
+type WatchRow = Pick<
+  typeof pullRequestWatches.$inferSelect,
+  | "id"
+  | "prNumber"
+  | "prUrl"
+  | "slackTeamId"
+  | "slackChannelId"
+  | "slackThreadTs"
+  | "matchedProdCommit"
+>;
+
+const watchColumns = {
+  id: pullRequestWatches.id,
+  prNumber: pullRequestWatches.prNumber,
+  prUrl: pullRequestWatches.prUrl,
+  slackTeamId: pullRequestWatches.slackTeamId,
+  slackChannelId: pullRequestWatches.slackChannelId,
+  slackThreadTs: pullRequestWatches.slackThreadTs,
+  matchedProdCommit: pullRequestWatches.matchedProdCommit,
+};
+
+function livePullRequestText(prNumber: number, prUrl: string): string {
+  return `PR #${prNumber} is now live in production. ${prUrl}`;
+}
+
+function closedPullRequestText(prNumber: number): string {
+  return `PR #${prNumber} was closed without merging, so I stopped watching it.`;
 }
 
 interface RenderDeploy {
@@ -81,35 +107,6 @@ interface RenderProjectPageItem {
 interface RenderEnvironmentPageItem {
   environment?: { id?: string; name?: string; projectId?: string };
 }
-
-/** Legacy bootstrap retained while the Drizzle migration baseline rolls out. */
-export const PR_WATCH_SCHEMA = `
-CREATE TABLE IF NOT EXISTS compadre_pr_watches (
-  id uuid PRIMARY KEY,
-  pr_number integer NOT NULL CHECK (pr_number > 0),
-  pr_url text NOT NULL,
-  slack_team_id text NOT NULL,
-  slack_channel_id text NOT NULL,
-  slack_thread_ts text NOT NULL,
-  status text NOT NULL DEFAULT 'waiting' CHECK (
-    status IN ('waiting', 'delivering', 'notified', 'closed_unmerged')
-  ),
-  matched_prod_commit text,
-  created_at timestamptz NOT NULL DEFAULT now(),
-  checked_at timestamptz,
-  delivery_started_at timestamptz,
-  notified_at timestamptz,
-  last_error text,
-  UNIQUE (pr_number, slack_team_id, slack_channel_id, slack_thread_ts)
-);
-
-ALTER TABLE compadre_pr_watches
-  ADD COLUMN IF NOT EXISTS delivery_started_at timestamptz;
-
-CREATE INDEX IF NOT EXISTS compadre_pr_watches_waiting_idx
-  ON compadre_pr_watches (created_at)
-  WHERE status = 'waiting';
-`;
 
 function sslForConnectionString(connectionString: string): pg.PoolConfig["ssl"] {
   try {
@@ -466,6 +463,7 @@ export function selectProductionCmServiceId(
 
 export class PullRequestWatchService {
   private readonly pool: pg.Pool;
+  private readonly db: CompadreDatabase;
   private readonly slack: SlackClient;
 
   constructor(options: { connectionString: string; botToken: string; teamId: string }) {
@@ -476,6 +474,7 @@ export class PullRequestWatchService {
       allowExitOnIdle: true,
       application_name: "compadre-pr-watch",
     });
+    this.db = createDatabase(this.pool);
     this.slack = new SlackClient({ botToken: options.botToken, teamId: options.teamId });
     this.pool.on("error", (error) =>
       console.error("[pr-watch] idle Postgres connection failed", error),
@@ -483,29 +482,36 @@ export class PullRequestWatchService {
   }
 
   async initialize(): Promise<void> {
-    await this.pool.query(PR_WATCH_SCHEMA);
+    await this.db
+      .select({ id: pullRequestWatches.id })
+      .from(pullRequestWatches)
+      .limit(0);
   }
 
   async register(
     request: PullRequestWatchRequest,
     destination: PullRequestWatchDestination,
   ): Promise<{ created: boolean }> {
-    const result = await this.pool.query(
-      `INSERT INTO compadre_pr_watches (
-         id, pr_number, pr_url, slack_team_id, slack_channel_id, slack_thread_ts
-       ) VALUES ($1, $2, $3, $4, $5, $6)
-       ON CONFLICT (pr_number, slack_team_id, slack_channel_id, slack_thread_ts)
-       DO NOTHING`,
-      [
-        randomUUID(),
-        request.prNumber,
-        request.prUrl,
-        destination.teamId,
-        destination.channelId,
-        destination.threadTs,
-      ],
-    );
-    return { created: result.rowCount === 1 };
+    const rows = await this.db
+      .insert(pullRequestWatches)
+      .values({
+        id: randomUUID(),
+        prNumber: request.prNumber,
+        prUrl: request.prUrl,
+        slackTeamId: destination.teamId,
+        slackChannelId: destination.channelId,
+        slackThreadTs: destination.threadTs,
+      })
+      .onConflictDoNothing({
+        target: [
+          pullRequestWatches.prNumber,
+          pullRequestWatches.slackTeamId,
+          pullRequestWatches.slackChannelId,
+          pullRequestWatches.slackThreadTs,
+        ],
+      })
+      .returning({ id: pullRequestWatches.id });
+    return { created: rows.length === 1 };
   }
 
   async reconcile(): Promise<void> {
@@ -515,22 +521,27 @@ export class PullRequestWatchService {
         "SELECT pg_try_advisory_lock(hashtext('compadre-pr-watch-reconcile')) AS locked",
       );
       if (!lock.rows[0]?.locked) return;
-      await this.recoverStaleDeliveries(client);
-      const watches = await client.query<WatchRow>(
-        `SELECT id, pr_number, pr_url, slack_team_id, slack_channel_id,
-                slack_thread_ts, matched_prod_commit
-         FROM compadre_pr_watches WHERE status = 'waiting'
-         ORDER BY created_at ASC LIMIT 100`,
-      );
-      for (const watch of watches.rows) {
+      const db = createDatabase(client);
+      await this.recoverStaleDeliveries(db);
+      const watches: WatchRow[] = await db
+        .select(watchColumns)
+        .from(pullRequestWatches)
+        .where(eq(pullRequestWatches.status, "waiting"))
+        .orderBy(asc(pullRequestWatches.createdAt))
+        .limit(RECONCILE_BATCH_SIZE);
+      for (const watch of watches) {
         await this.reconcileOne(watch).catch(async (error) => {
           const message = error instanceof Error ? error.message : String(error);
-          console.error(`[pr-watch] PR #${watch.pr_number} reconciliation failed:`, error);
-          await this.pool.query(
-            `UPDATE compadre_pr_watches SET checked_at = now(), last_error = $2
-             WHERE id = $1 AND status = 'waiting'`,
-            [watch.id, message.slice(0, 2000)],
-          );
+          console.error(`[pr-watch] PR #${watch.prNumber} reconciliation failed:`, error);
+          await this.db
+            .update(pullRequestWatches)
+            .set({ checkedAt: sql`now()`, lastError: message.slice(0, 2000) })
+            .where(
+              and(
+                eq(pullRequestWatches.id, watch.id),
+                eq(pullRequestWatches.status, "waiting"),
+              ),
+            );
         });
       }
     } finally {
@@ -543,19 +554,23 @@ export class PullRequestWatchService {
 
   private async reconcileOne(watch: WatchRow): Promise<void> {
     const details = await githubJson<PullRequestDetails>(
-      `/repos/${REPOSITORY}/pulls/${watch.pr_number}`,
+      `/repos/${REPOSITORY}/pulls/${watch.prNumber}`,
     );
     if (details.state === "closed" && !details.merged) {
-      await this.deliver(watch, "closed_unmerged", null,
-        `PR #${watch.pr_number} was closed without merging, so I stopped watching it.`);
-      await this.cleanUpWatchRef(watch.pr_number);
+      await this.deliver(
+        watch,
+        "closed_unmerged",
+        null,
+        closedPullRequestText(watch.prNumber),
+      );
+      await this.cleanUpWatchRef(watch.prNumber);
       return;
     }
     if (!details.merged) {
       await this.markChecked(watch.id);
       return;
     }
-    const commits = await githubPullRequestCommits(watch.pr_number);
+    const commits = await githubPullRequestCommits(watch.prNumber);
     const prodCommit = await findPullRequestOnProd(details, commits);
     if (!prodCommit || !(await isCommitLiveOnRender(prodCommit))) {
       await this.markChecked(watch.id);
@@ -565,29 +580,34 @@ export class PullRequestWatchService {
       watch,
       "notified",
       prodCommit,
-      `PR #${watch.pr_number} is now live in production. ${watch.pr_url}`,
+      livePullRequestText(watch.prNumber, watch.prUrl),
     );
-    await this.cleanUpWatchRef(watch.pr_number);
+    await this.cleanUpWatchRef(watch.prNumber);
   }
 
-  private async recoverStaleDeliveries(client: pg.PoolClient): Promise<void> {
-    const stale = await client.query<WatchRow>(
-      `SELECT id, pr_number, pr_url, slack_team_id, slack_channel_id,
-              slack_thread_ts, matched_prod_commit
-       FROM compadre_pr_watches
-       WHERE status = 'delivering'
-         AND delivery_started_at <=
-           now() - make_interval(secs => $1::double precision)`,
-      [STALE_DELIVERY_MS / 1000],
-    );
-    for (const watch of stale.rows) {
-      const text = watch.matched_prod_commit
-        ? `PR #${watch.pr_number} is now live in production. ${watch.pr_url}`
-        : `PR #${watch.pr_number} was closed without merging, so I stopped watching it.`;
+  private async recoverStaleDeliveries(db: CompadreDatabase): Promise<void> {
+    const stale: WatchRow[] = await db
+      .select(watchColumns)
+      .from(pullRequestWatches)
+      .where(
+        and(
+          eq(pullRequestWatches.status, "delivering"),
+          lte(
+            pullRequestWatches.deliveryStartedAt,
+            sql`now() - make_interval(secs => ${STALE_DELIVERY_MS / 1000}::double precision)`,
+          ),
+        ),
+      )
+      .orderBy(asc(pullRequestWatches.deliveryStartedAt))
+      .limit(RECONCILE_BATCH_SIZE);
+    for (const watch of stale) {
+      const text = watch.matchedProdCommit
+        ? livePullRequestText(watch.prNumber, watch.prUrl)
+        : closedPullRequestText(watch.prNumber);
       try {
         const response = await this.slack.getThreadReplies(
-          watch.slack_channel_id,
-          watch.slack_thread_ts,
+          watch.slackChannelId,
+          watch.slackThreadTs,
         );
         const messages = Array.isArray(response.messages)
           ? response.messages as Array<{ client_msg_id?: string; text?: string }>
@@ -597,33 +617,47 @@ export class PullRequestWatchService {
             message.client_msg_id === watch.id || message.text === text,
         );
         if (delivered) {
-          await client.query(
-            `UPDATE compadre_pr_watches
-             SET status = $2, notified_at = now(), delivery_started_at = NULL,
-                 last_error = NULL
-             WHERE id = $1 AND status = 'delivering'`,
-            [
-              watch.id,
-              watch.matched_prod_commit ? "notified" : "closed_unmerged",
-            ],
-          );
-          await this.cleanUpWatchRef(watch.pr_number);
+          await db
+            .update(pullRequestWatches)
+            .set({
+              status: watch.matchedProdCommit ? "notified" : "closed_unmerged",
+              notifiedAt: sql`now()`,
+              deliveryStartedAt: null,
+              lastError: null,
+            })
+            .where(
+              and(
+                eq(pullRequestWatches.id, watch.id),
+                eq(pullRequestWatches.status, "delivering"),
+              ),
+            );
+          await this.cleanUpWatchRef(watch.prNumber);
         } else {
-          await client.query(
-            `UPDATE compadre_pr_watches
-             SET status = 'waiting', matched_prod_commit = NULL,
-                 delivery_started_at = NULL
-             WHERE id = $1 AND status = 'delivering'`,
-            [watch.id],
-          );
+          await db
+            .update(pullRequestWatches)
+            .set({
+              status: "waiting",
+              matchedProdCommit: null,
+              deliveryStartedAt: null,
+            })
+            .where(
+              and(
+                eq(pullRequestWatches.id, watch.id),
+                eq(pullRequestWatches.status, "delivering"),
+              ),
+            );
         }
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
-        await client.query(
-          `UPDATE compadre_pr_watches SET checked_at = now(), last_error = $2
-           WHERE id = $1 AND status = 'delivering'`,
-          [watch.id, message.slice(0, 2000)],
-        );
+        await db
+          .update(pullRequestWatches)
+          .set({ checkedAt: sql`now()`, lastError: message.slice(0, 2000) })
+          .where(
+            and(
+              eq(pullRequestWatches.id, watch.id),
+              eq(pullRequestWatches.status, "delivering"),
+            ),
+          );
       }
     }
   }
@@ -635,12 +669,15 @@ export class PullRequestWatchService {
   }
 
   private async markChecked(id: string): Promise<void> {
-    await this.pool.query(
-      `UPDATE compadre_pr_watches
-       SET checked_at = now(), last_error = NULL
-       WHERE id = $1 AND status = 'waiting'`,
-      [id],
-    );
+    await this.db
+      .update(pullRequestWatches)
+      .set({ checkedAt: sql`now()`, lastError: null })
+      .where(
+        and(
+          eq(pullRequestWatches.id, id),
+          eq(pullRequestWatches.status, "waiting"),
+        ),
+      );
   }
 
   private async deliver(
@@ -649,32 +686,63 @@ export class PullRequestWatchService {
     prodCommit: string | null,
     text: string,
   ): Promise<void> {
-    const claim = await this.pool.query(
-      `UPDATE compadre_pr_watches
-       SET status = 'delivering', checked_at = now(), delivery_started_at = now(),
-           matched_prod_commit = $2
-       WHERE id = $1 AND status = 'waiting' RETURNING id`,
-      [watch.id, prodCommit],
-    );
-    if (claim.rowCount !== 1) return;
+    const claim = await this.db
+      .update(pullRequestWatches)
+      .set({
+        status: "delivering",
+        checkedAt: sql`now()`,
+        deliveryStartedAt: sql`now()`,
+        matchedProdCommit: prodCommit,
+      })
+      .where(
+        and(
+          eq(pullRequestWatches.id, watch.id),
+          eq(pullRequestWatches.status, "waiting"),
+        ),
+      )
+      .returning({ id: pullRequestWatches.id });
+    if (claim.length !== 1) return;
     try {
-      await this.slack.replyToThread(watch.slack_channel_id, watch.slack_thread_ts, text, watch.id);
-      await this.pool.query(
-        `UPDATE compadre_pr_watches
-         SET status = $2, matched_prod_commit = $3, notified_at = now(),
-             delivery_started_at = NULL, last_error = NULL
-         WHERE id = $1 AND status = 'delivering'`,
-        [watch.id, finalStatus, prodCommit],
+      await this.slack.replyToThread(
+        watch.slackChannelId,
+        watch.slackThreadTs,
+        text,
+        watch.id,
       );
+      await this.db
+        .update(pullRequestWatches)
+        .set({
+          status: finalStatus,
+          matchedProdCommit: prodCommit,
+          notifiedAt: sql`now()`,
+          deliveryStartedAt: null,
+          lastError: null,
+        })
+        .where(
+          and(
+            eq(pullRequestWatches.id, watch.id),
+            eq(pullRequestWatches.status, "delivering"),
+          ),
+        );
     } catch (error) {
-      await this.pool.query(
-        `UPDATE compadre_pr_watches
-         SET last_error = $2
-         WHERE id = $1 AND status = 'delivering'`,
-        [watch.id, error instanceof Error ? error.message : String(error)],
-      ).catch((databaseError) =>
-        console.error("[pr-watch] failed to record delivery error:", databaseError),
-      );
+      await this.db
+        .update(pullRequestWatches)
+        .set({
+          lastError: (error instanceof Error ? error.message : String(error))
+            .slice(0, 2000),
+        })
+        .where(
+          and(
+            eq(pullRequestWatches.id, watch.id),
+            eq(pullRequestWatches.status, "delivering"),
+          ),
+        )
+        .catch((databaseError) =>
+          console.error(
+            "[pr-watch] failed to record delivery error:",
+            databaseError,
+          ),
+        );
       throw error;
     }
   }
