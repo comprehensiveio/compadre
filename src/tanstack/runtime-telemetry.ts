@@ -12,7 +12,14 @@ import {
   type Tracer,
 } from "@opentelemetry/api";
 import { EventType, type StreamChunk } from "@tanstack/ai";
+import { AssistantMessageAccumulator } from "./assistant-messages.js";
 import type { HarnessSelection } from "./harness.js";
+import {
+  TELEMETRY_MAX_CONTENT_LENGTH,
+  createTelemetryContentRedactor,
+  genAiMessagesAttribute,
+  serializeTelemetryValue,
+} from "./telemetry-content.js";
 
 export type WorktreeSource = "existing" | "prepared" | "on-demand";
 
@@ -30,6 +37,8 @@ export interface HarnessRunTelemetryOptions {
   tracer?: Tracer;
   meter?: Meter;
   now?: () => number;
+  input?: unknown;
+  environment?: NodeJS.ProcessEnv;
 }
 
 function errorMessage(error: unknown): string {
@@ -53,6 +62,8 @@ export class HarnessRunTelemetry {
   private readonly runDuration: Histogram;
   private readonly memoryUsage: Histogram;
   private readonly selection: HarnessSelection;
+  private readonly assistantMessages = new AssistantMessageAccumulator();
+  private readonly redactContent: (value: string) => string;
   private worktreeSource: WorktreeSource | undefined;
   private firstEventObserved = false;
   private firstTextObserved = false;
@@ -68,11 +79,14 @@ export class HarnessRunTelemetry {
     tracer = otelTrace.getTracer("compadre.runtime"),
     meter = metrics.getMeter("compadre.runtime"),
     now = Date.now,
+    input,
+    environment = process.env,
   }: HarnessRunTelemetryOptions) {
     this.tracer = tracer;
     this.now = now;
     this.startedAt = now();
     this.selection = selection;
+    this.redactContent = createTelemetryContentRedactor(environment);
     this.runSpan = tracer.startSpan("compadre.agent.run", {
       kind: SpanKind.INTERNAL,
       startTime: this.startedAt,
@@ -88,6 +102,16 @@ export class HarnessRunTelemetry {
       },
     });
     this.runContext = otelTrace.setSpan(otelContext.active(), this.runSpan);
+    if (input !== undefined) {
+      const inputMessages = genAiMessagesAttribute(
+        "user",
+        serializeTelemetryValue(input, TELEMETRY_MAX_CONTENT_LENGTH),
+        this.redactContent,
+      );
+      this.runSpan.setAttribute("gen_ai.input.messages", inputMessages);
+      this.runSpan.setAttribute("langfuse.observation.input", inputMessages);
+      this.runSpan.setAttribute("langfuse.trace.input", inputMessages);
+    }
     this.firstEventSpan = tracer.startSpan(
       "compadre.agent.wait.first_event",
       { kind: SpanKind.INTERNAL, startTime: this.startedAt },
@@ -181,6 +205,7 @@ export class HarnessRunTelemetry {
   }
 
   observe(chunk: StreamChunk): void {
+    this.assistantMessages.observe(chunk);
     if (!this.firstEventObserved) {
       this.firstEventObserved = true;
       this.recordMilestone("first_event");
@@ -258,6 +283,17 @@ export class HarnessRunTelemetry {
       });
     } else {
       this.runSpan.setStatus({ code: SpanStatusCode.OK });
+    }
+    const output = this.assistantMessages.terminalText();
+    if (output.length > 0) {
+      const outputMessages = genAiMessagesAttribute(
+        "assistant",
+        output,
+        this.redactContent,
+      );
+      this.runSpan.setAttribute("gen_ai.output.messages", outputMessages);
+      this.runSpan.setAttribute("langfuse.observation.output", outputMessages);
+      this.runSpan.setAttribute("langfuse.trace.output", outputMessages);
     }
     this.runSpan.setAttribute(
       "compadre.agent.duration_ms",

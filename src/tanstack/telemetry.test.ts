@@ -80,10 +80,16 @@ test("emits GenAI spans, harness tool spans, usage, and provider cost", async ()
     runId: "run-1",
     worktreeId: "worktree-1",
     tracer,
+    environment: { COMPADRE_API_KEY: "secret-value-123" },
   });
   const ctx = middlewareContext("claude-code", "claude-opus-5");
   const config = {
-    messages: [{ role: "user" as const, content: "inspect the repository" }],
+    messages: [
+      {
+        role: "user" as const,
+        content: "inspect secret-value-123 repository",
+      },
+    ],
     systemPrompts: [],
     tools: [],
     modelOptions: {},
@@ -108,11 +114,32 @@ test("emits GenAI spans, harness tool spans, usage, and provider cost", async ()
     timestamp: 1_100,
   });
   await passChunk(observer, telemetry, ctx, {
+    type: EventType.TOOL_CALL_ARGS,
+    toolCallId: "tool-1",
+    delta: '{"path":"secret-value-123"}',
+    args: '{"path":"secret-value-123"}',
+    timestamp: 1_110,
+  });
+  await passChunk(observer, telemetry, ctx, {
+    type: EventType.TOOL_CALL_END,
+    toolCallId: "tool-1",
+    toolCallName: "Read",
+    input: { path: "secret-value-123" },
+    timestamp: 1_120,
+  });
+  await passChunk(observer, telemetry, ctx, {
     type: EventType.TOOL_CALL_RESULT,
     toolCallId: "tool-1",
     messageId: "tool-result-1",
-    content: "package.json",
+    content: "package secret-value-123",
     timestamp: 1_140,
+  });
+  await passChunk(observer, telemetry, ctx, {
+    type: EventType.TEXT_MESSAGE_CONTENT,
+    messageId: "message-1",
+    delta: "done secret-value-123",
+    content: "done secret-value-123",
+    timestamp: 1_150,
   });
   const finished = await passChunk(observer, telemetry, ctx, {
     type: EventType.RUN_FINISHED,
@@ -124,13 +151,15 @@ test("emits GenAI spans, harness tool spans, usage, and provider cost", async ()
       promptTokens: 10,
       completionTokens: 4,
       totalTokens: 14,
-      promptTokensDetails: { cachedTokens: 3 },
+      promptTokensDetails: { cachedTokens: 3, cacheWriteTokens: 5 },
       providerUsageDetails: { totalCostUsd: 0.12 },
     },
     timestamp: 1_200,
   });
   assert.equal(finished.type, EventType.RUN_FINISHED);
   assert.equal(finished.usage?.cost, 0.12);
+  assert.equal(finished.usage?.promptTokens, 18);
+  assert.equal(finished.usage?.totalTokens, 22);
 
   await telemetry.onFinish?.(ctx, {
     finishReason: "stop",
@@ -154,17 +183,45 @@ test("emits GenAI spans, harness tool spans, usage, and provider cost", async ()
   assert.equal(root.attributes["agent.session_id"], "session-1");
   assert.equal(root.attributes["agui.thread_id"], "thread-1");
   assert.equal(root.attributes["gen_ai.usage.cost"], 0.12);
-  assert.equal(iteration.attributes["gen_ai.usage.input_tokens"], 10);
+  assert.equal(iteration.attributes["gen_ai.usage.input_tokens"], 18);
   assert.equal(iteration.attributes["gen_ai.usage.output_tokens"], 4);
-  assert.equal(iteration.attributes["gen_ai.usage.total_tokens"], 14);
+  assert.equal(iteration.attributes["gen_ai.usage.total_tokens"], 22);
   assert.equal(iteration.attributes["gen_ai.usage.cost"], 0.12);
   assert.equal(
     iteration.attributes["gen_ai.usage.cache_read.input_tokens"],
-    3
+    3,
+  );
+  assert.equal(
+    iteration.attributes["gen_ai.usage.cache_creation.input_tokens"],
+    5,
+  );
+  assert.deepEqual(
+    JSON.parse(String(iteration.attributes["gen_ai.input.messages"])),
+    [{ role: "user", content: "inspect [REDACTED] repository" }],
+  );
+  assert.deepEqual(
+    JSON.parse(String(iteration.attributes["gen_ai.output.messages"])),
+    [{ role: "assistant", content: "done [REDACTED]" }],
+  );
+  assert.equal(
+    root.attributes["langfuse.trace.input"],
+    iteration.attributes["gen_ai.input.messages"],
+  );
+  assert.equal(
+    root.attributes["langfuse.trace.output"],
+    iteration.attributes["gen_ai.output.messages"],
   );
   assert.equal(tool.attributes["gen_ai.operation.name"], "execute_tool");
   assert.equal(tool.attributes["gen_ai.tool.name"], "Read");
   assert.equal(tool.attributes["tanstack.ai.tool.outcome"], "success");
+  assert.deepEqual(
+    JSON.parse(String(tool.attributes["gen_ai.input.messages"])),
+    [{ role: "tool", content: '{"path":"[REDACTED]"}' }],
+  );
+  assert.deepEqual(
+    JSON.parse(String(tool.attributes["gen_ai.output.messages"])),
+    [{ role: "tool", content: "package [REDACTED]" }],
+  );
   assert.equal(
     tool.parentSpanContext?.spanId,
     iteration.spanContext().spanId

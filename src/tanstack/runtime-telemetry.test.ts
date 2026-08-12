@@ -46,6 +46,8 @@ test("keeps startup phases under one coarse agent trace", async () => {
     tracer,
     meter: capturingMeter(metricRecords),
     now: () => now,
+    input: "inspect runtime-secret-value",
+    environment: { AGENT_SECRET: "runtime-secret-value" },
   });
 
   await telemetry.phase("queue.thread", async () => {
@@ -63,7 +65,7 @@ test("keeps startup phases under one coarse agent trace", async () => {
   telemetry.observe({
     type: EventType.TEXT_MESSAGE_CONTENT,
     messageId: "message-1",
-    delta: "hello",
+    delta: "hello runtime-secret-value",
     timestamp: now,
   });
   telemetry.observeMemory(1_024, 2_048, 4_096);
@@ -93,6 +95,22 @@ test("keeps startup phases under one coarse agent trace", async () => {
   assert.equal(root.attributes["gen_ai.operation.name"], "invoke_agent");
   assert.equal(root.attributes["gen_ai.provider.name"], "anthropic");
   assert.equal(root.attributes["gen_ai.conversation.id"], "thread-1");
+  assert.deepEqual(
+    JSON.parse(String(root.attributes["gen_ai.input.messages"])),
+    [{ role: "user", content: "inspect [REDACTED]" }],
+  );
+  assert.deepEqual(
+    JSON.parse(String(root.attributes["gen_ai.output.messages"])),
+    [{ role: "assistant", content: "hello [REDACTED]" }],
+  );
+  assert.equal(
+    root.attributes["langfuse.trace.input"],
+    root.attributes["gen_ai.input.messages"],
+  );
+  assert.equal(
+    root.attributes["langfuse.trace.output"],
+    root.attributes["gen_ai.output.messages"],
+  );
   assert.equal(root.attributes["worktree.source"], "on-demand");
   assert.equal(root.attributes["compadre.agent.duration_ms"], 40);
   assert.equal(root.attributes["memory.process_tree.peak_rss_bytes"], 1_024);

@@ -20,12 +20,21 @@ import {
 } from "@tanstack/ai/middlewares/otel";
 import type { HarnessSelection } from "./harness.js";
 import { sessionIdFromChunk } from "./protocol.js";
+import {
+  TELEMETRY_MAX_CONTENT_LENGTH,
+  appendTelemetryContent,
+  createTelemetryContentRedactor,
+  genAiMessagesAttribute,
+  serializeTelemetryValue,
+} from "./telemetry-content.js";
 
 interface HarnessToolRun {
   id: string;
   name: string;
   startedAt: number;
   endedAt?: number;
+  input?: string;
+  output?: string;
   outcome: "success" | "error" | "unknown";
 }
 
@@ -36,6 +45,7 @@ export interface HarnessTelemetryOptions {
   worktreeId: string;
   tracer?: Tracer;
   meter?: Meter;
+  environment?: NodeJS.ProcessEnv;
 }
 
 function modelProvider(provider: HarnessSelection["provider"]): string {
@@ -49,17 +59,31 @@ function reportedCost(chunk: StreamChunk): number | undefined {
   return typeof providerCost === "number" ? providerCost : undefined;
 }
 
-function withNormalizedCost(chunk: StreamChunk): StreamChunk {
+function withNormalizedUsage(
+  chunk: StreamChunk,
+  provider: HarnessSelection["provider"],
+): StreamChunk {
+  if (chunk.type !== EventType.RUN_FINISHED || !chunk.usage) return chunk;
+
   const cost = reportedCost(chunk);
-  if (
-    cost === undefined ||
-    chunk.type !== EventType.RUN_FINISHED ||
-    !chunk.usage ||
-    chunk.usage.cost === cost
-  ) {
-    return chunk;
+  let usage = chunk.usage;
+
+  if (provider === "claude-code") {
+    // Claude reports non-cached, cache-read, and cache-write input separately.
+    // Datadog defines input_tokens as their sum; preserving Claude's raw
+    // input_tokens here would make Datadog infer a negative non-cached count.
+    const cacheRead = usage.promptTokensDetails?.cachedTokens ?? 0;
+    const cacheWrite = usage.promptTokensDetails?.cacheWriteTokens ?? 0;
+    const promptTokens = usage.promptTokens + cacheRead + cacheWrite;
+    usage = {
+      ...usage,
+      promptTokens,
+      totalTokens: promptTokens + usage.completionTokens,
+    };
   }
-  return { ...chunk, usage: { ...chunk.usage, cost } };
+
+  if (cost !== undefined && usage.cost !== cost) usage = { ...usage, cost };
+  return usage === chunk.usage ? chunk : { ...chunk, usage };
 }
 
 /**
@@ -74,8 +98,10 @@ export function createHarnessTelemetryMiddleware({
   worktreeId,
   tracer = otelTrace.getTracer("compadre.tanstack-ai"),
   meter = metrics.getMeter("compadre.tanstack-ai"),
+  environment = process.env,
 }: HarnessTelemetryOptions): [ChatMiddleware, ChatMiddleware] {
   const tools = new Map<string, HarnessToolRun>();
+  const redactContent = createTelemetryContentRedactor(environment);
   let sessionId: string | undefined;
   let totalCostUsd: number | undefined;
   let toolSpansEmitted = false;
@@ -93,7 +119,7 @@ export function createHarnessTelemetryMiddleware({
   const harnessEvents: ChatMiddleware = {
     name: "compadre-harness-events",
     onChunk(_ctx, originalChunk) {
-      const chunk = withNormalizedCost(originalChunk);
+      const chunk = withNormalizedUsage(originalChunk, selection.provider);
       sessionId ??= sessionIdFromChunk(chunk, selection.provider);
       totalCostUsd ??= reportedCost(chunk);
 
@@ -104,10 +130,21 @@ export function createHarnessTelemetryMiddleware({
           startedAt: chunk.timestamp ?? Date.now(),
           outcome: "unknown",
         });
+      } else if (chunk.type === EventType.TOOL_CALL_ARGS) {
+        const tool = tools.get(chunk.toolCallId);
+        if (tool) {
+          tool.input = appendTelemetryContent(tool.input, chunk.delta);
+        }
+      } else if (chunk.type === EventType.TOOL_CALL_END) {
+        const tool = tools.get(chunk.toolCallId);
+        if (tool && chunk.input !== undefined) {
+          tool.input = serializeTelemetryValue(chunk.input);
+        }
       } else if (chunk.type === EventType.TOOL_CALL_RESULT) {
         const tool = tools.get(chunk.toolCallId);
         if (tool) {
           tool.endedAt = chunk.timestamp ?? Date.now();
+          tool.output = serializeTelemetryValue(chunk.content);
           tool.outcome = chunk.state === "output-error" ? "error" : "success";
         }
       } else if (
@@ -149,6 +186,20 @@ export function createHarnessTelemetryMiddleware({
       if (tool.outcome === "error") {
         span.setStatus({ code: SpanStatusCode.ERROR });
       }
+      if (tool.input !== undefined) {
+        const input = genAiMessagesAttribute("tool", tool.input, redactContent);
+        span.setAttribute("gen_ai.input.messages", input);
+        span.setAttribute("langfuse.observation.input", input);
+      }
+      if (tool.output !== undefined) {
+        const output = genAiMessagesAttribute(
+          "tool",
+          tool.output,
+          redactContent,
+        );
+        span.setAttribute("gen_ai.output.messages", output);
+        span.setAttribute("langfuse.observation.output", output);
+      }
       span.end(tool.endedAt ?? Date.now());
     }
   };
@@ -163,7 +214,9 @@ export function createHarnessTelemetryMiddleware({
   const telemetry = otelMiddleware({
     tracer,
     meter,
-    captureContent: false,
+    captureContent: true,
+    redact: redactContent,
+    maxContentLength: TELEMETRY_MAX_CONTENT_LENGTH,
     attributeEnricher: enrichSpan,
     onSpanEnd(info, span) {
       span.setAttributes(commonAttributes());
