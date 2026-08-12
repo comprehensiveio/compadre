@@ -13,6 +13,7 @@ import {
   EventType,
   type ChatMiddleware,
   type StreamChunk,
+  type TokenUsage,
 } from "@tanstack/ai";
 import {
   otelMiddleware,
@@ -52,21 +53,19 @@ function modelProvider(provider: HarnessSelection["provider"]): string {
   return provider === "codex" ? "openai" : "anthropic";
 }
 
-function reportedCost(chunk: StreamChunk): number | undefined {
-  if (chunk.type !== EventType.RUN_FINISHED || !chunk.usage) return undefined;
-  if (typeof chunk.usage.cost === "number") return chunk.usage.cost;
-  const providerCost = chunk.usage.providerUsageDetails?.totalCostUsd;
+function reportedCost(usage: TokenUsage | undefined): number | undefined {
+  if (!usage) return undefined;
+  if (typeof usage.cost === "number") return usage.cost;
+  const providerCost = usage.providerUsageDetails?.totalCostUsd;
   return typeof providerCost === "number" ? providerCost : undefined;
 }
 
-function withNormalizedUsage(
-  chunk: StreamChunk,
+function normalizedUsage(
+  usage: TokenUsage,
   provider: HarnessSelection["provider"],
-): StreamChunk {
-  if (chunk.type !== EventType.RUN_FINISHED || !chunk.usage) return chunk;
-
-  const cost = reportedCost(chunk);
-  let usage = chunk.usage;
+): TokenUsage {
+  const cost = reportedCost(usage);
+  let normalized = usage;
 
   if (provider === "claude-code") {
     // Claude reports non-cached, cache-read, and cache-write input separately.
@@ -75,15 +74,52 @@ function withNormalizedUsage(
     const cacheRead = usage.promptTokensDetails?.cachedTokens ?? 0;
     const cacheWrite = usage.promptTokensDetails?.cacheWriteTokens ?? 0;
     const promptTokens = usage.promptTokens + cacheRead + cacheWrite;
-    usage = {
+    normalized = {
       ...usage,
       promptTokens,
       totalTokens: promptTokens + usage.completionTokens,
     };
   }
 
-  if (cost !== undefined && usage.cost !== cost) usage = { ...usage, cost };
+  if (cost !== undefined && normalized.cost !== cost) {
+    normalized = { ...normalized, cost };
+  }
+  return normalized;
+}
+
+function withNormalizedUsage(
+  chunk: StreamChunk,
+  provider: HarnessSelection["provider"],
+): StreamChunk {
+  if (chunk.type !== EventType.RUN_FINISHED || !chunk.usage) return chunk;
+  const usage = normalizedUsage(chunk.usage, provider);
   return usage === chunk.usage ? chunk : { ...chunk, usage };
+}
+
+/**
+ * TanStack pipes transformed chunks between onChunk hooks, but onUsage and
+ * onFinish each receive the engine's original provider usage. Decorate OTel's
+ * lifecycle hooks so a later raw callback cannot overwrite the normalized
+ * attributes it observed on RUN_FINISHED.
+ */
+function withNormalizedTelemetryUsage(
+  telemetry: ChatMiddleware,
+  provider: HarnessSelection["provider"],
+): ChatMiddleware {
+  return {
+    ...telemetry,
+    onUsage(ctx, usage) {
+      return telemetry.onUsage?.(ctx, normalizedUsage(usage, provider));
+    },
+    onFinish(ctx, info) {
+      return telemetry.onFinish?.(
+        ctx,
+        info.usage
+          ? { ...info, usage: normalizedUsage(info.usage, provider) }
+          : info,
+      );
+    },
+  };
 }
 
 /**
@@ -121,7 +157,10 @@ export function createHarnessTelemetryMiddleware({
     onChunk(_ctx, originalChunk) {
       const chunk = withNormalizedUsage(originalChunk, selection.provider);
       sessionId ??= sessionIdFromChunk(chunk, selection.provider);
-      totalCostUsd ??= reportedCost(chunk);
+      totalCostUsd ??=
+        chunk.type === EventType.RUN_FINISHED
+          ? reportedCost(chunk.usage)
+          : undefined;
 
       if (chunk.type === EventType.TOOL_CALL_START) {
         tools.set(chunk.toolCallId, {
@@ -211,21 +250,24 @@ export function createHarnessTelemetryMiddleware({
       : {}),
   });
 
-  const telemetry = otelMiddleware({
-    tracer,
-    meter,
-    captureContent: true,
-    redact: redactContent,
-    maxContentLength: TELEMETRY_MAX_CONTENT_LENGTH,
-    attributeEnricher: enrichSpan,
-    onSpanEnd(info, span) {
-      span.setAttributes(commonAttributes());
-      if (totalCostUsd !== undefined) {
-        span.setAttribute("gen_ai.usage.cost", totalCostUsd);
-      }
-      if (info.kind === "iteration") emitHarnessToolSpans(span);
-    },
-  });
+  const telemetry = withNormalizedTelemetryUsage(
+    otelMiddleware({
+      tracer,
+      meter,
+      captureContent: true,
+      redact: redactContent,
+      maxContentLength: TELEMETRY_MAX_CONTENT_LENGTH,
+      attributeEnricher: enrichSpan,
+      onSpanEnd(info, span) {
+        span.setAttributes(commonAttributes());
+        if (totalCostUsd !== undefined) {
+          span.setAttribute("gen_ai.usage.cost", totalCostUsd);
+        }
+        if (info.kind === "iteration") emitHarnessToolSpans(span);
+      },
+    }),
+    selection.provider,
+  );
 
   return [harnessEvents, telemetry];
 }

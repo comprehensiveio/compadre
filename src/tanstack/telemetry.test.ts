@@ -59,8 +59,10 @@ async function passChunk(
   const normalized =
     transformed && !Array.isArray(transformed) ? transformed : chunk;
   await telemetry.onChunk?.(ctx, normalized);
-  if (normalized.type === EventType.RUN_FINISHED && normalized.usage) {
-    await telemetry.onUsage?.(ctx, normalized.usage);
+  // TanStack pipes the transformed chunk through later onChunk hooks, then
+  // invokes onUsage with the original adapter chunk rather than the transform.
+  if (chunk.type === EventType.RUN_FINISHED && chunk.usage) {
+    await telemetry.onUsage?.(ctx, chunk.usage);
   }
   return normalized;
 }
@@ -141,19 +143,20 @@ test("emits GenAI spans, harness tool spans, usage, and provider cost", async ()
     content: "done secret-value-123",
     timestamp: 1_150,
   });
+  const rawUsage = {
+    promptTokens: 10,
+    completionTokens: 4,
+    totalTokens: 14,
+    promptTokensDetails: { cachedTokens: 3, cacheWriteTokens: 5 },
+    providerUsageDetails: { totalCostUsd: 0.12 },
+  };
   const finished = await passChunk(observer, telemetry, ctx, {
     type: EventType.RUN_FINISHED,
     runId: "run-1",
     threadId: "thread-1",
     model: "claude-opus-5",
     finishReason: "stop",
-    usage: {
-      promptTokens: 10,
-      completionTokens: 4,
-      totalTokens: 14,
-      promptTokensDetails: { cachedTokens: 3, cacheWriteTokens: 5 },
-      providerUsageDetails: { totalCostUsd: 0.12 },
-    },
+    usage: rawUsage,
     timestamp: 1_200,
   });
   assert.equal(finished.type, EventType.RUN_FINISHED);
@@ -165,7 +168,8 @@ test("emits GenAI spans, harness tool spans, usage, and provider cost", async ()
     finishReason: "stop",
     duration: 200,
     content: "done",
-    usage: finished.usage,
+    // onFinish also receives the engine's untransformed aggregate usage.
+    usage: rawUsage,
   });
 
   const spans = exporter.getFinishedSpans();
