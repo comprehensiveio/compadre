@@ -1,8 +1,11 @@
-let prompt = "";
-for await (const chunk of process.stdin) prompt += chunk;
+// Claude Code sends one prompt and closes stdin; wait for that boundary before
+// emitting the scripted response so this fixture matches the real CLI lifecycle.
+for await (const _chunk of process.stdin) {
+  // Drain the prompt. Its wording must not control fixture behavior.
+}
 
 const resumed = process.argv.includes("--resume");
-const turn = resumed || prompt.includes("second") ? "second" : "first";
+const turn = resumed ? "second" : "first";
 const toolCallId = `${turn}-tool`;
 const answerId = `${turn}-answer`;
 const events = [

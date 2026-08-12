@@ -8,9 +8,14 @@ export function deferTerminalHooks(middleware: ChatMiddleware): {
   lifecycle: ChatMiddleware;
   terminal: ChatMiddleware;
 } {
-  const { onFinish, onAbort, onError, ...lifecycle } = middleware;
+  const { onFinish, onAbort, onError, ...rest } = middleware;
+  const baseName = middleware.name ?? "middleware";
+  const lifecycle: ChatMiddleware = {
+    ...rest,
+    name: `${baseName}-lifecycle`,
+  };
   const terminal: ChatMiddleware = {
-    name: `${middleware.name ?? "middleware"}-terminal`,
+    name: `${baseName}-terminal`,
     ...(onFinish ? { onFinish } : {}),
     ...(onAbort ? { onAbort } : {}),
     ...(onError ? { onError } : {}),

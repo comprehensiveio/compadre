@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, rm } from "node:fs/promises";
+import { copyFile, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -23,6 +23,7 @@ import {
   defineSandbox,
   defineWorkspace,
   SandboxCapability,
+  type SandboxHandle,
   withSandbox,
 } from "@tanstack/ai-sandbox";
 import { localProcessSandbox } from "@tanstack/ai-sandbox-local-process";
@@ -36,11 +37,77 @@ interface ScriptedTurn {
   toolResult: string;
 }
 
+const EXPECTED_HISTORY = [
+  {
+    role: "user",
+    content: "first prompt",
+    toolCallId: undefined,
+    toolCallIds: undefined,
+  },
+  {
+    role: "assistant",
+    content: null,
+    toolCallId: undefined,
+    toolCallIds: ["first-tool"],
+  },
+  {
+    role: "tool",
+    content: "one",
+    toolCallId: "first-tool",
+    toolCallIds: undefined,
+  },
+  {
+    role: "assistant",
+    content: "first answer",
+    toolCallId: undefined,
+    toolCallIds: undefined,
+  },
+  {
+    role: "user",
+    content: "second prompt",
+    toolCallId: undefined,
+    toolCallIds: undefined,
+  },
+  {
+    role: "assistant",
+    content: null,
+    toolCallId: undefined,
+    toolCallIds: ["second-tool"],
+  },
+  {
+    role: "tool",
+    content: "two",
+    toolCallId: "second-tool",
+    toolCallIds: undefined,
+  },
+  {
+    role: "assistant",
+    content: "second answer",
+    toolCallId: undefined,
+    toolCallIds: undefined,
+  },
+];
+
+function projectHistory(messages: ReadonlyArray<ModelMessage>) {
+  return messages.map((message) => ({
+    role: message.role,
+    content: message.content,
+    toolCallId: message.toolCallId,
+    toolCallIds: message.toolCalls?.map((call) => call.id),
+  }));
+}
+
+/** Single-quote a shell word, escaping embedded single quotes POSIX-style. */
+function shellQuote(value: string): string {
+  return `'${value.replaceAll("'", `'\\''`)}'`;
+}
+
 async function createTestSandbox(id: string): Promise<{
   sandbox: ReturnType<typeof defineSandbox>;
   cleanup: () => Promise<void>;
 }> {
   const directory = await mkdtemp(join(tmpdir(), "compadre-persistence-"));
+  let handle: SandboxHandle | undefined;
   return {
     sandbox: defineSandbox({
       id,
@@ -53,9 +120,20 @@ async function createTestSandbox(id: string): Promise<{
         snapshot: "none",
         destroyOnComplete: false,
       },
+      hooks: {
+        onReady(readyHandle) {
+          handle = readyHandle;
+        },
+      },
       fileEvents: false,
     }),
-    cleanup: () => rm(directory, { recursive: true, force: true }),
+    cleanup: async () => {
+      try {
+        await handle?.destroy();
+      } finally {
+        await rm(directory, { recursive: true, force: true });
+      }
+    },
   };
 }
 
@@ -236,33 +314,22 @@ test("persists complete tool-heavy history across two native harness turns", asy
   const messages = await persistence.stores.messages.loadThread(
     "two-turn-thread",
   );
-  assert.deepEqual(
-    messages.map((message: ModelMessage) => ({
-      role: message.role,
-      content: message.content,
-      toolCallId: message.toolCallId,
-      toolCallIds: message.toolCalls?.map((call) => call.id),
-    })),
-    [
-      { role: "user", content: "first prompt", toolCallId: undefined, toolCallIds: undefined },
-      { role: "assistant", content: null, toolCallId: undefined, toolCallIds: ["first-tool"] },
-      { role: "tool", content: "one", toolCallId: "first-tool", toolCallIds: undefined },
-      { role: "assistant", content: "first answer", toolCallId: undefined, toolCallIds: undefined },
-      { role: "user", content: "second prompt", toolCallId: undefined, toolCallIds: undefined },
-      { role: "assistant", content: null, toolCallId: undefined, toolCallIds: ["second-tool"] },
-      { role: "tool", content: "two", toolCallId: "second-tool", toolCallIds: undefined },
-      { role: "assistant", content: "second answer", toolCallId: undefined, toolCallIds: undefined },
-    ],
-  );
+  assert.deepEqual(projectHistory(messages), EXPECTED_HISTORY);
 });
 
 test("persists complete history through the real Claude Code adapter lifecycle", async (t) => {
   const persistence = memoryPersistence();
-  const executable = fileURLToPath(
+  const fixtureSource = fileURLToPath(
     new URL("./fixtures/scripted-claude.mjs", import.meta.url),
   );
+  const fixtureDirectory = await mkdtemp(
+    join(tmpdir(), "compadre claude fixture "),
+  );
+  const executable = join(fixtureDirectory, "scripted claude.mjs");
+  await copyFile(fixtureSource, executable);
+  t.after(() => rm(fixtureDirectory, { recursive: true, force: true }));
   const adapter = claudeCodeText("claude-opus-5", {
-    claudeExecutable: `${process.execPath} ${executable}`,
+    claudeExecutable: `${shellQuote(process.execPath)} ${shellQuote(executable)}`,
     emitDiff: false,
   });
   const { sandbox, cleanup } = await createTestSandbox(
@@ -293,24 +360,7 @@ test("persists complete history through the real Claude Code adapter lifecycle",
   const messages = await persistence.stores.messages.loadThread(
     "two-turn-thread",
   );
-  assert.deepEqual(
-    messages.map((message) => ({
-      role: message.role,
-      content: message.content,
-      toolCallId: message.toolCallId,
-      toolCallIds: message.toolCalls?.map((call) => call.id),
-    })),
-    [
-      { role: "user", content: "first prompt", toolCallId: undefined, toolCallIds: undefined },
-      { role: "assistant", content: null, toolCallId: undefined, toolCallIds: ["first-tool"] },
-      { role: "tool", content: "one", toolCallId: "first-tool", toolCallIds: undefined },
-      { role: "assistant", content: "first answer", toolCallId: undefined, toolCallIds: undefined },
-      { role: "user", content: "second prompt", toolCallId: undefined, toolCallIds: undefined },
-      { role: "assistant", content: null, toolCallId: undefined, toolCallIds: ["second-tool"] },
-      { role: "tool", content: "two", toolCallId: "second-tool", toolCallIds: undefined },
-      { role: "assistant", content: "second answer", toolCallId: undefined, toolCallIds: undefined },
-    ],
-  );
+  assert.deepEqual(projectHistory(messages), EXPECTED_HISTORY);
 });
 
 test("persists reconciled tool history after a terminal message resync", async (t) => {
@@ -347,22 +397,5 @@ test("persists reconciled tool history after a terminal message resync", async (
   const messages = await persistence.stores.messages.loadThread(
     "two-turn-thread",
   );
-  assert.deepEqual(
-    messages.map((message) => ({
-      role: message.role,
-      content: message.content,
-      toolCallId: message.toolCallId,
-      toolCallIds: message.toolCalls?.map((call) => call.id),
-    })),
-    [
-      { role: "user", content: "first prompt", toolCallId: undefined, toolCallIds: undefined },
-      { role: "assistant", content: null, toolCallId: undefined, toolCallIds: ["first-tool"] },
-      { role: "tool", content: "one", toolCallId: "first-tool", toolCallIds: undefined },
-      { role: "assistant", content: "first answer", toolCallId: undefined, toolCallIds: undefined },
-      { role: "user", content: "second prompt", toolCallId: undefined, toolCallIds: undefined },
-      { role: "assistant", content: null, toolCallId: undefined, toolCallIds: ["second-tool"] },
-      { role: "tool", content: "two", toolCallId: "second-tool", toolCallIds: undefined },
-      { role: "assistant", content: "second answer", toolCallId: undefined, toolCallIds: undefined },
-    ],
-  );
+  assert.deepEqual(projectHistory(messages), EXPECTED_HISTORY);
 });
