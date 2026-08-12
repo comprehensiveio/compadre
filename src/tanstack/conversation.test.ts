@@ -54,6 +54,7 @@ test("translates AG-UI text, tools, session, and usage for channel callers", asy
       }
     ),
     {
+      runId: "run",
       provider: "codex",
       startedAt: Date.now(),
       stream: {
@@ -67,6 +68,7 @@ test("translates AG-UI text, tools, session, and usage for channel callers", asy
   );
 
   assert.equal(result.result, "hello");
+  assert.equal(result.runId, "run");
   assert.equal(result.sessionId, "codex-thread");
   assert.equal(result.provider, "codex");
   assert.equal(result.model, "gpt-5.6-sol");
@@ -87,6 +89,7 @@ test("surfaces AG-UI failures and still completes the channel stream", async () 
         timestamp: 1,
       }),
       {
+        runId: "run",
         provider: "claude-code",
         startedAt: Date.now(),
         stream: {
@@ -156,6 +159,7 @@ test("publishes only the terminal Codex message to channel callers", async () =>
       }
     ),
     {
+      runId: "run",
       provider: "codex",
       startedAt: Date.now(),
       stream: {
@@ -172,6 +176,7 @@ test("publishes only the terminal Codex message to channel callers", async () =>
 test("requires a terminal AG-UI event", async () => {
   await assert.rejects(
     consumeHarnessConversation(stream(), {
+      runId: "run",
       provider: "codex",
       startedAt: Date.now(),
     }),

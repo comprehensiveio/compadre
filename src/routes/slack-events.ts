@@ -2,13 +2,13 @@ import { Hono } from "hono";
 import { DEFAULT_MAX_TURNS } from "../config.js";
 import {
   configuredAgentProvider,
-  runConversation,
 } from "../conversation.js";
 import { getSlackSystemPrompt, getSlackStreamingSystemPrompt } from "../prompts/index.js";
 import { resolveSlackChannelName } from "../services/slack-context.js";
 import { parseAgentRouteDirective } from "../services/agent-routing.js";
 import { buildSlackAgentInput } from "../services/slack-prompt.js";
 import { SlackStream } from "../services/slack-stream.js";
+import { configuredConversationRunner } from "../services/conversation-runner.js";
 import { providerForAgentProfile } from "../tanstack/protocol.js";
 import { humanizeToolName } from "../services/tool-labels.js";
 import { verifySlackSignature } from "../services/slack-verify.js";
@@ -181,15 +181,18 @@ async function handleAIMessage(
     `[slack-events] routing user=${event.user ?? "unknown"} provider=${profile ? providerForAgentProfile(profile) : configuredAgentProvider()} profile=${profile ?? "default"}`,
   );
 
-  runConversation({
+  configuredConversationRunner()({
     prompt,
     transcriptUserMessage,
     threadId: threadKey,
     profile,
-    systemPrompt: (worktreePath) =>
-      slackStream
-        ? getSlackStreamingSystemPrompt(worktreePath)
-        : getSlackSystemPrompt(worktreePath),
+    systemPrompt:
+      process.env.COMPADRE_SLACK_WORKFLOW_ENABLED === "true"
+        ? undefined
+        : (worktreePath) =>
+            slackStream
+              ? getSlackStreamingSystemPrompt(worktreePath)
+              : getSlackSystemPrompt(worktreePath),
     maxTurns: DEFAULT_MAX_TURNS,
     stream: slackStream
       ? {

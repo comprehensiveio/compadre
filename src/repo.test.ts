@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { execFile as execFileCallback } from "node:child_process";
 import {
   access,
   chmod,
@@ -12,7 +13,60 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import test from "node:test";
-import { isRemovableStaleWorktree, prepareWorktree } from "./repo.js";
+import { promisify } from "node:util";
+import {
+  configuredRepositoryUrl,
+  gitEnvironment,
+  isRemovableStaleWorktree,
+  prepareRepositorySeed,
+  prepareWorktree,
+  refreshExistingRepository,
+  repositoryNeedsFetch,
+  usesRepositoryAsWorktree,
+} from "./repo.js";
+
+const execFile = promisify(execFileCallback);
+
+test("keeps GitHub credentials out of the configured repository URL", () => {
+  const token = "secret-token";
+  const url = configuredRepositoryUrl({
+    GITHUB_REPO_URL: "https://github.com/comprehensiveio/comp.git",
+    GITHUB_PERSONAL_ACCESS_TOKEN: token,
+  });
+
+  assert.equal(url, "https://github.com/comprehensiveio/comp.git");
+  assert.equal(url.includes(token), false);
+});
+
+test("scopes Git credentials to the configured HTTP origin", () => {
+  const environment = gitEnvironment({
+    GITHUB_REPO_URL: "https://github.example/owner/repo.git",
+    GITHUB_PERSONAL_ACCESS_TOKEN: "secret-token",
+  });
+
+  assert.equal(environment.GIT_CONFIG_COUNT, "2");
+  assert.equal(
+    environment.GIT_CONFIG_KEY_0,
+    "http.https://github.example/.extraHeader",
+  );
+  assert.equal(
+    environment.GIT_CONFIG_KEY_1,
+    "http.https://github.example/.followRedirects",
+  );
+  assert.equal(environment.GIT_CONFIG_VALUE_1, "false");
+  assert.match(environment.GIT_CONFIG_VALUE_0 ?? "", /^Authorization: Basic /);
+});
+
+test("does not attach HTTP credentials to a file repository", () => {
+  const environment = gitEnvironment({
+    GITHUB_REPO_URL: "file:///tmp/repository",
+    GITHUB_PERSONAL_ACCESS_TOKEN: "secret-token",
+  });
+
+  assert.equal(environment.GIT_CONFIG_COUNT, undefined);
+  assert.equal(environment.GIT_CONFIG_KEY_0, undefined);
+  assert.equal(environment.GIT_TERMINAL_PROMPT, "0");
+});
 
 test("removes only stale worktrees that have no live thread owner", () => {
   const retained = new Set(["active"]);
@@ -30,6 +84,100 @@ test("removes only stale worktrees that have no live thread owner", () => {
     isRemovableStaleWorktree("recent", 9_000, now, 5_000, retained),
     false
   );
+});
+
+test("uses the base checkout directly only for local or single-use tasks", () => {
+  assert.equal(
+    usesRepositoryAsWorktree("/opt/render/repo", {
+      COMPADRE_SINGLE_USE_REPOSITORY: "true",
+    }),
+    true,
+  );
+  assert.equal(usesRepositoryAsWorktree("/Users/test/comp", {}), true);
+  assert.equal(usesRepositoryAsWorktree("/opt/render/repo", {}), false);
+});
+
+test("fetches only when the baked and remote revisions differ", () => {
+  const revision = "a".repeat(40);
+  assert.equal(repositoryNeedsFetch(revision, revision), false);
+  assert.equal(repositoryNeedsFetch(revision, "b".repeat(40)), true);
+});
+
+test("builds a self-contained editable Workflow repository", async () => {
+  const testRoot = await mkdtemp(path.join(tmpdir(), "compadre-repo-seed-"));
+  const sourcePath = path.join(testRoot, "source");
+  const seedPath = path.join(testRoot, "repository");
+  const previousUrl = process.env.GITHUB_REPO_URL;
+  const previousBranch = process.env.REPO_BRANCH;
+
+  try {
+    await mkdir(sourcePath);
+    await execFile("git", ["init", "--initial-branch", "main"], {
+      cwd: sourcePath,
+    });
+    await writeFile(path.join(sourcePath, "README.md"), "seed contents\n");
+    await execFile("git", ["add", "README.md"], { cwd: sourcePath });
+    await execFile(
+      "git",
+      [
+        "-c",
+        "user.name=Compadre Test",
+        "-c",
+        "user.email=compadre@example.com",
+        "commit",
+        "-m",
+        "seed",
+      ],
+      { cwd: sourcePath },
+    );
+
+    process.env.GITHUB_REPO_URL = `file://${sourcePath}`;
+    process.env.REPO_BRANCH = "main";
+    prepareRepositorySeed(seedPath);
+
+    assert.equal(
+      await readFile(path.join(seedPath, "README.md"), "utf8"),
+      "seed contents\n",
+    );
+    assert.equal(
+      (await execFile("git", ["-C", seedPath, "rev-parse", "--is-shallow-repository"]))
+        .stdout.trim(),
+      "true",
+    );
+
+    await writeFile(path.join(sourcePath, "README.md"), "new remote contents\n");
+    await execFile("git", ["add", "README.md"], { cwd: sourcePath });
+    await execFile(
+      "git",
+      [
+        "-c",
+        "user.name=Compadre Test",
+        "-c",
+        "user.email=compadre@example.com",
+        "commit",
+        "-m",
+        "remote update",
+      ],
+      { cwd: sourcePath },
+    );
+
+    refreshExistingRepository(
+      seedPath,
+      `file://${sourcePath}`,
+      "main",
+      true,
+    );
+    assert.equal(
+      await readFile(path.join(seedPath, "README.md"), "utf8"),
+      "new remote contents\n",
+    );
+  } finally {
+    if (previousUrl === undefined) delete process.env.GITHUB_REPO_URL;
+    else process.env.GITHUB_REPO_URL = previousUrl;
+    if (previousBranch === undefined) delete process.env.REPO_BRANCH;
+    else process.env.REPO_BRANCH = previousBranch;
+    await rm(testRoot, { recursive: true, force: true });
+  }
 });
 
 test("prepares a worktree through its checked-in setup script", async () => {

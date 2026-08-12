@@ -23,6 +23,7 @@ export interface StreamCallbacks {
 }
 
 export interface ConversationOptions {
+  runId?: string;
   prompt: string;
   transcriptUserMessage?: string;
   threadId?: string;
@@ -75,6 +76,7 @@ export function runConversation(
   const run = async () => {
     try {
       const execute = () => runHarnessConversation({
+        runId: options.runId,
         threadId,
         prompt: options.prompt,
         transcriptUserMessage:

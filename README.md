@@ -26,6 +26,8 @@ GET  /health                 # Health check
 POST /prompt                 # Ad-hoc prompt (Bearer COMPADRE_API_KEY)
 POST /slack/events           # Primary signed Slack Events ingress
 POST /ag-ui                  # Optional authenticated AG-UI stream
+POST /workflow-runs          # Optional durable Workflow launcher (Bearer COMPADRE_API_KEY)
+GET  /workflow-runs/:id/events # Resumable AG-UI event stream (Bearer COMPADRE_API_KEY; any authenticated caller may replay a known run ID)
 POST /webhook/:source        # Generic webhook (Bearer COMPADRE_API_KEY)
 ```
 
@@ -53,6 +55,8 @@ See `.env.example` for the full list. Key notes:
 - **DATADOG_MCP_URL**: Optional endpoint override for another Datadog site or toolset selection. Defaults to US1 with the `core`, `apm`, and `llmobs` toolsets.
 - **DD_SERVICE / DD_LLMOBS_ENABLED / DD_LLMOBS_ML_APP / DD_TRACE_OTEL_ENABLED**: Attribute TanStack's provider-neutral OpenTelemetry agent/model/tool spans to Compadre in Datadog. Compadre defaults these on at startup unless explicitly overridden.
 - **DD_METRICS_OTEL_ENABLED**: Export TanStack's GenAI token and duration histograms through `dd-trace`.
+- **COMPADRE_DURABILITY_BACKEND / COMPADRE_DURABILITY_DATABASE_URL**: Persist TanStack run lifecycle records and ordered AG-UI delivery events. The default is off, `memory` enables database-free local replay, and deployed Workflows use `postgres` with a dedicated URL.
+- **READONLY_DATABASE_URL**: Must use a dedicated least-privilege role with only `CONNECT`, required schema `USAGE`, and `SELECT` grants. Revoke ownership, DML, DDL, and elevated server-file privileges; the MCP server's read-only transaction and bounded cursor are defense in depth.
 - **SLACK_BOT_TOKEN**: `xoxb-*` token from the Compadre Slack app.
 - The Slack bot needs `reactions:read` in addition to `reactions:write` so a restarted instance can replace interrupted `compadre-thinking` reactions with `compadre-failure`.
 - **GOOGLE_WORKSPACE_USER_EMAIL / GOOGLE_OAUTH_CLIENT_ID / GOOGLE_OAUTH_CLIENT_SECRET / GOOGLE_OAUTH_REFRESH_TOKEN**: OAuth credentials for the Compadre Google Workspace bot user. When set, Compadre enables Google Workspace tools through `workspace-mcp`.
@@ -83,13 +87,78 @@ On Render:
 - Threads get isolated git worktrees; inactive thread state and worktrees expire together after one hour
 - One isolated worktree is prepared while the harness is idle so a new thread normally avoids dependency installation on its request path; incoming user work preempts that preparation
 
+### Ephemeral agent Workflow spike
+
+The repository also registers three opt-in Render Workflow tasks:
+
+- `probeAgentRuntime` measures Workflow and repository startup without calling a model.
+- `runAgent` executes one existing TanStack AI agent turn on an isolated 4 GB task instance.
+- `probeAgentDurability` verifies a saved run through the same Postgres replay adapter without returning its message content.
+
+Slack remains on the persistent runner by default. The same channel-neutral
+conversation interface can be switched to the Workflow producer with
+`COMPADRE_SLACK_WORKFLOW_ENABLED=true` after the relay has been verified. Task
+retries remain disabled until Slack and GitHub side effects have durable
+idempotency, and provider session/worktree reuse remains a separate persistence
+milestone.
+
+Use these commands for local Workflow development with Render CLI 2.12 or
+newer:
+
+```bash
+# Terminal 1
+render workflows dev -- npm run workflow:dev
+
+# Terminal 2
+RENDER_USE_LOCAL_DEV=true npm run workflow:probe
+RENDER_USE_LOCAL_DEV=true npm run workflow:agent -- "Reply with only: hi"
+```
+
+Configure the Workflow service with:
+
+```text
+Build: npm ci && npm run build && npm run workflow:prepare-runtime && npm run workflow:seed-repo
+Start: npm run workflow:start
+```
+
+The build command clones a shallow editable `comp` repository into the cached
+Workflow image. Because Render gives each task its own disposable instance,
+the task uses that checkout directly and fetches only the latest GitHub delta.
+The persistent service continues to use isolated per-thread worktrees. If the
+baked checkout is missing, the runtime falls back to a partial shallow clone.
+The Workflow needs the same
+agent/MCP environment group as the web service plus a valid
+`GITHUB_PERSONAL_ACCESS_TOKEN`; the credential is passed through Git's child
+process environment and is never stored in the origin URL. A shared
+`REPO_PATH` is intentionally replaced by the baked checkout for Workflow tasks;
+set `COMPADRE_WORKFLOW_REPO_PATH` only if the Workflow needs a different path.
+
+Workflow run and delivery durability uses TanStack's `RunStore`,
+`StreamDurability`, and `RunController` contracts. Local development remains
+database-free unless `COMPADRE_DURABILITY_BACKEND=memory` is selected. The
+deployed Workflow sets the backend to `postgres`; every AG-UI chunk is persisted
+before the existing Compadre consumer observes it, and can be replayed later by
+the Slack delivery gateway.
+
+The relay has a database-free local mode: set
+`COMPADRE_DURABILITY_BACKEND=memory`, `COMPADRE_WORKFLOW_RUNNER=local`, and
+`COMPADRE_WORKFLOW_RELAY_ENABLED=true`. `POST /workflow-runs` starts an
+in-process run and `GET /workflow-runs/:runId/events?offset=-1` serves its
+resumable AG-UI stream. A deployed relay switches only the runner to `render`
+and the durability backend to `postgres`; the HTTP and event contracts stay
+the same. Slack consumes that identical durable log through the existing
+`SlackStream`; it never depends on a live connection to the Workflow task.
+See [the Render Workflow cutover runbook](docs/render-workflow-cutover.md) for
+the deployed topology, repeatable probe, failure semantics, and cutover steps.
+
 ## Architecture
 
-```
-Slack, /prompt, or webhooks → runConversation() → TanStack AI ─┬→ Claude Code
-                                                              └→ Codex
-                                                                    │
-                                           shared worktree, MCP, sessions, telemetry
+```text
+Slack / HTTP -> persistent relay -> Render Workflow -> Claude Code or Codex
+                       |                  |
+                       +---- Postgres <---+
+                       |
+                       +-> Slack stream
 ```
 
 Slack threads retain their worktree, bounded neutral transcript, and
@@ -97,5 +166,6 @@ provider-scoped native sessions in the current process. Runs on the same thread
 are serialized, and the service runs only one coding harness at a time. A
 run-scoped supervisor records safe PID/RSS telemetry and aborts the harness
 process group before it can exhaust the service cgroup. The runtime reconciles
-stale Slack reactions after a restart. Postgres durability and distributed
-locking across instances are deliberately deferred.
+stale Slack reactions after a restart. Postgres stores run lifecycle and
+ordered AG-UI delivery events; distributed tool-side-effect locking and exact
+Slack message continuation remain deliberately deferred.
