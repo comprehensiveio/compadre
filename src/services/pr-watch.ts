@@ -82,6 +82,7 @@ interface RenderEnvironmentPageItem {
   environment?: { id?: string; name?: string; projectId?: string };
 }
 
+/** Legacy bootstrap retained while the Drizzle migration baseline rolls out. */
 export const PR_WATCH_SCHEMA = `
 CREATE TABLE IF NOT EXISTS compadre_pr_watches (
   id uuid PRIMARY KEY,

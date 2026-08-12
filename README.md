@@ -76,9 +76,36 @@ for Codex, `--fable` for Fable through Claude Code, and `--claude-code` or `--cc
 for the normal Claude Code model. Routing directives are removed before the
 agent prompt and conversation transcript are created.
 
+## Database schema and migrations
+
+Compadre's PostgreSQL schema is declared in `src/db/schema.ts`, with generated
+SQL migrations committed under `drizzle/`. Drizzle uses the existing
+`COMPADRE_DURABILITY_DATABASE_URL`; local commands load it from `.env.local`.
+
+```bash
+npm run db:generate -- --name=describe_change # generate a migration
+npm run db:check                              # validate migration history
+npm run db:migrate                            # apply pending migrations
+npm run db:studio                             # inspect the configured database
+```
+
+Run `db:migrate` as an explicit deployment step before starting code that
+depends on a new schema. The initial migration safely baselines databases where
+the durability and PR-watch tables were already created by older application
+versions. The legacy startup DDL remains temporarily for rollout compatibility;
+new schema changes should be made through Drizzle migrations.
+
 ## Deployment (Render)
 
-Native Node.js service. Build: `npm install && npm run build`, Start: `npm start`.
+Native Node.js service. Build: `npm ci --include=dev && npm run build`, Start: `npm start`.
+
+The active `compadre-relay` Web Service is declared in [`render.yaml`](render.yaml).
+Render runs `npm run db:migrate` as its pre-deploy command, so migrations finish
+before a newly built version can receive traffic. Existing environment variables
+are intentionally omitted from the Blueprint: Render preserves them when the
+Blueprint is linked, without putting secret values in Git. Linking the repository
+to the Blueprint is a one-time Render setup; subsequent service configuration
+changes and deploys sync from `main`.
 
 Google Workspace support uses `uvx` because `workspace-mcp` runs as a Python MCP server. `npm start` installs `uvx` at startup when Google Workspace env vars are present and `uvx` is not already available.
 

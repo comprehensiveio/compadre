@@ -1,3 +1,4 @@
+/** Legacy bootstrap retained while the Drizzle migration baseline rolls out. */
 export const POSTGRES_DURABILITY_SCHEMA = `
 CREATE TABLE IF NOT EXISTS compadre_ai_runs (
   run_id text PRIMARY KEY,
