@@ -300,3 +300,63 @@ test("identifies Codex as OpenAI and records cache and reasoning usage", async (
 
   await provider.shutdown();
 });
+
+test("logs each agent iteration and its terminal status without content", async () => {
+  const lines: string[] = [];
+  const [observer] = createHarnessTelemetryMiddleware({
+    selection: {
+      provider: "codex",
+      model: "gpt-5.6-sol",
+    },
+    threadId: "thread-log",
+    runId: "run-log",
+    worktreeId: "worktree-log",
+    logger: { log: (line) => lines.push(String(line)) },
+  });
+  const ctx = middlewareContext("codex", "gpt-5.6-sol");
+
+  await observer.onIteration?.(ctx, {
+    iteration: 0,
+    messageId: "message-secret",
+  });
+  ctx.iteration = 0;
+  await observer.onFinish?.(ctx, {
+    finishReason: "stop",
+    duration: 1_234.6,
+    content: "response-secret",
+  });
+
+  assert.deepEqual(lines, [
+    "[agent-turn] run=run-log iteration=1 status=started provider=codex model=gpt-5.6-sol",
+    "[agent-turn] run=run-log iteration=1 status=finished duration-ms=1235 finish-reason=stop",
+  ]);
+  assert.doesNotMatch(lines.join("\n"), /message-secret|response-secret|thread-log/);
+});
+
+test("logs aborted and failed agent turns", async () => {
+  const lines: string[] = [];
+  const [observer] = createHarnessTelemetryMiddleware({
+    selection: {
+      provider: "claude-code",
+      model: "claude-opus-5",
+    },
+    threadId: "thread-terminal",
+    runId: "run-terminal",
+    worktreeId: "worktree-terminal",
+    logger: { log: (line) => lines.push(String(line)) },
+  });
+  const ctx = middlewareContext("claude-code", "claude-opus-5");
+  ctx.iteration = 2;
+
+  await observer.onAbort?.(ctx, { duration: 40.4 });
+  await observer.onError?.(ctx, {
+    duration: 50.6,
+    error: new Error("provider-secret"),
+  });
+
+  assert.deepEqual(lines, [
+    "[agent-turn] run=run-terminal iteration=3 status=aborted duration-ms=40",
+    "[agent-turn] run=run-terminal iteration=3 status=error duration-ms=51",
+  ]);
+  assert.doesNotMatch(lines.join("\n"), /provider-secret|thread-terminal/);
+});
