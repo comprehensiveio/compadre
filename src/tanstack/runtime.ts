@@ -1,6 +1,10 @@
 import crypto from "node:crypto";
 import { readdir, unlink } from "node:fs/promises";
-import { EventType, type StreamChunk } from "@tanstack/ai";
+import {
+  EventType,
+  convertMessagesToModelMessages,
+  type StreamChunk,
+} from "@tanstack/ai";
 import {
   defineSandbox,
   defineWorkspace,
@@ -47,6 +51,17 @@ export interface AguiRuntimeOptions {
   systemPrompt?: (worktreePath: string) => string;
   transcriptUserMessage?: string;
   capacityPriority?: RunCapacityPriority;
+}
+
+function latestUserInput(
+  messages: AguiChatParams["messages"],
+): unknown | undefined {
+  const normalized = convertMessagesToModelMessages(messages);
+  for (let index = normalized.length - 1; index >= 0; index -= 1) {
+    const message = normalized[index];
+    if (message?.role === "user") return message.content;
+  }
+  return undefined;
 }
 
 interface ActiveRunLeases {
@@ -224,6 +239,7 @@ export async function runAguiChat(
     selection,
     threadId: params.threadId,
     runId: params.runId,
+    input: latestUserInput(params.messages),
   });
   let threadLease: ThreadRunLease | undefined;
   let capacityLease: ThreadRunLease | undefined;
