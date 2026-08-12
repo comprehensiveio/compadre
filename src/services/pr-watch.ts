@@ -8,6 +8,7 @@ const REPOSITORY = "comprehensiveio/comp";
 const DEFAULT_INTERVAL_MS = 2 * 60 * 1000;
 const RENDER_SERVICE_CACHE_MS = 10 * 60 * 1000;
 const STALE_DELIVERY_MS = 10 * 60 * 1000;
+const HTTP_TIMEOUT_MS = 15 * 1000;
 const PATCH_SCAN_COMMIT_LIMIT = 500;
 const RENDER_PROJECT_NAME = "CM";
 const RENDER_ENVIRONMENT_NAME = "Prod";
@@ -45,6 +46,7 @@ interface WatchRow {
   slack_team_id: string;
   slack_channel_id: string;
   slack_thread_ts: string;
+  matched_prod_commit: string | null;
 }
 
 interface RenderDeploy {
@@ -127,6 +129,7 @@ async function githubJson<T>(path: string): Promise<T> {
       "X-GitHub-Api-Version": "2022-11-28",
       "User-Agent": "compadre-pr-watch",
     },
+    signal: AbortSignal.timeout(HTTP_TIMEOUT_MS),
   });
   if (!response.ok) {
     throw new Error(`GitHub ${path} failed with HTTP ${response.status}`);
@@ -167,6 +170,7 @@ async function git(args: string[], input?: string): Promise<string> {
       stdout.push(chunk);
     });
     child.stderr.on("data", (chunk: Buffer) => stderr.push(chunk));
+    child.stdin.on("error", reject);
     child.on("error", reject);
     child.on("close", (code) => {
       if (code !== 0) {
@@ -196,6 +200,10 @@ async function fetchWatchRefs(prNumber: number): Promise<void> {
   ]);
 }
 
+async function deleteWatchRef(prNumber: number): Promise<void> {
+  await git(["update-ref", "-d", `refs/compadre-pr-watches/${prNumber}`]);
+}
+
 async function isAncestor(commit: string, descendant: string): Promise<boolean> {
   try {
     await git(["merge-base", "--is-ancestor", commit, descendant]);
@@ -215,34 +223,71 @@ async function commitPatchId(commit: string): Promise<string | null> {
   return stablePatchId(await git(["show", "--pretty=format:", "--no-ext-diff", commit]));
 }
 
+interface ProdPatchIndex {
+  positions: Map<string, number>;
+  patchIds: Map<string, string>;
+}
+
+let prodPatchIndexCache:
+  | { tip: string; index: Promise<ProdPatchIndex> }
+  | undefined;
+
+async function prodPatchIndex(): Promise<ProdPatchIndex> {
+  const tip = await git(["rev-parse", "origin/prod"]);
+  if (prodPatchIndexCache?.tip === tip) return prodPatchIndexCache.index;
+
+  const index = (async () => {
+    const prodCommits = (await git([
+      "rev-list",
+      `--max-count=${PATCH_SCAN_COMMIT_LIMIT}`,
+      "origin/prod",
+    ]))
+      .split("\n")
+      .filter(Boolean);
+    const positions = new Map(
+      prodCommits.map((commit, position) => [commit, position]),
+    );
+    const patchIds = new Map<string, string>();
+    const output = await git(
+      ["patch-id", "--stable"],
+      await git([
+        "log",
+        `--max-count=${PATCH_SCAN_COMMIT_LIMIT}`,
+        "--no-merges",
+        "--pretty=format:%H",
+        "-p",
+        "--no-ext-diff",
+        "origin/prod",
+      ]),
+    );
+    for (const line of output.split("\n")) {
+      const [patchId, commit] = line.trim().split(/\s+/);
+      if (
+        patchId &&
+        commit &&
+        positions.has(commit) &&
+        !patchIds.has(patchId)
+      ) {
+        // git log is newest-first, so retain the first occurrence.
+        patchIds.set(patchId, commit);
+      }
+    }
+    return { positions, patchIds };
+  })();
+  prodPatchIndexCache = { tip, index };
+  try {
+    return await index;
+  } catch (error) {
+    if (prodPatchIndexCache?.index === index) prodPatchIndexCache = undefined;
+    throw error;
+  }
+}
+
 async function findPatchEquivalentProdCommit(
   details: PullRequestDetails,
   commits: PullRequestCommit[],
 ): Promise<string | null> {
-  const prodCommits = (await git([
-    "rev-list",
-    `--max-count=${PATCH_SCAN_COMMIT_LIMIT}`,
-    "origin/prod",
-  ]))
-    .split("\n")
-    .filter(Boolean);
-  const prodPatchIds = new Map<string, string>();
-  const prodPatchOutput = await git(
-    ["patch-id", "--stable"],
-    await git([
-      "log",
-      `--max-count=${PATCH_SCAN_COMMIT_LIMIT}`,
-      "--no-merges",
-      "--pretty=format:%H",
-      "-p",
-      "--no-ext-diff",
-      "origin/prod",
-    ]),
-  );
-  for (const line of prodPatchOutput.split("\n")) {
-    const [patchId, commit] = line.trim().split(/\s+/);
-    if (patchId && commit) prodPatchIds.set(patchId, commit);
-  }
+  const prod = await prodPatchIndex();
 
   // A squash merge or a cherry-pick of a squash has the same aggregate patch
   // as the PR even though none of its individual commit SHAs survive.
@@ -254,25 +299,25 @@ async function findPatchEquivalentProdCommit(
     details.head.sha,
   ]);
   const aggregatePatchId = await stablePatchId(aggregatePatch);
-  if (aggregatePatchId && prodPatchIds.has(aggregatePatchId)) {
-    return prodPatchIds.get(aggregatePatchId)!;
+  if (aggregatePatchId && prod.patchIds.has(aggregatePatchId)) {
+    return prod.patchIds.get(aggregatePatchId)!;
   }
 
   // A PR can also be cherry-picked one commit at a time. Only declare it
   // present after every non-empty PR commit has a patch-equivalent prod commit.
-  const matches: string[] = [];
+  const matches: Array<{ commit: string; position: number }> = [];
   for (const commit of commits) {
     const patchId = await commitPatchId(commit.sha);
     if (!patchId) continue;
-    const match = prodPatchIds.get(patchId);
+    const match = prod.patchIds.get(patchId);
     if (!match) return null;
-    matches.push(match);
+    const position = prod.positions.get(match);
+    if (position === undefined) return null;
+    matches.push({ commit: match, position });
   }
   if (matches.length === 0) return null;
-  matches.sort(
-    (left, right) => prodCommits.indexOf(left) - prodCommits.indexOf(right),
-  );
-  return matches[0] ?? null;
+  matches.sort((left, right) => left.position - right.position);
+  return matches[0]?.commit ?? null;
 }
 
 export async function findPullRequestOnProd(
@@ -295,7 +340,10 @@ async function isCommitLiveOnRender(commit: string): Promise<boolean> {
   const serviceId = await productionCmServiceId(apiKey);
   const response = await fetch(
     `https://api.render.com/v1/services/${encodeURIComponent(serviceId)}/deploys?limit=20`,
-    { headers: { Authorization: `Bearer ${apiKey}` } },
+    {
+      headers: { Authorization: `Bearer ${apiKey}` },
+      signal: AbortSignal.timeout(HTTP_TIMEOUT_MS),
+    },
   );
   if (!response.ok) {
     throw new Error(`Render deploy lookup failed with HTTP ${response.status}`);
@@ -315,7 +363,7 @@ let renderServiceCache:
 function isCompRepository(repo: string | undefined): boolean {
   return Boolean(
     repo &&
-      /(?:github\.com[/:])comprehensiveio\/comp(?:\.git)?\/?$/i.test(repo),
+      /^(?:https?:\/\/github\.com\/|ssh:\/\/git@github\.com\/|git@github\.com:|github\.com\/)comprehensiveio\/comp(?:\.git)?\/?$/i.test(repo),
   );
 }
 
@@ -330,6 +378,7 @@ async function renderPage<T>(
   }
   const response = await fetch(url, {
     headers: { Authorization: `Bearer ${apiKey}` },
+    signal: AbortSignal.timeout(HTTP_TIMEOUT_MS),
   });
   if (!response.ok) {
     throw new Error(`Render ${path} lookup failed with HTTP ${response.status}`);
@@ -463,16 +512,10 @@ export class PullRequestWatchService {
         "SELECT pg_try_advisory_lock(hashtext('compadre-pr-watch-reconcile')) AS locked",
       );
       if (!lock.rows[0]?.locked) return;
-      await client.query(
-        `UPDATE compadre_pr_watches
-         SET status = 'waiting', delivery_started_at = NULL
-         WHERE status = 'delivering'
-           AND delivery_started_at <=
-             now() - make_interval(secs => $1::double precision)`,
-        [STALE_DELIVERY_MS / 1000],
-      );
+      await this.recoverStaleDeliveries(client);
       const watches = await client.query<WatchRow>(
-        `SELECT id, pr_number, pr_url, slack_team_id, slack_channel_id, slack_thread_ts
+        `SELECT id, pr_number, pr_url, slack_team_id, slack_channel_id,
+                slack_thread_ts, matched_prod_commit
          FROM compadre_pr_watches WHERE status = 'waiting'
          ORDER BY created_at ASC LIMIT 100`,
       );
@@ -502,6 +545,7 @@ export class PullRequestWatchService {
     if (details.state === "closed" && !details.merged) {
       await this.deliver(watch, "closed_unmerged", null,
         `PR #${watch.pr_number} was closed without merging, so I stopped watching it.`);
+      await this.cleanUpWatchRef(watch.pr_number);
       return;
     }
     if (!details.merged) {
@@ -519,6 +563,71 @@ export class PullRequestWatchService {
       "notified",
       prodCommit,
       `PR #${watch.pr_number} is now live in production. ${watch.pr_url}`,
+    );
+    await this.cleanUpWatchRef(watch.pr_number);
+  }
+
+  private async recoverStaleDeliveries(client: pg.PoolClient): Promise<void> {
+    const stale = await client.query<WatchRow>(
+      `SELECT id, pr_number, pr_url, slack_team_id, slack_channel_id,
+              slack_thread_ts, matched_prod_commit
+       FROM compadre_pr_watches
+       WHERE status = 'delivering'
+         AND delivery_started_at <=
+           now() - make_interval(secs => $1::double precision)`,
+      [STALE_DELIVERY_MS / 1000],
+    );
+    for (const watch of stale.rows) {
+      const text = watch.matched_prod_commit
+        ? `PR #${watch.pr_number} is now live in production. ${watch.pr_url}`
+        : `PR #${watch.pr_number} was closed without merging, so I stopped watching it.`;
+      try {
+        const response = await this.slack.getThreadReplies(
+          watch.slack_channel_id,
+          watch.slack_thread_ts,
+        );
+        const messages = Array.isArray(response.messages)
+          ? response.messages as Array<{ client_msg_id?: string; text?: string }>
+          : [];
+        const delivered = messages.some(
+          (message) =>
+            message.client_msg_id === watch.id || message.text === text,
+        );
+        if (delivered) {
+          await client.query(
+            `UPDATE compadre_pr_watches
+             SET status = $2, notified_at = now(), delivery_started_at = NULL,
+                 last_error = NULL
+             WHERE id = $1 AND status = 'delivering'`,
+            [
+              watch.id,
+              watch.matched_prod_commit ? "notified" : "closed_unmerged",
+            ],
+          );
+          await this.cleanUpWatchRef(watch.pr_number);
+        } else {
+          await client.query(
+            `UPDATE compadre_pr_watches
+             SET status = 'waiting', matched_prod_commit = NULL,
+                 delivery_started_at = NULL
+             WHERE id = $1 AND status = 'delivering'`,
+            [watch.id],
+          );
+        }
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        await client.query(
+          `UPDATE compadre_pr_watches SET checked_at = now(), last_error = $2
+           WHERE id = $1 AND status = 'delivering'`,
+          [watch.id, message.slice(0, 2000)],
+        );
+      }
+    }
+  }
+
+  private async cleanUpWatchRef(prNumber: number): Promise<void> {
+    await deleteWatchRef(prNumber).catch((error) =>
+      console.error(`[pr-watch] failed to clean up PR #${prNumber} ref:`, error),
     );
   }
 
@@ -539,9 +648,10 @@ export class PullRequestWatchService {
   ): Promise<void> {
     const claim = await this.pool.query(
       `UPDATE compadre_pr_watches
-       SET status = 'delivering', checked_at = now(), delivery_started_at = now()
+       SET status = 'delivering', checked_at = now(), delivery_started_at = now(),
+           matched_prod_commit = $2
        WHERE id = $1 AND status = 'waiting' RETURNING id`,
-      [watch.id],
+      [watch.id, prodCommit],
     );
     if (claim.rowCount !== 1) return;
     try {
@@ -556,9 +666,11 @@ export class PullRequestWatchService {
     } catch (error) {
       await this.pool.query(
         `UPDATE compadre_pr_watches
-         SET status = 'waiting', delivery_started_at = NULL, last_error = $2
+         SET last_error = $2
          WHERE id = $1 AND status = 'delivering'`,
         [watch.id, error instanceof Error ? error.message : String(error)],
+      ).catch((databaseError) =>
+        console.error("[pr-watch] failed to record delivery error:", databaseError),
       );
       throw error;
     }

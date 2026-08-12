@@ -33,3 +33,23 @@ test("fails closed when the primary production service is ambiguous", () => {
     /Expected one active cm-app-/,
   );
 });
+
+test("fails closed when production services do not match the expected app", () => {
+  assert.throws(
+    () =>
+      selectProductionCmServiceId([
+        { ...primaryService, suspended: "suspended" },
+        {
+          ...primaryService,
+          id: "srv-foreign",
+          repo: "https://notgithub.com/comprehensiveio/comp",
+        },
+        { ...primaryService, id: "srv-static", type: "static_site" },
+      ]),
+    /found 0/,
+  );
+});
+
+test("fails closed when Render returns no production services", () => {
+  assert.throws(() => selectProductionCmServiceId([]), /found 0/);
+});

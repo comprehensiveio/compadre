@@ -96,10 +96,10 @@ server.tool(
     pr_number: z.number().int().positive().describe(
       "The resolved comprehensiveio/comp pull request number",
     ),
-    channel_id: z.string().describe(
+    channel_id: z.string().trim().min(1).describe(
       "The channel ID from the Reply to section of the Slack prompt",
     ),
-    thread_ts: z.string().describe(
+    thread_ts: z.string().trim().min(1).describe(
       "The thread timestamp from the Reply to section of the Slack prompt",
     ),
   },
