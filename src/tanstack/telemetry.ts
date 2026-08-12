@@ -47,6 +47,7 @@ export interface HarnessTelemetryOptions {
   tracer?: Tracer;
   meter?: Meter;
   environment?: NodeJS.ProcessEnv;
+  logger?: Pick<Console, "log">;
 }
 
 function modelProvider(provider: HarnessSelection["provider"]): string {
@@ -135,6 +136,7 @@ export function createHarnessTelemetryMiddleware({
   tracer = otelTrace.getTracer("compadre.tanstack-ai"),
   meter = metrics.getMeter("compadre.tanstack-ai"),
   environment = process.env,
+  logger = console,
 }: HarnessTelemetryOptions): [ChatMiddleware, ChatMiddleware] {
   const tools = new Map<string, HarnessToolRun>();
   const redactContent = createTelemetryContentRedactor(environment);
@@ -154,6 +156,11 @@ export function createHarnessTelemetryMiddleware({
 
   const harnessEvents: ChatMiddleware = {
     name: "compadre-harness-events",
+    onIteration(_ctx, info) {
+      logger.log(
+        `[agent-turn] run=${runId} iteration=${info.iteration + 1} status=started provider=${selection.provider} model=${selection.model}`,
+      );
+    },
     onChunk(_ctx, originalChunk) {
       const chunk = withNormalizedUsage(originalChunk, selection.provider);
       sessionId ??= sessionIdFromChunk(chunk, selection.provider);
@@ -197,6 +204,21 @@ export function createHarnessTelemetryMiddleware({
       }
 
       return chunk === originalChunk ? undefined : chunk;
+    },
+    onFinish(ctx, info) {
+      logger.log(
+        `[agent-turn] run=${runId} iteration=${ctx.iteration + 1} status=finished duration-ms=${Math.round(info.duration)} finish-reason=${info.finishReason ?? "unknown"}`,
+      );
+    },
+    onAbort(ctx, info) {
+      logger.log(
+        `[agent-turn] run=${runId} iteration=${ctx.iteration + 1} status=aborted duration-ms=${Math.round(info.duration)}`,
+      );
+    },
+    onError(ctx, info) {
+      logger.log(
+        `[agent-turn] run=${runId} iteration=${ctx.iteration + 1} status=error duration-ms=${Math.round(info.duration)}`,
+      );
     },
   };
 
