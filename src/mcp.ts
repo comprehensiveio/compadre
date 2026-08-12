@@ -170,6 +170,12 @@ export async function buildMcpServers() {
         ...(process.env.SLACK_CHANNEL_IDS
           ? { SLACK_CHANNEL_IDS: process.env.SLACK_CHANNEL_IDS }
           : {}),
+        ...(process.env.COMPADRE_DURABILITY_DATABASE_URL
+          ? {
+              COMPADRE_DURABILITY_DATABASE_URL:
+                process.env.COMPADRE_DURABILITY_DATABASE_URL,
+            }
+          : {}),
       },
     },
 

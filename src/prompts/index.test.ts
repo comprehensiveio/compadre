@@ -28,6 +28,9 @@ test("keeps Slack workspace persistence and upload instructions scoped to Slack 
     assert.match(prompt, /Prefer an inline Markdown table/);
     assert.match(prompt, /explicitly asks for one/);
     assert.match(prompt, /slack_upload_file/);
+    assert.match(prompt, /slack_watch_comp_pr_deployment/);
+    assert.match(prompt, /Do not merely promise to follow up/);
+    assert.match(prompt, /find the PR for this/);
     assert.doesNotMatch(prompt, /curl/);
   }
 });

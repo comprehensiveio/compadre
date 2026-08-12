@@ -70,11 +70,13 @@ export class SlackClient {
     channel: string,
     threadTs: string,
     markdown: string,
+    clientMsgId?: string,
   ): Promise<SlackResponse> {
     return this.post("chat.postMessage", {
       channel,
       thread_ts: threadTs,
       markdown_text: truncateSlackMarkdown(markdown),
+      ...(clientMsgId ? { client_msg_id: clientMsgId } : {}),
     });
   }
 
