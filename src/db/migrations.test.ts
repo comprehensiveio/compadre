@@ -30,13 +30,19 @@ test(
         migrationsSchema: migrationSchema,
       };
       await migrate(db, migrationConfig);
+      const firstApplied = await client.query<{ count: string }>(
+        `SELECT count(*) AS count
+         FROM "${migrationSchema}".__drizzle_migrations`,
+      );
       await migrate(db, migrationConfig);
 
       const applied = await client.query<{ count: string }>(
         `SELECT count(*) AS count
          FROM "${migrationSchema}".__drizzle_migrations`,
       );
-      assert.equal(Number(applied.rows[0]?.count), 1);
+      const firstCount = Number(firstApplied.rows[0]?.count);
+      assert.ok(firstCount > 0);
+      assert.equal(Number(applied.rows[0]?.count), firstCount);
 
       const tables = await client.query<{ table_name: string }>(
         `SELECT table_name

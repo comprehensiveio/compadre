@@ -15,6 +15,7 @@ const REPOSITORY = "comprehensiveio/comp";
 const DEFAULT_INTERVAL_MS = 2 * 60 * 1000;
 const RENDER_SERVICE_CACHE_MS = 10 * 60 * 1000;
 const STALE_DELIVERY_MS = 10 * 60 * 1000;
+const RECONCILE_BATCH_SIZE = 100;
 const HTTP_TIMEOUT_MS = 15 * 1000;
 const PATCH_SCAN_COMMIT_LIMIT = 500;
 const RENDER_PROJECT_NAME = "CM";
@@ -66,6 +67,14 @@ const watchColumns = {
   slackThreadTs: pullRequestWatches.slackThreadTs,
   matchedProdCommit: pullRequestWatches.matchedProdCommit,
 };
+
+function livePullRequestText(prNumber: number, prUrl: string): string {
+  return `PR #${prNumber} is now live in production. ${prUrl}`;
+}
+
+function closedPullRequestText(prNumber: number): string {
+  return `PR #${prNumber} was closed without merging, so I stopped watching it.`;
+}
 
 interface RenderDeploy {
   status?: string;
@@ -519,7 +528,7 @@ export class PullRequestWatchService {
         .from(pullRequestWatches)
         .where(eq(pullRequestWatches.status, "waiting"))
         .orderBy(asc(pullRequestWatches.createdAt))
-        .limit(100);
+        .limit(RECONCILE_BATCH_SIZE);
       for (const watch of watches) {
         await this.reconcileOne(watch).catch(async (error) => {
           const message = error instanceof Error ? error.message : String(error);
@@ -548,8 +557,12 @@ export class PullRequestWatchService {
       `/repos/${REPOSITORY}/pulls/${watch.prNumber}`,
     );
     if (details.state === "closed" && !details.merged) {
-      await this.deliver(watch, "closed_unmerged", null,
-        `PR #${watch.prNumber} was closed without merging, so I stopped watching it.`);
+      await this.deliver(
+        watch,
+        "closed_unmerged",
+        null,
+        closedPullRequestText(watch.prNumber),
+      );
       await this.cleanUpWatchRef(watch.prNumber);
       return;
     }
@@ -567,7 +580,7 @@ export class PullRequestWatchService {
       watch,
       "notified",
       prodCommit,
-      `PR #${watch.prNumber} is now live in production. ${watch.prUrl}`,
+      livePullRequestText(watch.prNumber, watch.prUrl),
     );
     await this.cleanUpWatchRef(watch.prNumber);
   }
@@ -584,11 +597,13 @@ export class PullRequestWatchService {
             sql`now() - make_interval(secs => ${STALE_DELIVERY_MS / 1000}::double precision)`,
           ),
         ),
-      );
+      )
+      .orderBy(asc(pullRequestWatches.deliveryStartedAt))
+      .limit(RECONCILE_BATCH_SIZE);
     for (const watch of stale) {
       const text = watch.matchedProdCommit
-        ? `PR #${watch.prNumber} is now live in production. ${watch.prUrl}`
-        : `PR #${watch.prNumber} was closed without merging, so I stopped watching it.`;
+        ? livePullRequestText(watch.prNumber, watch.prUrl)
+        : closedPullRequestText(watch.prNumber);
       try {
         const response = await this.slack.getThreadReplies(
           watch.slackChannelId,
@@ -713,7 +728,8 @@ export class PullRequestWatchService {
       await this.db
         .update(pullRequestWatches)
         .set({
-          lastError: error instanceof Error ? error.message : String(error),
+          lastError: (error instanceof Error ? error.message : String(error))
+            .slice(0, 2000),
         })
         .where(
           and(

@@ -308,7 +308,7 @@ function createStreamDurability(
         }
         const firstSequence =
           asSafeNumber(stream.nextSequence, "next_sequence") - chunks.length;
-        const rows = await tx
+        await tx
           .insert(aiStreamEvents)
           .values(
             chunks.map((chunk, index) => ({
@@ -316,13 +316,9 @@ function createStreamDurability(
               sequence: firstSequence + index,
               chunk,
             })),
-          )
-          .returning({ sequence: aiStreamEvents.sequence });
-        return rows.map((row) =>
-          encodeOffset(
-            runId,
-            asSafeNumber(row.sequence, "stream sequence"),
-          ),
+          );
+        return chunks.map((_, index) =>
+          encodeOffset(runId, firstSequence + index),
         );
       });
     },
