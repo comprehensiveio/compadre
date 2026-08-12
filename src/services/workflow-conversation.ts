@@ -71,6 +71,7 @@ export async function runWorkflowConversation(
       profile: options.profile,
       maxTurns: options.maxTurns,
       responseMode: options.stream ? "slack-streaming" : "default",
+      persistThread: options.persistThread ?? options.threadId !== undefined,
     });
   } catch (error) {
     try {

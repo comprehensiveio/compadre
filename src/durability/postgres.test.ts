@@ -5,6 +5,10 @@ import { EventType, type StreamChunk } from "@tanstack/ai";
 import { migrate } from "drizzle-orm/node-postgres/migrator";
 import pg from "pg";
 import { createDatabase } from "../db/client.js";
+import {
+  PostgresLockAcquireTimeoutError,
+  PostgresLockStore,
+} from "../persistence/postgres.js";
 import { createPostgresAgentRunDurability } from "./postgres.js";
 import { captureDurableRun } from "./runtime.js";
 
@@ -196,6 +200,44 @@ test(
         (await durability.runs.get(drivenRunId))?.status,
         "completed",
       );
+
+      const lockKey = `postgres-lock-${nonce}`;
+      const locks = new PostgresLockStore(pool);
+      let releaseFirst!: () => void;
+      let markFirstAcquired!: () => void;
+      const firstAcquired = new Promise<void>((resolve) => {
+        markFirstAcquired = resolve;
+      });
+      const firstHolding = locks.withLock(
+        lockKey,
+        () => new Promise<void>((resolve) => {
+          releaseFirst = resolve;
+          markFirstAcquired();
+        }),
+      );
+      await firstAcquired;
+      let secondAcquired = false;
+      const secondHolding = locks.withLock(lockKey, async () => {
+        secondAcquired = true;
+      });
+      const blocked = await Promise.race([
+        secondHolding.then(() => "acquired" as const),
+        new Promise<"blocked">((resolve) =>
+          setTimeout(() => resolve("blocked"), 250),
+        ),
+      ]);
+      assert.equal(blocked, "blocked");
+      assert.equal(secondAcquired, false);
+      await assert.rejects(
+        new PostgresLockStore(pool, {
+          acquireTimeoutMs: 50,
+          pollIntervalMs: 10,
+        }).withLock(lockKey, async () => undefined),
+        PostgresLockAcquireTimeoutError,
+      );
+      releaseFirst();
+      await Promise.all([firstHolding, secondHolding]);
+      assert.equal(secondAcquired, true);
     } finally {
       await durability.close();
       await pool.query(

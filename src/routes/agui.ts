@@ -3,6 +3,8 @@ import {
   toServerSentEventsResponse,
 } from "@tanstack/ai";
 import { Hono } from "hono";
+import { reconstructChat } from "@tanstack/ai-persistence";
+import { getConfiguredThreadPersistence } from "../persistence/runtime.js";
 import { runAguiChat } from "../tanstack/runtime.js";
 import {
   isAgentProfile,
@@ -15,6 +17,23 @@ export const aguiRoutes = new Hono();
 function isEnabled(): boolean {
   return process.env.COMPADRE_TANSTACK_AI_ENABLED === "true";
 }
+
+aguiRoutes.get("/ag-ui", async (c) => {
+  if (!isEnabled()) return c.notFound();
+
+  const authError = requireCompadreApiKey(c);
+  if (authError) return authError;
+
+  const threadPersistence = await getConfiguredThreadPersistence();
+  if (!threadPersistence) {
+    return c.json({ error: "thread persistence is not enabled" }, 503);
+  }
+  return reconstructChat(threadPersistence.persistence, c.req.raw, {
+    // The shared API key is currently the authorization boundary for all
+    // Compadre threads. Replace this with per-user ownership if that changes.
+    authorize: () => true,
+  });
+});
 
 aguiRoutes.post("/ag-ui", async (c) => {
   if (!isEnabled()) return c.notFound();

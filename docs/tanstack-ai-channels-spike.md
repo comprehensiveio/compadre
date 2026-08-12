@@ -90,28 +90,33 @@ identified by absolute path in the system prompt. Claude can use its plugin
 commands; Codex and other harnesses can read the same `SKILL.md` sources
 directly.
 
-## Deliberately deferred durability
+## Thread persistence experiment
 
-Postgres is not part of this milestone. `HarnessThreadStore` currently keeps:
+`@tanstack/ai-persistence` now provides the canonical provider-neutral
+transcript, run/interrupt state, and hydration boundary. PostgreSQL-backed
+advisory locks serialize turns across processes. `HarnessThreadStore` still
+keeps the process-local optimization state:
 
 ```text
 thread ID
   -> shared worktree ID
-  -> bounded provider-neutral transcript
   -> Claude Code session ID
   -> Codex session ID
   -> last provider
 ```
 
-The durability milestone should combine a Postgres-backed thread store,
-TanStack persistence stores, a distributed `LockStore`, and durable/shared
-provider session plus worktree storage. The current in-memory TanStack lock
-store serializes runs only within one process. Postgres alone cannot make
-native Claude/Codex session directories or git worktrees portable between
-hosts.
+Postgres cannot make native Claude/Codex session directories or git worktrees
+portable between hosts. Those remain opportunistic: a fresh host falls back to
+the canonical neutral transcript, and source changes needed later must still be
+committed to a branch or PR.
 
 ## Remaining considerations
 
+- Harness-native Claude Code and Codex tool events are durable in the run log
+  but are not guaranteed to become canonical model messages after a native
+  session is lost. The problem, solution options, and recommended follow-up
+  spike are documented in
+  [`harness-tool-history-persistence.md`](harness-tool-history-persistence.md).
 - Claude streams token deltas; Codex currently emits completed message bursts.
 - The local-process sandbox provides lifecycle plumbing, not host isolation.
   Both harnesses intentionally have unrestricted tool permissions.

@@ -35,6 +35,7 @@ export interface ConversationOptions {
   stream?: StreamCallbacks;
   capacityPriority?: RunCapacityPriority;
   retryOnBackgroundPreemption?: boolean;
+  persistThread?: boolean;
 }
 
 export type ConversationResult = HarnessConversationResult;
@@ -88,6 +89,7 @@ export function runConversation(
         systemPrompt: options.systemPrompt,
         stream: options.stream,
         capacityPriority: options.capacityPriority,
+        persistThread: options.persistThread ?? !ephemeral,
       });
       if (!options.retryOnBackgroundPreemption) return await execute();
       return await retryBackgroundPreemptions(

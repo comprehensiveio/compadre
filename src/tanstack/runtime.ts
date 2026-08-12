@@ -3,6 +3,7 @@ import { readdir, unlink } from "node:fs/promises";
 import {
   EventType,
   convertMessagesToModelMessages,
+  type ModelMessage,
   type StreamChunk,
 } from "@tanstack/ai";
 import {
@@ -11,6 +12,8 @@ import {
 } from "@tanstack/ai-sandbox";
 import { localProcessSandbox } from "@tanstack/ai-sandbox-local-process";
 import { getBaseSystemPrompt } from "../prompts/index.js";
+import { createChannelConversationPersistence } from "../persistence/conversation.js";
+import { getConfiguredThreadPersistence } from "../persistence/runtime.js";
 import { createWorktree, removeWorktree } from "../repo.js";
 import {
   createHarnessStream,
@@ -32,6 +35,7 @@ import {
 import {
   harnessRunCapacity,
   harnessThreadRuns,
+  ThreadRunCoordinator,
   BackgroundCapacityPreemptedError,
   type RunCapacityPriority,
   type ThreadRunLease,
@@ -51,6 +55,7 @@ export interface AguiRuntimeOptions {
   systemPrompt?: (worktreePath: string) => string;
   transcriptUserMessage?: string;
   capacityPriority?: RunCapacityPriority;
+  persistThread?: boolean;
 }
 
 function latestUserInput(
@@ -234,6 +239,9 @@ export async function runAguiChat(
   requestSignal?: AbortSignal,
   options: AguiRuntimeOptions = {}
 ): Promise<AsyncIterable<StreamChunk>> {
+  const threadPersistence = options.persistThread === false
+    ? null
+    : await getConfiguredThreadPersistence();
   const selection = resolveHarnessSelection(params.forwardedProps);
   const telemetry = new HarnessRunTelemetry({
     selection,
@@ -245,7 +253,11 @@ export async function runAguiChat(
   let capacityLease: ThreadRunLease | undefined;
   try {
     threadLease = await telemetry.phase("queue.thread", () =>
-      harnessThreadRuns.acquire(params.threadId),
+      threadPersistence
+        ? new ThreadRunCoordinator(threadPersistence.locks).acquire(
+            params.threadId,
+          )
+        : harnessThreadRuns.acquire(params.threadId),
     );
     capacityLease = await telemetry.phase("queue.capacity", () =>
       options.capacityPriority === "background"
@@ -263,6 +275,7 @@ export async function runAguiChat(
       },
       selection,
       telemetry,
+      threadPersistence,
     );
   } catch (error) {
     await Promise.allSettled([
@@ -282,6 +295,7 @@ async function prepareAguiChat(
   runLeases: ActiveRunLeases,
   selection: HarnessSelection,
   telemetry: HarnessRunTelemetry,
+  threadPersistence: Awaited<ReturnType<typeof getConfiguredThreadPersistence>>,
 ): Promise<AsyncIterable<StreamChunk>> {
   const abortController = new AbortController();
   const abortSources = [
@@ -328,16 +342,31 @@ async function prepareAguiChat(
   const transcriptUserMessage = options.transcriptUserMessage;
   const tracksTranscript = transcriptUserMessage !== undefined;
   const sessionId = resumableHarnessSession(thread, selection.provider);
-  const effectiveParams: AguiChatParams = tracksTranscript
-    ? {
-        ...params,
-        messages: messagesForHarnessSession(
-          params.messages,
-          thread.transcript,
-          sessionId
-        ),
-      }
-    : params;
+  let persistence = threadPersistence?.persistence;
+  let effectiveParams: AguiChatParams;
+  if (persistence && tracksTranscript) {
+    const providerMessages = convertMessagesToModelMessages(
+      params.messages,
+    ) as ModelMessage[];
+    persistence = await createChannelConversationPersistence(persistence, {
+      threadId: params.threadId,
+      providerMessages,
+      transcriptUserMessage,
+      resumesNativeSession: sessionId !== undefined,
+    });
+    effectiveParams = { ...params, messages: [] };
+  } else if (tracksTranscript) {
+    effectiveParams = {
+      ...params,
+      messages: messagesForHarnessSession(
+        params.messages,
+        thread.transcript,
+        sessionId,
+      ),
+    };
+  } else {
+    effectiveParams = params;
+  }
   console.log(
     `[ag-ui] run=${params.runId} worktree=${worktreeId} source=${worktreeSource} allocation=${Date.now() - preparationStartedAt}ms`,
   );
@@ -398,6 +427,8 @@ async function prepareAguiChat(
         abortController,
         systemPrompt:
           options.systemPrompt?.(worktreePath) ?? getBaseSystemPrompt(worktreePath),
+        persistence,
+        locks: threadPersistence?.locks,
       }),
     );
   } catch (error) {
@@ -415,7 +446,7 @@ async function prepareAguiChat(
     worktreeId,
     worktreePath,
     sessionId !== undefined,
-    tracksTranscript ? transcriptUserMessage : undefined
+    tracksTranscript && !persistence ? transcriptUserMessage : undefined
   );
   return (async function* () {
     let firstEvent = true;

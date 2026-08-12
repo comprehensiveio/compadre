@@ -33,6 +33,7 @@ test("relays a Workflow AG-UI log through channel callbacks", async () => {
       getLauncher: () => ({
         async start(input) {
           assert.equal(input.responseMode, "slack-streaming");
+          assert.equal(input.persistThread, true);
           await durability.runs.createOrResume({
             runId: "relayed-run",
             threadId: "slack-thread",

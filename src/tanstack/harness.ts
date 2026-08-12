@@ -3,8 +3,9 @@ import { chat, mergeAgentTools, type StreamChunk } from "@tanstack/ai";
 import { claudeCodeText } from "@tanstack/ai-claude-code";
 import { codexText } from "@tanstack/ai-codex";
 import { withSandbox, type SandboxDefinition } from "@tanstack/ai-sandbox";
+import { withPersistence, type ChatPersistence } from "@tanstack/ai-persistence";
 import type { MCPClient } from "@tanstack/ai-mcp";
-import { withLocks } from "@tanstack/ai/locks";
+import { withLocks, type LockStore } from "@tanstack/ai/locks";
 import {
   CODEX_MODEL,
   DEFAULT_MODEL,
@@ -52,6 +53,8 @@ export interface CreateHarnessStreamOptions {
   sandbox: SandboxDefinition;
   abortController: AbortController;
   systemPrompt: string;
+  persistence?: ChatPersistence;
+  locks?: LockStore;
 }
 
 export function resolveHarnessSelection(
@@ -118,6 +121,8 @@ export function createHarnessStream({
   sandbox,
   abortController,
   systemPrompt,
+  persistence,
+  locks = harnessLockStore,
 }: CreateHarnessStreamOptions): AsyncIterable<StreamChunk> {
   const telemetry = createHarnessTelemetryMiddleware({
     selection,
@@ -131,7 +136,8 @@ export function createHarnessStream({
     tools: mergeAgentTools([], params.tools),
     mcp: { clients },
     middleware: [
-      withLocks(harnessLockStore),
+      ...(persistence ? [withPersistence(persistence)] : []),
+      withLocks(locks),
       withSandbox(sandbox),
       ...telemetry,
     ],
