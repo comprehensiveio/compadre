@@ -1,3 +1,4 @@
+import type { RunRecord, StreamChunk } from "@tanstack/ai";
 import { sql } from "drizzle-orm";
 import {
   bigint,
@@ -20,11 +21,11 @@ export const aiRuns = pgTable(
   {
     runId: text("run_id").primaryKey(),
     threadId: text("thread_id").notNull(),
-    status: text("status").notNull(),
+    status: text("status").$type<RunRecord["status"]>().notNull(),
     startedAtMs: bigint("started_at_ms", { mode: "number" }).notNull(),
     finishedAtMs: bigint("finished_at_ms", { mode: "number" }),
-    error: jsonb("error"),
-    usage: jsonb("usage"),
+    error: jsonb("error").$type<RunRecord["error"]>(),
+    usage: jsonb("usage").$type<RunRecord["usage"]>(),
     sandboxKey: text("sandbox_key"),
     detachedSinceMs: bigint("detached_since_ms", { mode: "number" }),
     cancelRequested: boolean("cancel_requested"),
@@ -60,7 +61,7 @@ export const aiStreamEvents = pgTable(
   {
     runId: text("run_id").notNull(),
     sequence: bigint("sequence", { mode: "number" }).notNull(),
-    chunk: jsonb("chunk").notNull(),
+    chunk: jsonb("chunk").$type<StreamChunk>().notNull(),
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
       .defaultNow(),
@@ -78,6 +79,12 @@ export const aiStreamEvents = pgTable(
   ],
 );
 
+export type PullRequestWatchStatus =
+  | "waiting"
+  | "delivering"
+  | "notified"
+  | "closed_unmerged";
+
 export const pullRequestWatches = pgTable(
   "compadre_pr_watches",
   {
@@ -87,7 +94,10 @@ export const pullRequestWatches = pgTable(
     slackTeamId: text("slack_team_id").notNull(),
     slackChannelId: text("slack_channel_id").notNull(),
     slackThreadTs: text("slack_thread_ts").notNull(),
-    status: text("status").notNull().default("waiting"),
+    status: text("status")
+      .$type<PullRequestWatchStatus>()
+      .notNull()
+      .default("waiting"),
     matchedProdCommit: text("matched_prod_commit"),
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
