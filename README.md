@@ -76,6 +76,25 @@ for Codex, `--fable` for Fable through Claude Code, and `--claude-code` or `--cc
 for the normal Claude Code model. Routing directives are removed before the
 agent prompt and conversation transcript are created.
 
+## Database schema and migrations
+
+Compadre's PostgreSQL schema is declared in `src/db/schema.ts`, with generated
+SQL migrations committed under `drizzle/`. Drizzle uses the existing
+`COMPADRE_DURABILITY_DATABASE_URL`; local commands load it from `.env.local`.
+
+```bash
+npm run db:generate -- --name=describe_change # generate a migration
+npm run db:check                              # validate migration history
+npm run db:migrate                            # apply pending migrations
+npm run db:studio                             # inspect the configured database
+```
+
+Run `db:migrate` as an explicit deployment step before starting code that
+depends on a new schema. The initial migration safely baselines databases where
+the durability and PR-watch tables were already created by older application
+versions. The legacy startup DDL remains temporarily for rollout compatibility;
+new schema changes should be made through Drizzle migrations.
+
 ## Deployment (Render)
 
 Native Node.js service. Build: `npm install && npm run build`, Start: `npm start`.
