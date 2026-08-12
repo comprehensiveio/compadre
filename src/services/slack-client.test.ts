@@ -59,6 +59,7 @@ test("posts and replies using bounded standard Markdown", async () => {
     "C123",
     "99.001",
     "x".repeat(SLACK_MARKDOWN_TEXT_LIMIT + 1),
+    "c352d625-4219-4b00-9b22-f1416c136a65",
   );
 
   assert.deepEqual(jsonBody(calls[0]!), {
@@ -72,6 +73,7 @@ test("posts and replies using bounded standard Markdown", async () => {
     markdown_text:
       "x".repeat(SLACK_MARKDOWN_TEXT_LIMIT - SLACK_TRUNCATION_NOTICE.length) +
       SLACK_TRUNCATION_NOTICE,
+    client_msg_id: "c352d625-4219-4b00-9b22-f1416c136a65",
   });
 });
 

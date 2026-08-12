@@ -25,6 +25,10 @@ import { recoverStaleSlackRuns } from "./services/slack-run-recovery.js";
 import { harnessThreadStore } from "./tanstack/thread-state.js";
 import { harnessPreparedWorktrees } from "./tanstack/prepared-worktrees.js";
 import { validateRelayOnlyConfiguration } from "./services/conversation-runner.js";
+import {
+  getConfiguredPullRequestWatchService,
+  startPullRequestWatchReconciler,
+} from "./services/pr-watch.js";
 
 const app = new Hono();
 
@@ -81,6 +85,14 @@ async function start() {
       recoveryTimer.unref();
     }
   });
+
+  void getConfiguredPullRequestWatchService()
+    .then((service) => {
+      if (service) startPullRequestWatchReconciler(service);
+    })
+    .catch((error) =>
+      console.error("[pr-watch] initialization failed:", error),
+    );
 
   // Clone or update the repo in the background (can be slow)
   if (!relayOnly) {

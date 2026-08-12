@@ -292,6 +292,13 @@ Prefer an inline Markdown table for ordinary tabular results. Upload a file only
 `;
 }
 
+function getSlackPrWatchInstructions() {
+  return `
+## Production PR notifications
+When a user asks you to notify this Slack thread after a change or pull request is live in production, resolve the exact \`comprehensiveio/comp\` PR first using the available context, GitHub, and the codebase. Then call \`slack_watch_comp_pr_deployment\` with that PR number and the channel/thread coordinates from the user's prompt. Do not merely promise to follow up: the durable watch exists only after this tool succeeds. If the request does not identify a PR directly (for example, "find the PR for this"), investigate until you can identify one unambiguously before registering it.
+`;
+}
+
 export function getSlackSystemPrompt(repoPath: string = REPO_PATH) {
   return `${getBaseSystemPrompt(repoPath)}
 
@@ -306,6 +313,7 @@ You are responding to a message from Slack. Your ONLY output channel is Slack â€
 - If a task takes multiple steps, post a brief initial acknowledgment, then post the final result when done.
 
 ${getSlackFileUploadInstructions()}
+${getSlackPrWatchInstructions()}
 `;
 }
 
@@ -322,5 +330,6 @@ You are responding to a message from Slack. Your text output is streamed directl
 - Keep responses concise â€” this is a chat, not a document.
 
 ${getSlackFileUploadInstructions()}
+${getSlackPrWatchInstructions()}
 `;
 }

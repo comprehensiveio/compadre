@@ -9,6 +9,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
 import { SlackClient } from "../services/slack-client.js";
+import { PullRequestWatchService } from "../services/pr-watch.js";
 
 const botToken = process.env.SLACK_BOT_TOKEN;
 const teamId = process.env.SLACK_TEAM_ID;
@@ -22,6 +23,32 @@ const slack = new SlackClient({
   channelIds: process.env.SLACK_CHANNEL_IDS,
 });
 const server = new McpServer({ name: "slack", version: "2.0.0" });
+let prWatchService: Promise<PullRequestWatchService> | undefined;
+
+function getPullRequestWatchService(): Promise<PullRequestWatchService> {
+  if (!prWatchService) {
+    const initialization = (async () => {
+      const connectionString = process.env.COMPADRE_DURABILITY_DATABASE_URL;
+      if (!connectionString) {
+        throw new Error(
+          "COMPADRE_DURABILITY_DATABASE_URL is required to watch a PR deployment",
+        );
+      }
+      const service = new PullRequestWatchService({
+        connectionString,
+        botToken: botToken!,
+        teamId: teamId!,
+      });
+      await service.initialize();
+      return service;
+    })().catch((error) => {
+      if (prWatchService === initialization) prWatchService = undefined;
+      throw error;
+    });
+    prWatchService = initialization;
+  }
+  return prWatchService;
+}
 
 function jsonResult(data: unknown) {
   return {
@@ -60,6 +87,38 @@ server.tool(
   },
   async ({ channel_id, thread_ts, text }) =>
     jsonResult(await slack.replyToThread(channel_id, thread_ts, text)),
+);
+
+server.tool(
+  "watch_comp_pr_deployment",
+  "Durably watch a comprehensiveio/comp pull request and notify the specified Slack thread after that PR is live on the primary CM production app service. Use only when the user asks for a future production notification. Resolve the exact PR first; this tool does not search for a PR.",
+  {
+    pr_number: z.number().int().positive().describe(
+      "The resolved comprehensiveio/comp pull request number",
+    ),
+    channel_id: z.string().describe(
+      "The channel ID from the Reply to section of the Slack prompt",
+    ),
+    thread_ts: z.string().describe(
+      "The thread timestamp from the Reply to section of the Slack prompt",
+    ),
+  },
+  async ({ pr_number, channel_id, thread_ts }) => {
+    const watchService = await getPullRequestWatchService();
+    const prUrl = `https://github.com/comprehensiveio/comp/pull/${pr_number}`;
+    const result = await watchService.register(
+      { prNumber: pr_number, prUrl },
+      { teamId, channelId: channel_id, threadTs: thread_ts },
+    );
+    return jsonResult({
+      ...result,
+      pr_number,
+      pr_url: prUrl,
+      message: result.created
+        ? `Watching PR #${pr_number} for production deployment.`
+        : `PR #${pr_number} is already being watched in this thread.`,
+    });
+  },
 );
 
 server.tool(
