@@ -90,10 +90,9 @@ npm run db:studio                             # inspect the configured database
 ```
 
 Run `db:migrate` as an explicit deployment step before starting code that
-depends on a new schema. The initial migration safely baselines databases where
-the durability and PR-watch tables were already created by older application
-versions. Runtime durability and PR-watch queries use the typed Drizzle schema;
-schema creation and changes belong exclusively in committed migrations.
+depends on a new schema. Runtime durability and PR-watch queries use the typed
+Drizzle schema; schema creation and changes belong exclusively in committed
+migrations.
 
 ## Deployment (Render)
 
