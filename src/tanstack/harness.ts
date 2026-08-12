@@ -23,6 +23,7 @@ import {
 } from "./protocol.js";
 import { createHarnessTelemetryMiddleware } from "./telemetry.js";
 import { harnessLockStore } from "./thread-lock.js";
+import { deferTerminalHooks } from "./middleware-order.js";
 
 /** Trusted Compadre harnesses run non-interactively with no approval gates. */
 export const CODEX_DANGEROUS_PERMISSIONS = {
@@ -130,15 +131,21 @@ export function createHarnessStream({
     runId: params.runId,
     worktreeId,
   });
+  const persistenceMiddleware = persistence
+    ? deferTerminalHooks(withPersistence(persistence))
+    : undefined;
   const shared = {
     messages: params.messages,
     systemPrompts: [systemPrompt],
     tools: mergeAgentTools([], params.tools),
     mcp: { clients },
     middleware: [
-      ...(persistence ? [withPersistence(persistence)] : []),
+      // Persistence loads history and provides pending-turn state before the
+      // sandbox starts, but must save only after the sandbox reconciles tools.
+      ...(persistenceMiddleware ? [persistenceMiddleware.lifecycle] : []),
       withLocks(locks),
       withSandbox(sandbox),
+      ...(persistenceMiddleware ? [persistenceMiddleware.terminal] : []),
       ...telemetry,
     ],
     threadId: params.threadId,

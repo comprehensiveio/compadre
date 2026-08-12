@@ -38,6 +38,7 @@ POST /webhook/:source        # Generic webhook (Bearer COMPADRE_API_KEY)
 cp .env.example .env.local   # Fill in all values
 npm install
 npm run dev                  # tsx watch on port 3100
+npm run test:thread-persistence # database-free two-turn persistence regression
 ```
 
 Test with curl:
