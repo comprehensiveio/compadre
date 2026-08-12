@@ -34,6 +34,11 @@ export function configureEphemeralRepositoryEnvironment(
 ): void {
   if (!ephemeral) return;
 
+  // The shared Render environment is inherited by Workflow tasks and by any
+  // child server an agent starts. Override the role before probing the baked
+  // checkout so neither can run persistent-relay startup recovery.
+  environment.COMPADRE_PROCESS_ROLE = "workflow";
+
   // Render starts every Workflow task in its own instance. A checkout baked
   // into that instance is therefore already an isolated, disposable worktree;
   // cloning it into /tmp and creating a second git worktree only repeats I/O.

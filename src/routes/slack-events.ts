@@ -210,7 +210,7 @@ async function handleAIMessage(
   })
     .then(async (result) => {
       if (!isDM && slackStream) {
-        await slackStream.removeReaction("compadre-thinking", event.ts);
+        await slackStream.markRunSucceeded(event.ts);
       }
       console.log(
         `[slack-events] completed for ${event.user}: provider=${result.provider} turns=${result.numTurns} cost=$${result.costUsd.toFixed(3)} duration=${result.durationMs}ms`,
@@ -223,8 +223,7 @@ async function handleAIMessage(
         await slackStream.clearStatus();
       }
       if (!isDM && slackStream) {
-        await slackStream.removeReaction("compadre-thinking", event.ts);
-        await slackStream.addReaction("compadre-failure", event.ts);
+        await slackStream.markRunFailed(event.ts);
       } else if (isDM && botToken) {
         try {
           await fetch("https://slack.com/api/reactions.add", {

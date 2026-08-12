@@ -85,8 +85,27 @@ test("runs both coding harnesses without tool approval gates", () => {
 });
 
 test("marks Compadre harness startup as dependency-lazy", () => {
-  assert.deepEqual(harnessEnvironment("/tmp/worktrees/example"), {
+  assert.deepEqual(harnessEnvironment("/tmp/worktrees/example", {}), {
     COMPADRE_SKIP_WORKTREE_SETUP: "1",
     GIT_CEILING_DIRECTORIES: "/tmp/worktrees",
+    GIT_TERMINAL_PROMPT: "0",
   });
+});
+
+test("gives harness Git commands the same non-persisted GitHub auth", () => {
+  const environment = harnessEnvironment("/tmp/worktrees/example", {
+    GITHUB_REPO_URL: "https://github.example/owner/repo.git",
+    GITHUB_PERSONAL_ACCESS_TOKEN: "secret-token",
+  });
+
+  assert.equal(environment.GIT_CONFIG_COUNT, "2");
+  assert.equal(
+    environment.GIT_CONFIG_KEY_0,
+    "http.https://github.example/.extraHeader",
+  );
+  assert.match(environment.GIT_CONFIG_VALUE_0, /^Authorization: Basic /);
+  assert.equal(
+    JSON.stringify(environment).includes("secret-token"),
+    false,
+  );
 });

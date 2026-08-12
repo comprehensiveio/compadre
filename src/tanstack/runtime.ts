@@ -45,8 +45,8 @@ import {
 } from "./thread-lock.js";
 import { harnessPreparedWorktrees } from "./prepared-worktrees.js";
 import {
-  createAgentProcessSupervisor,
-  type AgentProcessSupervisor,
+  createAgentProcessMonitor,
+  type AgentProcessMonitor,
 } from "./process-supervisor.js";
 import { superviseSandboxProvider } from "./supervised-provider.js";
 import {
@@ -82,7 +82,7 @@ interface ActiveRunLeases {
 export function createHarnessSandbox(
   worktreeId: string,
   worktreePath: string,
-  processSupervisor?: AgentProcessSupervisor,
+  processMonitor?: AgentProcessMonitor,
 ) {
   const localProvider = localProcessSandbox({
     dir: worktreePath,
@@ -90,9 +90,9 @@ export function createHarnessSandbox(
   });
   return defineSandbox({
     id: `compadre-agui-${worktreeId}`,
-    provider: processSupervisor
+    provider: processMonitor
       ? superviseSandboxProvider(localProvider, (pid) =>
-          processSupervisor.trackRoot(pid),
+          processMonitor.trackRoot(pid),
         )
       : localProvider,
     workspace: defineWorkspace({
@@ -401,10 +401,8 @@ async function prepareAguiChat(
     throw abortController.signal.reason;
   }
 
-  const processSupervisor = createAgentProcessSupervisor(
+  const processMonitor = createAgentProcessMonitor(
     params.runId,
-    abortController,
-    process.env,
     (sample) =>
       telemetry.observeMemory(
         sample.treeRssBytes,
@@ -415,7 +413,7 @@ async function prepareAguiChat(
   const sandbox = createHarnessSandbox(
     worktreeId,
     worktreePath,
-    processSupervisor,
+    processMonitor,
   );
 
   let stream: AsyncIterable<StreamChunk>;
@@ -438,15 +436,14 @@ async function prepareAguiChat(
       }),
     );
   } catch (error) {
-    processSupervisor.stop();
+    processMonitor.stop();
     removeAbortListeners();
     await discardPreparation(params.threadId, worktreeId, clients);
     throw backgroundPreemptionReason(runLeases.capacity) ?? error;
   }
 
-  const supervised = processSupervisor.guard(stream, model);
   const tracked = trackSession(
-    supervised,
+    stream,
     params.threadId,
     selection,
     worktreeId,
@@ -482,7 +479,7 @@ async function prepareAguiChat(
       } catch (error) {
         failure ??= error;
       }
-      processSupervisor.stop();
+      processMonitor.stop();
       removeAbortListeners();
       await Promise.allSettled(clients.map((client) => client.close()));
       await Promise.allSettled(

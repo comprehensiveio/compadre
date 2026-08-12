@@ -109,6 +109,33 @@ export class SlackStream {
     });
   }
 
+  async markRunSucceeded(messageTs: string): Promise<void> {
+    await this.removeReactionIfPresent("compadre-thinking", messageTs);
+    // A prior process may have raced startup recovery with this live run.
+    // Success is authoritative, so clean up any stale failure marker too.
+    await this.removeReactionIfPresent("compadre-failure", messageTs);
+  }
+
+  async markRunFailed(messageTs: string): Promise<void> {
+    await this.removeReactionIfPresent("compadre-thinking", messageTs);
+    await this.addReaction("compadre-failure", messageTs);
+  }
+
+  private async removeReactionIfPresent(
+    name: string,
+    messageTs: string,
+  ): Promise<void> {
+    await this.call(
+      "reactions.remove",
+      {
+        channel: this.channel,
+        timestamp: messageTs,
+        name,
+      },
+      new Set(["no_reaction"]),
+    );
+  }
+
   appendText(text: string): void {
     if (this.streamEnded || this.truncated || !text) return;
 
@@ -292,6 +319,7 @@ export class SlackStream {
   private async call(
     method: string,
     body: Record<string, unknown>,
+    ignoredErrors: ReadonlySet<string> = new Set(),
   ): Promise<Record<string, unknown> & { ok?: boolean }> {
     try {
       const res = await this.fetchImpl(`${SLACK_API}/${method}`, {
@@ -305,7 +333,7 @@ export class SlackStream {
       const data = (await res.json()) as Record<string, unknown> & {
         ok?: boolean;
       };
-      if (!data.ok) {
+      if (!data.ok && !ignoredErrors.has(String(data.error))) {
         this.logger.error(`[slack-stream] ${method} failed`, {
           ...this.logContext(),
           error: data.error,

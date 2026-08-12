@@ -68,6 +68,7 @@ test("uses a baked checkout only for an ephemeral process", async () => {
     );
     assert.equal(environment.REPO_PATH, repositoryPath);
     assert.equal(environment.COMPADRE_SINGLE_USE_REPOSITORY, "true");
+    assert.equal(environment.COMPADRE_PROCESS_ROLE, "workflow");
 
     const overriddenEnvironment: NodeJS.ProcessEnv = {
       COMPADRE_WORKFLOW_REPO_PATH: "/custom/workflow/repository",
@@ -81,6 +82,7 @@ test("uses a baked checkout only for an ephemeral process", async () => {
       overriddenEnvironment.REPO_PATH,
       "/custom/workflow/repository",
     );
+    assert.equal(overriddenEnvironment.COMPADRE_PROCESS_ROLE, "workflow");
 
     const persistentEnvironment: NodeJS.ProcessEnv = {};
     configureEphemeralRepositoryEnvironment(
@@ -89,6 +91,7 @@ test("uses a baked checkout only for an ephemeral process", async () => {
       processRoot,
     );
     assert.equal(persistentEnvironment.REPO_PATH, undefined);
+    assert.equal(persistentEnvironment.COMPADRE_PROCESS_ROLE, undefined);
   } finally {
     await rm(processRoot, { recursive: true, force: true });
   }
@@ -109,6 +112,7 @@ test("warns when an ephemeral image has no baked checkout", async (t) => {
       processRoot,
     );
     assert.equal(environment.REPO_PATH, undefined);
+    assert.equal(environment.COMPADRE_PROCESS_ROLE, "workflow");
     assert.match(String(warnings[0]?.[0]), /baked checkout is missing/);
   } finally {
     await rm(processRoot, { recursive: true, force: true });

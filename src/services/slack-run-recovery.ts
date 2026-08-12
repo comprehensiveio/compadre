@@ -1,6 +1,7 @@
 const SLACK_API = "https://slack.com/api";
 const THINKING_REACTION = "compadre-thinking";
 const FAILURE_REACTION = "compadre-failure";
+export const DEFAULT_SLACK_RECOVERY_MIN_AGE_MS = 20 * 60 * 1000;
 
 interface SlackReaction {
   name?: string;
@@ -34,6 +35,19 @@ interface SlackRunRecoveryOptions {
   botToken: string;
   fetchImpl?: typeof fetch;
   logger?: Pick<Console, "info" | "warn">;
+  now?: () => number;
+  minimumAgeMs?: number;
+}
+
+export function isSlackRecoveryOwner(
+  environment: NodeJS.ProcessEnv = process.env,
+): boolean {
+  return environment.COMPADRE_PROCESS_ROLE === "relay";
+}
+
+function slackTimestampMs(timestamp: string): number | undefined {
+  const value = Number(timestamp);
+  return Number.isFinite(value) && value > 0 ? value * 1000 : undefined;
 }
 
 async function slackCall(
@@ -56,13 +70,17 @@ async function slackCall(
 /**
  * Slack retains reactions across container restarts, so the bot's thinking
  * reaction acts as a durable record of work that did not reach a terminal
- * state. Convert those records to failures after a new instance starts.
+ * state. A relay converts only markers older than a complete run's normal
+ * lifetime; fresh markers may still belong to an active Workflow task.
  */
 export async function recoverStaleSlackRuns({
   botToken,
   fetchImpl = fetch,
   logger = console,
+  now = Date.now,
+  minimumAgeMs = DEFAULT_SLACK_RECOVERY_MIN_AGE_MS,
 }: SlackRunRecoveryOptions): Promise<SlackRunRecoveryResult> {
+  const recoveryStartedAt = now();
   const auth = await slackCall(fetchImpl, botToken, "auth.test");
   if (!auth.ok || !auth.user_id) {
     logger.warn(
@@ -100,6 +118,9 @@ export async function recoverStaleSlackRuns({
       const message = item.message;
       const channel = item.channel;
       const messageTs = message?.ts;
+      const messageCreatedAt = messageTs
+        ? slackTimestampMs(messageTs)
+        : undefined;
       const botIsThinking = message?.reactions?.some(
         (reaction) =>
           reaction.name === THINKING_REACTION &&
@@ -109,7 +130,9 @@ export async function recoverStaleSlackRuns({
         item.type === "message" &&
         channel &&
         messageTs &&
-        botIsThinking
+        botIsThinking &&
+        messageCreatedAt !== undefined &&
+        recoveryStartedAt - messageCreatedAt >= minimumAgeMs
       ) {
         stale.set(`${channel}:${messageTs}`, {
           channel,

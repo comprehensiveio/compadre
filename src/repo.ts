@@ -15,12 +15,19 @@ import { REPO_PATH } from "./config.js";
 export function gitEnvironment(
   environment: NodeJS.ProcessEnv = process.env,
 ): NodeJS.ProcessEnv {
+  return { ...environment, ...gitAuthenticationEnvironment(environment) };
+}
+
+/** Git authentication safe to inherit without persisting a credentialed URL. */
+export function gitAuthenticationEnvironment(
+  environment: NodeJS.ProcessEnv = process.env,
+): Record<string, string> {
   const pat = environment.GITHUB_PERSONAL_ACCESS_TOKEN;
-  if (!pat) return environment;
+  if (!pat) return { GIT_TERMINAL_PROMPT: "0" };
 
   const repository = new URL(configuredRepositoryUrl(environment));
   if (repository.protocol !== "http:" && repository.protocol !== "https:") {
-    return { ...environment, GIT_TERMINAL_PROMPT: "0" };
+    return { GIT_TERMINAL_PROMPT: "0" };
   }
 
   // Keep credentials out of command arguments, exception messages, process
@@ -32,7 +39,6 @@ export function gitEnvironment(
     ? configuredCount
     : 0;
   return {
-    ...environment,
     GIT_CONFIG_COUNT: String(index + 2),
     [`GIT_CONFIG_KEY_${index}`]: `http.${repository.origin}/.extraHeader`,
     [`GIT_CONFIG_VALUE_${index}`]: `Authorization: Basic ${authorization}`,

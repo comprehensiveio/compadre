@@ -1,14 +1,9 @@
 import { execFile } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import { promisify } from "node:util";
-import { EventType, type StreamChunk } from "@tanstack/ai";
 
 const execFileAsync = promisify(execFile);
 const MIB = 1024 * 1024;
-export const DEFAULT_SERVICE_MEMORY_MB = 4_096;
-export const DEFAULT_CGROUP_MEMORY_HEADROOM_MB = 768;
-export const DEFAULT_AGENT_TREE_MEMORY_MB =
-  DEFAULT_SERVICE_MEMORY_MB - DEFAULT_CGROUP_MEMORY_HEADROOM_MB;
 
 export interface ProcessMemoryEntry {
   pid: number;
@@ -28,33 +23,14 @@ export interface AgentMemorySample {
   hostLimitBytes?: number;
 }
 
-export interface AgentProcessSupervisorOptions {
+export interface AgentProcessMonitorOptions {
   runId: string;
-  abortController: AbortController;
-  treeLimitBytes: number;
-  cgroupHeadroomBytes: number;
   sampleIntervalMs?: number;
   logIntervalMs?: number;
   readProcesses?: () => Promise<ProcessMemoryEntry[]>;
   readHostMemory?: () => Promise<HostMemorySnapshot>;
   onMemorySample?: (sample: AgentMemorySample) => void | Promise<void>;
   logger?: Pick<Console, "log" | "warn">;
-}
-
-export class AgentMemoryLimitError extends Error {
-  readonly code = "AGENT_MEMORY_LIMIT";
-
-  constructor(
-    readonly runId: string,
-    readonly reason: "process-tree" | "service-cgroup",
-    readonly observedBytes: number,
-    readonly limitBytes: number,
-  ) {
-    super(
-      `Agent run exceeded its memory limit (${reason}: ${formatMib(observedBytes)} MiB used, ${formatMib(limitBytes)} MiB limit)`,
-    );
-    this.name = "AgentMemoryLimitError";
-  }
 }
 
 function formatMib(bytes: number): string {
@@ -132,11 +108,11 @@ export function processTree(
 }
 
 /**
- * Observes only the process groups spawned for one harness run. The service
- * cgroup is a separate last-resort guard because filesystem page cache is not
- * represented in process RSS but still counts toward Render's memory limit.
+ * Observes the process groups spawned for one harness run. Workflow tasks are
+ * isolated at the service boundary, so memory enforcement belongs to the
+ * platform cgroup; this monitor never intercepts the stream or aborts a run.
  */
-export class AgentProcessSupervisor {
+export class AgentProcessMonitor {
   private readonly rootPids = new Set<number>();
   private readonly readProcesses: () => Promise<ProcessMemoryEntry[]>;
   private readonly readHostMemory: () => Promise<HostMemorySnapshot>;
@@ -146,19 +122,14 @@ export class AgentProcessSupervisor {
   private timer: NodeJS.Timeout | undefined;
   private samplePromise: Promise<void> | undefined;
   private lastLoggedAt = 0;
-  private limitErrorValue: AgentMemoryLimitError | undefined;
   private stopped = false;
 
-  constructor(private readonly options: AgentProcessSupervisorOptions) {
+  constructor(private readonly options: AgentProcessMonitorOptions) {
     this.readProcesses = options.readProcesses ?? readProcessTable;
     this.readHostMemory = options.readHostMemory ?? readHostMemory;
     this.logger = options.logger ?? console;
     this.sampleIntervalMs = options.sampleIntervalMs ?? 1_000;
     this.logIntervalMs = options.logIntervalMs ?? 30_000;
-  }
-
-  get limitError(): AgentMemoryLimitError | undefined {
-    return this.limitErrorValue;
   }
 
   trackRoot(pid: number): void {
@@ -171,7 +142,7 @@ export class AgentProcessSupervisor {
   }
 
   async sample(): Promise<void> {
-    if (this.stopped || this.limitErrorValue || this.rootPids.size === 0) return;
+    if (this.stopped || this.rootPids.size === 0) return;
     if (this.samplePromise) return this.samplePromise;
     this.samplePromise = this.sampleOnce().finally(() => {
       this.samplePromise = undefined;
@@ -185,50 +156,6 @@ export class AgentProcessSupervisor {
     this.timer = undefined;
   }
 
-  async *guard(
-    stream: AsyncIterable<StreamChunk>,
-    model: string,
-  ): AsyncIterable<StreamChunk> {
-    let sawTerminal = false;
-    try {
-      for await (const chunk of stream) {
-        if (
-          this.limitErrorValue &&
-          (chunk.type === EventType.RUN_ERROR ||
-            chunk.type === EventType.RUN_FINISHED)
-        ) {
-          sawTerminal = true;
-          yield this.errorChunk(model);
-          return;
-        }
-        if (
-          chunk.type === EventType.RUN_ERROR ||
-          chunk.type === EventType.RUN_FINISHED
-        ) {
-          sawTerminal = true;
-        }
-        yield chunk;
-      }
-    } catch (error) {
-      if (!this.limitErrorValue) throw error;
-    }
-
-    if (this.limitErrorValue && !sawTerminal) {
-      yield this.errorChunk(model);
-    }
-  }
-
-  private errorChunk(model: string): StreamChunk {
-    const error = this.limitErrorValue!;
-    return {
-      type: EventType.RUN_ERROR,
-      model,
-      timestamp: Date.now(),
-      message: error.message,
-      code: error.code,
-    };
-  }
-
   private async sampleOnce(): Promise<void> {
     try {
       const [entries, hostMemory] = await Promise.all([
@@ -238,14 +165,6 @@ export class AgentProcessSupervisor {
       if (this.stopped) return;
       const tree = processTree(entries, this.rootPids);
       const treeBytes = tree.reduce((total, entry) => total + entry.rssBytes, 0);
-      const cgroupThreshold =
-        hostMemory.limitBytes === undefined
-          ? undefined
-          : Math.max(0, hostMemory.limitBytes - this.options.cgroupHeadroomBytes);
-      const treeThreshold =
-        cgroupThreshold === undefined
-          ? this.options.treeLimitBytes
-          : Math.min(this.options.treeLimitBytes, cgroupThreshold);
       try {
         const observation = this.options.onMemorySample?.({
           treeRssBytes: treeBytes,
@@ -259,42 +178,17 @@ export class AgentProcessSupervisor {
         this.logObserverFailure(error);
       }
 
-      if (treeBytes >= treeThreshold) {
-        this.trip(
-          "process-tree",
-          treeBytes,
-          treeThreshold,
-          tree,
-          hostMemory,
-        );
-        return;
-      }
-      if (
-        hostMemory.usageBytes !== undefined &&
-        cgroupThreshold !== undefined &&
-        hostMemory.usageBytes >= cgroupThreshold
-      ) {
-        this.trip(
-          "service-cgroup",
-          hostMemory.usageBytes,
-          cgroupThreshold,
-          tree,
-          hostMemory,
-        );
-        return;
-      }
-
       const now = Date.now();
       if (now - this.lastLoggedAt >= this.logIntervalMs) {
         this.lastLoggedAt = now;
         this.logger.log(
-          `[process-supervisor] run=${this.options.runId} roots=${[...this.rootPids].join(",")} tree-rss-mib=${formatMib(treeBytes)} cgroup-mib=${hostMemory.usageBytes === undefined ? "unknown" : formatMib(hostMemory.usageBytes)}`,
+          `[process-monitor] run=${this.options.runId} roots=${[...this.rootPids].join(",")} tree-rss-mib=${formatMib(treeBytes)} cgroup-mib=${hostMemory.usageBytes === undefined ? "unknown" : formatMib(hostMemory.usageBytes)}`,
         );
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       this.logger.warn(
-        `[process-supervisor] run=${this.options.runId} sample failed: ${message}`,
+        `[process-monitor] run=${this.options.runId} sample failed: ${message}`,
       );
     }
   }
@@ -302,80 +196,14 @@ export class AgentProcessSupervisor {
   private logObserverFailure(error: unknown): void {
     const message = error instanceof Error ? error.message : String(error);
     this.logger.warn(
-      `[process-supervisor] run=${this.options.runId} memory observer failed: ${message}`,
+      `[process-monitor] run=${this.options.runId} memory observer failed: ${message}`,
     );
   }
-
-  private trip(
-    reason: AgentMemoryLimitError["reason"],
-    observedBytes: number,
-    limitBytes: number,
-    tree: ProcessMemoryEntry[],
-    hostMemory: HostMemorySnapshot,
-  ): void {
-    if (this.limitErrorValue) return;
-    const error = new AgentMemoryLimitError(
-      this.options.runId,
-      reason,
-      observedBytes,
-      limitBytes,
-    );
-    this.limitErrorValue = error;
-    this.stop();
-    const top = [...tree]
-      .sort((left, right) => right.rssBytes - left.rssBytes)
-      .slice(0, 8)
-      .map(
-        (entry) =>
-          `${entry.pid}:${entry.name}:${formatMib(entry.rssBytes)}MiB`,
-      )
-      .join(",");
-    this.logger.warn(
-      `[process-supervisor] run=${this.options.runId} aborting reason=${reason} tree-rss-mib=${formatMib(tree.reduce((total, entry) => total + entry.rssBytes, 0))} cgroup-mib=${hostMemory.usageBytes === undefined ? "unknown" : formatMib(hostMemory.usageBytes)} top=${top || "none"}`,
-    );
-    this.options.abortController.abort(error);
-  }
 }
 
-function configuredMib(
-  env: NodeJS.ProcessEnv,
-  name: string,
-  fallback: number,
-): number {
-  const value = Number(env[name]);
-  return Number.isFinite(value) && value > 0 ? value * MIB : fallback * MIB;
-}
-
-export function configuredAgentMemoryLimits(
-  env: NodeJS.ProcessEnv,
-): Pick<
-  AgentProcessSupervisorOptions,
-  "treeLimitBytes" | "cgroupHeadroomBytes"
-> {
-  return {
-    treeLimitBytes: configuredMib(
-      env,
-      "COMPADRE_AGENT_TREE_MEMORY_MB",
-      DEFAULT_AGENT_TREE_MEMORY_MB,
-    ),
-    cgroupHeadroomBytes: configuredMib(
-      env,
-      "COMPADRE_CGROUP_MEMORY_HEADROOM_MB",
-      DEFAULT_CGROUP_MEMORY_HEADROOM_MB,
-    ),
-  };
-}
-
-export function createAgentProcessSupervisor(
+export function createAgentProcessMonitor(
   runId: string,
-  abortController: AbortController,
-  env: NodeJS.ProcessEnv = process.env,
   onMemorySample?: (sample: AgentMemorySample) => void | Promise<void>,
-): AgentProcessSupervisor {
-  return new AgentProcessSupervisor({
-    runId,
-    abortController,
-    ...configuredAgentMemoryLimits(env),
-    onMemorySample,
-  });
+): AgentProcessMonitor {
+  return new AgentProcessMonitor({ runId, onMemorySample });
 }
