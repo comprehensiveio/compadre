@@ -112,6 +112,11 @@ committed to a branch or PR.
 
 ## Remaining considerations
 
+- Harness-native Claude Code and Codex tool events are durable in the run log
+  but are not guaranteed to become canonical model messages after a native
+  session is lost. The problem, solution options, and recommended follow-up
+  spike are documented in
+  [`harness-tool-history-persistence.md`](harness-tool-history-persistence.md).
 - Claude streams token deltas; Codex currently emits completed message bursts.
 - The local-process sandbox provides lifecycle plumbing, not host isolation.
   Both harnesses intentionally have unrestricted tool permissions.
