@@ -79,23 +79,22 @@ revision. Production must replace that environment tag during cutover.
 > thread memory and workspace-state persistence are implemented, tested, and
 > documented in their permanent architecture or operations documentation.
 
-Keep the initial cutover on the existing Slack-history behavior. After the
-Workflow topology is stable, make server-side TanStack persistence the
-canonical history for each Slack `thread_ts`; Slack remains a supplemental
-source for ambient human messages that arrived while Compadre was not tagged.
+The first persistence layer is now in place. For each mention, the relay
+acquires a PostgreSQL advisory lock, reloads the canonical channel-neutral
+TanStack transcript after the lock is held, and saves the accepted user and
+assistant turns back to Postgres. A fresh host or provider can therefore fall
+back to that transcript instead of depending on process-local session state.
 
-For each mention, the relay should:
+Slack remains a supplemental source for ambient human messages that arrived
+while Compadre was not tagged. The remaining work is to:
 
-1. Acquire a distributed lock for the Slack thread, then reload state after the
-   lock is held.
-2. Load the bounded provider-neutral transcript, rolling summary, provider
-   session references, and workspace/artifact references from Postgres.
-3. Fetch Slack messages newer than the stored Slack checkpoint, preserving
+1. Bound older transcript context with a rolling summary.
+2. Fetch Slack messages newer than the stored Slack checkpoint, preserving
    author, timestamp, and order. Deduplicate them by Slack event/message ID.
-4. Supply that Slack delta as supplemental channel context rather than copying
+3. Supply that Slack delta as supplemental channel context rather than copying
    the entire Slack thread into the canonical transcript.
-5. Persist the accepted user turn, terminal assistant turn, derived memory,
-   artifact references, and the new Slack checkpoint after the run.
+4. Persist derived memory, provider-local hints, artifact references, and the
+   new Slack checkpoint through the metadata store after the run.
 
 The existing durable AG-UI run log remains the detailed audit record for tool
 calls, intermediate messages, usage, and errors. Do not replay every raw event

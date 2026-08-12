@@ -54,9 +54,12 @@ test(
       assert.deepEqual(
         tables.rows.map((row) => row.table_name),
         [
+          "compadre_ai_interrupts",
+          "compadre_ai_metadata",
           "compadre_ai_runs",
           "compadre_ai_stream_events",
           "compadre_ai_streams",
+          "compadre_ai_threads",
           "compadre_pr_watches",
         ],
       );

@@ -21,7 +21,8 @@
     "db:migrate": "drizzle-kit migrate",
     "db:studio": "drizzle-kit studio",
     "typecheck": "tsc --noEmit",
-    "test": "tsx --test src/*.test.ts src/**/*.test.ts"
+    "test": "tsx --test src/*.test.ts src/**/*.test.ts",
+    "test:persistence": "vitest run src/persistence/postgres.conformance.spec.ts"
   },
   "dependencies": {
     "@anthropic-ai/claude-code": "2.1.222",
@@ -36,11 +37,12 @@
     "@opentelemetry/sdk-trace-node": "2.10.0",
     "@opentelemetry/semantic-conventions": "1.43.0",
     "@renderinc/sdk": "0.6.0",
-    "@tanstack/ai": "0.43.0",
-    "@tanstack/ai-claude-code": "0.3.0",
-    "@tanstack/ai-codex": "0.3.0",
-    "@tanstack/ai-mcp": "0.2.6",
-    "@tanstack/ai-sandbox": "0.3.0",
+    "@tanstack/ai": "0.44.0",
+    "@tanstack/ai-claude-code": "0.3.1",
+    "@tanstack/ai-codex": "0.3.1",
+    "@tanstack/ai-mcp": "0.3.0",
+    "@tanstack/ai-persistence": "0.1.2",
+    "@tanstack/ai-sandbox": "0.3.1",
     "@tanstack/ai-sandbox-local-process": "0.2.1",
     "dd-trace": "^5.119.0",
     "dotenv": "^17.4.2",
@@ -57,6 +59,7 @@
     "@types/pg-cursor": "2.7.2",
     "drizzle-kit": "1.0.0-rc.4",
     "tsx": "^4.23.5",
-    "typescript": "^5.7.0"
+    "typescript": "^5.7.0",
+    "vitest": "4.1.10"
   }
 }

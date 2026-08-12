@@ -26,6 +26,7 @@ import { harnessThreadStore } from "./tanstack/thread-state.js";
 import { harnessPreparedWorktrees } from "./tanstack/prepared-worktrees.js";
 import { validateRelayOnlyConfiguration } from "./services/conversation-runner.js";
 import { startConfiguredPullRequestWatch } from "./services/pr-watch-runtime.js";
+import { getConfiguredThreadPersistence } from "./persistence/runtime.js";
 
 const app = new Hono();
 
@@ -61,6 +62,10 @@ const port = Number(process.env.PORT) || 3100;
 
 async function start() {
   validateRelayOnlyConfiguration();
+  const threadPersistence = await getConfiguredThreadPersistence();
+  if (threadPersistence) {
+    console.log("[persistence] TanStack thread state enabled");
+  }
   const relayOnly = process.env.COMPADRE_RELAY_ONLY === "true";
   if (!relayOnly) {
     const agent = validateConversationConfiguration();

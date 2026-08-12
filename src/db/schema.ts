@@ -1,4 +1,5 @@
-import type { RunRecord, StreamChunk } from "@tanstack/ai";
+import type { ModelMessage, RunRecord, StreamChunk } from "@tanstack/ai";
+import type { InterruptRecord } from "@tanstack/ai-persistence";
 import { sql } from "drizzle-orm";
 import {
   bigint,
@@ -76,6 +77,57 @@ export const aiStreamEvents = pgTable(
       foreignColumns: [aiStreams.runId],
       name: "compadre_ai_stream_events_run_id_fkey",
     }).onDelete("cascade"),
+  ],
+);
+
+export const aiThreads = pgTable("compadre_ai_threads", {
+  threadId: text("thread_id").primaryKey(),
+  messages: jsonb("messages").$type<ModelMessage[]>().notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true })
+    .notNull()
+    .defaultNow(),
+});
+
+export const aiInterrupts = pgTable(
+  "compadre_ai_interrupts",
+  {
+    interruptId: text("interrupt_id").primaryKey(),
+    runId: text("run_id").notNull(),
+    threadId: text("thread_id").notNull(),
+    status: text("status").$type<InterruptRecord["status"]>().notNull(),
+    requestedAtMs: bigint("requested_at_ms", { mode: "number" }).notNull(),
+    resolvedAtMs: bigint("resolved_at_ms", { mode: "number" }),
+    payload: jsonb("payload").$type<Record<string, unknown>>().notNull(),
+    response: jsonb("response").$type<unknown>(),
+  },
+  (table) => [
+    check(
+      "compadre_ai_interrupts_status_check",
+      sql`${table.status} in ('pending', 'resolved', 'cancelled')`,
+    ),
+    index("compadre_ai_interrupts_thread_requested_idx").on(
+      table.threadId,
+      table.requestedAtMs,
+    ),
+    index("compadre_ai_interrupts_run_requested_idx").on(
+      table.runId,
+      table.requestedAtMs,
+    ),
+  ],
+);
+
+export const aiMetadata = pgTable(
+  "compadre_ai_metadata",
+  {
+    namespace: text("namespace").notNull(),
+    key: text("key").notNull(),
+    value: jsonb("value").$type<unknown>().notNull(),
+  },
+  (table) => [
+    primaryKey({
+      columns: [table.namespace, table.key],
+      name: "compadre_ai_metadata_pkey",
+    }),
   ],
 );
 

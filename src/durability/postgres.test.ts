@@ -1,10 +1,12 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { setImmediate as waitForImmediate } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 import { EventType, type StreamChunk } from "@tanstack/ai";
 import { migrate } from "drizzle-orm/node-postgres/migrator";
 import pg from "pg";
 import { createDatabase } from "../db/client.js";
+import { PostgresLockStore } from "../persistence/postgres.js";
 import { createPostgresAgentRunDurability } from "./postgres.js";
 import { captureDurableRun } from "./runtime.js";
 
@@ -196,6 +198,31 @@ test(
         (await durability.runs.get(drivenRunId))?.status,
         "completed",
       );
+
+      const lockKey = `postgres-lock-${nonce}`;
+      const locks = new PostgresLockStore(pool);
+      let releaseFirst!: () => void;
+      let markFirstAcquired!: () => void;
+      const firstAcquired = new Promise<void>((resolve) => {
+        markFirstAcquired = resolve;
+      });
+      const firstHolding = locks.withLock(
+        lockKey,
+        () => new Promise<void>((resolve) => {
+          releaseFirst = resolve;
+          markFirstAcquired();
+        }),
+      );
+      await firstAcquired;
+      let secondAcquired = false;
+      const secondHolding = locks.withLock(lockKey, async () => {
+        secondAcquired = true;
+      });
+      await waitForImmediate();
+      assert.equal(secondAcquired, false);
+      releaseFirst();
+      await Promise.all([firstHolding, secondHolding]);
+      assert.equal(secondAcquired, true);
     } finally {
       await durability.close();
       await pool.query(

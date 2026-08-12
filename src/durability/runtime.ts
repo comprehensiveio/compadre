@@ -8,6 +8,8 @@ import {
   type StreamDurability,
 } from "@tanstack/ai";
 import { RunController } from "@tanstack/ai-sandbox";
+import type pg from "pg";
+import type { CompadreDatabase } from "../db/client.js";
 import { createPostgresAgentRunDurability } from "./postgres.js";
 
 export type DurabilityBackend = "memory" | "postgres";
@@ -16,6 +18,8 @@ export interface AgentRunDurability {
   backend: DurabilityBackend;
   runs: RunStore;
   stream(runId: string): StreamDurability<string>;
+  pool?: pg.Pool;
+  database?: CompadreDatabase;
   close(): Promise<void>;
 }
 

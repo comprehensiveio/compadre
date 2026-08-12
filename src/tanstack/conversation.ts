@@ -29,6 +29,7 @@ export interface HarnessConversationOptions {
   systemPrompt?: (worktreePath: string) => string;
   stream?: StreamCallbacks;
   capacityPriority?: RunCapacityPriority;
+  persistThread?: boolean;
 }
 
 export interface HarnessConversationResult {
@@ -183,6 +184,7 @@ export async function runHarnessConversation(
       systemPrompt: options.systemPrompt,
       transcriptUserMessage: options.transcriptUserMessage,
       capacityPriority: options.capacityPriority,
+      persistThread: options.persistThread,
     });
     const consumableChunks = durability
       ? captureDurableRun(chunks, {

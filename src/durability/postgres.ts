@@ -46,6 +46,8 @@ export interface PostgresDurabilityOptions {
 export interface PostgresAgentRunDurability {
   runs: RunStore;
   stream(runId: string): StreamDurability<string>;
+  pool: pg.Pool;
+  database: CompadreDatabase;
   close(): Promise<void>;
 }
 
@@ -112,7 +114,7 @@ async function validatePostgresDurabilitySchema(
   ]);
 }
 
-function createRunStore(db: CompadreDatabase): RunStore {
+export function createPostgresRunStore(db: CompadreDatabase): RunStore {
   return {
     async createOrResume(input) {
       const status = input.status ?? "running";
@@ -460,8 +462,10 @@ export async function createPostgresAgentRunDurability(
   }
   const pollIntervalMs = options.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS;
   return {
-    runs: createRunStore(db),
+    runs: createPostgresRunStore(db),
     stream: (runId) => createStreamDurability(db, runId, pollIntervalMs),
+    pool,
+    database: db,
     close: async () => {
       if (ownsPool) await pool.end();
     },

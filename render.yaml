@@ -9,5 +9,8 @@ services:
     startCommand: npm start
     healthCheckPath: /health
     autoDeployTrigger: commit
+    envVars:
+      - key: COMPADRE_THREAD_PERSISTENCE_ENABLED
+        value: "true"
     previews:
       generation: off
