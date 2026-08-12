@@ -34,6 +34,7 @@ export interface PostgresDurabilityOptions {
   connectionString: string;
   pollIntervalMs?: number;
   pool?: pg.Pool;
+  poolFactory?: (config: pg.PoolConfig) => pg.Pool;
 }
 
 export interface PostgresAgentRunDurability {
@@ -415,19 +416,27 @@ export async function createPostgresAgentRunDurability(
   options: PostgresDurabilityOptions,
 ): Promise<PostgresAgentRunDurability> {
   const ownsPool = options.pool === undefined;
-  const pool = options.pool ?? new pg.Pool({
-      connectionString: options.connectionString,
-      ssl: sslForConnectionString(options.connectionString),
-      max: 4,
-      allowExitOnIdle: true,
-      application_name: "compadre-durability",
-    });
+  const createPool = options.poolFactory ?? ((config) => new pg.Pool(config));
+  const pool = options.pool ?? createPool({
+    connectionString: options.connectionString,
+    ssl: sslForConnectionString(options.connectionString),
+    max: 4,
+    allowExitOnIdle: true,
+    application_name: "compadre-durability",
+  });
   if (ownsPool) {
     pool.on("error", (error) => {
       console.error("[durability] idle Postgres connection failed", error);
     });
   }
-  await ensurePostgresDurabilitySchema(pool);
+  try {
+    await ensurePostgresDurabilitySchema(pool);
+  } catch (error) {
+    if (ownsPool) {
+      await pool.end().catch(() => undefined);
+    }
+    throw error;
+  }
   const pollIntervalMs = options.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS;
   return {
     runs: createRunStore(pool),

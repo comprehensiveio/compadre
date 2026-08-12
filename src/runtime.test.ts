@@ -52,6 +52,7 @@ test("replaces a blank Workspace MCP override with the baked executable", () => 
   const binDir = path.join(runtimeRoot, "bin");
   mkdirSync(binDir);
   writeFileSync(path.join(binDir, "workspace-mcp"), "");
+  const previousPath = process.env.PATH;
   const previousExecutable = process.env.WORKSPACE_MCP_EXECUTABLE;
 
   try {
@@ -62,6 +63,11 @@ test("replaces a blank Workspace MCP override with the baked executable", () => 
       path.join(binDir, "workspace-mcp"),
     );
   } finally {
+    if (previousPath === undefined) {
+      delete process.env.PATH;
+    } else {
+      process.env.PATH = previousPath;
+    }
     if (previousExecutable === undefined) {
       delete process.env.WORKSPACE_MCP_EXECUTABLE;
     } else {

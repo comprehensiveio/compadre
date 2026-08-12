@@ -117,3 +117,31 @@ test("fails promptly when the Workflow task dies before opening a log", async ()
   const snapshot = await durability.stream("missing-log").snapshot();
   assert.equal(snapshot.at(-1)?.chunk.type, EventType.RUN_ERROR);
 });
+
+test("preserves launcher startup failure when durability finalization also fails", async (t) => {
+  const durability = await createAgentRunDurability({
+    COMPADRE_DURABILITY_BACKEND: "memory",
+  });
+  assert.ok(durability);
+  durability.runs.get = async () => {
+    throw new Error("finalization failed");
+  };
+  t.mock.method(console, "error", () => undefined);
+
+  await assert.rejects(
+    runWorkflowConversation(
+      { prompt: "hello", provider: "claude-code" },
+      {
+        getDurability: async () => durability,
+        createId: () => "startup-failure",
+        now: () => 1,
+        getLauncher: () => ({
+          async start() {
+            throw new Error("launcher startup failed");
+          },
+        }),
+      },
+    ),
+    /launcher startup failed/,
+  );
+});

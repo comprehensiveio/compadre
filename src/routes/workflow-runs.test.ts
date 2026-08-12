@@ -148,3 +148,48 @@ test("terminalizes fire-and-tail runs when the Workflow task fails", async (t) =
   const snapshot = await durability.stream("failed-route-run").snapshot();
   assert.equal(snapshot.at(-1)?.chunk.type, EventType.RUN_ERROR);
 });
+
+test("preserves route launcher failure when durability finalization also fails", async (t) => {
+  const previousApiKey = process.env.COMPADRE_API_KEY;
+  process.env.COMPADRE_API_KEY = "test-key";
+  t.after(() => {
+    if (previousApiKey === undefined) delete process.env.COMPADRE_API_KEY;
+    else process.env.COMPADRE_API_KEY = previousApiKey;
+  });
+
+  const durability = await createAgentRunDurability({
+    COMPADRE_DURABILITY_BACKEND: "memory",
+  });
+  assert.ok(durability);
+  durability.runs.get = async () => {
+    throw new Error("finalization failed");
+  };
+  t.mock.method(console, "error", () => undefined);
+  const app = new Hono();
+  app.onError((error, c) => c.text(error.message, 500));
+  app.route(
+    "/",
+    createWorkflowRunRoutes({
+      enabled: () => true,
+      getDurability: async () => durability,
+      createId: () => "route-startup-failure",
+      getLauncher: () => ({
+        async start() {
+          throw new Error("launcher startup failed");
+        },
+      }),
+    }),
+  );
+
+  const response = await app.request("/workflow-runs", {
+    method: "POST",
+    headers: {
+      Authorization: "Bearer test-key",
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ prompt: "hello" }),
+  });
+
+  assert.equal(response.status, 500);
+  assert.equal(await response.text(), "launcher startup failed");
+});

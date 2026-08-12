@@ -73,7 +73,14 @@ export async function runWorkflowConversation(
       responseMode: options.stream ? "slack-streaming" : "default",
     });
   } catch (error) {
-    await failOpenDurableRun(durability, runId, error, dependencies.now);
+    try {
+      await failOpenDurableRun(durability, runId, error, dependencies.now);
+    } catch (finalizationError) {
+      console.error("[workflow-relay] failure finalization failed", {
+        runId,
+        error: finalizationError,
+      });
+    }
     throw error;
   }
 

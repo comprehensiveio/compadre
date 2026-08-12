@@ -127,6 +127,42 @@ test("preserves the agent error when thread cleanup also fails", async () => {
   );
 });
 
+test("preserves an undefined agent rejection when cleanup also fails", async (t) => {
+  t.mock.method(console, "warn", () => undefined);
+  let rejected = false;
+
+  try {
+    await executeAgentWorkflow(
+      { prompt: "fail" },
+      dependencies({
+        runConversation: async () => Promise.reject(undefined),
+        releaseThread: async () => {
+          throw new Error("cleanup failed");
+        },
+      }),
+    );
+  } catch (error) {
+    rejected = true;
+    assert.equal(error, undefined);
+  }
+
+  assert.equal(rejected, true);
+});
+
+test("surfaces cleanup failure after a successful agent run", async () => {
+  await assert.rejects(
+    executeAgentWorkflow(
+      { prompt: "succeed" },
+      dependencies({
+        releaseThread: async () => {
+          throw new Error("cleanup failed");
+        },
+      }),
+    ),
+    /cleanup failed/,
+  );
+});
+
 test("agent workflow rejects malformed task input before starting work", async () => {
   let ensured = false;
   await assert.rejects(

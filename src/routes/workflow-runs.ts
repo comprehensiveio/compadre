@@ -99,7 +99,14 @@ export function createWorkflowRunRoutes(
         threadId,
       });
     } catch (error) {
-      await failOpenDurableRun(durability, runId, error);
+      try {
+        await failOpenDurableRun(durability, runId, error);
+      } catch (finalizationError) {
+        console.error("[workflow-route] failure finalization failed", {
+          runId,
+          error: finalizationError,
+        });
+      }
       throw error;
     }
     if (launcher.wait) {

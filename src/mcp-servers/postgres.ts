@@ -16,6 +16,7 @@ import {
 } from "@modelcontextprotocol/sdk/types.js";
 import pg from "pg";
 import Cursor from "pg-cursor";
+import { readBoundedJsonRows } from "./bounded-query.js";
 
 const QUERY_BATCH_SIZE = 100;
 const QUERY_ROW_LIMIT = 1_000;
@@ -107,33 +108,16 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
   try {
     await client.query("BEGIN TRANSACTION READ ONLY");
     cursor = client.query(new Cursor<Record<string, unknown>>(sql));
-    const rows: Record<string, unknown>[] = [];
-    let serializedBytes = 2;
-    let truncated = false;
-
-    while (rows.length < QUERY_ROW_LIMIT) {
-      const batch = await cursor.read(
-        Math.min(QUERY_BATCH_SIZE, QUERY_ROW_LIMIT - rows.length),
-      );
-      if (batch.length === 0) break;
-      for (const row of batch) {
-        const rowBytes = Buffer.byteLength(JSON.stringify(row), "utf8") + 1;
-        if (serializedBytes + rowBytes > QUERY_SERIALIZED_BYTE_LIMIT) {
-          truncated = true;
-          break;
-        }
-        rows.push(row);
-        serializedBytes += rowBytes;
-      }
-      if (truncated) break;
-      if (batch.length < QUERY_BATCH_SIZE) break;
-      if (rows.length === QUERY_ROW_LIMIT) truncated = true;
-    }
+    const result = await readBoundedJsonRows(cursor, {
+      batchSize: QUERY_BATCH_SIZE,
+      rowLimit: QUERY_ROW_LIMIT,
+      serializedByteLimit: QUERY_SERIALIZED_BYTE_LIMIT,
+    });
 
     return {
       content: [
-        { type: "text" as const, text: JSON.stringify(rows, null, 2) },
-        ...(truncated
+        { type: "text" as const, text: result.json },
+        ...(result.truncated
           ? [
               {
                 type: "text" as const,

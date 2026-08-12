@@ -102,7 +102,10 @@ export async function executeAgentWorkflow(
   const agentStartedAt = dependencies.now();
   let firstActivityAt: number | undefined;
 
-  let operationError: unknown;
+  let operationFailed = false;
+  let cleanupFailed = false;
+  let cleanupError: unknown;
+  let workflowResult!: AgentWorkflowResult;
   try {
     const result = await dependencies.runConversation({
       runId: input.runId,
@@ -127,7 +130,7 @@ export async function executeAgentWorkflow(
       },
     });
     const completedAt = dependencies.now();
-    const workflowResult: AgentWorkflowResult = {
+    workflowResult = {
       ...result,
       repositoryRevision: repository.revision,
       timings: {
@@ -147,19 +150,24 @@ export async function executeAgentWorkflow(
       revision: repository.revision,
       ...workflowResult.timings,
     });
-    return workflowResult;
   } catch (error) {
-    operationError = error;
+    operationFailed = true;
     throw error;
   } finally {
     try {
       await dependencies.releaseThread(threadId);
     } catch (error) {
-      if (operationError === undefined) throw error;
-      console.warn("[workflow-agent] thread cleanup failed", {
-        threadId,
-        error,
-      });
+      if (operationFailed) {
+        console.warn("[workflow-agent] thread cleanup failed", {
+          threadId,
+          error,
+        });
+      } else {
+        cleanupFailed = true;
+        cleanupError = error;
+      }
     }
   }
+  if (cleanupFailed) throw cleanupError;
+  return workflowResult;
 }

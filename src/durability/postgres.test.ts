@@ -7,6 +7,29 @@ import { captureDurableRun } from "./runtime.js";
 
 const connectionString = process.env.COMPADRE_TEST_DATABASE_URL;
 
+test("closes an owned pool when schema initialization fails", async () => {
+  let ended = false;
+  const pool = {
+    on: () => pool,
+    connect: async () => {
+      throw new Error("schema connection failed");
+    },
+    end: async () => {
+      ended = true;
+      throw new Error("pool close failed");
+    },
+  } as unknown as pg.Pool;
+
+  await assert.rejects(
+    createPostgresAgentRunDurability({
+      connectionString: "postgresql://localhost/test",
+      poolFactory: () => pool,
+    }),
+    /schema connection failed/,
+  );
+  assert.equal(ended, true);
+});
+
 test(
   "Postgres adapter preserves run lifecycle fields and ordered stream replay",
   { skip: connectionString ? false : "set COMPADRE_TEST_DATABASE_URL" },
