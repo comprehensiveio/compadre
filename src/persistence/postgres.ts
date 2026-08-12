@@ -289,12 +289,21 @@ export class PostgresLockStore implements LockStore {
       return await fn(abortController.signal);
     } finally {
       client.off("error", onConnectionError);
+      let discardClient = abortController.signal.aborted;
       if (locked && !abortController.signal.aborted) {
-        await client
-          .query("SELECT pg_advisory_unlock(hashtextextended($1, 0))", [key])
-          .catch(() => undefined);
+        try {
+          const result = await client.query<{ unlocked: boolean }>(
+            "SELECT pg_advisory_unlock(hashtextextended($1, 0)) AS unlocked",
+            [key],
+          );
+          discardClient = result.rows[0]?.unlocked !== true;
+        } catch {
+          // A session-scoped lock may still be held. Destroying the connection
+          // guarantees PostgreSQL releases it instead of returning it to the pool.
+          discardClient = true;
+        }
       }
-      client.release(abortController.signal.aborted);
+      client.release(discardClient);
     }
   }
 }

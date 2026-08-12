@@ -54,12 +54,15 @@ afterAll(async () => {
   if (adminPool) {
     // These identifiers are the same internal UUID-derived names described
     // above; PostgreSQL DDL identifiers cannot be supplied as bind parameters.
-    await adminPool
-      .query(`DROP SCHEMA IF EXISTS "${applicationSchema}" CASCADE`)
-      .catch(() => undefined);
-    await adminPool
-      .query(`DROP SCHEMA IF EXISTS "${migrationSchema}" CASCADE`)
-      .catch(() => undefined);
-    await adminPool.end();
+    try {
+      await Promise.all([
+        adminPool.query(
+          `DROP SCHEMA IF EXISTS "${applicationSchema}" CASCADE`,
+        ),
+        adminPool.query(`DROP SCHEMA IF EXISTS "${migrationSchema}" CASCADE`),
+      ]);
+    } finally {
+      await adminPool.end();
+    }
   }
 });
