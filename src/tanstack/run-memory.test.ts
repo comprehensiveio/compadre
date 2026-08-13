@@ -312,6 +312,29 @@ test("persists a record when the run fails", async () => {
   assert.equal(store.threads.get("thread")?.[0]?.status, "failed");
 });
 
+test("observe mode records without injecting", async () => {
+  const store = inMemoryStore();
+  const chunks = toolCallChunks({
+    toolCallId: "call-1",
+    name: "read_logs",
+    input: {},
+    result: "ok",
+  });
+  await simulateRun({ store, runId: "run-1", chunks });
+
+  const observed = await simulateRun({
+    store,
+    runId: "run-2",
+    chunks,
+    middlewareOptions: { shouldInject: () => false },
+  });
+  assert.equal(observed.configPatch, undefined);
+  assert.deepEqual(
+    store.threads.get("thread")?.map((record) => record.runId),
+    ["run-1", "run-2"],
+  );
+});
+
 test("a failing store never fails the run's terminal hooks", async (t) => {
   const warn = t.mock.method(console, "warn", () => {});
   const store = defineRunMemoryStore({

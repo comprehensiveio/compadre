@@ -91,6 +91,20 @@ function isRunMemoryRecord(value: unknown): value is RunMemoryRecord {
   );
 }
 
+export type RunMemoryMode = "on" | "observe" | "off";
+
+/**
+ * Deliberately a code-level switch, not an environment variable: flipping it
+ * is a reviewed, versioned change that behaves identically in every
+ * environment.
+ *
+ * - `on`: record activity and inject the fresh-session digest.
+ * - `observe`: keep recording but never inject — records survive a diagnosis
+ *   period if the digest is suspected of degrading answers.
+ * - `off`: disable the middleware entirely.
+ */
+export const RUN_MEMORY_MODE: RunMemoryMode = "on";
+
 export interface WithRunMemoryOptions {
   /** Records kept per thread. Default 20. */
   maxRecords?: number;

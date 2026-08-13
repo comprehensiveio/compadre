@@ -377,6 +377,53 @@ Spike items to confirm before implementation:
 - Whether Codex's synthesized unresolved results match the interrupted-shape
   detection exactly.
 
+## Key decisions and findings from the implementation review
+
+Recorded from the design/implementation discussion (2026-08-13) so the
+reasoning survives the conversation:
+
+1. **The gap is model context, not storage.** Upstream already persists
+   harness tool calls (`withSandbox`'s recorder + `withPersistence`) but
+   deliberately strips them from every model request as display-only history,
+   and reasoning is captured nowhere. Any fix that "persists tool calls" is
+   re-solving a solved problem; the missing piece is projection.
+2. **The digest lives in `systemPrompts`, not `messages` — deliberately.**
+   `messages` is a persisted, contested surface: persistence saves it back
+   verbatim (an injected message would become permanent canonical history),
+   and three middlewares already rewrite it (persistence merges, sandbox
+   strips, the channel wrapper slices by turn boundary). `systemPrompts` is
+   append-only and untouched by others, which is what makes `withRunMemory`
+   position-independent. There is also no honest `ModelMessage` role for
+   injected context (`user`/`assistant`/`tool` would each fabricate
+   something), and harness adapters flatten messages into the spawned
+   process's prompt anyway. Revisit trigger: models observably
+   under-attending to the digest — the fix then is an upstream ephemeral
+   message concept (`persist: false` or a `context` role), not local
+   strip-and-reconcile machinery.
+3. **Kill switch, in code by request:** `RUN_MEMORY_MODE` in
+   `src/tanstack/run-memory.ts` — `on` (default) | `observe` (record but never
+   inject; keeps history while diagnosing suspected harm) | `off`. A
+   code-level constant rather than an environment variable so flipping it is
+   a reviewed, versioned change with identical behavior in every environment.
+4. **Native session resume requires consecutive same-provider turns**
+   (`resumableHarnessSession` checks `lastProvider`), so every provider
+   alternation is a fresh session. The digest path is exercised far more
+   often than "rare recovery" intuition suggests.
+5. **Live-verification evidence bar:** the provider-switch turn answered
+   with Claude's private `description` tool argument and `<`-redirection —
+   content that exists only in the durable record, not in the transcript and
+   not reproducible by re-running the command. Prefer evidence a model could
+   not fake or re-derive.
+6. **Found and fixed while verifying:** the memory durability backend could
+   never deliver a real harness run — `captureDurableRun`'s from-start reader
+   hit `memoryStream`'s 100ms unknown-run fail-fast while Claude/Codex spawn
+   for seconds. Producers now pass a 60s `firstChunkDeadlineMs`; joiners keep
+   fail-fast. Trap for the future: `memoryStream(init, options)` takes the
+   deadline in the second argument; inside the first it is silently ignored.
+7. **Redaction is key-based.** A secret embedded in a plain string argument
+   (e.g., inline in a shell command) survives scrubbing — treat digest
+   content with the same sensitivity as the transcript it derives from.
+
 ## Upstream path
 
 - The middleware is fully self-contained: no imports from `ai-sandbox`, one
