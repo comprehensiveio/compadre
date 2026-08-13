@@ -23,6 +23,11 @@ import {
   type AguiChatParams,
 } from "./protocol.js";
 import { createHarnessTelemetryMiddleware } from "./telemetry.js";
+import {
+  RUN_MEMORY_MODE,
+  metadataRunMemoryStore,
+  withRunMemory,
+} from "./run-memory.js";
 import { harnessLockStore } from "./thread-lock.js";
 import { deferTerminalHooks } from "./middleware-order.js";
 
@@ -137,6 +142,14 @@ export function createHarnessStream({
   const persistenceMiddleware = persistence
     ? deferTerminalHooks(withPersistence(persistence))
     : undefined;
+  const runMemory =
+    persistence && RUN_MEMORY_MODE !== "off"
+      ? withRunMemory(metadataRunMemoryStore(persistence.stores.metadata), {
+          ...(RUN_MEMORY_MODE === "observe"
+            ? { shouldInject: () => false }
+            : {}),
+        })
+      : undefined;
   const shared = {
     messages: params.messages,
     systemPrompts: [systemPrompt],
@@ -146,6 +159,7 @@ export function createHarnessStream({
       // Persistence loads history and provides pending-turn state before the
       // sandbox starts, but must save only after the sandbox reconciles tools.
       ...(persistenceMiddleware ? [persistenceMiddleware.lifecycle] : []),
+      ...(runMemory ? [runMemory] : []),
       withLocks(locks),
       withSandbox(sandbox),
       ...(persistenceMiddleware ? [persistenceMiddleware.terminal] : []),

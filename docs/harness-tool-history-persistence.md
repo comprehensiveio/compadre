@@ -8,6 +8,10 @@ durable in Postgres. This note describes a remaining gap: preserving enough
 Claude Code and Codex tool activity for a later turn to answer questions about
 what the agent previously did, even when its native provider session is gone.
 
+A concrete design for the hybrid approach (option 5) is proposed in
+[`run-memory-middleware.md`](run-memory-middleware.md), which also documents
+what upstream `@tanstack/ai-sandbox` already persists.
+
 ## The problem
 
 TanStack AI has two relevant persistence layers with different contracts:

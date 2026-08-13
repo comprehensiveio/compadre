@@ -32,6 +32,7 @@ import { harnessPreparedWorktrees } from "./tanstack/prepared-worktrees.js";
 import { validateRelayOnlyConfiguration } from "./services/conversation-runner.js";
 import { startConfiguredPullRequestWatch } from "./services/pr-watch-runtime.js";
 import { getConfiguredThreadPersistence } from "./persistence/runtime.js";
+import { RUN_MEMORY_MODE } from "./tanstack/run-memory.js";
 
 const app = new Hono();
 
@@ -69,7 +70,9 @@ async function start() {
   validateRelayOnlyConfiguration();
   const threadPersistence = await getConfiguredThreadPersistence();
   if (threadPersistence) {
-    console.log("[persistence] TanStack thread state enabled");
+    console.log(
+      `[persistence] TanStack thread state enabled (run memory: ${RUN_MEMORY_MODE})`,
+    );
   }
   const relayOnly = process.env.COMPADRE_RELAY_ONLY === "true";
   if (!relayOnly) {

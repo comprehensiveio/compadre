@@ -14,10 +14,21 @@ import { createPostgresAgentRunDurability } from "./postgres.js";
 
 export type DurabilityBackend = "memory" | "postgres";
 
+export interface DurableStreamOptions {
+  /**
+   * How long an empty log may stay empty before a from-start reader fails.
+   * Joiners of unknown runs want the backend's fail-fast default; a producer
+   * that just started the run passes a deadline covering harness startup.
+   * Only the memory backend has such a fail-fast; the Postgres backend polls
+   * without an empty-log deadline and ignores this option.
+   */
+  firstChunkDeadlineMs?: number;
+}
+
 export interface AgentRunDurability {
   backend: DurabilityBackend;
   runs: RunStore;
-  stream(runId: string): StreamDurability<string>;
+  stream(runId: string, options?: DurableStreamOptions): StreamDurability<string>;
   pool?: pg.Pool;
   lockPool?: pg.Pool;
   database?: CompadreDatabase;
@@ -50,7 +61,7 @@ export async function createAgentRunDurability(
     return {
       backend,
       runs,
-      stream: (runId) => {
+      stream: (runId, options) => {
         let stream = streams.get(runId);
         if (!stream) {
           const underlying = memoryStream({ runId });
@@ -75,7 +86,25 @@ export async function createAgentRunDurability(
           };
           streams.set(runId, stream);
         }
-        return stream;
+        if (options?.firstChunkDeadlineMs === undefined) return stream;
+        // Deadlines are caller-scoped. The cached facade always keeps the
+        // backend's fail-fast default, so whichever call order occurs, a
+        // joiner never inherits a producer's long deadline and a producer
+        // never inherits a joiner's fail-fast. Facades share one
+        // process-global log per run; close routes through the cached facade
+        // so retention bookkeeping stays single-pathed.
+        const scoped = memoryStream(
+          { runId },
+          { firstChunkDeadlineMs: options.firstChunkDeadlineMs },
+        );
+        const cached = stream;
+        return {
+          resumeFrom: () => scoped.resumeFrom(),
+          append: (chunks) => scoped.append(chunks),
+          read: (offset, signal) => scoped.read(offset, signal),
+          snapshot: () => scoped.snapshot(),
+          close: () => cached.close(),
+        };
       },
       close: async () => undefined,
     };
@@ -104,6 +133,14 @@ export function getConfiguredAgentRunDurability(): Promise<AgentRunDurability | 
   return configuredDurability;
 }
 
+/**
+ * A freshly started harness appends nothing until its process spawns and
+ * initializes, which takes seconds — far beyond the memory backend's 100ms
+ * unknown-run fail-fast. The producer path knows the run is live, so it may
+ * wait out startup; external joiners keep the backend default.
+ */
+const PRODUCER_FIRST_CHUNK_DEADLINE_MS = 60_000;
+
 export function captureDurableRun(
   source: AsyncIterable<StreamChunk>,
   options: {
@@ -115,7 +152,10 @@ export function captureDurableRun(
 ): AsyncIterable<StreamChunk> {
   const controller = new RunController({
     runs: options.durability.runs,
-    durability: options.durability.stream,
+    durability: (runId) =>
+      options.durability.stream(runId, {
+        firstChunkDeadlineMs: PRODUCER_FIRST_CHUNK_DEADLINE_MS,
+      }),
   });
   const handle = controller.start({
     runId: options.runId,
