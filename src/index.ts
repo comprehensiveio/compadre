@@ -21,7 +21,12 @@ import {
   removeWorktree,
 } from "./repo.js";
 import { validateConversationConfiguration } from "./conversation.js";
-import { recoverStaleSlackRuns } from "./services/slack-run-recovery.js";
+import {
+  createSingleFlightSlackRecovery,
+  DEFAULT_SLACK_RECOVERY_MIN_AGE_MS,
+  isSlackRecoveryOwner,
+  recoverStaleSlackRuns,
+} from "./services/slack-run-recovery.js";
 import { harnessThreadStore } from "./tanstack/thread-state.js";
 import { harnessPreparedWorktrees } from "./tanstack/prepared-worktrees.js";
 import { validateRelayOnlyConfiguration } from "./services/conversation-runner.js";
@@ -78,13 +83,25 @@ async function start() {
   serve({ fetch: app.fetch, port }, (info) => {
     console.log(`[agent] server running on port ${info.port}`);
     const botToken = process.env.SLACK_BOT_TOKEN;
-    if (botToken) {
-      const recoveryTimer = setTimeout(() => {
-        void recoverStaleSlackRuns({ botToken }).catch((error) =>
+    if (botToken && isSlackRecoveryOwner()) {
+      const recoverSlackRuns = createSingleFlightSlackRecovery(() =>
+        recoverStaleSlackRuns({ botToken }),
+      );
+      const scheduleSlackRecovery = () => {
+        void recoverSlackRuns().catch((error) =>
           console.error("[slack-recovery] recovery failed:", error),
         );
-      }, SLACK_RECOVERY_DELAY_MS);
+      };
+      const recoveryTimer = setTimeout(
+        scheduleSlackRecovery,
+        SLACK_RECOVERY_DELAY_MS,
+      );
       recoveryTimer.unref();
+      const recoveryInterval = setInterval(
+        scheduleSlackRecovery,
+        DEFAULT_SLACK_RECOVERY_MIN_AGE_MS,
+      );
+      recoveryInterval.unref();
     }
   });
 

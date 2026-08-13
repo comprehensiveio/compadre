@@ -149,6 +149,49 @@ test("publishes channel loading states without requiring assistant view", async 
   ]);
 });
 
+test("successful runs clear both live and stale terminal reactions idempotently", async () => {
+  const errors: unknown[][] = [];
+  const { calls, fetchImpl } = createSlackFetch({
+    "reactions.remove": [
+      { ok: false, error: "no_reaction" },
+      { ok: true },
+    ],
+  });
+  const stream = new SlackStream({
+    channel: "C123",
+    threadTs: "100.001",
+    botToken: "xoxb-test",
+    fetchImpl,
+    logger: {
+      info() {},
+      warn() {},
+      error: (...args: unknown[]) => void errors.push(args),
+    },
+  });
+
+  await stream.markRunSucceeded("200.002");
+
+  assert.deepEqual(calls, [
+    {
+      method: "reactions.remove",
+      body: {
+        channel: "C123",
+        timestamp: "200.002",
+        name: "compadre-thinking",
+      },
+    },
+    {
+      method: "reactions.remove",
+      body: {
+        channel: "C123",
+        timestamp: "200.002",
+        name: "compadre-failure",
+      },
+    },
+  ]);
+  assert.deepEqual(errors, []);
+});
+
 test("falls back to a normal thread message when native streaming is unavailable", async () => {
   const { calls, fetchImpl } = createSlackFetch({
     "chat.startStream": [{ ok: false, error: "channel_type_not_supported" }],

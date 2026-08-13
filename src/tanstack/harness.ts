@@ -11,6 +11,7 @@ import {
   DEFAULT_MODEL,
   FABLE_MODEL,
 } from "../config.js";
+import { gitAuthenticationEnvironment } from "../repo.js";
 import { resolveClaudeExecutable } from "./claude-executable.js";
 import { resolveCodexExecutable } from "./codex-executable.js";
 import {
@@ -99,8 +100,10 @@ function codexReasoningEffort(): "minimal" | "low" | "medium" | "high" {
  */
 export function harnessEnvironment(
   worktreePath: string,
+  environment: NodeJS.ProcessEnv = process.env,
 ): Record<string, string> {
   return {
+    ...gitAuthenticationEnvironment(environment),
     COMPADRE_SKIP_WORKTREE_SETUP: "1",
     GIT_CEILING_DIRECTORIES: path.dirname(path.resolve(worktreePath)),
   };

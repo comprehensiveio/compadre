@@ -10,6 +10,8 @@ services:
     healthCheckPath: /health
     autoDeployTrigger: commit
     envVars:
+      - key: COMPADRE_PROCESS_ROLE
+        value: relay
       - key: COMPADRE_DURABILITY_BACKEND
         value: postgres
       - key: COMPADRE_DURABILITY_DATABASE_URL

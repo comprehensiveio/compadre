@@ -70,7 +70,7 @@ See `.env.example` for the full list. Key notes:
 - **CODEX_API_KEY**: API key for the Codex CLI harness; a persisted Codex login is also supported for local development.
 - **COMPADRE_AGENT_PROVIDER**: Select the default Claude Code or Codex harness. `/prompt` and AG-UI callers may override it per request.
 - Fire-and-forget `/prompt` and webhook runs use background capacity. Interactive Slack and synchronous API runs preempt them instead of waiting behind automation; accepted background work retries after foreground capacity is released.
-- **COMPADRE_AGENT_TREE_MEMORY_MB / COMPADRE_CGROUP_MEMORY_HEADROOM_MB**: Bound one agent process tree and reserve service memory for graceful cleanup. Defaults are `2560` MiB and `768` MiB. Process-tree usage conservatively sums RSS, while the cgroup guard measures total service memory. A breach aborts only the active harness tree and surfaces a terminal run error.
+- Agent process-tree RSS and cgroup usage are recorded as run telemetry. Ephemeral Workflow tasks rely on their isolated platform cgroup for enforcement, so reclaimable filesystem cache cannot trigger a premature application-level abort.
 - **COMPADRE_TANSTACK_AI_ENABLED**: Expose the authenticated AG-UI endpoint without changing Slack routing.
 - **FABLE_MODEL**: Optional model ID used by Slack's `--fable` routing profile. Defaults to `claude-fable-5`; normal Claude Code prompts use `DEFAULT_MODEL` or the built-in default.
 
