@@ -96,6 +96,7 @@ test("gives harness Git commands the same non-persisted GitHub auth", () => {
   const environment = harnessEnvironment("/tmp/worktrees/example", {
     GITHUB_REPO_URL: "https://github.example/owner/repo.git",
     GITHUB_PERSONAL_ACCESS_TOKEN: "secret-token",
+    UNRELATED: "not-forwarded",
   });
 
   assert.equal(environment.GIT_CONFIG_COUNT, "2");
@@ -103,7 +104,18 @@ test("gives harness Git commands the same non-persisted GitHub auth", () => {
     environment.GIT_CONFIG_KEY_0,
     "http.https://github.example/.extraHeader",
   );
-  assert.match(environment.GIT_CONFIG_VALUE_0, /^Authorization: Basic /);
+  assert.equal(
+    environment.GIT_CONFIG_VALUE_0,
+    `Authorization: Basic ${Buffer.from("x-access-token:secret-token").toString("base64")}`,
+  );
+  assert.equal(
+    environment.GIT_CONFIG_KEY_1,
+    "http.https://github.example/.followRedirects",
+  );
+  assert.equal(environment.GIT_CONFIG_VALUE_1, "false");
+  assert.equal("GITHUB_PERSONAL_ACCESS_TOKEN" in environment, false);
+  assert.equal("GITHUB_REPO_URL" in environment, false);
+  assert.equal("UNRELATED" in environment, false);
   assert.equal(
     JSON.stringify(environment).includes("secret-token"),
     false,

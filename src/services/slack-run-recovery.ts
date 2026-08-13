@@ -2,6 +2,8 @@ const SLACK_API = "https://slack.com/api";
 const THINKING_REACTION = "compadre-thinking";
 const FAILURE_REACTION = "compadre-failure";
 export const DEFAULT_SLACK_RECOVERY_MIN_AGE_MS = 20 * 60 * 1000;
+export const DEFAULT_SLACK_RECOVERY_REQUEST_TIMEOUT_MS = 30_000;
+const MAX_SLACK_RECOVERY_REQUEST_TIMEOUT_MS = 20 * 60 * 1000;
 
 interface SlackReaction {
   name?: string;
@@ -37,12 +39,29 @@ interface SlackRunRecoveryOptions {
   logger?: Pick<Console, "info" | "warn">;
   now?: () => number;
   minimumAgeMs?: number;
+  requestTimeoutMs?: number;
 }
 
+/** True only for the persistent process allowed to mutate stale Slack state. */
 export function isSlackRecoveryOwner(
   environment: NodeJS.ProcessEnv = process.env,
 ): boolean {
   return environment.COMPADRE_PROCESS_ROLE === "relay";
+}
+
+/** Coalesce concurrent scheduler ticks while allowing the next tick to retry. */
+export function createSingleFlightSlackRecovery(
+  recover: () => Promise<SlackRunRecoveryResult>,
+): () => Promise<SlackRunRecoveryResult> {
+  let active: Promise<SlackRunRecoveryResult> | undefined;
+  return () => {
+    if (active) return active;
+    const current = Promise.resolve().then(recover).finally(() => {
+      if (active === current) active = undefined;
+    });
+    active = current;
+    return current;
+  };
 }
 
 function slackTimestampMs(timestamp: string): number | undefined {
@@ -54,17 +73,53 @@ async function slackCall(
   fetchImpl: typeof fetch,
   botToken: string,
   method: string,
+  requestTimeoutMs: number,
   body?: Record<string, unknown>,
 ): Promise<SlackApiResponse> {
-  const response = await fetchImpl(`${SLACK_API}/${method}`, {
-    method: body ? "POST" : "GET",
-    headers: {
-      Authorization: `Bearer ${botToken}`,
-      ...(body ? { "Content-Type": "application/json" } : {}),
+  return fetchSlackJsonWithDeadline(
+    fetchImpl,
+    `${SLACK_API}/${method}`,
+    {
+      method: body ? "POST" : "GET",
+      headers: {
+        Authorization: `Bearer ${botToken}`,
+        ...(body ? { "Content-Type": "application/json" } : {}),
+      },
+      ...(body ? { body: JSON.stringify(body) } : {}),
     },
-    ...(body ? { body: JSON.stringify(body) } : {}),
-  });
-  return (await response.json()) as SlackApiResponse;
+    requestTimeoutMs,
+  );
+}
+
+function boundedRequestTimeoutMs(value: number): number {
+  if (!Number.isFinite(value) || value <= 0) {
+    return DEFAULT_SLACK_RECOVERY_REQUEST_TIMEOUT_MS;
+  }
+  return Math.min(value, MAX_SLACK_RECOVERY_REQUEST_TIMEOUT_MS);
+}
+
+async function fetchSlackJsonWithDeadline(
+  fetchImpl: typeof fetch,
+  input: string | URL | Request,
+  init: RequestInit,
+  timeoutMs: number,
+): Promise<SlackApiResponse> {
+  const abortController = new AbortController();
+  const timer = setTimeout(
+    () => abortController.abort(
+      new Error(`Slack recovery request timed out after ${timeoutMs}ms`),
+    ),
+    timeoutMs,
+  );
+  try {
+    const response = await fetchImpl(input, {
+      ...init,
+      signal: abortController.signal,
+    });
+    return (await response.json()) as SlackApiResponse;
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 /**
@@ -79,9 +134,16 @@ export async function recoverStaleSlackRuns({
   logger = console,
   now = Date.now,
   minimumAgeMs = DEFAULT_SLACK_RECOVERY_MIN_AGE_MS,
+  requestTimeoutMs = DEFAULT_SLACK_RECOVERY_REQUEST_TIMEOUT_MS,
 }: SlackRunRecoveryOptions): Promise<SlackRunRecoveryResult> {
   const recoveryStartedAt = now();
-  const auth = await slackCall(fetchImpl, botToken, "auth.test");
+  const boundedTimeoutMs = boundedRequestTimeoutMs(requestTimeoutMs);
+  const auth = await slackCall(
+    fetchImpl,
+    botToken,
+    "auth.test",
+    boundedTimeoutMs,
+  );
   if (!auth.ok || !auth.user_id) {
     logger.warn(
       `[slack-recovery] auth.test failed: ${auth.error ?? "missing user_id"}`,
@@ -102,10 +164,12 @@ export async function recoverStaleSlackRuns({
     url.searchParams.set("full", "true");
     if (cursor) url.searchParams.set("cursor", cursor);
 
-    const response = await fetchImpl(url, {
-      headers: { Authorization: `Bearer ${botToken}` },
-    });
-    const page = (await response.json()) as SlackApiResponse;
+    const page = await fetchSlackJsonWithDeadline(
+      fetchImpl,
+      url,
+      { headers: { Authorization: `Bearer ${botToken}` } },
+      boundedTimeoutMs,
+    );
     if (!page.ok) {
       logger.warn(
         `[slack-recovery] reactions.list failed: ${page.error ?? "unknown error"}`,
@@ -151,6 +215,7 @@ export async function recoverStaleSlackRuns({
       fetchImpl,
       botToken,
       "reactions.remove",
+      boundedTimeoutMs,
       {
         channel: run.channel,
         timestamp: run.messageTs,
@@ -161,28 +226,46 @@ export async function recoverStaleSlackRuns({
     // call. Only mark failure if this instance actually removed the marker.
     if (!removed.ok) continue;
 
-    const failed = await slackCall(fetchImpl, botToken, "reactions.add", {
-      channel: run.channel,
-      timestamp: run.messageTs,
-      name: FAILURE_REACTION,
-    });
+    const failed = await slackCall(
+      fetchImpl,
+      botToken,
+      "reactions.add",
+      boundedTimeoutMs,
+      {
+        channel: run.channel,
+        timestamp: run.messageTs,
+        name: FAILURE_REACTION,
+      },
+    );
     if (!failed.ok) {
       logger.warn(
         `[slack-recovery] reactions.add failed: ${failed.error ?? "unknown error"}`,
       );
       // Preserve the durable marker so a later recovery attempt can retry.
-      await slackCall(fetchImpl, botToken, "reactions.add", {
-        channel: run.channel,
-        timestamp: run.messageTs,
-        name: THINKING_REACTION,
-      });
+      await slackCall(
+        fetchImpl,
+        botToken,
+        "reactions.add",
+        boundedTimeoutMs,
+        {
+          channel: run.channel,
+          timestamp: run.messageTs,
+          name: THINKING_REACTION,
+        },
+      );
       continue;
     }
-    await slackCall(fetchImpl, botToken, "assistant.threads.setStatus", {
-      channel_id: run.channel,
-      thread_ts: run.threadTs,
-      status: "",
-    });
+    await slackCall(
+      fetchImpl,
+      botToken,
+      "assistant.threads.setStatus",
+      boundedTimeoutMs,
+      {
+        channel_id: run.channel,
+        thread_ts: run.threadTs,
+        status: "",
+      },
+    );
     recovered += 1;
   }
 

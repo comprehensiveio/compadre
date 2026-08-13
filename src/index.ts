@@ -22,6 +22,7 @@ import {
 } from "./repo.js";
 import { validateConversationConfiguration } from "./conversation.js";
 import {
+  createSingleFlightSlackRecovery,
   DEFAULT_SLACK_RECOVERY_MIN_AGE_MS,
   isSlackRecoveryOwner,
   recoverStaleSlackRuns,
@@ -83,18 +84,21 @@ async function start() {
     console.log(`[agent] server running on port ${info.port}`);
     const botToken = process.env.SLACK_BOT_TOKEN;
     if (botToken && isSlackRecoveryOwner()) {
-      const recoverSlackRuns = () => {
-        void recoverStaleSlackRuns({ botToken }).catch((error) =>
+      const recoverSlackRuns = createSingleFlightSlackRecovery(() =>
+        recoverStaleSlackRuns({ botToken }),
+      );
+      const scheduleSlackRecovery = () => {
+        void recoverSlackRuns().catch((error) =>
           console.error("[slack-recovery] recovery failed:", error),
         );
       };
       const recoveryTimer = setTimeout(
-        recoverSlackRuns,
+        scheduleSlackRecovery,
         SLACK_RECOVERY_DELAY_MS,
       );
       recoveryTimer.unref();
       const recoveryInterval = setInterval(
-        recoverSlackRuns,
+        scheduleSlackRecovery,
         DEFAULT_SLACK_RECOVERY_MIN_AGE_MS,
       );
       recoveryInterval.unref();
