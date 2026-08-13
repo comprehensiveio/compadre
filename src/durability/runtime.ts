@@ -19,6 +19,8 @@ export interface DurableStreamOptions {
    * How long an empty log may stay empty before a from-start reader fails.
    * Joiners of unknown runs want the backend's fail-fast default; a producer
    * that just started the run passes a deadline covering harness startup.
+   * Only the memory backend has such a fail-fast; the Postgres backend polls
+   * without an empty-log deadline and ignores this option.
    */
   firstChunkDeadlineMs?: number;
 }
@@ -62,12 +64,7 @@ export async function createAgentRunDurability(
       stream: (runId, options) => {
         let stream = streams.get(runId);
         if (!stream) {
-          const underlying = memoryStream(
-            { runId },
-            options?.firstChunkDeadlineMs !== undefined
-              ? { firstChunkDeadlineMs: options.firstChunkDeadlineMs }
-              : {},
-          );
+          const underlying = memoryStream({ runId });
           let closed = false;
           stream = {
             resumeFrom: () => underlying.resumeFrom(),
@@ -89,7 +86,25 @@ export async function createAgentRunDurability(
           };
           streams.set(runId, stream);
         }
-        return stream;
+        if (options?.firstChunkDeadlineMs === undefined) return stream;
+        // Deadlines are caller-scoped. The cached facade always keeps the
+        // backend's fail-fast default, so whichever call order occurs, a
+        // joiner never inherits a producer's long deadline and a producer
+        // never inherits a joiner's fail-fast. Facades share one
+        // process-global log per run; close routes through the cached facade
+        // so retention bookkeeping stays single-pathed.
+        const scoped = memoryStream(
+          { runId },
+          { firstChunkDeadlineMs: options.firstChunkDeadlineMs },
+        );
+        const cached = stream;
+        return {
+          resumeFrom: () => scoped.resumeFrom(),
+          append: (chunks) => scoped.append(chunks),
+          read: (offset, signal) => scoped.read(offset, signal),
+          snapshot: () => scoped.snapshot(),
+          close: () => cached.close(),
+        };
       },
       close: async () => undefined,
     };

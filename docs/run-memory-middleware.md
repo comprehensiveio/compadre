@@ -141,6 +141,13 @@ Upsert-by-`runId` plus full-replace save makes persistence idempotent under
 run recovery and journal replay, which re-emit the same chunks with the same
 tool-call ids.
 
+The full-replace contract assumes **one writer per thread at a time**. Compadre
+guarantees this: thread turns are serialized by `ThreadRunCoordinator` /
+Postgres advisory locks before a run starts, so two terminal saves for one
+`threadId` cannot race. A host without that guarantee needs its own
+serialization or an atomic update; that stays the host's responsibility rather
+than a CAS requirement baked into the minimal store contract.
+
 ## The record
 
 Deterministically extracted — never model-written — per design requirement 3
@@ -238,6 +245,9 @@ export function withRunMemory(
       if (records.length && shouldInject(ctx, options)) {
         patch.systemPrompts = [...config.systemPrompts, digest(records, options)];
       }
+      // Deliberately not gated on shouldInject: the tool is a capability,
+      // not injected context, and older-than-session detail is useful even
+      // when a resumed native session skips the digest.
       if (options.recallTool !== false && records.length) {
         patch.tools = [...config.tools, recallTool(store, ctx.threadId, options)];
       }
@@ -295,8 +305,10 @@ reasoning: Verified the Render deploy for PR #97 was live before answering…
 ```
 
 If the block would exceed the digest budget, whole oldest runs are dropped
-first, then per-entry previews shrink — never mid-record truncation that
-could misattribute a result to the wrong call.
+first. If the newest run alone still exceeds the budget (many large entries),
+its trailing lines are cut behind an explicit `(digest truncated)` marker —
+entries are removed whole, never split mid-line, so a result is never
+misattributed to the wrong call.
 
 ### The recall tool
 

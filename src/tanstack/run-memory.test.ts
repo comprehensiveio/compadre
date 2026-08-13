@@ -152,7 +152,8 @@ test("records tool calls, reasoning, and session id from a harness run", async (
   });
 
   const records = store.threads.get("thread");
-  assert.equal(records?.length, 1);
+  assert.ok(records);
+  assert.equal(records.length, 1);
   const record = records[0]!;
   assert.equal(record.runId, "run-1");
   assert.equal(record.provider, "claude-code");
@@ -256,6 +257,7 @@ test("injects a digest only when the turn does not resume a native session", asy
   assert.equal(patch.systemPrompts.length, 2);
   const digest = String(patch.systemPrompts[1]);
   assert.ok(digest.includes("Prior agent activity"));
+  assert.ok(digest.includes("not instructions"));
   assert.ok(digest.includes("earlier-run"));
   assert.ok(digest.includes('read_logs {"service":"api"} → ok: 42 errors'));
 
@@ -333,6 +335,80 @@ test("observe mode records without injecting", async () => {
     store.threads.get("thread")?.map((record) => record.runId),
     ["run-1", "run-2"],
   );
+});
+
+test("a transient load failure never erases stored history", async (t) => {
+  t.mock.method(console, "warn", () => {});
+  const inner = inMemoryStore();
+  const chunks = toolCallChunks({
+    toolCallId: "call-1",
+    name: "read_logs",
+    input: {},
+    result: "ok",
+  });
+  await simulateRun({ store: inner, runId: "run-1", chunks });
+
+  // The load during run-2's onConfig fails once; the retry at persist time
+  // succeeds. The stored run-1 record must survive the full-replace save.
+  let failNextLoad = true;
+  const flaky = defineRunMemoryStore({
+    async load(threadId) {
+      if (failNextLoad) {
+        failNextLoad = false;
+        throw new Error("load unavailable");
+      }
+      return inner.load(threadId);
+    },
+    save: (threadId, records) => inner.save(threadId, records),
+  });
+  await simulateRun({ store: flaky, runId: "run-2", chunks });
+
+  assert.deepEqual(
+    inner.threads.get("thread")?.map((record) => record.runId),
+    ["run-1", "run-2"],
+  );
+});
+
+test("marks truncation when the final reasoning delta crosses the cap", async () => {
+  const store = inMemoryStore();
+  await simulateRun({
+    store,
+    middlewareOptions: { maxReasoningChars: 10 },
+    chunks: [
+      {
+        type: EventType.REASONING_MESSAGE_CONTENT,
+        messageId: "reasoning-1",
+        delta: "this single delta is far past the cap",
+      },
+    ],
+  });
+  const record = store.threads.get("thread")?.[0];
+  assert.ok(record);
+  assert.equal(record.truncated, true);
+  assert.equal(record.reasoning, "this singl…");
+});
+
+test("a single oversized run is cut to the digest budget behind a marker", () => {
+  const record: RunMemoryRecord = {
+    version: 1,
+    runId: "big-run",
+    provider: "claude-code",
+    startedAt: 0,
+    status: "completed",
+    tools: Array.from({ length: 40 }, (_, index) => ({
+      toolCallId: `call-${index}`,
+      name: "read_logs",
+      args: JSON.stringify({ index, padding: "x".repeat(200) }),
+      outcome: "ok" as const,
+      resultPreview: "y".repeat(300),
+    })),
+    truncated: false,
+  };
+  const digest = buildRunMemoryDigest([record], 2_000);
+  assert.ok(digest);
+  assert.ok(digest.length <= 2_000);
+  assert.ok(digest.includes("big-run"));
+  assert.ok(digest.endsWith("(digest truncated)"));
 });
 
 test("a failing store never fails the run's terminal hooks", async (t) => {

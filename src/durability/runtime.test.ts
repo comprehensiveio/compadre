@@ -126,6 +126,47 @@ test("delivers a run whose harness takes longer than the join fail-fast to start
   );
 });
 
+test("a joiner-created stream never imposes its fail-fast on the producer", async () => {
+  const durability = await createAgentRunDurability({
+    COMPADRE_DURABILITY_BACKEND: "memory",
+  });
+  assert.ok(durability);
+  // A joiner (e.g. the workflow events route) resolves the stream before the
+  // producer starts. The cached facade keeps the fail-fast default, but the
+  // producer's own deadline must still apply to the same run.
+  const joiner = durability.stream("order-run");
+  assert.ok(joiner);
+  const chunks: StreamChunk[] = [
+    {
+      type: EventType.RUN_STARTED,
+      runId: "order-run",
+      threadId: "memory-thread",
+      timestamp: 1,
+    },
+    {
+      type: EventType.RUN_FINISHED,
+      runId: "order-run",
+      threadId: "memory-thread",
+      finishReason: "stop",
+      timestamp: 2,
+    },
+  ];
+  const replayed = await collect(
+    captureDurableRun(
+      (async function* () {
+        await new Promise((resolve) => setTimeout(resolve, 250));
+        yield* chunks;
+      })(),
+      {
+        runId: "order-run",
+        threadId: "memory-thread",
+        durability,
+      },
+    ),
+  );
+  assert.deepEqual(replayed, chunks);
+});
+
 test("turns a producer exception into a durable RUN_ERROR", async () => {
   const durability = await createAgentRunDurability({
     COMPADRE_DURABILITY_BACKEND: "memory",
