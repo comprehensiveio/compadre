@@ -83,6 +83,49 @@ test("persists and replays a TanStack AG-UI run through the memory adapter", asy
   assert.deepEqual(snapshot.map((entry) => entry.chunk), chunks);
 });
 
+test("delivers a run whose harness takes longer than the join fail-fast to start", async () => {
+  const durability = await createAgentRunDurability({
+    COMPADRE_DURABILITY_BACKEND: "memory",
+  });
+  assert.ok(durability);
+  const chunks: StreamChunk[] = [
+    {
+      type: EventType.RUN_STARTED,
+      runId: "slow-start-run",
+      threadId: "memory-thread",
+      timestamp: 1,
+    },
+    {
+      type: EventType.RUN_FINISHED,
+      runId: "slow-start-run",
+      threadId: "memory-thread",
+      finishReason: "stop",
+      timestamp: 2,
+    },
+  ];
+  const replayed = await collect(
+    captureDurableRun(
+      (async function* () {
+        // A real Claude Code/Codex process emits nothing until it has
+        // spawned — well past the memory backend's 100ms unknown-run
+        // fail-fast for from-start joins.
+        await new Promise((resolve) => setTimeout(resolve, 250));
+        yield* chunks;
+      })(),
+      {
+        runId: "slow-start-run",
+        threadId: "memory-thread",
+        durability,
+      },
+    ),
+  );
+  assert.deepEqual(replayed, chunks);
+  assert.equal(
+    (await durability.runs.get("slow-start-run"))?.status,
+    "completed",
+  );
+});
+
 test("turns a producer exception into a durable RUN_ERROR", async () => {
   const durability = await createAgentRunDurability({
     COMPADRE_DURABILITY_BACKEND: "memory",

@@ -14,10 +14,19 @@ import { createPostgresAgentRunDurability } from "./postgres.js";
 
 export type DurabilityBackend = "memory" | "postgres";
 
+export interface DurableStreamOptions {
+  /**
+   * How long an empty log may stay empty before a from-start reader fails.
+   * Joiners of unknown runs want the backend's fail-fast default; a producer
+   * that just started the run passes a deadline covering harness startup.
+   */
+  firstChunkDeadlineMs?: number;
+}
+
 export interface AgentRunDurability {
   backend: DurabilityBackend;
   runs: RunStore;
-  stream(runId: string): StreamDurability<string>;
+  stream(runId: string, options?: DurableStreamOptions): StreamDurability<string>;
   pool?: pg.Pool;
   lockPool?: pg.Pool;
   database?: CompadreDatabase;
@@ -50,10 +59,15 @@ export async function createAgentRunDurability(
     return {
       backend,
       runs,
-      stream: (runId) => {
+      stream: (runId, options) => {
         let stream = streams.get(runId);
         if (!stream) {
-          const underlying = memoryStream({ runId });
+          const underlying = memoryStream(
+            { runId },
+            options?.firstChunkDeadlineMs !== undefined
+              ? { firstChunkDeadlineMs: options.firstChunkDeadlineMs }
+              : {},
+          );
           let closed = false;
           stream = {
             resumeFrom: () => underlying.resumeFrom(),
@@ -104,6 +118,14 @@ export function getConfiguredAgentRunDurability(): Promise<AgentRunDurability | 
   return configuredDurability;
 }
 
+/**
+ * A freshly started harness appends nothing until its process spawns and
+ * initializes, which takes seconds — far beyond the memory backend's 100ms
+ * unknown-run fail-fast. The producer path knows the run is live, so it may
+ * wait out startup; external joiners keep the backend default.
+ */
+const PRODUCER_FIRST_CHUNK_DEADLINE_MS = 60_000;
+
 export function captureDurableRun(
   source: AsyncIterable<StreamChunk>,
   options: {
@@ -115,7 +137,10 @@ export function captureDurableRun(
 ): AsyncIterable<StreamChunk> {
   const controller = new RunController({
     runs: options.durability.runs,
-    durability: options.durability.stream,
+    durability: (runId) =>
+      options.durability.stream(runId, {
+        firstChunkDeadlineMs: PRODUCER_FIRST_CHUNK_DEADLINE_MS,
+      }),
   });
   const handle = controller.start({
     runId: options.runId,
