@@ -148,12 +148,7 @@ export async function consumeHarnessConversation(
   }
 }
 
-function maxDurationMs(): number {
-  const configured = Number(process.env.COMPADRE_AGENT_MAX_DURATION_MS);
-  return Number.isFinite(configured) && configured > 0
-    ? configured
-    : 15 * 60 * 1000;
-}
+const AGENT_MAX_DURATION_MS = 30 * 60 * 1000;
 
 export async function runHarnessConversation(
   options: HarnessConversationOptions
@@ -169,9 +164,9 @@ export async function runHarnessConversation(
 
   const timer = setTimeout(() => {
     abortController.abort(
-      new Error(`Agent run exceeded ${maxDurationMs()}ms execution limit`)
+      new Error(`Agent run exceeded ${AGENT_MAX_DURATION_MS}ms execution limit`)
     );
-  }, maxDurationMs());
+  }, AGENT_MAX_DURATION_MS);
   timer.unref();
 
   const params: AguiChatParams = {
