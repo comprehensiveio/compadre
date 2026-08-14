@@ -35,15 +35,6 @@ promptRoutes.post("/prompt", async (c) => {
       400
     );
   }
-  if (
-    body.maxTurns !== undefined &&
-    (typeof body.maxTurns !== "number" ||
-      !Number.isInteger(body.maxTurns) ||
-      body.maxTurns <= 0)
-  ) {
-    return c.json({ error: "maxTurns must be a positive integer" }, 400);
-  }
-
   const async = body.async === true;
 
   console.log(`[prompt] received (async=${async}): ${prompt.slice(0, 100)}`);
@@ -54,7 +45,6 @@ promptRoutes.post("/prompt", async (c) => {
     provider: isAgentProvider(requestedProvider)
       ? requestedProvider
       : undefined,
-    maxTurns: body.maxTurns as number | undefined,
     signal: async ? undefined : c.req.raw.signal,
     capacityPriority: async ? ("background" as const) : ("foreground" as const),
     retryOnBackgroundPreemption: async,

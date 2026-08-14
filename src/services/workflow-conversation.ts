@@ -69,7 +69,6 @@ export async function runWorkflowConversation(
         options.transcriptUserMessage ?? options.prompt,
       provider: options.provider,
       profile: options.profile,
-      maxTurns: options.maxTurns,
       responseMode: options.stream ? "slack-streaming" : "default",
       persistThread: options.persistThread ?? options.threadId !== undefined,
     });

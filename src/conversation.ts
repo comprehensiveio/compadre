@@ -29,7 +29,6 @@ export interface ConversationOptions {
   threadId?: string;
   provider?: AgentProvider;
   profile?: AgentProfile;
-  maxTurns?: number;
   signal?: AbortSignal;
   systemPrompt?: (worktreePath: string) => string;
   stream?: StreamCallbacks;
@@ -84,7 +83,6 @@ export function runConversation(
           options.transcriptUserMessage ?? options.prompt,
         provider: options.provider ?? configuredAgentProvider(),
         profile: options.profile,
-        maxTurns: options.maxTurns,
         signal: options.signal,
         systemPrompt: options.systemPrompt,
         stream: options.stream,

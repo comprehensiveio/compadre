@@ -58,24 +58,6 @@ test("prompt route requires threadId instead of native sessionId", async () => {
   );
 });
 
-test("prompt route rejects invalid explicit turn limits", async () => {
-  await withEnv(
-    { COMPADRE_API_KEY: "test" },
-    async () => {
-      const response = await promptRoutes.request("/prompt", {
-        method: "POST",
-        headers: {
-          Authorization: "Bearer test",
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ prompt: "hello", maxTurns: 0 }),
-      });
-      assert.equal(response.status, 400);
-      assert.match(await response.text(), /maxTurns/);
-    },
-  );
-});
-
 test("prompt route fails closed when the API key is missing", async () => {
   await withEnv({ COMPADRE_API_KEY: undefined }, async () => {
     const response = await promptRoutes.request("/prompt", { method: "POST" });

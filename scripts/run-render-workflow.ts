@@ -37,7 +37,6 @@ const input = (() => {
           prompt:
             process.argv.slice(3).join(" ").trim() ||
             "Reply with only: hi",
-          maxTurns: 1,
         },
       ];
 })();

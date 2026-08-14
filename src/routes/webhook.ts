@@ -32,7 +32,6 @@ Based on the source and payload, determine what action to take. For example:
 
   runConversation({
     prompt,
-    maxTurns: 25,
     capacityPriority: "background",
     retryOnBackgroundPreemption: true,
   }).catch((err) =>

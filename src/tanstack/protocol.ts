@@ -47,12 +47,6 @@ export function validateAgentProviderConfiguration(): {
   return { provider: configuredAgentProvider() };
 }
 
-export function optionalMaxTurns(value: unknown): number | undefined {
-  return typeof value === "number" && Number.isInteger(value) && value > 0
-    ? value
-    : undefined;
-}
-
 const SESSION_EVENTS: Record<AgentProvider, string> = {
   "claude-code": "claude-code.session-id",
   codex: "codex.session-id",

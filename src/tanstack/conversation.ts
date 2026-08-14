@@ -3,7 +3,6 @@ import { EventType, type StreamChunk } from "@tanstack/ai";
 import type { StreamCallbacks } from "../conversation.js";
 import { AssistantMessageAccumulator } from "./assistant-messages.js";
 import {
-  optionalMaxTurns,
   providerForAgentProfile,
   sessionIdFromChunk,
   type AgentProfile,
@@ -24,7 +23,6 @@ export interface HarnessConversationOptions {
   transcriptUserMessage: string;
   provider?: AgentProvider;
   profile?: AgentProfile;
-  maxTurns?: number;
   signal?: AbortSignal;
   systemPrompt?: (worktreePath: string) => string;
   stream?: StreamCallbacks;
@@ -176,8 +174,6 @@ export async function runHarnessConversation(
   }, maxDurationMs());
   timer.unref();
 
-  const maxTurns = optionalMaxTurns(options.maxTurns);
-
   const params: AguiChatParams = {
     messages: [{ role: "user", content: options.prompt }],
     threadId: options.threadId,
@@ -186,7 +182,6 @@ export async function runHarnessConversation(
     forwardedProps: {
       provider,
       ...(options.profile ? { profile: options.profile } : {}),
-      ...(maxTurns === undefined ? {} : { maxTurns }),
     },
     state: {},
     context: [],

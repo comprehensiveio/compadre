@@ -103,7 +103,7 @@ const launchStarted = Date.now();
 const response = await boundedFetch(`${relayUrl}/workflow-runs`, {
   method: "POST",
   headers: { ...authorization, "Content-Type": "application/json" },
-  body: JSON.stringify({ prompt, maxTurns: 3 }),
+  body: JSON.stringify({ prompt }),
 });
 const launch = (await response.json()) as {
   runId?: string;
