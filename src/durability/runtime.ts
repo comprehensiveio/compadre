@@ -141,6 +141,42 @@ export function getConfiguredAgentRunDurability(): Promise<AgentRunDurability | 
  */
 const PRODUCER_FIRST_CHUNK_DEADLINE_MS = 60_000;
 
+/**
+ * A provider may report a final outcome and then exit non-zero to describe that
+ * same outcome at the process layer. Preserve the protocol-level terminal event
+ * as authoritative so durability never appends a contradictory RUN_ERROR.
+ */
+async function* normalizeFinalRunOutcome(
+  source: AsyncIterable<StreamChunk>,
+  runId: string,
+): AsyncIterable<StreamChunk> {
+  let finished = false;
+  try {
+    for await (const chunk of source) {
+      if (
+        chunk.type === EventType.RUN_FINISHED &&
+        chunk.finishReason !== "tool_calls"
+      ) {
+        finished = true;
+      }
+      if (finished && chunk.type === EventType.RUN_ERROR) {
+        console.warn("[durability] ignored error after final run event", {
+          runId,
+          error: chunk.message,
+        });
+        continue;
+      }
+      yield chunk;
+    }
+  } catch (error) {
+    if (!finished) throw error;
+    console.warn("[durability] ignored failure after final run event", {
+      runId,
+      error,
+    });
+  }
+}
+
 export function captureDurableRun(
   source: AsyncIterable<StreamChunk>,
   options: {
@@ -160,7 +196,7 @@ export function captureDurableRun(
   const handle = controller.start({
     runId: options.runId,
     threadId: options.threadId,
-    stream: source,
+    stream: normalizeFinalRunOutcome(source, options.runId),
     ...(options.signal ? { signal: options.signal } : {}),
   });
 

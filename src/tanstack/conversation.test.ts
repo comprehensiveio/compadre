@@ -104,6 +104,66 @@ test("surfaces AG-UI failures and still completes the channel stream", async () 
   assert.equal(completed, 1);
 });
 
+test("keeps a length outcome authoritative over a trailing process error", async () => {
+  const result = await consumeHarnessConversation(
+    stream(
+      {
+        type: EventType.TEXT_MESSAGE_START,
+        messageId: "message",
+        role: "assistant",
+        timestamp: 1,
+      },
+      {
+        type: EventType.TEXT_MESSAGE_CONTENT,
+        messageId: "message",
+        delta: "partial findings",
+        timestamp: 2,
+      },
+      {
+        type: EventType.RUN_FINISHED,
+        runId: "run",
+        threadId: "thread",
+        finishReason: "length",
+        timestamp: 3,
+      },
+      {
+        type: EventType.RUN_ERROR,
+        message: "Agent process exited with code 1",
+        timestamp: 4,
+      },
+    ),
+    {
+      runId: "run",
+      provider: "claude-code",
+      startedAt: Date.now(),
+    },
+  );
+
+  assert.equal(result.result, "partial findings");
+  assert.equal(result.finishReason, "length");
+});
+
+test("keeps a final outcome authoritative when the source subsequently throws", async () => {
+  async function* failedAfterFinish(): AsyncIterable<StreamChunk> {
+    yield {
+      type: EventType.RUN_FINISHED,
+      runId: "run",
+      threadId: "thread",
+      finishReason: "length",
+      timestamp: 1,
+    };
+    throw new Error("Agent process exited with code 1");
+  }
+
+  const result = await consumeHarnessConversation(failedAfterFinish(), {
+    runId: "run",
+    provider: "claude-code",
+    startedAt: Date.now(),
+  });
+
+  assert.equal(result.finishReason, "length");
+});
+
 test("publishes only the terminal Codex message to channel callers", async () => {
   const text: string[] = [];
   const result = await consumeHarnessConversation(

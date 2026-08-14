@@ -26,7 +26,7 @@ import {
 import { buildTanStackMcpClients } from "./mcp.js";
 import { AssistantMessageAccumulator } from "./assistant-messages.js";
 import {
-  boundedMaxTurns,
+  optionalMaxTurns,
   sessionIdFromChunk,
   type AguiChatParams,
 } from "./protocol.js";
@@ -376,7 +376,7 @@ async function prepareAguiChat(
   console.log(
     `[ag-ui] run=${params.runId} worktree=${worktreeId} source=${worktreeSource} allocation=${Date.now() - preparationStartedAt}ms`,
   );
-  const maxTurns = boundedMaxTurns(effectiveParams.forwardedProps.maxTurns);
+  const maxTurns = optionalMaxTurns(effectiveParams.forwardedProps.maxTurns);
   const model = selection.model;
   console.log(
     `[ag-ui] run=${params.runId} provider=${selection.provider} model=${model} resumed=${sessionId !== undefined}`

@@ -3,7 +3,6 @@ import {
   type StreamChunk,
   type chatParamsFromRequestBody,
 } from "@tanstack/ai";
-import { DEFAULT_MAX_TURNS } from "../config.js";
 
 export const AGENT_PROVIDERS = ["claude-code", "codex"] as const;
 export type AgentProvider = (typeof AGENT_PROVIDERS)[number];
@@ -48,10 +47,10 @@ export function validateAgentProviderConfiguration(): {
   return { provider: configuredAgentProvider() };
 }
 
-export function boundedMaxTurns(value: unknown): number {
+export function optionalMaxTurns(value: unknown): number | undefined {
   return typeof value === "number" && Number.isInteger(value) && value > 0
-    ? Math.min(value, DEFAULT_MAX_TURNS)
-    : DEFAULT_MAX_TURNS;
+    ? value
+    : undefined;
 }
 
 const SESSION_EVENTS: Record<AgentProvider, string> = {
