@@ -11,6 +11,11 @@ import { SlackStream } from "../services/slack-stream.js";
 import { configuredConversationRunner } from "../services/conversation-runner.js";
 import { providerForAgentProfile } from "../tanstack/protocol.js";
 import { humanizeToolName } from "../services/tool-labels.js";
+import {
+  INCOMPLETE_RESPONSE_NOTICE,
+  IncompleteTerminalResponseError,
+  TerminalResponseTracker,
+} from "../services/terminal-response.js";
 import { verifySlackSignature } from "../services/slack-verify.js";
 
 export const slackEventsRoutes = new Hono();
@@ -168,6 +173,7 @@ async function handleAIMessage(
   });
 
   const slackStream = createSlackStream(event, threadTs, botToken, teamId);
+  const terminalResponse = new TerminalResponseTracker();
 
   // In non-DM contexts, use a reaction to indicate processing
   if (!isDM && slackStream) {
@@ -196,19 +202,28 @@ async function handleAIMessage(
     maxTurns: DEFAULT_MAX_TURNS,
     stream: slackStream
       ? {
-          onTextDelta: (text) => void slackStream!.appendText(text),
-          onToolStart: (name) =>
-            void slackStream!.setStatus(
+          onTextDelta: (text) => {
+            terminalResponse.recordText(text);
+            slackStream.appendText(text);
+          },
+          onToolStart: (name) => {
+            terminalResponse.recordToolStart();
+            void slackStream.setStatus(
               `is ${humanizeToolName(name).toLowerCase()}...`,
-            ),
-          onComplete: async () => {
-            await slackStream!.stopStream();
-            await slackStream!.clearStatus();
+            );
           },
         }
       : undefined,
   })
     .then(async (result) => {
+      if (slackStream && !terminalResponse.isComplete(result)) {
+        slackStream.appendText(INCOMPLETE_RESPONSE_NOTICE);
+        throw new IncompleteTerminalResponseError(result.finishReason);
+      }
+      if (slackStream) {
+        await slackStream.stopStream();
+        await slackStream.clearStatus();
+      }
       if (!isDM && slackStream) {
         await slackStream.markRunSucceeded(event.ts);
       }
