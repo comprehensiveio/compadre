@@ -1,6 +1,7 @@
 import {
   SLACK_STREAM_CONTENT_LIMIT,
   SLACK_TRUNCATION_NOTICE,
+  truncateSlackMarkdown,
 } from "./slack-markdown.js";
 
 const SLACK_API = "https://slack.com/api";
@@ -136,12 +137,14 @@ export class SlackStream {
     );
   }
 
-  appendText(text: string): void {
-    if (this.streamEnded || this.truncated || !text) return;
+  /** Returns true only when the complete delta was accepted into the stream. */
+  appendText(text: string): boolean {
+    if (this.streamEnded || this.truncated || !text) return false;
 
     const currentLength = this.fullText.length + this.buffer.length;
     const remaining = Math.max(0, SLACK_STREAM_CONTENT_LIMIT - currentLength);
     this.buffer += text.slice(0, remaining);
+    const accepted = text.length <= remaining;
     if (text.length > remaining) {
       this.buffer += SLACK_TRUNCATION_NOTICE;
       this.truncated = true;
@@ -153,6 +156,20 @@ export class SlackStream {
         this.flushing = this.flushing.then(() => this.flush());
       }, this.flushIntervalMs);
     }
+    return accepted;
+  }
+
+  hasTruncatedContent(): boolean {
+    return this.truncated;
+  }
+
+  /** Post a separate thread message that is not subject to this stream's cap. */
+  async postThreadMessage(markdownText: string): Promise<void> {
+    await this.call("chat.postMessage", {
+      channel: this.channel,
+      thread_ts: this.threadTs,
+      markdown_text: truncateSlackMarkdown(markdownText),
+    });
   }
 
   async stopStream(): Promise<void> {
