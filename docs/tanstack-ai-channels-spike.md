@@ -24,8 +24,7 @@ provider-neutral transcript continuity, MCP clients, and telemetry.
 # claude-code or codex
 COMPADRE_AGENT_PROVIDER=claude-code
 
-# Hard wall-clock limit. Defaults to 15 minutes.
-COMPADRE_AGENT_MAX_DURATION_MS=900000
+# Agent execution uses a code-owned 30-minute deadline.
 
 ANTHROPIC_API_KEY=...
 DEFAULT_MODEL=claude-opus-5
@@ -50,8 +49,7 @@ uses `bypassPermissions`; Codex uses `danger-full-access`, `approvalPolicy:
 never`, and automatic MCP approval. This service therefore assumes its process,
 credentials, prompts, and configured MCP servers are trusted.
 
-Claude supports the configured turn count. Codex does not currently enforce a
-turn count. Both harnesses share the hard wall-clock limit.
+Both harnesses share the code-owned 30-minute wall-clock deadline.
 
 ## AG-UI
 
@@ -61,7 +59,7 @@ response. `forwardedProps.provider` may select `claude-code` or `codex`.
 `forwardedProps.profile` may select the allowlisted `claude-code`, `codex`, or
 `fable` profile.
 
-Only allowlisted provider, profile, model, and max-turn fields affect the harness;
+Only allowlisted provider, profile, and model fields affect the harness;
 arbitrary forwarded properties cannot replace adapters or tools.
 
 ## Verified behavior

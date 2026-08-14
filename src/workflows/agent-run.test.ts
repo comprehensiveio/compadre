@@ -58,7 +58,6 @@ test("agent workflow runs the existing conversation stack after repository setup
       prompt: "say hi",
       threadId: "slack-thread",
       provider: "codex",
-      maxTurns: 1,
     },
     dependencies({
       ensureRepository() {

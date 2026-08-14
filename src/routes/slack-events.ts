@@ -1,5 +1,4 @@
 import { Hono } from "hono";
-import { DEFAULT_MAX_TURNS } from "../config.js";
 import {
   configuredAgentProvider,
 } from "../conversation.js";
@@ -193,7 +192,6 @@ async function handleAIMessage(
             slackStream
               ? getSlackStreamingSystemPrompt(worktreePath)
               : getSlackSystemPrompt(worktreePath),
-    maxTurns: DEFAULT_MAX_TURNS,
     stream: slackStream
       ? {
           onTextDelta: (text) => void slackStream!.appendText(text),

@@ -4,20 +4,12 @@ dotenv.config({ path: ".env.local", quiet: true });
 const { runConversation } = await import("../src/conversation.js");
 
 const prompt = process.argv.slice(2).join(" ") || "Reply with only: hi";
-const configuredMaxTurns = Number(
-  process.env.COMPADRE_BENCHMARK_MAX_TURNS ?? 1,
-);
-const maxTurns =
-  Number.isFinite(configuredMaxTurns) && configuredMaxTurns >= 1
-    ? Math.floor(configuredMaxTurns)
-    : 1;
 const startedAt = Date.now();
 let firstTextAt: number | undefined;
 
 const result = await runConversation({
   threadId: `cold-start-benchmark-${startedAt}`,
   prompt,
-  maxTurns,
   stream: {
     onTextDelta(text) {
       firstTextAt ??= Date.now();

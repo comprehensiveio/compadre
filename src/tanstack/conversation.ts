@@ -3,7 +3,6 @@ import { EventType, type StreamChunk } from "@tanstack/ai";
 import type { StreamCallbacks } from "../conversation.js";
 import { AssistantMessageAccumulator } from "./assistant-messages.js";
 import {
-  boundedMaxTurns,
   providerForAgentProfile,
   sessionIdFromChunk,
   type AgentProfile,
@@ -24,7 +23,6 @@ export interface HarnessConversationOptions {
   transcriptUserMessage: string;
   provider?: AgentProvider;
   profile?: AgentProfile;
-  maxTurns?: number;
   signal?: AbortSignal;
   systemPrompt?: (worktreePath: string) => string;
   stream?: StreamCallbacks;
@@ -70,46 +68,63 @@ export async function consumeHarnessConversation(
   const assistantMessages = new AssistantMessageAccumulator();
 
   try {
-    for await (const chunk of chunks) {
-      if (chunk.model) model = chunk.model;
-      assistantMessages.observe(chunk);
+    try {
+      for await (const chunk of chunks) {
+        if (chunk.model) model = chunk.model;
+        assistantMessages.observe(chunk);
 
-      const nextSessionId = sessionIdFromChunk(chunk, options.provider);
-      if (nextSessionId) sessionId = nextSessionId;
+        const nextSessionId = sessionIdFromChunk(chunk, options.provider);
+        if (nextSessionId) sessionId = nextSessionId;
 
-      if (chunk.type === EventType.TEXT_MESSAGE_START) {
-        if (activeMessageId !== chunk.messageId) {
-          activeMessageId = chunk.messageId;
-          numTurns += 1;
-          if (text.length > 0) {
-            text += "\n\n";
-            if (options.provider !== "codex") {
-              options.stream?.onTextDelta?.("\n\n");
+        if (chunk.type === EventType.TEXT_MESSAGE_START) {
+          if (activeMessageId !== chunk.messageId) {
+            activeMessageId = chunk.messageId;
+            numTurns += 1;
+            if (text.length > 0) {
+              text += "\n\n";
+              if (options.provider !== "codex") {
+                options.stream?.onTextDelta?.("\n\n");
+              }
             }
           }
+        } else if (chunk.type === EventType.TEXT_MESSAGE_CONTENT) {
+          text += chunk.delta;
+          // Codex emits completed progress notes and the terminal response as
+          // indistinguishable agent_message items. Buffer them until the run
+          // finishes so channel callers publish only the terminal message.
+          if (options.provider !== "codex") {
+            options.stream?.onTextDelta?.(chunk.delta);
+          }
+        } else if (chunk.type === EventType.TOOL_CALL_START) {
+          options.stream?.onToolStart?.(chunk.toolCallName);
+        } else if (chunk.type === EventType.RUN_ERROR) {
+          if (!finished) {
+            throw new Error(chunk.message || "Agent run failed");
+          }
+          console.warn("[conversation] ignored error after final run event", {
+            runId: options.runId,
+            error: chunk.message,
+          });
+        } else if (
+          chunk.type === EventType.RUN_FINISHED &&
+          chunk.finishReason !== "tool_calls"
+        ) {
+          finished = true;
+          finishReason = chunk.finishReason ?? null;
+          if (options.provider === "codex") {
+            options.stream?.onTextDelta?.(assistantMessages.terminalText());
+          }
+          const reportedCost =
+            chunk.usage?.providerUsageDetails?.totalCostUsd;
+          if (typeof reportedCost === "number") costUsd = reportedCost;
         }
-      } else if (chunk.type === EventType.TEXT_MESSAGE_CONTENT) {
-        text += chunk.delta;
-        // Codex emits completed progress notes and the terminal response as
-        // indistinguishable agent_message items. Buffer them until the run
-        // finishes so channel callers publish only the terminal message.
-        if (options.provider !== "codex") {
-          options.stream?.onTextDelta?.(chunk.delta);
-        }
-      } else if (chunk.type === EventType.TOOL_CALL_START) {
-        options.stream?.onToolStart?.(chunk.toolCallName);
-      } else if (chunk.type === EventType.RUN_ERROR) {
-        throw new Error(chunk.message || "Agent run failed");
-      } else if (chunk.type === EventType.RUN_FINISHED) {
-        finished = true;
-        finishReason = chunk.finishReason ?? null;
-        if (options.provider === "codex") {
-          options.stream?.onTextDelta?.(assistantMessages.terminalText());
-        }
-        const reportedCost =
-          chunk.usage?.providerUsageDetails?.totalCostUsd;
-        if (typeof reportedCost === "number") costUsd = reportedCost;
       }
+    } catch (error) {
+      if (!finished) throw error;
+      console.warn("[conversation] ignored failure after final run event", {
+        runId: options.runId,
+        error,
+      });
     }
 
     if (!finished) throw new Error("Agent stream ended without a terminal event");
@@ -133,12 +148,7 @@ export async function consumeHarnessConversation(
   }
 }
 
-function maxDurationMs(): number {
-  const configured = Number(process.env.COMPADRE_AGENT_MAX_DURATION_MS);
-  return Number.isFinite(configured) && configured > 0
-    ? configured
-    : 15 * 60 * 1000;
-}
+const AGENT_MAX_DURATION_MS = 30 * 60 * 1000;
 
 export async function runHarnessConversation(
   options: HarnessConversationOptions
@@ -154,9 +164,9 @@ export async function runHarnessConversation(
 
   const timer = setTimeout(() => {
     abortController.abort(
-      new Error(`Agent run exceeded ${maxDurationMs()}ms execution limit`)
+      new Error(`Agent run exceeded ${AGENT_MAX_DURATION_MS}ms execution limit`)
     );
-  }, maxDurationMs());
+  }, AGENT_MAX_DURATION_MS);
   timer.unref();
 
   const params: AguiChatParams = {
@@ -167,7 +177,6 @@ export async function runHarnessConversation(
     forwardedProps: {
       provider,
       ...(options.profile ? { profile: options.profile } : {}),
-      maxTurns: boundedMaxTurns(options.maxTurns),
     },
     state: {},
     context: [],

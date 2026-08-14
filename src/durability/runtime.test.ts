@@ -198,6 +198,38 @@ test("turns a producer exception into a durable RUN_ERROR", async () => {
   );
 });
 
+test("does not persist a process failure after a final length outcome", async () => {
+  const durability = await createAgentRunDurability({
+    COMPADRE_DURABILITY_BACKEND: "memory",
+  });
+  assert.ok(durability);
+  const replayed = await collect(
+    captureDurableRun(
+      (async function* () {
+        yield {
+          type: EventType.RUN_FINISHED,
+          runId: "limited-run",
+          threadId: "limited-thread",
+          finishReason: "length",
+          timestamp: 1,
+        } satisfies StreamChunk;
+        throw new Error("Agent process exited with code 1");
+      })(),
+      {
+        runId: "limited-run",
+        threadId: "limited-thread",
+        durability,
+      },
+    ),
+  );
+
+  assert.deepEqual(
+    replayed.map((chunk) => chunk.type),
+    [EventType.RUN_FINISHED],
+  );
+  assert.equal((await durability.runs.get("limited-run"))?.status, "completed");
+});
+
 test("bounds retained completed memory streams", async () => {
   const durability = await createAgentRunDurability({
     COMPADRE_DURABILITY_BACKEND: "memory",

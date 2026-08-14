@@ -55,7 +55,6 @@ export interface CreateHarnessStreamOptions {
   sessionId?: string;
   worktreePath: string;
   worktreeId: string;
-  maxTurns: number;
   clients: MCPClient[];
   sandbox: SandboxDefinition;
   abortController: AbortController;
@@ -125,7 +124,6 @@ export function createHarnessStream({
   sessionId,
   worktreePath,
   worktreeId,
-  maxTurns,
   clients,
   sandbox,
   abortController,
@@ -198,11 +196,9 @@ export function createHarnessStream({
       claudeExecutable: resolveClaudeExecutable(),
       ...CLAUDE_DANGEROUS_PERMISSIONS,
       systemPromptMode: "replace",
-      maxTurns,
       env: harnessEnvironment(worktreePath),
     }),
     modelOptions: {
-      maxTurns,
       ...(sessionId ? { sessionId } : {}),
     },
   });

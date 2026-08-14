@@ -1,5 +1,4 @@
 import { Hono } from "hono";
-import { DEFAULT_MAX_TURNS } from "../config.js";
 import { runConversation } from "../conversation.js";
 import { isAgentProvider } from "../tanstack/protocol.js";
 import { requireCompadreApiKey } from "./auth.js";
@@ -36,7 +35,6 @@ promptRoutes.post("/prompt", async (c) => {
       400
     );
   }
-
   const async = body.async === true;
 
   console.log(`[prompt] received (async=${async}): ${prompt.slice(0, 100)}`);
@@ -47,7 +45,6 @@ promptRoutes.post("/prompt", async (c) => {
     provider: isAgentProvider(requestedProvider)
       ? requestedProvider
       : undefined,
-    maxTurns: (body.maxTurns as number) ?? DEFAULT_MAX_TURNS,
     signal: async ? undefined : c.req.raw.signal,
     capacityPriority: async ? ("background" as const) : ("foreground" as const),
     retryOnBackgroundPreemption: async,

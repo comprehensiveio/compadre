@@ -18,7 +18,6 @@ export const agentWorkflowInputSchema = z.object({
   threadId: z.string().trim().min(1).optional(),
   provider: z.enum(["claude-code", "codex"]).optional(),
   profile: z.enum(["claude-code", "codex", "fable"]).optional(),
-  maxTurns: z.number().int().positive().optional(),
   responseMode: z.enum(["default", "slack-streaming"]).optional(),
   persistThread: z.boolean().optional(),
 });
@@ -116,7 +115,6 @@ export async function executeAgentWorkflow(
       threadId,
       provider: input.provider,
       profile: input.profile,
-      maxTurns: input.maxTurns,
       persistThread: input.persistThread ?? input.threadId !== undefined,
       systemPrompt:
         input.responseMode === "slack-streaming"
