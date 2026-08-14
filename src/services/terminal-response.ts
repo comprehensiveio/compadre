@@ -1,7 +1,7 @@
 import type { ConversationResult } from "../conversation.js";
 
 export const INCOMPLETE_RESPONSE_NOTICE =
-  "\n\n:warning: I stopped without producing a complete final answer. Reply `continue` and I'll pick the investigation back up.";
+  ":warning: I stopped without producing a complete final answer. Reply `continue` and I'll pick the investigation back up.";
 
 /**
  * Tracks whether the user-facing text stream ends with an answer rather than
@@ -23,7 +23,9 @@ export class TerminalResponseTracker {
 
   isComplete(
     result: Pick<ConversationResult, "result" | "finishReason">,
+    delivery: { truncated?: boolean } = {},
   ): boolean {
+    if (delivery.truncated) return false;
     if (!result.result.trim()) return false;
     if (result.finishReason !== null && result.finishReason !== "stop") {
       return false;

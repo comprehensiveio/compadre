@@ -57,6 +57,21 @@ test("rejects non-terminal finish reasons even when answer text exists", () => {
   }
 });
 
+test("rejects a response whose Slack delivery was truncated", () => {
+  const tracker = new TerminalResponseTracker();
+  tracker.recordText("A complete answer that did not all reach Slack");
+  assert.equal(
+    tracker.isComplete(
+      {
+        result: "A complete answer that did not all reach Slack",
+        finishReason: "stop",
+      },
+      { truncated: true },
+    ),
+    false,
+  );
+});
+
 test("accepts text-only runs whose provider omits a finish reason", () => {
   const tracker = new TerminalResponseTracker();
   tracker.recordText("A complete answer");

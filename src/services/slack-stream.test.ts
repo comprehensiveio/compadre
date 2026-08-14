@@ -346,13 +346,46 @@ test("bounds an oversized initial stream chunk", async () => {
     logger: silentLogger,
   });
 
-  stream.appendText("x".repeat(SLACK_MARKDOWN_TEXT_LIMIT + 1));
+  assert.equal(
+    stream.appendText("x".repeat(SLACK_MARKDOWN_TEXT_LIMIT + 1)),
+    false,
+  );
+  assert.equal(stream.hasTruncatedContent(), true);
+  assert.equal(stream.appendText("undelivered final answer"), false);
   await stream.stopStream();
 
   assertBoundedMarkdownCalls(calls);
   assert.ok(
     String(calls[0]?.body.markdown_text).endsWith(SLACK_TRUNCATION_NOTICE),
   );
+});
+
+test("posts an incomplete-response notice separately after truncation", async () => {
+  const { calls, fetchImpl } = createSlackFetch({
+    "chat.startStream": [{ ok: true, ts: "200.001" }],
+    "chat.stopStream": [{ ok: true }],
+    "chat.postMessage": [{ ok: true, ts: "200.002" }],
+  });
+  const stream = new SlackStream({
+    channel: "C123",
+    threadTs: "100.001",
+    botToken: "xoxb-test",
+    fetchImpl,
+    logger: silentLogger,
+  });
+
+  stream.appendText("x".repeat(SLACK_MARKDOWN_TEXT_LIMIT + 1));
+  await stream.stopStream();
+  await stream.postThreadMessage("Continue the investigation.");
+
+  assert.deepEqual(calls.at(-1), {
+    method: "chat.postMessage",
+    body: {
+      channel: "C123",
+      thread_ts: "100.001",
+      markdown_text: "Continue the investigation.",
+    },
+  });
 });
 
 test("bounds accumulated Markdown during interrupted-stream recovery", async () => {

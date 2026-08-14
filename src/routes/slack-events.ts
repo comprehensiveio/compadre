@@ -203,8 +203,9 @@ async function handleAIMessage(
     stream: slackStream
       ? {
           onTextDelta: (text) => {
-            terminalResponse.recordText(text);
-            slackStream.appendText(text);
+            if (slackStream.appendText(text)) {
+              terminalResponse.recordText(text);
+            }
           },
           onToolStart: (name) => {
             terminalResponse.recordToolStart();
@@ -216,8 +217,12 @@ async function handleAIMessage(
       : undefined,
   })
     .then(async (result) => {
-      if (slackStream && !terminalResponse.isComplete(result)) {
-        slackStream.appendText(INCOMPLETE_RESPONSE_NOTICE);
+      if (
+        slackStream &&
+        !terminalResponse.isComplete(result, {
+          truncated: slackStream.hasTruncatedContent(),
+        })
+      ) {
         throw new IncompleteTerminalResponseError(result.finishReason);
       }
       if (slackStream) {
@@ -236,6 +241,9 @@ async function handleAIMessage(
       if (slackStream) {
         await slackStream.stopStream();
         await slackStream.clearStatus();
+        if (err instanceof IncompleteTerminalResponseError) {
+          await slackStream.postThreadMessage(INCOMPLETE_RESPONSE_NOTICE);
+        }
       }
       if (!isDM && slackStream) {
         await slackStream.markRunFailed(event.ts);
