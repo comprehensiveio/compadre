@@ -124,7 +124,7 @@ On Render:
 The repository also registers three opt-in Render Workflow tasks:
 
 - `probeAgentRuntime` measures Workflow and repository startup without calling a model.
-- `runAgent` executes one existing TanStack AI agent turn on an isolated 4 GB task instance.
+- `runAgent` executes one existing TanStack AI agent turn on an isolated 4 GB task instance. The agent aborts after 30 minutes, while the Workflow and relay allow 35 and 36 minutes respectively for terminal persistence and cleanup.
 - `probeAgentDurability` verifies a saved run through the same Postgres replay adapter without returning its message content.
 
 Slack remains on the persistent runner by default. The same channel-neutral
@@ -133,6 +133,12 @@ conversation interface can be switched to the Workflow producer with
 retries remain disabled until Slack and GitHub side effects have durable
 idempotency, and provider session/worktree reuse remains a separate persistence
 milestone.
+
+Slack makes at most one automatic continuation turn when an agent returns a
+clean but incomplete terminal outcome. It reuses the persisted thread with a
+fresh run ID and instructs the agent not to repeat completed side effects.
+Thrown failures, content-filter stops, and Slack delivery truncation are not
+retried; every terminal failure receives a sanitized thread message.
 
 Use these commands for local Workflow development with Render CLI 2.12 or
 newer:

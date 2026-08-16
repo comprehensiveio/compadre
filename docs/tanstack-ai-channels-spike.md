@@ -49,7 +49,9 @@ uses `bypassPermissions`; Codex uses `danger-full-access`, `approvalPolicy:
 never`, and automatic MCP approval. This service therefore assumes its process,
 credentials, prompts, and configured MCP servers are trusted.
 
-Both harnesses share the code-owned 30-minute wall-clock deadline.
+Both harnesses share the code-owned 30-minute wall-clock deadline. Render's
+Workflow envelope allows 35 minutes for cleanup and terminal persistence, and
+the relay monitors it for 36 minutes so it observes the platform outcome.
 
 ## AG-UI
 

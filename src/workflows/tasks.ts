@@ -1,4 +1,5 @@
 import { task } from "@renderinc/sdk/workflows";
+import { AGENT_WORKFLOW_TASK_TIMEOUT_SECONDS } from "../agent-timeouts.js";
 import {
   executeAgentWorkflow,
   executeRepositoryProbe,
@@ -37,7 +38,7 @@ export const runAgent = task(
   {
     name: "runAgent",
     plan: "pro",
-    timeoutSeconds: 30 * 60,
+    timeoutSeconds: AGENT_WORKFLOW_TASK_TIMEOUT_SECONDS,
     // Side effects are not idempotent yet. Reliability requires failing once
     // rather than silently duplicating Slack messages, commits, or pull requests.
     retry: NO_RETRIES,
