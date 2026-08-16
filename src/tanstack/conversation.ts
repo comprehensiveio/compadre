@@ -1,5 +1,6 @@
 import crypto from "node:crypto";
 import { EventType, type StreamChunk } from "@tanstack/ai";
+import { AGENT_EXECUTION_TIMEOUT_MS } from "../agent-timeouts.js";
 import type { StreamCallbacks } from "../conversation.js";
 import { AssistantMessageAccumulator } from "./assistant-messages.js";
 import {
@@ -148,8 +149,6 @@ export async function consumeHarnessConversation(
   }
 }
 
-const AGENT_MAX_DURATION_MS = 30 * 60 * 1000;
-
 export async function runHarnessConversation(
   options: HarnessConversationOptions
 ): Promise<HarnessConversationResult> {
@@ -164,9 +163,9 @@ export async function runHarnessConversation(
 
   const timer = setTimeout(() => {
     abortController.abort(
-      new Error(`Agent run exceeded ${AGENT_MAX_DURATION_MS}ms execution limit`)
+      new Error(`Agent run exceeded ${AGENT_EXECUTION_TIMEOUT_MS}ms execution limit`)
     );
-  }, AGENT_MAX_DURATION_MS);
+  }, AGENT_EXECUTION_TIMEOUT_MS);
   timer.unref();
 
   const params: AguiChatParams = {

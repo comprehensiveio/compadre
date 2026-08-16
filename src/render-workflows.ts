@@ -2,6 +2,7 @@ import {
   TaskRunStatus,
   type TaskRunDetails,
 } from "@renderinc/sdk/workflows";
+import { AGENT_WORKFLOW_WAIT_TIMEOUT_MS } from "./agent-timeouts.js";
 
 const TERMINAL_STATUSES = new Set<TaskRunDetails["status"]>([
   TaskRunStatus.COMPLETED,
@@ -55,7 +56,7 @@ export async function waitForTaskRun(
   options: WaitForTaskRunOptions = {},
 ): Promise<TaskRunDetails> {
   const pollIntervalMs = options.pollIntervalMs ?? 1_000;
-  const timeoutMs = options.timeoutMs ?? 30 * 60 * 1_000;
+  const timeoutMs = options.timeoutMs ?? AGENT_WORKFLOW_WAIT_TIMEOUT_MS;
   const now = options.now ?? Date.now;
   const sleep = options.sleep ?? defaultSleep;
   const startedAt = now();

@@ -1,6 +1,12 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { TerminalResponseTracker } from "./terminal-response.js";
+import {
+  AGENT_FAILURE_NOTICE,
+  INCOMPLETE_RESPONSE_NOTICE,
+  IncompleteTerminalResponseError,
+  TerminalResponseTracker,
+  slackFailureNotice,
+} from "./terminal-response.js";
 
 test("rejects empty and preamble-only runs", () => {
   const empty = new TerminalResponseTracker();
@@ -79,4 +85,16 @@ test("accepts text-only runs whose provider omits a finish reason", () => {
     tracker.isComplete({ result: "A complete answer", finishReason: null }),
     true,
   );
+});
+
+test("selects a sanitized Slack notice for incomplete and thrown failures", () => {
+  assert.equal(
+    slackFailureNotice(new IncompleteTerminalResponseError("length")),
+    INCOMPLETE_RESPONSE_NOTICE,
+  );
+  assert.equal(
+    slackFailureNotice(new Error("secret provider detail")),
+    AGENT_FAILURE_NOTICE,
+  );
+  assert.doesNotMatch(AGENT_FAILURE_NOTICE, /secret provider detail/);
 });

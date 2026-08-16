@@ -3,6 +3,9 @@ import type { ConversationResult } from "../conversation.js";
 export const INCOMPLETE_RESPONSE_NOTICE =
   ":warning: I stopped without producing a complete final answer. Reply `continue` and I'll pick the investigation back up.";
 
+export const AGENT_FAILURE_NOTICE =
+  ":warning: This run stopped unexpectedly. Reply `continue` and I'll resume from the saved investigation.";
+
 /**
  * Tracks whether the user-facing text stream ends with an answer rather than
  * with tool activity. Whitespace-only deltas do not count as a response.
@@ -21,16 +24,21 @@ export class TerminalResponseTracker {
     this.lastToolSequence = ++this.activitySequence;
   }
 
-  isComplete(
+  isAgentComplete(
     result: Pick<ConversationResult, "result" | "finishReason">,
-    delivery: { truncated?: boolean } = {},
   ): boolean {
-    if (delivery.truncated) return false;
     if (!result.result.trim()) return false;
     if (result.finishReason !== null && result.finishReason !== "stop") {
       return false;
     }
     return this.lastTextSequence > this.lastToolSequence;
+  }
+
+  isComplete(
+    result: Pick<ConversationResult, "result" | "finishReason">,
+    delivery: { truncated?: boolean } = {},
+  ): boolean {
+    return !delivery.truncated && this.isAgentComplete(result);
   }
 }
 
@@ -41,4 +49,10 @@ export class IncompleteTerminalResponseError extends Error {
     );
     this.name = "IncompleteTerminalResponseError";
   }
+}
+
+export function slackFailureNotice(error: unknown): string {
+  return error instanceof IncompleteTerminalResponseError
+    ? INCOMPLETE_RESPONSE_NOTICE
+    : AGENT_FAILURE_NOTICE;
 }
