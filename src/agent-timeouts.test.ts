@@ -17,4 +17,5 @@ test("agent, Workflow, and relay timeouts leave ordered cleanup headroom", () =>
     AGENT_WORKFLOW_WAIT_TIMEOUT_MS >
       AGENT_WORKFLOW_TASK_TIMEOUT_SECONDS * 1_000,
   );
+  assert.equal(AGENT_WORKFLOW_WAIT_TIMEOUT_MS, 36 * 60 * 1_000);
 });

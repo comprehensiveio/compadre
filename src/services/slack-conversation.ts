@@ -77,6 +77,9 @@ export async function runSlackConversation({
   if (canAutoContinue(result, tracker, delivery)) {
     autoContinued = true;
     await delivery.onAutoContinue();
+    if (delivery.hasTruncatedContent()) {
+      throw new IncompleteTerminalResponseError(result.finishReason);
+    }
     tracker = new TerminalResponseTracker();
     const continuationOptions = { ...options };
     delete continuationOptions.runId;

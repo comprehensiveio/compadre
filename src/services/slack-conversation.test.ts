@@ -129,6 +129,33 @@ test("does not continue content-filtered or Slack-truncated responses", async ()
   }
 });
 
+test("does not continue if the continuation marker fills the Slack message", async () => {
+  let attempts = 0;
+  let truncated = false;
+  await assert.rejects(
+    runSlackConversation({
+      runner: async (options) => {
+        attempts += 1;
+        options.stream?.onTextDelta?.("Partial answer");
+        options.stream?.onToolStart?.("read_file");
+        return result("Partial answer", "length");
+      },
+      options: { prompt: "Investigate", threadId: "slack-thread" },
+      delivery: {
+        appendText: () => true,
+        hasTruncatedContent: () => truncated,
+        onToolStart() {},
+        onAutoContinue() {
+          truncated = true;
+        },
+      },
+    }),
+    /without a complete terminal response/,
+  );
+
+  assert.equal(attempts, 1);
+});
+
 test("stops after one automatic continuation attempt", async () => {
   let attempts = 0;
   let continuations = 0;
