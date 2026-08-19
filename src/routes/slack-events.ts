@@ -36,7 +36,7 @@ const APP_LINK_REGEX = /https:\/\/(?:www\.)?app\.comprehensive\.io\/\S+/i;
 const SLACKBOT_USER_ID = "U073509NYP7";
 const PRODUCTION_SUPPORT_CHANNEL_ID = "C04D24LB4J1";
 
-interface SlackEvent {
+export interface SlackEvent {
   type: string;
   subtype?: string;
   bot_id?: string;
@@ -47,6 +47,12 @@ interface SlackEvent {
   text: string;
   ts: string;
   thread_ts?: string;
+}
+
+/** Accept ordinary user messages, including messages with attached files. */
+export function isSupportedUserMessage(event: SlackEvent): boolean {
+  if (event.type !== "message" || event.bot_id) return false;
+  return event.subtype === undefined || event.subtype === "file_share";
 }
 
 slackEventsRoutes.post("/slack/events", async (c) => {
@@ -92,8 +98,7 @@ slackEventsRoutes.post("/slack/events", async (c) => {
 });
 
 async function handleEvent(event: SlackEvent, teamId?: string) {
-  if (event.type !== "message") return;
-  if (event.subtype || event.bot_id) return;
+  if (!isSupportedUserMessage(event)) return;
   if (isDuplicate(event.ts)) return;
 
   const isDM = event.channel.startsWith("D");
