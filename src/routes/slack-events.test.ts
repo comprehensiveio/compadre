@@ -18,7 +18,10 @@ function message(overrides: Partial<SlackEvent> = {}): SlackEvent {
 
 test("accepts a user message with a file attachment", () => {
   assert.equal(
-    isSupportedUserMessage(message({ subtype: "file_share" })),
+    isSupportedUserMessage(message({
+      subtype: "file_share",
+      files: [{ id: "F123", name: "screenshot.png", mimetype: "image/png" }],
+    })),
     true,
   );
 });

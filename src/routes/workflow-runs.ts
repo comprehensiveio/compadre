@@ -19,6 +19,7 @@ import { requireCompadreApiKey } from "./auth.js";
 
 const workflowRunInputSchema = agentWorkflowInputSchema.omit({
   responseMode: true,
+  slackFiles: true,
 });
 
 export interface WorkflowRunRouteDependencies {

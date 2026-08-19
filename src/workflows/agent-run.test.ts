@@ -58,6 +58,7 @@ test("agent workflow runs the existing conversation stack after repository setup
       prompt: "say hi",
       threadId: "slack-thread",
       provider: "codex",
+      slackFiles: [{ id: "F123", name: "screenshot.png" }],
     },
     dependencies({
       ensureRepository() {
@@ -65,6 +66,9 @@ test("agent workflow runs the existing conversation stack after repository setup
       },
       runConversation: async (options) => {
         events.push(`conversation:${options.threadId}:${options.provider}`);
+        assert.deepEqual(options.slackFiles, [
+          { id: "F123", name: "screenshot.png" },
+        ]);
         options.stream?.onTextDelta?.("hi");
         return conversationResult;
       },

@@ -19,6 +19,10 @@ import {
 } from "../persistence/runtime.js";
 import { createWorktree, removeWorktree } from "../repo.js";
 import {
+  materializeSlackFiles,
+  type SlackFileReference,
+} from "../services/slack-files.js";
+import {
   createHarnessStream,
   resolveHarnessSelection,
   type HarnessSelection,
@@ -59,6 +63,7 @@ export interface AguiRuntimeOptions {
   capacityPriority?: RunCapacityPriority;
   /** False only for generated one-off threads; true requires durability. */
   persistThread?: boolean;
+  slackFiles?: SlackFileReference[];
 }
 
 function latestUserInput(
@@ -184,6 +189,35 @@ export function messagesForHarnessSession(
   sessionId: string | undefined
 ): AguiChatParams["messages"] {
   return sessionId ? current : [...transcript, ...current];
+}
+
+export function messagesWithAttachmentPrompt(
+  messages: AguiChatParams["messages"],
+  attachmentPrompt: string,
+): AguiChatParams["messages"] {
+  if (!attachmentPrompt) return messages;
+  const normalized = convertMessagesToModelMessages(messages) as ModelMessage[];
+  let index = -1;
+  for (let candidate = normalized.length - 1; candidate >= 0; candidate -= 1) {
+    if (normalized[candidate]?.role === "user") {
+      index = candidate;
+      break;
+    }
+  }
+  if (index === -1) return messages;
+  const message = normalized[index]!;
+  const suffix = `\n\n${attachmentPrompt}`;
+  normalized[index] = {
+    ...message,
+    content:
+      typeof message.content === "string"
+        ? `${message.content}${suffix}`
+        : [
+            ...(message.content ?? []),
+            { type: "text", content: suffix },
+          ],
+  };
+  return normalized;
 }
 
 async function discardPreparation(
@@ -344,33 +378,50 @@ async function prepareAguiChat(
     return { thread, worktreeId, worktreePath };
   });
   const { thread, worktreeId, worktreePath } = allocation;
+  const attachments = await materializeSlackFiles(options.slackFiles ?? [], {
+    directoryPrefix: `${worktreePath}/.compadre-attachments-`,
+  });
+  const inputParams = attachments.prompt
+    ? {
+        ...params,
+        messages: messagesWithAttachmentPrompt(
+          params.messages,
+          attachments.prompt,
+        ),
+      }
+    : params;
   const transcriptUserMessage = options.transcriptUserMessage;
   const tracksTranscript = transcriptUserMessage !== undefined;
   const sessionId = resumableHarnessSession(thread, selection.provider);
   let persistence = threadPersistence?.persistence;
   let effectiveParams: AguiChatParams;
-  if (persistence && tracksTranscript) {
-    const providerMessages = convertMessagesToModelMessages(
-      params.messages,
-    ) as ModelMessage[];
-    persistence = await createChannelConversationPersistence(persistence, {
-      threadId: params.threadId,
-      providerMessages,
-      transcriptUserMessage,
-      resumesNativeSession: sessionId !== undefined,
-    });
-    effectiveParams = { ...params, messages: [] };
-  } else if (tracksTranscript) {
-    effectiveParams = {
-      ...params,
-      messages: messagesForHarnessSession(
-        params.messages,
-        thread.transcript,
-        sessionId,
-      ),
-    };
-  } else {
-    effectiveParams = params;
+  try {
+    if (persistence && tracksTranscript) {
+      const providerMessages = convertMessagesToModelMessages(
+        inputParams.messages,
+      ) as ModelMessage[];
+      persistence = await createChannelConversationPersistence(persistence, {
+        threadId: params.threadId,
+        providerMessages,
+        transcriptUserMessage,
+        resumesNativeSession: sessionId !== undefined,
+      });
+      effectiveParams = { ...inputParams, messages: [] };
+    } else if (tracksTranscript) {
+      effectiveParams = {
+        ...inputParams,
+        messages: messagesForHarnessSession(
+          inputParams.messages,
+          thread.transcript,
+          sessionId,
+        ),
+      };
+    } else {
+      effectiveParams = inputParams;
+    }
+  } catch (error) {
+    await attachments.cleanup();
+    throw error;
   }
   console.log(
     `[ag-ui] run=${params.runId} worktree=${worktreeId} source=${worktreeSource} allocation=${Date.now() - preparationStartedAt}ms`,
@@ -387,6 +438,7 @@ async function prepareAguiChat(
     );
   } catch (error) {
     removeAbortListeners();
+    await attachments.cleanup();
     await discardPreparation(params.threadId, worktreeId);
     throw backgroundPreemptionReason(runLeases.capacity) ?? error;
   }
@@ -395,6 +447,7 @@ async function prepareAguiChat(
   );
   if (abortController.signal.aborted) {
     removeAbortListeners();
+    await attachments.cleanup();
     await discardPreparation(params.threadId, worktreeId, clients);
     throw abortController.signal.reason;
   }
@@ -435,6 +488,7 @@ async function prepareAguiChat(
   } catch (error) {
     processMonitor.stop();
     removeAbortListeners();
+    await attachments.cleanup();
     await discardPreparation(params.threadId, worktreeId, clients);
     throw backgroundPreemptionReason(runLeases.capacity) ?? error;
   }
@@ -478,6 +532,7 @@ async function prepareAguiChat(
       }
       processMonitor.stop();
       removeAbortListeners();
+      await attachments.cleanup();
       await Promise.allSettled(clients.map((client) => client.close()));
       await Promise.allSettled(
         Object.values(runLeases).map((lease) => lease.release()),

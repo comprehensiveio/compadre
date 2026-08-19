@@ -16,6 +16,7 @@ import {
   getConfiguredAgentRunDurability,
 } from "../durability/runtime.js";
 import type { RunCapacityPriority } from "./thread-lock.js";
+import type { SlackFileReference } from "../services/slack-files.js";
 
 export interface HarnessConversationOptions {
   runId?: string;
@@ -29,6 +30,7 @@ export interface HarnessConversationOptions {
   stream?: StreamCallbacks;
   capacityPriority?: RunCapacityPriority;
   persistThread?: boolean;
+  slackFiles?: SlackFileReference[];
 }
 
 export interface HarnessConversationResult {
@@ -193,6 +195,7 @@ export async function runHarnessConversation(
       transcriptUserMessage: options.transcriptUserMessage,
       capacityPriority: options.capacityPriority,
       persistThread: options.persistThread,
+      slackFiles: options.slackFiles,
     });
     const consumableChunks = durability
       ? captureDurableRun(chunks, {
