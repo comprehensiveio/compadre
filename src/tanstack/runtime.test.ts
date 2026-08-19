@@ -7,6 +7,7 @@ import { EventType, type StreamChunk } from "@tanstack/ai";
 import {
   createHarnessSandbox,
   guardBackgroundPreemption,
+  messagesWithAttachmentPrompt,
   messagesForHarnessSession,
 } from "./runtime.js";
 import {
@@ -43,6 +44,22 @@ test("starts a harness without blocking on dependency preparation", async () => 
     await sandbox.destroy(context);
     await rm(worktreePath, { recursive: true, force: true });
   }
+});
+
+test("adds materialized Slack images to the active user prompt", () => {
+  assert.deepEqual(
+    messagesWithAttachmentPrompt(
+      [{ role: "user", content: "what is this?" }],
+      "Slack attachment F123 is available at /repo/.compadre-attachments/image.png.",
+    ),
+    [
+      {
+        role: "user",
+        content:
+          "what is this?\n\nSlack attachment F123 is available at /repo/.compadre-attachments/image.png.",
+      },
+    ],
+  );
 });
 
 test("replays the neutral transcript only when starting a fresh provider session", () => {

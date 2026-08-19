@@ -95,6 +95,78 @@ test("preserves the existing Slack read API contract", async () => {
   assert.equal(url.searchParams.get("limit"), "25");
 });
 
+test("downloads a private Slack image with bot authentication", async () => {
+  const calls: SlackCall[] = [];
+  const image = new Uint8Array([137, 80, 78, 71]);
+  const fetchImpl = (async (
+    input: string | URL | Request,
+    init?: RequestInit,
+  ) => {
+    calls.push({ url: String(input), init });
+    if (calls.length === 1) {
+      return Response.json({
+        ok: true,
+        file: {
+          name: "screenshot.png",
+          mimetype: "image/png",
+          size: image.byteLength,
+          url_private_download:
+            "https://files.slack.com/files-pri/T123-F123/download/screenshot.png",
+        },
+      });
+    }
+    return new Response(image, {
+      headers: { "Content-Type": "image/png" },
+    });
+  }) as typeof fetch;
+  const client = new SlackClient({
+    botToken: "xoxb-test",
+    teamId: "T123",
+    fetchImpl,
+  });
+
+  const downloaded = await client.downloadFile("F123");
+
+  assert.deepEqual(downloaded, {
+    data: image,
+    name: "screenshot.png",
+    mimetype: "image/png",
+  });
+  const infoUrl = new URL(calls[0]!.url);
+  assert.equal(infoUrl.pathname, "/api/files.info");
+  assert.equal(infoUrl.searchParams.get("file"), "F123");
+  assert.equal(calls[1]!.url, "https://files.slack.com/files-pri/T123-F123/download/screenshot.png");
+  assert.equal(
+    new Headers(calls[1]!.init?.headers).get("authorization"),
+    "Bearer xoxb-test",
+  );
+});
+
+test("rejects oversized Slack images before downloading them", async () => {
+  const { calls, fetchImpl } = createSlackFetch([
+    {
+      body: {
+        ok: true,
+        file: {
+          name: "huge.png",
+          mimetype: "image/png",
+          size: 101,
+          url_private_download:
+            "https://files.slack.com/files-pri/T123-F123/download/huge.png",
+        },
+      },
+    },
+  ]);
+  const client = new SlackClient({
+    botToken: "xoxb-test",
+    teamId: "T123",
+    fetchImpl,
+  });
+
+  await assert.rejects(client.downloadFile("F123", 100), /exceeds/);
+  assert.equal(calls.length, 1);
+});
+
 test("uploads a local file directly to the requested Slack thread", async (t) => {
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), "compadre-slack-"));
   t.after(() => fs.rm(directory, { recursive: true, force: true }));

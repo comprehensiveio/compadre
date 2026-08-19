@@ -4,3 +4,4 @@ dist/
 .sessions/
 datadog-mcp-creds.json
 .workflow-cache/
+.compadre-attachments-*/

@@ -10,6 +10,10 @@ import {
 } from "../repo.js";
 import { releaseAguiThread } from "../tanstack/runtime.js";
 import { getSlackStreamingSystemPrompt } from "../prompts/index.js";
+import {
+  MAX_SLACK_INPUT_FILES,
+  slackFileReferenceSchema,
+} from "../services/slack-files.js";
 
 export const agentWorkflowInputSchema = z.object({
   runId: z.string().trim().min(1).optional(),
@@ -20,6 +24,10 @@ export const agentWorkflowInputSchema = z.object({
   profile: z.enum(["claude-code", "codex", "fable"]).optional(),
   responseMode: z.enum(["default", "slack-streaming"]).optional(),
   persistThread: z.boolean().optional(),
+  slackFiles: z
+    .array(slackFileReferenceSchema)
+    .max(MAX_SLACK_INPUT_FILES)
+    .optional(),
 });
 
 export type AgentWorkflowInput = z.infer<typeof agentWorkflowInputSchema>;
@@ -116,6 +124,7 @@ export async function executeAgentWorkflow(
       provider: input.provider,
       profile: input.profile,
       persistThread: input.persistThread ?? input.threadId !== undefined,
+      slackFiles: input.slackFiles,
       systemPrompt:
         input.responseMode === "slack-streaming"
           ? (worktreePath) => getSlackStreamingSystemPrompt(worktreePath)

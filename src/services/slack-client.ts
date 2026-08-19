@@ -9,6 +9,19 @@ type SlackResponse = Record<string, unknown> & {
   error?: string;
 };
 
+export interface DownloadedSlackFile {
+  data: Uint8Array;
+  name: string;
+  mimetype: string;
+}
+
+const SUPPORTED_IMAGE_MIME_TYPES = new Set([
+  "image/gif",
+  "image/jpeg",
+  "image/png",
+  "image/webp",
+]);
+
 export interface SlackClientOptions {
   botToken: string;
   teamId: string;
@@ -122,6 +135,67 @@ export class SlackClient {
       user: userId,
       include_labels: "true",
     });
+  }
+
+  async downloadFile(
+    fileId: string,
+    maxBytes = 10 * 1024 * 1024,
+  ): Promise<DownloadedSlackFile> {
+    const info = await this.get("files.info", { file: fileId });
+    const file = info.file as {
+      name?: unknown;
+      mimetype?: unknown;
+      size?: unknown;
+      url_private_download?: unknown;
+      url_private?: unknown;
+    } | undefined;
+    const name = typeof file?.name === "string" ? file.name : fileId;
+    const mimetype =
+      typeof file?.mimetype === "string" ? file.mimetype : "";
+    const size = typeof file?.size === "number" ? file.size : undefined;
+    const rawUrl =
+      typeof file?.url_private_download === "string"
+        ? file.url_private_download
+        : typeof file?.url_private === "string"
+          ? file.url_private
+          : undefined;
+
+    if (!SUPPORTED_IMAGE_MIME_TYPES.has(mimetype)) {
+      throw new Error(
+        `Slack file ${fileId} is not a supported image (${mimetype || "unknown type"})`,
+      );
+    }
+    if (size !== undefined && size > maxBytes) {
+      throw new Error(
+        `Slack file ${fileId} exceeds the ${maxBytes}-byte image limit`,
+      );
+    }
+    if (!rawUrl) throw new Error(`Slack file ${fileId} has no download URL`);
+    const url = new URL(rawUrl);
+    if (
+      url.protocol !== "https:" ||
+      (url.hostname !== "slack.com" && !url.hostname.endsWith(".slack.com"))
+    ) {
+      throw new Error(`Slack file ${fileId} returned an invalid download URL`);
+    }
+
+    const response = await this.fetchImpl(url, {
+      headers: { Authorization: `Bearer ${this.botToken}` },
+    });
+    if (!response.ok) {
+      throw new Error(`Slack file download failed with HTTP ${response.status}`);
+    }
+    const contentLength = Number(response.headers.get("content-length"));
+    if (Number.isFinite(contentLength) && contentLength > maxBytes) {
+      throw new Error(
+        `Slack file ${fileId} exceeds the ${maxBytes}-byte image limit`,
+      );
+    }
+    const data = new Uint8Array(await response.arrayBuffer());
+    if (data.byteLength > maxBytes) {
+      throw new Error(`Slack file ${fileId} exceeds the ${maxBytes}-byte image limit`);
+    }
+    return { data, name, mimetype };
   }
 
   async uploadFile({

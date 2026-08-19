@@ -18,6 +18,7 @@ test("relays a Workflow AG-UI log through channel callbacks", async () => {
       prompt: "hello",
       threadId: "slack-thread",
       provider: "claude-code",
+      slackFiles: [{ id: "F123", name: "screenshot.png" }],
       stream: {
         onTextDelta: (delta) => text.push(delta),
         onToolStart: (name) => statuses.push(name),
@@ -34,6 +35,9 @@ test("relays a Workflow AG-UI log through channel callbacks", async () => {
         async start(input) {
           assert.equal(input.responseMode, "slack-streaming");
           assert.equal(input.persistThread, true);
+          assert.deepEqual(input.slackFiles, [
+            { id: "F123", name: "screenshot.png" },
+          ]);
           await durability.runs.createOrResume({
             runId: "relayed-run",
             threadId: "slack-thread",

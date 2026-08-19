@@ -14,6 +14,12 @@ import { humanizeToolName } from "../services/tool-labels.js";
 import { slackFailureNotice } from "../services/terminal-response.js";
 import { runSlackConversation } from "../services/slack-conversation.js";
 import { verifySlackSignature } from "../services/slack-verify.js";
+import {
+  mergeSlackFileReferences,
+  slackFileReferences,
+  type SlackEventFile,
+  type SlackFileReference,
+} from "../services/slack-files.js";
 
 export const slackEventsRoutes = new Hono();
 
@@ -47,6 +53,7 @@ export interface SlackEvent {
   text: string;
   ts: string;
   thread_ts?: string;
+  files?: SlackEventFile[];
 }
 
 /** Accept ordinary user messages, including messages with attached files. */
@@ -147,7 +154,7 @@ async function handleAIMessage(
 
   const threadKey = threadTs;
 
-  const [threadContext, channelName] = await Promise.all([
+  const [thread, channelName] = await Promise.all([
     event.thread_ts && botToken
       ? fetchThreadContext(
           event.channel,
@@ -164,6 +171,11 @@ async function handleAIMessage(
         })
       : null,
   ]);
+  const threadContext = thread?.text ?? null;
+  const slackFiles = mergeSlackFileReferences(
+    slackFileReferences(event.files),
+    thread?.files,
+  );
 
   const { prompt, transcriptUserMessage } = buildSlackAgentInput({
     messageText,
@@ -194,6 +206,7 @@ async function handleAIMessage(
     transcriptUserMessage,
     threadId: threadKey,
     profile,
+    slackFiles,
     systemPrompt:
       process.env.COMPADRE_SLACK_WORKFLOW_ENABLED === "true"
         ? undefined
@@ -290,7 +303,7 @@ async function fetchThreadContext(
   threadTs: string,
   triggeringTs: string,
   botToken: string,
-): Promise<string | null> {
+): Promise<{ text: string | null; files: SlackFileReference[] }> {
   try {
     const res = await fetch(
       `https://slack.com/api/conversations.replies?${new URLSearchParams({
@@ -304,21 +317,33 @@ async function fetchThreadContext(
     );
     const data = (await res.json()) as {
       ok: boolean;
-      messages?: { user?: string; text?: string; ts: string }[];
+      messages?: {
+        user?: string;
+        text?: string;
+        ts: string;
+        files?: SlackEventFile[];
+      }[];
       error?: string;
     };
     if (!data.ok || !data.messages) {
       console.error("[slack-events] conversations.replies failed:", data.error);
-      return null;
+      return { text: null, files: [] };
     }
-    const lines = data.messages
-      .filter((m) => m.ts !== triggeringTs)
-      .slice(-20)
-      .map((m) => `<@${m.user || "unknown"}>: ${m.text || ""}`);
-    return lines.length > 0 ? lines.join("\n") : null;
+    const messages = data.messages
+      .filter((message) => message.ts !== triggeringTs)
+      .slice(-20);
+    const lines = messages.map(
+      (message) => `<@${message.user || "unknown"}>: ${message.text || ""}`,
+    );
+    return {
+      text: lines.length > 0 ? lines.join("\n") : null,
+      files: mergeSlackFileReferences(
+        ...messages.map((message) => slackFileReferences(message.files)),
+      ),
+    };
   } catch (err) {
     console.error("[slack-events] fetchThreadContext error:", err);
-    return null;
+    return { text: null, files: [] };
   }
 }
 
