@@ -14,6 +14,7 @@ import {
   MAX_SLACK_INPUT_FILES,
   slackFileReferenceSchema,
 } from "../services/slack-files.js";
+import { workflowErrorDetails } from "./diagnostics.js";
 
 export const agentWorkflowInputSchema = z.object({
   runId: z.string().trim().min(1).optional(),
@@ -161,6 +162,14 @@ export async function executeAgentWorkflow(
     });
   } catch (error) {
     operationFailed = true;
+    console.error("[workflow-agent] run failed", {
+      runId: input.runId ?? null,
+      threadId,
+      provider: input.provider ?? null,
+      revision: repository.revision,
+      elapsedMs: dependencies.now() - startedAt,
+      ...workflowErrorDetails(error),
+    });
     throw error;
   } finally {
     try {
