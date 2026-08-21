@@ -37,6 +37,13 @@ function formatMib(bytes: number): string {
   return (bytes / MIB).toFixed(0);
 }
 
+function formatPercent(usageBytes?: number, limitBytes?: number): string {
+  if (usageBytes === undefined || limitBytes === undefined || limitBytes <= 0) {
+    return "unknown";
+  }
+  return ((usageBytes / limitBytes) * 100).toFixed(1);
+}
+
 export function parseProcessTable(output: string): ProcessMemoryEntry[] {
   const entries: ProcessMemoryEntry[] = [];
   for (const line of output.split("\n")) {
@@ -182,7 +189,7 @@ export class AgentProcessMonitor {
       if (now - this.lastLoggedAt >= this.logIntervalMs) {
         this.lastLoggedAt = now;
         this.logger.log(
-          `[process-monitor] run=${this.options.runId} roots=${[...this.rootPids].join(",")} tree-rss-mib=${formatMib(treeBytes)} cgroup-mib=${hostMemory.usageBytes === undefined ? "unknown" : formatMib(hostMemory.usageBytes)}`,
+          `[process-monitor] run=${this.options.runId} roots=${[...this.rootPids].join(",")} tree-rss-mib=${formatMib(treeBytes)} cgroup-mib=${hostMemory.usageBytes === undefined ? "unknown" : formatMib(hostMemory.usageBytes)} cgroup-limit-mib=${hostMemory.limitBytes === undefined ? "unknown" : formatMib(hostMemory.limitBytes)} cgroup-percent=${formatPercent(hostMemory.usageBytes, hostMemory.limitBytes)}`,
         );
       }
     } catch (error) {

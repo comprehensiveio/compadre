@@ -34,8 +34,19 @@ export function createRenderWorkflowRunLauncher({
       return { taskRunId: run.taskRunId };
     },
     async wait(taskRunId, signal) {
+      const waitStartedAt = Date.now();
       const result = await waitForTaskRun(render.workflows, taskRunId, { signal });
       if (!isTaskRunSuccessful(result.status)) {
+        console.error("[workflow-relay] Render Workflow task failed", {
+          taskRunId,
+          taskId: result.taskId,
+          status: result.status,
+          retries: result.retries,
+          attempts: result.attempts,
+          parentTaskRunId: result.parentTaskRunId,
+          rootTaskRunId: result.rootTaskRunId,
+          waitMs: Date.now() - waitStartedAt,
+        });
         throw new Error(
           `Render Workflow task ${taskRunId} ended with status ${result.status}`,
         );

@@ -55,6 +55,36 @@ test("reports process-tree and host memory without aborting under pressure", asy
   monitor.stop();
 });
 
+test("logs process-tree and cgroup memory pressure", async () => {
+  const messages: string[] = [];
+  const monitor = new AgentProcessMonitor({
+    runId: "pressure-run",
+    sampleIntervalMs: 60_000,
+    logIntervalMs: 0,
+    readProcesses: async () => [
+      { pid: 10, ppid: 1, rssBytes: 25 * 1024 * 1024, name: "node" },
+      { pid: 11, ppid: 10, rssBytes: 75 * 1024 * 1024, name: "codex" },
+    ],
+    readHostMemory: async () => ({
+      usageBytes: 3 * 1024 * 1024 * 1024,
+      limitBytes: 4 * 1024 * 1024 * 1024,
+    }),
+    logger: {
+      log: (message) => messages.push(String(message)),
+      warn: () => undefined,
+    },
+  });
+
+  monitor.trackRoot(10);
+  await monitor.sample();
+  monitor.stop();
+
+  assert.match(messages.join("\n"), /tree-rss-mib=100/);
+  assert.match(messages.join("\n"), /cgroup-mib=3072/);
+  assert.match(messages.join("\n"), /cgroup-limit-mib=4096/);
+  assert.match(messages.join("\n"), /cgroup-percent=75\.0/);
+});
+
 test("contains rejected memory observers", async () => {
   const warnings: string[] = [];
   const monitor = new AgentProcessMonitor({
