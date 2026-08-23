@@ -175,10 +175,12 @@ When durability is configured, its persistence backend is the
 canonical source for the provider-neutral transcript and TanStack run/interrupt
 state. Production uses PostgreSQL for restart durability and cross-process
 advisory locking; memory mode is process-local and provides neither guarantee.
-Provider-native sessions and Daytona sandboxes are persisted per conversation;
-after a provider switch the PostgreSQL runtime can reconstruct context from the
-neutral transcript. Different threads may run concurrently in independent
-sandboxes, while a distributed lock serializes messages within one thread. The runtime reconciles
+Provider-native sessions and Daytona sandboxes are persisted for durable
+conversation threads; one-shot requests use disposable sandboxes that are
+destroyed after completion. After a provider switch the PostgreSQL runtime can
+reconstruct context from the neutral transcript. Different threads may run
+concurrently in independent sandboxes, while a distributed lock serializes
+messages within one thread. The runtime reconciles
 stale Slack reactions after a restart. Postgres stores run lifecycle and
 ordered AG-UI delivery events. Durable workspace snapshots and exact Slack
 message continuation remain deliberately deferred.
