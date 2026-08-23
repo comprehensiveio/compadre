@@ -1,4 +1,4 @@
-# Daytona harness cutover
+# Modal harness cutover
 
 ## Boundary
 
@@ -6,7 +6,7 @@
 Slack / HTTP
      |
      v
-Persistent Render relay ---------> Daytona sandbox
+Persistent Render relay ---------> Modal sandbox
      |                               - Claude Code or Codex
      |                               - repository files
      |                               - shell, Git, builds, and tests
@@ -19,7 +19,7 @@ Persistent Render relay ---------> Daytona sandbox
        authenticated TanStack tool bridge
 ```
 
-The relay is the controller. Daytona is an execution sandbox. Database and
+The relay is the controller. Modal is an execution sandbox. Database and
 private-network credentials stay on Render. A sandbox receives a separate
 short-lived bearer token for each run. It can call only the TanStack tools that
 the controller registered for that run.
@@ -27,15 +27,15 @@ the controller registered for that run.
 The implementation mounts TanStack's transport-neutral bridge core on the
 relay's public HTTPS origin. A random bridge ID and bearer token are created for
 each run and removed when the harness closes. Individual tools do not implement
-their own Daytona transport or authentication.
+their own Modal transport or authentication.
 
-## Initial lifecycle
+## Lifecycle
 
-The first cutover uses one sandbox per run and deletes it after completion or
-cancellation. This avoids orphaned persistent sandboxes until Compadre wires a
-Postgres-backed `SandboxInstanceStore`, takeover fencing, and a detached-run
-reaper. Thread transcripts remain durable in Postgres. Filesystem reuse is a
-later stage.
+Compadre uses one Modal sandbox per active turn. A successful persisted turn
+captures a seven-day filesystem snapshot, stores the image ID through the
+Postgres-backed `SandboxInstanceStore`, and terminates the sandbox. The next
+turn restores from that image. One-shot runs terminate without snapshotting.
+This preserves working-tree changes without paying for idle compute.
 
 Slack attachments are downloaded by the relay and uploaded into the sandbox
 before the harness starts. Their prompt paths refer to the remote workspace.
@@ -47,7 +47,8 @@ within the sandbox disk budget. An agent can fetch more history when required.
 The persistent relay owns orchestration. Production requires:
 
 ```bash
-DAYTONA_API_KEY=...
+MODAL_TOKEN_ID=...
+MODAL_TOKEN_SECRET=...
 COMPADRE_PUBLIC_URL=https://compadre.example.com
 GITHUB_PERSONAL_ACCESS_TOKEN=...
 ```
@@ -55,27 +56,28 @@ GITHUB_PERSONAL_ACCESS_TOKEN=...
 Optional settings:
 
 ```bash
-DAYTONA_TARGET=us
-DAYTONA_API_URL=
-COMPADRE_DAYTONA_SNAPSHOT=
-COMPADRE_DAYTONA_WORKDIR=/home/daytona/workspace
-COMPADRE_DAYTONA_CLI_ROOT=/home/daytona/.compadre-runtime
-COMPADRE_DAYTONA_AUTO_STOP_MINUTES=40
-COMPADRE_DAYTONA_AUTO_DELETE_MINUTES=10080
-COMPADRE_DAYTONA_SKIP_CLI_SETUP=false
+MODAL_ENVIRONMENT=
+COMPADRE_MODAL_APP=compadre
+COMPADRE_MODAL_BASE_IMAGE=node:22
+COMPADRE_MODAL_WORKDIR=/workspace
+COMPADRE_MODAL_CLI_ROOT=/opt/compadre-runtime
+COMPADRE_MODAL_TIMEOUT_MS=7200000
+COMPADRE_MODAL_SNAPSHOT_TTL_MS=604800000
+COMPADRE_MODAL_CPU=0.5
+COMPADRE_MODAL_CPU_LIMIT=2
+COMPADRE_MODAL_MEMORY_MIB=2048
+COMPADRE_MODAL_MEMORY_LIMIT_MIB=8192
+COMPADRE_MODAL_SKIP_CLI_SETUP=false
 ```
 
-A prepared snapshot should contain the pinned Claude Code and Codex CLIs. Set
-`COMPADRE_DAYTONA_SKIP_CLI_SETUP=true` only after a probe proves both commands
+A prepared base image should contain the pinned Claude Code and Codex CLIs. Set
+`COMPADRE_MODAL_SKIP_CLI_SETUP=true` only after a probe proves both commands
 are available in that snapshot.
 
-Persisted conversation threads reuse one Daytona sandbox, including its Git
-working tree and installed dependencies. Daytona stops an idle sandbox after at
-least 36 minutes (40 by default), preserving its filesystem, and deletes it
-after seven stopped days by default. Generated one-shot requests still delete
-their sandbox on completion. If durable thread persistence is unavailable,
-Compadre also falls back to one-shot cleanup so an in-memory mapping cannot
-orphan a retained sandbox after a relay restart.
+Persisted conversation threads restore their latest Modal snapshot, including
+the Git working tree and installed dependencies. Snapshots expire after seven
+days by default, matching thread retention. If durable thread persistence is
+unavailable, Compadre falls back to one-shot cleanup.
 
 ## Verification gates
 
@@ -86,15 +88,15 @@ thread for each case:
 2. A repository edit and test run.
 3. A host MCP tool call that reaches a Tailscale-only service.
 4. A Postgres-backed tool call; confirm the database connection originates
-   from Render, not Daytona.
+   from Render, not Modal.
 5. A Slack image attachment.
 6. Agent timeout and user cancellation.
 7. Forced sandbox deletion during a run.
 8. Relay restart during a run.
 
-Do not make Daytona the default until every failure produces a terminal durable
-event and a final Slack state. Relay restart recovery needs takeover support;
-until then, keep the rollout limited and treat that gate as expected to fail.
+Do not deploy until every failure produces a terminal durable event and a final
+Slack state. Relay restart recovery needs takeover support; treat that gate as
+expected to fail until it is implemented.
 
 The first cutover also assumes one relay instance. The active bridge contains
 live tool closures and is process-local, so a load balancer must not send bridge

@@ -96,8 +96,8 @@ export async function executeRepositoryProbe(
 }
 
 /**
- * Execute one coding-agent turn. Persisted threads reuse their Daytona
- * workspace; generated one-shot threads remain ephemeral.
+ * Execute one coding-agent turn. Persisted threads restore their Modal
+ * workspace snapshot; generated one-shot threads remain ephemeral.
  */
 export async function executeAgentWorkflow(
   rawInput: unknown,
@@ -105,7 +105,7 @@ export async function executeAgentWorkflow(
 ): Promise<AgentWorkflowResult> {
   const input = agentWorkflowInputSchema.parse(rawInput);
   const startedAt = dependencies.now();
-  // The coding checkout lives in Daytona. Avoid cloning or refreshing the
+  // The coding checkout lives in Modal. Avoid cloning or refreshing the
   // application repository in the persistent relay request path.
   const repository = { durationMs: 0, revision: null };
   const threadId = input.threadId ?? `workflow-${dependencies.createId()}`;

@@ -65,7 +65,7 @@ async function start() {
     );
   }
   const agent = validateConversationConfiguration();
-  console.log(`[agent] conversation provider=${agent.provider} harness=daytona`);
+  console.log(`[agent] conversation provider=${agent.provider} harness=modal`);
 
   // Start the server first so Render sees the port binding
   serve({ fetch: app.fetch, port }, (info) => {
@@ -93,7 +93,7 @@ async function start() {
     }
   });
 
-  // Agent repositories live in Daytona. The PR deployment watcher maintains
+  // Agent repositories live in Modal. The PR deployment watcher maintains
   // its own read-only Git clone only when that optional service is configured.
   void startConfiguredPullRequestWatch(false).catch((error) =>
     console.error("[pr-watch] initialization failed:", error),

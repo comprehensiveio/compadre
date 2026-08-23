@@ -1,6 +1,6 @@
 ---
 name: debug-compadre-workflows
-description: Investigate and improve Compadre's Slack-to-Daytona execution when agent runs stop, reset, time out, exhaust memory, fail to open PRs, or surface incomplete Slack responses. Use while developing or operating the Compadre repository, not as a skill executed by Compadre against customer application code.
+description: Investigate and improve Compadre's Slack-to-Modal execution when agent runs stop, reset, time out, exhaust memory, fail to open PRs, or surface incomplete Slack responses. Use while developing or operating the Compadre repository, not as a skill executed by Compadre against customer application code.
 ---
 
 # Debug Compadre Workflows
@@ -12,12 +12,12 @@ Slack thread -> compadre-relay -> execution controller -> harness process tree
 ```
 
 The persistent Render relay is the execution controller and supervises a
-Daytona sandbox. Correlate the Compadre run ID, Daytona sandbox ID, and
-host-tool bridge lifecycle. Native repository tools run in Daytona; bridged MCP
+Modal sandbox. Correlate the Compadre run ID, Modal sandbox ID, and
+host-tool bridge lifecycle. Native repository tools run in Modal; bridged MCP
 and private-network tools still run in the relay.
 
 Do not infer that the relay failed merely because Slack says a run stopped. The
-relay can remain healthy while Daytona provisioning, the harness process, or an
+relay can remain healthy while Modal provisioning, the harness process, or an
 authenticated tool request fails.
 
 ## Correlate one run
@@ -26,7 +26,7 @@ authenticated tool request fails.
 2. Search `compadre-relay` logs around that window using the Slack `threadTs`
    or run ID. Record sandbox creation, bridge registration, first-event, and
    terminal lifecycle messages.
-3. Inspect the matching Daytona sandbox and audit log using its sandbox ID.
+3. Inspect the matching Modal sandbox and audit log using its sandbox ID.
    Distinguish provisioning failure, setup failure, harness exit, controller
    cancellation, and destroy failure.
 4. Check `[workflow-agent] run failed` for the bounded,
@@ -40,6 +40,10 @@ authenticated tool request fails.
    reached bridge authentication. Capture connection error details separately
    when investigating DNS, TLS, tunnel, or egress failures; treat other HTTP
    statuses as route or upstream responses before bearer validation.
+   For local Cloudflare quick-tunnel probes, start `cloudflared` with an empty
+   config (`--config /dev/null`) and verify the issued hostname's `/health`
+   returns 200 before launching a run. Otherwise a local named-tunnel config can
+   silently capture the command and make every bridge path return 404.
 6. Correlate deploys or configuration changes only after identifying which
    boundary failed.
 
@@ -47,14 +51,17 @@ Prefer exact identifiers and narrow time windows. Render service instance suffix
 
 ## Interpret the evidence
 
-- For Daytona, distinguish controller failure, sandbox lifecycle failure,
+- For Modal, distinguish controller failure, sandbox lifecycle failure,
   harness command exit, and authenticated host-tool bridge failure. A tool
   bridge error does not prove that the sandbox or private service failed.
+- Modal's JS SDK exposes exec stdin, but Compadre deliberately advertises it as
+  non-writable: a persistent-shell probe showed writes can remain buffered with
+  no sentinel output. TanStack therefore uses its exec/file-backed path.
 - A caught harness error should produce `[workflow-agent] run failed`. Its
   absence does not prove success: sandbox termination can bypass JavaScript
   cleanup.
-- Compare observed duration with `src/agent-timeouts.ts` and Daytona auto-stop
-  configuration before calling a failure a timeout.
+- Compare observed duration with `src/agent-timeouts.ts` and the configured
+  Modal sandbox lifetime before calling a failure a timeout.
 - `message_not_in_streaming_state` during `chat.stopStream` is normally a secondary Slack-finalization error after the task has already failed. Do not report it as the root cause without contrary evidence.
 - A database connection/disconnection log containing the word `compadre` is not necessarily an agent-run log. Confirm host, service, run ID, and time.
 
@@ -67,7 +74,7 @@ Keep diagnostic logs structured, bounded, and free of prompts, message bodies, c
 When changing this execution path, verify the TypeScript build, targeted tests
 for the touched boundary, and the full test suite. Confirm that hard-kill paths
 still leave useful evidence outside the killed process, usually relay lifecycle
-logs and Daytona audit metadata.
+logs and Modal audit metadata.
 
 ## Keep this skill current
 

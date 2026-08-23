@@ -23,7 +23,7 @@ function configuredPublicUrl(environment: NodeJS.ProcessEnv): URL {
   const raw = environment.COMPADRE_PUBLIC_URL?.trim();
   if (!raw) {
     throw new Error(
-      "COMPADRE_PUBLIC_URL is required for the Daytona host-tool bridge",
+      "COMPADRE_PUBLIC_URL is required for the sandbox host-tool bridge",
     );
   }
   const url = new URL(raw);
