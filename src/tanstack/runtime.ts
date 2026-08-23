@@ -57,6 +57,12 @@ export interface AguiRuntimeOptions {
   slackFiles?: SlackFileReference[];
 }
 
+export function shouldReuseThreadSandbox(
+  threadPersistence: Awaited<ReturnType<typeof getConfiguredThreadPersistence>>,
+): boolean {
+  return threadPersistence !== null;
+}
+
 function latestUserInput(
   messages: AguiChatParams["messages"],
 ): unknown | undefined {
@@ -337,7 +343,7 @@ async function prepareAguiChat(
     worktreeId,
     localWorktreePath: worktreePath,
     uploads: attachments.uploads,
-    reuseThread: options.persistThread !== false,
+    reuseThread: shouldReuseThreadSandbox(threadPersistence),
   });
 
   let stream: AsyncIterable<StreamChunk>;

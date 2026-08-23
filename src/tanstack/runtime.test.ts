@@ -4,6 +4,7 @@ import type { StreamChunk } from "@tanstack/ai";
 import {
   messagesWithAttachmentPrompt,
   messagesForHarnessSession,
+  shouldReuseThreadSandbox,
 } from "./runtime.js";
 
 test("adds materialized Slack images to the active user prompt", () => {
@@ -37,4 +38,8 @@ test("replays the neutral transcript only when starting a fresh provider session
     messagesForHarnessSession(current, transcript, "native-session"),
     current
   );
+});
+
+test("does not retain a sandbox without a persistent instance store", () => {
+  assert.equal(shouldReuseThreadSandbox(null), false);
 });
