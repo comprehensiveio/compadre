@@ -1,15 +1,21 @@
 import { memoryPersistence, type ChatPersistence } from "@tanstack/ai-persistence";
 import { InMemoryLockStore, type LockStore } from "@tanstack/ai/locks";
+import {
+  InMemorySandboxInstanceStore,
+  type SandboxInstanceStore,
+} from "@tanstack/ai-sandbox";
 import { getConfiguredAgentRunDurability } from "../durability/runtime.js";
 import {
   createPostgresChatPersistence,
   PostgresLockStore,
   validatePostgresChatPersistenceSchema,
 } from "./postgres.js";
+import { metadataSandboxInstanceStore } from "../tanstack/sandbox-instance-store.js";
 
 export interface ThreadPersistenceRuntime {
   persistence: ChatPersistence;
   locks: LockStore;
+  sandboxInstances: SandboxInstanceStore;
 }
 
 let configuredRuntime: Promise<ThreadPersistenceRuntime | null> | undefined;
@@ -22,6 +28,7 @@ export async function createThreadPersistenceRuntime(): Promise<ThreadPersistenc
     return {
       persistence: memoryPersistence(),
       locks: new InMemoryLockStore(),
+      sandboxInstances: new InMemorySandboxInstanceStore(),
     };
   }
 
@@ -29,12 +36,16 @@ export async function createThreadPersistenceRuntime(): Promise<ThreadPersistenc
     throw new Error("Postgres durability did not expose its database resources");
   }
   await validatePostgresChatPersistenceSchema(durability.database);
-  return {
-    persistence: createPostgresChatPersistence(
+  const persistence = createPostgresChatPersistence(
       durability.database,
       durability.runs,
-    ),
+    );
+  return {
+    persistence,
     locks: new PostgresLockStore(durability.lockPool),
+    sandboxInstances: metadataSandboxInstanceStore(
+      persistence.stores.metadata,
+    ),
   };
 }
 

@@ -96,9 +96,8 @@ export async function executeRepositoryProbe(
 }
 
 /**
- * Execute one self-contained coding-agent turn on ephemeral Workflow compute.
- * Cross-run session/worktree reuse is intentionally excluded from this spike;
- * the caller must treat the returned provider session as observational only.
+ * Execute one coding-agent turn. Persisted threads reuse their Daytona
+ * workspace; generated one-shot threads remain ephemeral.
  */
 export async function executeAgentWorkflow(
   rawInput: unknown,
@@ -106,7 +105,9 @@ export async function executeAgentWorkflow(
 ): Promise<AgentWorkflowResult> {
   const input = agentWorkflowInputSchema.parse(rawInput);
   const startedAt = dependencies.now();
-  const repository = prepareRepository(dependencies);
+  // The coding checkout lives in Daytona. Avoid cloning or refreshing the
+  // application repository in the persistent relay request path.
+  const repository = { durationMs: 0, revision: null };
   const threadId = input.threadId ?? `workflow-${dependencies.createId()}`;
   const agentStartedAt = dependencies.now();
   let firstActivityAt: number | undefined;
@@ -173,7 +174,9 @@ export async function executeAgentWorkflow(
     throw error;
   } finally {
     try {
-      await dependencies.releaseThread(threadId);
+      if (!(input.persistThread ?? input.threadId !== undefined)) {
+        await dependencies.releaseThread(threadId);
+      }
     } catch (error) {
       if (operationFailed) {
         console.warn("[workflow-agent] thread cleanup failed", {

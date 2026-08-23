@@ -61,6 +61,7 @@ COMPADRE_DAYTONA_SNAPSHOT=
 COMPADRE_DAYTONA_WORKDIR=/home/daytona/workspace
 COMPADRE_DAYTONA_CLI_ROOT=/home/daytona/.compadre-runtime
 COMPADRE_DAYTONA_AUTO_STOP_MINUTES=40
+COMPADRE_DAYTONA_AUTO_DELETE_MINUTES=10080
 COMPADRE_DAYTONA_SKIP_CLI_SETUP=false
 ```
 
@@ -68,10 +69,13 @@ A prepared snapshot should contain the pinned Claude Code and Codex CLIs. Set
 `COMPADRE_DAYTONA_SKIP_CLI_SETUP=true` only after a probe proves both commands
 are available in that snapshot.
 
-Every sandbox receives a Daytona-side auto-stop of at least 36 minutes and an
-immediate auto-delete after it stops. Normal completion still deletes the
-sandbox immediately. The Daytona lifecycle is an external cleanup backstop for
-a relay process that is killed before its `finally` block runs.
+Persisted conversation threads reuse one Daytona sandbox, including its Git
+working tree and installed dependencies. Daytona stops an idle sandbox after at
+least 36 minutes (40 by default), preserving its filesystem, and deletes it
+after seven stopped days by default. Generated one-shot requests still delete
+their sandbox on completion. If durable thread persistence is unavailable,
+Compadre also falls back to one-shot cleanup so an in-memory mapping cannot
+orphan a retained sandbox after a relay restart.
 
 ## Verification gates
 

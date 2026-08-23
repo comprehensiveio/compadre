@@ -3,6 +3,7 @@ import { chat, mergeAgentTools, type StreamChunk } from "@tanstack/ai";
 import { claudeCodeText } from "@tanstack/ai-claude-code";
 import { codexText } from "@tanstack/ai-codex";
 import { withSandbox, type SandboxDefinition } from "@tanstack/ai-sandbox";
+import type { SandboxInstanceStore } from "@tanstack/ai-sandbox";
 import { withPersistence, type ChatPersistence } from "@tanstack/ai-persistence";
 import type { MCPClient } from "@tanstack/ai-mcp";
 import { withLocks, type LockStore } from "@tanstack/ai/locks";
@@ -62,6 +63,7 @@ export interface CreateHarnessStreamOptions {
   systemPrompt: string;
   persistence?: ChatPersistence;
   locks?: LockStore;
+  sandboxInstances?: SandboxInstanceStore;
 }
 
 export function resolveHarnessSelection(
@@ -138,6 +140,7 @@ export function createHarnessStream({
   systemPrompt,
   persistence,
   locks = harnessLockStore,
+  sandboxInstances,
 }: CreateHarnessStreamOptions): AsyncIterable<StreamChunk> {
   if (!process.env.COMPADRE_PUBLIC_URL?.trim()) {
     throw new Error(
@@ -172,7 +175,9 @@ export function createHarnessStream({
       ...(persistenceMiddleware ? [persistenceMiddleware.lifecycle] : []),
       ...(runMemory ? [runMemory] : []),
       withLocks(locks),
-      withSandbox(sandbox),
+      withSandbox(sandbox, {
+        ...(sandboxInstances ? { instances: sandboxInstances } : {}),
+      }),
       // A Daytona sandbox cannot reach the relay's loopback listener. The
       // provisioner publishes the same per-run authenticated TanStack bridge
       // through HTTPS; individual tools remain unaware of this transport.

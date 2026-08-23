@@ -1,5 +1,4 @@
 import crypto from "node:crypto";
-import { readdir, unlink } from "node:fs/promises";
 import {
   EventType,
   convertMessagesToModelMessages,
@@ -12,7 +11,6 @@ import {
   getConfiguredThreadPersistence,
   getRequiredThreadPersistence,
 } from "../persistence/runtime.js";
-import { createWorktree, removeWorktree } from "../repo.js";
 import {
   materializeSlackFiles,
   type SlackFileReference,
@@ -34,14 +32,11 @@ import {
   type HarnessTranscriptMessage,
 } from "./thread-state.js";
 import {
-  harnessRunCapacity,
   harnessThreadRuns,
   ThreadRunCoordinator,
-  BackgroundCapacityPreemptedError,
   type RunCapacityPriority,
   type ThreadRunLease,
 } from "./thread-lock.js";
-import { harnessPreparedWorktrees } from "./prepared-worktrees.js";
 import {
   createHarnessSandbox,
   harnessWorkspacePath,
@@ -62,6 +57,12 @@ export interface AguiRuntimeOptions {
   slackFiles?: SlackFileReference[];
 }
 
+export function shouldReuseThreadSandbox(
+  threadPersistence: Awaited<ReturnType<typeof getConfiguredThreadPersistence>>,
+): boolean {
+  return threadPersistence !== null;
+}
+
 function latestUserInput(
   messages: AguiChatParams["messages"],
 ): unknown | undefined {
@@ -74,22 +75,7 @@ function latestUserInput(
 }
 
 interface ActiveRunLeases {
-  capacity: ThreadRunLease;
   thread: ThreadRunLease;
-}
-
-async function removeProjectionMarkers(worktreePath: string): Promise<void> {
-  let entries: string[];
-  try {
-    entries = await readdir(worktreePath);
-  } catch {
-    return;
-  }
-  await Promise.allSettled(
-    entries
-      .filter((entry) => /^\.tanstack-projected-[a-f0-9]+$/.test(entry))
-      .map((entry) => unlink(`${worktreePath}/${entry}`))
-  );
 }
 
 async function* trackSession(
@@ -97,7 +83,6 @@ async function* trackSession(
   threadId: string,
   selection: HarnessSelection,
   worktreeId: string,
-  worktreePath: string,
   hadProviderSession: boolean,
   transcriptUserMessage: string | undefined
 ): AsyncIterable<StreamChunk> {
@@ -132,13 +117,8 @@ async function* trackSession(
   } catch (error) {
     throw error;
   } finally {
-    await removeProjectionMarkers(worktreePath);
-    if (
-      !capturedSessionId &&
-      !hadProviderSession &&
-      (await harnessThreadStore.deleteIfUninitialized(threadId, worktreeId))
-    ) {
-      removeWorktree(worktreeId);
+    if (!capturedSessionId && !hadProviderSession) {
+      await harnessThreadStore.deleteIfUninitialized(threadId, worktreeId);
     }
   }
 }
@@ -191,50 +171,12 @@ async function discardPreparation(
   clients: ReadonlyArray<{ close(): Promise<void> }> = [],
 ): Promise<void> {
   await Promise.allSettled(clients.map((client) => client.close()));
-  if (await harnessThreadStore.deleteIfUninitialized(threadId, worktreeId)) {
-    removeWorktree(worktreeId);
-  }
-}
-
-function backgroundPreemptionReason(
-  lease: ThreadRunLease,
-): BackgroundCapacityPreemptedError | undefined {
-  return lease.signal.aborted &&
-    lease.signal.reason instanceof BackgroundCapacityPreemptedError
-    ? lease.signal.reason
-    : undefined;
-}
-
-export async function* guardBackgroundPreemption(
-  stream: AsyncIterable<StreamChunk>,
-  capacityLease: ThreadRunLease,
-): AsyncIterable<StreamChunk> {
-  let sawTerminal = false;
-  try {
-    for await (const chunk of stream) {
-      const preemption = backgroundPreemptionReason(capacityLease);
-      if (!sawTerminal && preemption) throw preemption;
-      if (
-        chunk.type === EventType.RUN_ERROR ||
-        chunk.type === EventType.RUN_FINISHED
-      ) {
-        sawTerminal = true;
-      }
-      yield chunk;
-    }
-  } catch (error) {
-    throw (
-      (!sawTerminal && backgroundPreemptionReason(capacityLease)) ?? error
-    );
-  }
-  const preemption = backgroundPreemptionReason(capacityLease);
-  if (!sawTerminal && preemption) throw preemption;
+  await harnessThreadStore.deleteIfUninitialized(threadId, worktreeId);
 }
 
 /**
  * Run one AG-UI request through a selected TanStack coding harness. Sessions
- * remain process-local and worktree state remains on local disk; those are the
- * explicit seams for the later Postgres milestone.
+ * serialize per thread while independent Daytona workspaces run concurrently.
  */
 export async function runAguiChat(
   params: AguiChatParams,
@@ -254,7 +196,6 @@ export async function runAguiChat(
     input: latestUserInput(params.messages),
   });
   let threadLease: ThreadRunLease | undefined;
-  let capacityLease: ThreadRunLease | undefined;
   try {
     threadLease = await telemetry.phase("queue.thread", () =>
       threadPersistence
@@ -263,30 +204,17 @@ export async function runAguiChat(
           )
         : harnessThreadRuns.acquire(params.threadId),
     );
-    capacityLease = await telemetry.phase("queue.capacity", () =>
-      options.capacityPriority === "background"
-        ? harnessRunCapacity.acquireBackground()
-        : harnessRunCapacity.acquireForeground(),
-    );
-    if (!capacityLease) throw new BackgroundCapacityPreemptedError();
     return await prepareAguiChat(
       params,
       requestSignal,
       options,
-      {
-        capacity: capacityLease,
-        thread: threadLease,
-      },
+      { thread: threadLease },
       selection,
       telemetry,
       threadPersistence,
     );
   } catch (error) {
-    await Promise.allSettled([
-      capacityLease?.release(),
-      threadLease?.release(),
-    ]);
-    harnessPreparedWorktrees.scheduleRefill();
+    await Promise.allSettled([threadLease?.release()]);
     telemetry.end(error);
     throw error;
   }
@@ -323,23 +251,15 @@ async function prepareAguiChat(
   }
 
   const preparationStartedAt = Date.now();
-  let worktreeSource: WorktreeSource = "existing";
+  const worktreeSource: WorktreeSource = "existing";
   const allocation = await telemetry.phase("worktree.allocate", async () => {
     const thread = await harnessThreadStore.getOrCreate(
       params.threadId,
-      () => {
-        const prepared = harnessPreparedWorktrees.claim();
-        if (prepared) {
-          worktreeSource = "prepared";
-          return prepared.id;
-        }
-        worktreeSource = "on-demand";
-        return crypto.randomUUID();
-      },
+      () => crypto.createHash("sha256").update(params.threadId).digest("hex").slice(0, 32),
     );
     const worktreeId = thread.worktreeId;
     telemetry.setWorktree(worktreeId, worktreeSource);
-    const worktreePath = createWorktree(worktreeId);
+    const worktreePath = harnessWorkspacePath("/unused");
     return { thread, worktreeId, worktreePath };
   });
   const { thread, worktreeId, worktreePath } = allocation;
@@ -406,7 +326,7 @@ async function prepareAguiChat(
     removeAbortListeners();
     await attachments.cleanup();
     await discardPreparation(params.threadId, worktreeId);
-    throw backgroundPreemptionReason(runLeases.capacity) ?? error;
+    throw error;
   }
   console.log(
     `[ag-ui] run=${params.runId} mcp-ready=${Date.now() - mcpStartedAt}ms clients=${clients.length}`,
@@ -423,6 +343,7 @@ async function prepareAguiChat(
     worktreeId,
     localWorktreePath: worktreePath,
     uploads: attachments.uploads,
+    reuseThread: shouldReuseThreadSandbox(threadPersistence),
   });
 
   let stream: AsyncIterable<StreamChunk>;
@@ -442,13 +363,14 @@ async function prepareAguiChat(
           getBaseSystemPrompt(harnessWorktreePath),
         persistence,
         locks: threadPersistence?.locks,
+        sandboxInstances: threadPersistence?.sandboxInstances,
       }),
     );
   } catch (error) {
     removeAbortListeners();
     await attachments.cleanup();
     await discardPreparation(params.threadId, worktreeId, clients);
-    throw backgroundPreemptionReason(runLeases.capacity) ?? error;
+    throw error;
   }
 
   const tracked = trackSession(
@@ -456,15 +378,13 @@ async function prepareAguiChat(
     params.threadId,
     selection,
     worktreeId,
-    worktreePath,
     sessionId !== undefined,
     tracksTranscript && !persistence ? transcriptUserMessage : undefined
   );
   return (async function* () {
     let firstEvent = true;
     let failure: unknown;
-    const guarded = guardBackgroundPreemption(tracked, runLeases.capacity);
-    const iterator = guarded[Symbol.asyncIterator]();
+    const iterator = tracked[Symbol.asyncIterator]();
     try {
       while (true) {
         const next = await telemetry.inContext(() => iterator.next());
@@ -494,14 +414,12 @@ async function prepareAguiChat(
       await Promise.allSettled(
         Object.values(runLeases).map((lease) => lease.release()),
       );
-      harnessPreparedWorktrees.scheduleRefill();
       telemetry.end(failure);
     }
   })();
 }
 
-/** Release process-local thread state and its worktree for one-shot callers. */
+/** Release process-local transcript/session state for one-shot callers. */
 export async function releaseAguiThread(threadId: string): Promise<void> {
-  const state = await harnessThreadStore.delete(threadId);
-  if (state) removeWorktree(state.worktreeId);
+  await harnessThreadStore.delete(threadId);
 }
