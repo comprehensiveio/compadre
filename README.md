@@ -69,7 +69,7 @@ See `.env.example` for the full list. Key notes:
 - **COMPADRE_API_KEY**: Auth token for the API. Generate with `openssl rand -hex 32`.
 - **CODEX_API_KEY**: API key for the Codex CLI harness; a persisted Codex login is also supported for local development.
 - **COMPADRE_AGENT_PROVIDER**: Select the default Claude Code or Codex harness. `/prompt` and AG-UI callers may override it per request.
-- **MODAL_TOKEN_ID / MODAL_TOKEN_SECRET**: Modal is the coding-harness runtime. After each successful persisted turn, Compadre snapshots the filesystem, stores its image ID with the thread, and terminates the billed sandbox. The next turn restores that snapshot. Without a prepared base image, Compadre installs its pinned Claude Code and Codex CLI versions during initial setup.
+- **MODAL_TOKEN_ID / MODAL_TOKEN_SECRET**: Modal is the coding-harness runtime. Compadre bakes its pinned Claude Code and Codex CLIs into the cached Modal image, keeping per-request setup to the repository clone. After each successful persisted turn, Compadre snapshots the filesystem, stores its image ID with the thread, and terminates the billed sandbox. The next turn restores that snapshot.
 - **GITHUB_PERSONAL_ACCESS_TOKEN**: Required in production so Modal can clone
   the private repository and the relay can operate configured PR watches.
 - **COMPADRE_PUBLIC_URL**: Public HTTPS origin of the relay. TanStack exposes each run's bearer-authenticated host-tool bridge at this origin so Modal can invoke tools that still execute on the relay. Individual tool definitions do not contain Modal-specific code.
@@ -78,6 +78,10 @@ See `.env.example` for the full list. Key notes:
   applies its own sandbox lifecycle limits.
 - **COMPADRE_TANSTACK_AI_ENABLED**: Expose the authenticated AG-UI endpoint without changing Slack routing.
 - **FABLE_MODEL**: Optional model ID used by Slack's `--fable` routing profile. Defaults to `claude-fable-5`; normal Claude Code prompts use `DEFAULT_MODEL` or the built-in default.
+
+Run `npm run modal:prepare-image` to build or resolve the same cached Modal
+image ahead of a local benchmark or deployment. It creates no sandbox and
+prints only the image ID and elapsed time.
 
 Slack messages can override the default for one turn with `--sol` or `--codex`
 for Codex, `--fable` for Fable through Claude Code, and `--claude-code` or `--cc`

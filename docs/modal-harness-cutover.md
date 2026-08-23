@@ -70,9 +70,10 @@ COMPADRE_MODAL_MEMORY_LIMIT_MIB=8192
 COMPADRE_MODAL_SKIP_CLI_SETUP=false
 ```
 
-A prepared base image should contain the pinned Claude Code and Codex CLIs. Set
-`COMPADRE_MODAL_SKIP_CLI_SETUP=true` only after a probe proves both commands
-are available in that snapshot.
+Compadre installs the pinned Claude Code and Codex CLIs while Modal builds its
+cached image, rather than during each sandbox bootstrap. Set
+`COMPADRE_MODAL_SKIP_CLI_SETUP=true` only when a custom base image already
+provides both commands on `PATH`.
 
 Persisted conversation threads restore their latest Modal snapshot, including
 the Git working tree and installed dependencies. Snapshots expire after seven

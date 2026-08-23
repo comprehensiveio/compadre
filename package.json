@@ -9,6 +9,7 @@
     "start": "node dist/start.js",
     "workflow:relay-probe": "tsx scripts/probe-workflow-relay.ts",
     "benchmark:cold-start": "tsx scripts/benchmark-cold-start.ts",
+    "modal:prepare-image": "tsx scripts/prepare-modal-image.ts",
     "db:check": "drizzle-kit check",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
