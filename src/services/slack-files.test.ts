@@ -85,3 +85,33 @@ test("keeps a failed download visible without failing the run", async (t) => {
   assert.match(materialized.prompt, /file_not_found/);
   await materialized.cleanup();
 });
+
+test("prepares Slack images for upload into a remote sandbox", async () => {
+  const materialized = await materializeSlackFiles(
+    [{ id: "F123", name: "diagram.png" }],
+    {
+      downloader: {
+        async downloadFile() {
+          return {
+            data: new Uint8Array([1, 2, 3]),
+            name: "diagram.png",
+            mimetype: "image/png",
+          };
+        },
+      },
+      promptDirectory: "/home/daytona/workspace/.attachments",
+    },
+  );
+
+  assert.match(
+    materialized.prompt,
+    /\/home\/daytona\/workspace\/\.attachments\/1-diagram\.png/,
+  );
+  assert.deepEqual(materialized.uploads, [
+    {
+      path: "/home/daytona/workspace/.attachments/1-diagram.png",
+      data: new Uint8Array([1, 2, 3]),
+    },
+  ]);
+  await materialized.cleanup();
+});

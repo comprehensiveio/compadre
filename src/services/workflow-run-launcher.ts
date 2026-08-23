@@ -1,9 +1,4 @@
 import crypto from "node:crypto";
-import { Render } from "@renderinc/sdk";
-import {
-  isTaskRunSuccessful,
-  waitForTaskRun,
-} from "../render-workflows.js";
 import type { AgentWorkflowInput } from "../workflows/agent-run.js";
 import { executeAgentWorkflow } from "../workflows/agent-run.js";
 
@@ -16,48 +11,10 @@ export interface WorkflowRunLauncher {
   wait?(taskRunId: string, signal?: AbortSignal): Promise<void>;
 }
 
-export interface RenderWorkflowRunLauncherOptions {
-  workflowSlug: string;
-  render?: Render;
-}
-
-export function createRenderWorkflowRunLauncher({
-  workflowSlug,
-  render = new Render(),
-}: RenderWorkflowRunLauncherOptions): WorkflowRunLauncher {
-  return {
-    async start(input) {
-      const run = await render.workflows.startTask(
-        `${workflowSlug}/runAgent`,
-        [input],
-      );
-      return { taskRunId: run.taskRunId };
-    },
-    async wait(taskRunId, signal) {
-      const waitStartedAt = Date.now();
-      const result = await waitForTaskRun(render.workflows, taskRunId, { signal });
-      if (!isTaskRunSuccessful(result.status)) {
-        console.error("[workflow-relay] Render Workflow task failed", {
-          taskRunId,
-          taskId: result.taskId,
-          status: result.status,
-          retries: result.retries,
-          attempts: result.attempts,
-          parentTaskRunId: result.parentTaskRunId,
-          rootTaskRunId: result.rootTaskRunId,
-          waitMs: Date.now() - waitStartedAt,
-        });
-        throw new Error(
-          `Render Workflow task ${taskRunId} ended with status ${result.status}`,
-        );
-      }
-    },
-  };
-}
-
 /**
- * Database-free local runner. Producer and relay share the process-wide memory
- * durability registry, while the execution boundary otherwise matches Render.
+ * The persistent relay starts the controller in-process. The controller keeps
+ * durability, MCP clients, and private-network access on Render; its harness
+ * process runs in Daytona.
  */
 export function createLocalWorkflowRunLauncher(
   execute: typeof executeAgentWorkflow = executeAgentWorkflow,
@@ -88,21 +45,6 @@ export function createLocalWorkflowRunLauncher(
   };
 }
 
-export function createConfiguredWorkflowRunLauncher(
-  environment: NodeJS.ProcessEnv = process.env,
-): WorkflowRunLauncher {
-  const mode = environment.COMPADRE_WORKFLOW_RUNNER?.trim() || "local";
-  if (mode === "local") return createLocalWorkflowRunLauncher();
-  if (mode !== "render") {
-    throw new Error(
-      `COMPADRE_WORKFLOW_RUNNER must be local or render; received ${mode}`,
-    );
-  }
-  const workflowSlug = environment.COMPADRE_RENDER_WORKFLOW_SLUG?.trim();
-  if (!workflowSlug) {
-    throw new Error(
-      "COMPADRE_RENDER_WORKFLOW_SLUG is required for the Render workflow runner",
-    );
-  }
-  return createRenderWorkflowRunLauncher({ workflowSlug });
+export function createConfiguredWorkflowRunLauncher(): WorkflowRunLauncher {
+  return createLocalWorkflowRunLauncher();
 }

@@ -16,5 +16,9 @@ services:
         value: postgres
       - key: COMPADRE_DURABILITY_DATABASE_URL
         sync: false
+      - key: DAYTONA_API_KEY
+        sync: false
+      - key: COMPADRE_PUBLIC_URL
+        sync: false
     previews:
       generation: off

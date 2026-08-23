@@ -207,13 +207,7 @@ async function handleAIMessage(
     threadId: threadKey,
     profile,
     slackFiles,
-    systemPrompt:
-      process.env.COMPADRE_SLACK_WORKFLOW_ENABLED === "true"
-        ? undefined
-        : (worktreePath) =>
-            slackStream
-              ? getSlackStreamingSystemPrompt(worktreePath)
-              : getSlackSystemPrompt(worktreePath),
+    systemPrompt: undefined,
   };
   const conversation = slackStream
     ? runSlackConversation({

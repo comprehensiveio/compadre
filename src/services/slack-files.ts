@@ -33,6 +33,7 @@ interface SlackFileDownloader {
 
 export interface MaterializedSlackFiles {
   prompt: string;
+  uploads: Array<{ path: string; data: Uint8Array }>;
   cleanup(): Promise<void>;
 }
 
@@ -83,11 +84,12 @@ export async function materializeSlackFiles(
     downloader?: SlackFileDownloader;
     environment?: NodeJS.ProcessEnv;
     directoryPrefix?: string;
+    promptDirectory?: string;
   } = {},
 ): Promise<MaterializedSlackFiles> {
   const references = mergeSlackFileReferences(files);
   if (references.length === 0) {
-    return { prompt: "", cleanup: async () => undefined };
+    return { prompt: "", uploads: [], cleanup: async () => undefined };
   }
 
   const environment = options.environment ?? process.env;
@@ -108,10 +110,15 @@ export async function materializeSlackFiles(
     for (const file of references) {
       lines.push(`- ${fileLabel(file)} could not be downloaded because Slack credentials are unavailable.`);
     }
-    return { prompt: lines.join("\n"), cleanup: async () => undefined };
+    return {
+      prompt: lines.join("\n"),
+      uploads: [],
+      cleanup: async () => undefined,
+    };
   }
 
   let directory: string | undefined;
+  const uploads: Array<{ path: string; data: Uint8Array }> = [];
   for (const [index, file] of references.entries()) {
     try {
       const downloaded = await downloader.downloadFile(
@@ -127,8 +134,17 @@ export async function materializeSlackFiles(
         safeFilename(downloaded.name, index),
       );
       await fs.writeFile(destination, downloaded.data, { mode: 0o600 });
+      const promptPath = options.promptDirectory
+        ? path.posix.join(
+            options.promptDirectory,
+            safeFilename(downloaded.name, index),
+          )
+        : destination;
+      if (options.promptDirectory) {
+        uploads.push({ path: promptPath, data: downloaded.data });
+      }
       lines.push(
-        `- ${fileLabel(file)} is available at ${JSON.stringify(destination)} (${downloaded.mimetype}).`,
+        `- ${fileLabel(file)} is available at ${JSON.stringify(promptPath)} (${downloaded.mimetype}).`,
       );
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -139,6 +155,7 @@ export async function materializeSlackFiles(
 
   return {
     prompt: lines.join("\n"),
+    uploads,
     cleanup: async () => {
       if (!directory) return;
       try {

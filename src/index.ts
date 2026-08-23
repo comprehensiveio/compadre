@@ -14,6 +14,7 @@ import { slackEventsRoutes } from "./routes/slack-events.js";
 import { webhookRoutes } from "./routes/webhook.js";
 import { aguiRoutes } from "./routes/agui.js";
 import { workflowRunRoutes } from "./routes/workflow-runs.js";
+import { toolBridgeRoutes } from "./routes/tool-bridge.js";
 import {
   cleanupStaleWorktrees,
   ensureRepo,
@@ -29,7 +30,6 @@ import {
 } from "./services/slack-run-recovery.js";
 import { harnessThreadStore } from "./tanstack/thread-state.js";
 import { harnessPreparedWorktrees } from "./tanstack/prepared-worktrees.js";
-import { validateRelayOnlyConfiguration } from "./services/conversation-runner.js";
 import { startConfiguredPullRequestWatch } from "./services/pr-watch-runtime.js";
 import { getConfiguredThreadPersistence } from "./persistence/runtime.js";
 import { RUN_MEMORY_MODE } from "./tanstack/run-memory.js";
@@ -59,6 +59,7 @@ app.route("/", slackEventsRoutes);
 app.route("/", webhookRoutes);
 app.route("/", aguiRoutes);
 app.route("/", workflowRunRoutes);
+app.route("/", toolBridgeRoutes);
 
 // Refresh the repo clone periodically (every 15 minutes)
 const REPO_REFRESH_INTERVAL_MS = 15 * 60 * 1000;
@@ -67,20 +68,14 @@ const SLACK_RECOVERY_DELAY_MS = 15_000;
 const port = Number(process.env.PORT) || 3100;
 
 async function start() {
-  validateRelayOnlyConfiguration();
   const threadPersistence = await getConfiguredThreadPersistence();
   if (threadPersistence) {
     console.log(
       `[persistence] TanStack thread state enabled (run memory: ${RUN_MEMORY_MODE})`,
     );
   }
-  const relayOnly = process.env.COMPADRE_RELAY_ONLY === "true";
-  if (!relayOnly) {
-    const agent = validateConversationConfiguration();
-    console.log(`[agent] conversation provider=${agent.provider}`);
-  } else {
-    console.log("[agent] relay-only mode");
-  }
+  const agent = validateConversationConfiguration();
+  console.log(`[agent] conversation provider=${agent.provider} harness=daytona`);
 
   // Start the server first so Render sees the port binding
   serve({ fetch: app.fetch, port }, (info) => {
@@ -110,7 +105,7 @@ async function start() {
 
   // Clone or update the repo in the background (can be slow)
   let repositoryReady = false;
-  if (!relayOnly) {
+  {
     try {
       ensureRepo();
       repositoryReady = true;

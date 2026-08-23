@@ -1,11 +1,7 @@
 import assert from "node:assert/strict";
-import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import path from "node:path";
 import test from "node:test";
 import { EventType, type StreamChunk } from "@tanstack/ai";
 import {
-  createHarnessSandbox,
   guardBackgroundPreemption,
   messagesWithAttachmentPrompt,
   messagesForHarnessSession,
@@ -14,37 +10,6 @@ import {
   BackgroundCapacityPreemptedError,
   type ThreadRunLease,
 } from "./thread-lock.js";
-
-async function fixtureWorktree(script: string): Promise<string> {
-  const worktreePath = await mkdtemp(
-    path.join(tmpdir(), "compadre-worktree-setup-")
-  );
-  const scriptsPath = path.join(worktreePath, "scripts");
-  await mkdir(scriptsPath);
-  const setupPath = path.join(scriptsPath, "worktree-up.sh");
-  await writeFile(setupPath, `#!/bin/sh\n${script}\n`);
-  await chmod(setupPath, 0o755);
-  return worktreePath;
-}
-
-test("starts a harness without blocking on dependency preparation", async () => {
-  const worktreePath = await fixtureWorktree(
-    "printf prepared > .compadre-worktree-ready"
-  );
-  const sandbox = createHarnessSandbox("prepared", worktreePath);
-  const context = { threadId: "thread-prepared", runId: "run-prepared" };
-
-  try {
-    await sandbox.ensure(context);
-    await assert.rejects(
-      readFile(path.join(worktreePath, ".compadre-worktree-ready"), "utf8"),
-      { code: "ENOENT" },
-    );
-  } finally {
-    await sandbox.destroy(context);
-    await rm(worktreePath, { recursive: true, force: true });
-  }
-});
 
 test("adds materialized Slack images to the active user prompt", () => {
   assert.deepEqual(

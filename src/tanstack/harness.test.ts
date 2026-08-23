@@ -121,3 +121,19 @@ test("gives harness Git commands the same non-persisted GitHub auth", () => {
     false,
   );
 });
+
+test("gives a remote harness only its selected model credential", () => {
+  const environment = harnessEnvironment("/workspace", {
+    ANTHROPIC_API_KEY: "anthropic-secret",
+    CODEX_API_KEY: "codex-secret",
+  }, "claude-code");
+  assert.equal(environment.ANTHROPIC_API_KEY, "anthropic-secret");
+  assert.equal(environment.CODEX_API_KEY, undefined);
+
+  const codexEnvironment = harnessEnvironment("/workspace", {
+    ANTHROPIC_API_KEY: "anthropic-secret",
+    CODEX_API_KEY: "codex-secret",
+  }, "codex");
+  assert.equal(codexEnvironment.CODEX_API_KEY, "codex-secret");
+  assert.equal(codexEnvironment.ANTHROPIC_API_KEY, undefined);
+});

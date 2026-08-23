@@ -70,8 +70,11 @@ See `.env.example` for the full list. Key notes:
 - **COMPADRE_API_KEY**: Auth token for the API. Generate with `openssl rand -hex 32`.
 - **CODEX_API_KEY**: API key for the Codex CLI harness; a persisted Codex login is also supported for local development.
 - **COMPADRE_AGENT_PROVIDER**: Select the default Claude Code or Codex harness. `/prompt` and AG-UI callers may override it per request.
+- **DAYTONA_API_KEY / COMPADRE_DAYTONA_SNAPSHOT**: Daytona is the only coding-harness runtime. Authenticate it and optionally start from a prepared runtime snapshot. Without a snapshot, Compadre installs its pinned Claude Code and Codex CLI versions during sandbox setup.
+- **COMPADRE_PUBLIC_URL**: Public HTTPS origin of the relay. TanStack exposes each run's bearer-authenticated host-tool bridge at this origin so Daytona can invoke tools that still execute on the relay. Individual tool definitions do not contain Daytona-specific code.
 - Fire-and-forget `/prompt` and webhook runs use background capacity. Interactive Slack and synchronous API runs preempt them instead of waiting behind automation; accepted background work retries after foreground capacity is released.
-- Agent process-tree RSS and cgroup usage are recorded as run telemetry. Ephemeral Workflow tasks rely on their isolated platform cgroup for enforcement, so reclaimable filesystem cache cannot trigger a premature application-level abort.
+- Daytona isolates harness resource usage from the persistent Render relay and
+  applies its own sandbox lifecycle limits.
 - **COMPADRE_TANSTACK_AI_ENABLED**: Expose the authenticated AG-UI endpoint without changing Slack routing.
 - **FABLE_MODEL**: Optional model ID used by Slack's `--fable` routing profile. Defaults to `claude-fable-5`; normal Claude Code prompts use `DEFAULT_MODEL` or the built-in default.
 
@@ -119,20 +122,13 @@ On Render:
 - Threads get isolated git worktrees; inactive thread state and worktrees expire together after one hour
 - One isolated worktree is prepared while the harness is idle so a new thread normally avoids dependency installation on its request path; incoming user work preempts that preparation
 
-### Ephemeral agent Workflow spike
+### Daytona agent execution
 
-The repository also registers three opt-in Render Workflow tasks:
-
-- `probeAgentRuntime` measures Workflow and repository startup without calling a model.
-- `runAgent` executes one existing TanStack AI agent turn on an isolated 4 GB task instance. The agent aborts after 30 minutes, while the Workflow and relay allow 35 and 36 minutes respectively for terminal persistence and cleanup.
-- `probeAgentDurability` verifies a saved run through the same Postgres replay adapter without returning its message content.
-
-Slack remains on the persistent runner by default. The same channel-neutral
-conversation interface can be switched to the Workflow producer with
-`COMPADRE_SLACK_WORKFLOW_ENABLED=true` after the relay has been verified. Task
-retries remain disabled until Slack and GitHub side effects have durable
-idempotency, and provider session/worktree reuse remains a separate persistence
-milestone.
+The Render Web Service is Compadre's persistent relay and controller. Slack and
+HTTP requests always enter its durable conversation path; the Claude Code or
+Codex process, repository checkout, shell commands, and tests always run in a
+run-scoped Daytona sandbox. There is no Render Workflow service or runner
+selection flag.
 
 Slack makes at most one automatic continuation turn when an agent returns a
 clean but incomplete terminal outcome. It reuses the persisted thread with a
@@ -140,64 +136,37 @@ fresh run ID and instructs the agent not to repeat completed side effects.
 Thrown failures, content-filter stops, and Slack delivery truncation are not
 retried; every terminal failure receives a sanitized thread message.
 
-Use these commands for local Workflow development with Render CLI 2.12 or
-newer:
-
-```bash
-# Terminal 1
-render workflows dev -- npm run workflow:dev
-
-# Terminal 2
-RENDER_USE_LOCAL_DEV=true npm run workflow:probe
-RENDER_USE_LOCAL_DEV=true npm run workflow:agent -- "Reply with only: hi"
-```
-
-Configure the Workflow service with:
-
-```text
-Build: npm ci && npm run build && npm run workflow:prepare-runtime && npm run workflow:seed-repo
-Start: npm run workflow:start
-```
-
-The build command clones a shallow editable `comp` repository into the cached
-Workflow image. Because Render gives each task its own disposable instance,
-the task uses that checkout directly and fetches only the latest GitHub delta.
-The persistent service continues to use isolated per-thread worktrees. If the
-baked checkout is missing, the runtime falls back to a partial shallow clone.
-The Workflow needs the same
-agent/MCP environment group as the web service plus a valid
-`GITHUB_PERSONAL_ACCESS_TOKEN`; the credential is passed through Git's child
-process environment and is never stored in the origin URL. A shared
-`REPO_PATH` is intentionally replaced by the baked checkout for Workflow tasks;
-set `COMPADRE_WORKFLOW_REPO_PATH` only if the Workflow needs a different path.
-
-Workflow run and delivery durability uses TanStack's `RunStore`,
+Run and delivery durability uses TanStack's `RunStore`,
 `StreamDurability`, and `RunController` contracts. Local development remains
 database-free unless `COMPADRE_DURABILITY_BACKEND=memory` is selected. The
-deployed Workflow sets the backend to `postgres`; every AG-UI chunk is persisted
+deployed service sets the backend to `postgres`; every AG-UI chunk is persisted
 before the existing Compadre consumer observes it, and can be replayed later by
 the Slack delivery gateway.
 
-The relay has a database-free local mode: set
-`COMPADRE_DURABILITY_BACKEND=memory`, `COMPADRE_WORKFLOW_RUNNER=local`, and
+For database-free local controller testing, set
+`COMPADRE_DURABILITY_BACKEND=memory` and
 `COMPADRE_WORKFLOW_RELAY_ENABLED=true`. `POST /workflow-runs` starts an
 in-process run and `GET /workflow-runs/:runId/events?offset=-1` serves its
-resumable AG-UI stream. A deployed relay switches only the runner to `render`
-and the durability backend to `postgres`; the HTTP and event contracts stay
-the same. Slack consumes that identical durable log through the existing
-`SlackStream`; it never depends on a live connection to the Workflow task.
-See [the Render Workflow cutover runbook](docs/render-workflow-cutover.md) for
-the deployed topology, repeatable probe, failure semantics, and cutover steps.
+resumable AG-UI stream. A deployed relay uses the PostgreSQL durability
+backend; the HTTP and event contracts stay the same. Slack consumes that
+durable log through the existing `SlackStream`; it does not depend on the
+Daytona process staying connected to Slack.
+See [the Daytona harness cutover runbook](docs/daytona-harness-cutover.md) for
+the remote execution boundary and deployment checks.
 
 ## Architecture
 
 ```text
-Slack / HTTP -> persistent relay -> Render Workflow -> Claude Code or Codex
-                       |                  |
-                       +---- Postgres <---+
-                       |
-                       +-> Slack stream
+Slack / HTTP -> persistent Render relay/controller -> Daytona harness
+                              |                         |
+                              +-> Postgres              +-> repo/shell/tests
+                              +-> MCP/private tools (via authenticated bridge)
+                              +-> Slack stream
 ```
+
+The persistent relay keeps Postgres, Slack,
+MCP clients, and private-network tool execution on Render. Claude Code or Codex,
+the repository, shell commands, and tests run in a run-scoped Daytona sandbox.
 
 When durability is configured, its persistence backend is the
 canonical source for the provider-neutral transcript and TanStack run/interrupt
