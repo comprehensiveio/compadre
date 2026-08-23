@@ -34,6 +34,10 @@ authenticated tool request fails.
    provider, and repository revision.
 5. For a tool failure, correlate the bridge ID and HTTP status without logging
    its bearer token, arguments, or result.
+   If the bridge registers but receives no request, inspect whether the harness
+   received an MCP server configuration and probe the configured public origin
+   from inside the sandbox. This distinguishes projection failure from DNS,
+   TLS, tunnel, or egress failure before bearer authentication.
 6. Correlate deploys or configuration changes only after identifying which
    boundary failed.
 
