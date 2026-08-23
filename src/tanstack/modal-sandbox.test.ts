@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { SandboxFilesystemNotFoundError, type Sandbox } from "modal";
 import {
+  cacheSuccessfulPromise,
   ModalHandle,
   MODAL_CAPS,
   modalImageCommands,
@@ -91,4 +92,18 @@ test("allows a custom Modal image to supply its own harness CLIs", () => {
     modalImageCommands({ COMPADRE_MODAL_SKIP_CLI_SETUP: "true" }).join("\n"),
     /npm install/,
   );
+});
+
+test("retries cached Modal preparation after a transient failure", async () => {
+  let attempts = 0;
+  const prepare = cacheSuccessfulPromise(async () => {
+    attempts += 1;
+    if (attempts === 1) throw new Error("transient");
+    return "ready";
+  });
+
+  await assert.rejects(prepare(), /transient/);
+  assert.equal(await prepare(), "ready");
+  assert.equal(await prepare(), "ready");
+  assert.equal(attempts, 2);
 });

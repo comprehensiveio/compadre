@@ -80,6 +80,20 @@ export function modalImageCommands(environment: NodeJS.ProcessEnv): string[] {
   ];
 }
 
+/** Share concurrent preparation while allowing a transient failure to retry. */
+export function cacheSuccessfulPromise<T>(task: () => Promise<T>): () => Promise<T> {
+  let cached: Promise<T> | undefined;
+  return () => {
+    if (cached) return cached;
+    const pending = task();
+    cached = pending;
+    void pending.catch(() => {
+      if (cached === pending) cached = undefined;
+    });
+    return pending;
+  };
+}
+
 async function processResult(
   process: ContainerProcess<string>,
 ): Promise<ExecResult> {
@@ -287,19 +301,19 @@ function modalRuntime(
       tokenSecret: environment.MODAL_TOKEN_SECRET,
       environment: environment.MODAL_ENVIRONMENT,
     });
-  let appPromise: Promise<App> | undefined;
-  let imagePromise: Promise<Image> | undefined;
-  const app = () =>
-    (appPromise ??= client.apps.fromName(appName, { createIfMissing: true }));
+  const app = cacheSuccessfulPromise(() =>
+    client.apps.fromName(appName, { createIfMissing: true }),
+  );
+  const baseImage = cacheSuccessfulPromise(async () =>
+    client.images
+      .fromRegistry(baseImageName)
+      .dockerfileCommands(modalImageCommands(environment))
+      .build(await app()),
+  );
   const value: ModalRuntime = {
     client,
     app,
-    baseImage: () =>
-      (imagePromise ??= (async () =>
-        client.images
-          .fromRegistry(baseImageName)
-          .dockerfileCommands(modalImageCommands(environment))
-          .build(await app()))()),
+    baseImage,
   };
   if (!providedClient) sharedRuntime = { key, value };
   return value;
