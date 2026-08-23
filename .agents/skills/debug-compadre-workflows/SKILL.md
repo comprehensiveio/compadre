@@ -37,9 +37,9 @@ authenticated tool request fails.
    If the bridge registers but receives no request, inspect whether the harness
    received an MCP server configuration and probe its complete per-run bridge
    URL from inside the sandbox without credentials. An HTTP 401 proves routing
-   reached bridge authentication; a connection failure or different status
-   distinguishes DNS, TLS, tunnel, egress, and route failures before bearer
-   validation.
+   reached bridge authentication. Capture connection error details separately
+   when investigating DNS, TLS, tunnel, or egress failures; treat other HTTP
+   statuses as route or upstream responses before bearer validation.
 6. Correlate deploys or configuration changes only after identifying which
    boundary failed.
 
