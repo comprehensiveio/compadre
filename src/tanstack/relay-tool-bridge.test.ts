@@ -54,7 +54,7 @@ test("advertises eagerly discovered host MCP tools to the sandbox", async () => 
         inputSchema: { type: "object", properties: {} },
         execute: async () => {
           calls += 1;
-          return { services: [] };
+          return { probe: "bridge-result" };
         },
       },
     ],
@@ -89,6 +89,15 @@ test("advertises eagerly discovered host MCP tools to the sandbox", async () => 
   });
   assert.equal(called.status, 200);
   assert.equal(calls, 1);
+  assert.deepEqual(called.body, {
+    jsonrpc: "2.0",
+    id: 2,
+    result: {
+      content: [
+        { type: "text", text: JSON.stringify({ probe: "bridge-result" }) },
+      ],
+    },
+  });
   await bridge.close();
 });
 

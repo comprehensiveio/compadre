@@ -35,9 +35,11 @@ authenticated tool request fails.
 5. For a tool failure, correlate the bridge ID and HTTP status without logging
    its bearer token, arguments, or result.
    If the bridge registers but receives no request, inspect whether the harness
-   received an MCP server configuration and probe the configured public origin
-   from inside the sandbox. This distinguishes projection failure from DNS,
-   TLS, tunnel, or egress failure before bearer authentication.
+   received an MCP server configuration and probe its complete per-run bridge
+   URL from inside the sandbox without credentials. An HTTP 401 proves routing
+   reached bridge authentication; a connection failure or different status
+   distinguishes DNS, TLS, tunnel, egress, and route failures before bearer
+   validation.
 6. Correlate deploys or configuration changes only after identifying which
    boundary failed.
 
