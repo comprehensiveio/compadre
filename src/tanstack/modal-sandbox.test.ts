@@ -7,6 +7,7 @@ import {
   MODAL_CAPS,
   modalImageCommands,
   modalSandboxProvider,
+  parseModalProcessTable,
 } from "./modal-sandbox.js";
 
 function sandboxStub(overrides: Record<string, unknown> = {}): Sandbox {
@@ -35,6 +36,59 @@ test("advertises the Modal capabilities used by TanStack", () => {
     durableFilesystem: false,
     fork: false,
   });
+});
+
+test("summarizes bounded Modal process telemetry without command arguments", () => {
+  assert.deepEqual(
+    parseModalProcessTable(
+      "  32  29 585092 claude\n1259 1258 2740996 tsc\ninvalid arguments --secret\n",
+    ),
+    {
+      processCount: 2,
+      rssBytes: (585_092 + 2_740_996) * 1024,
+      topProcess: "tsc",
+      topProcessRssBytes: 2_740_996 * 1024,
+    },
+  );
+});
+
+test("samples a Modal harness before the first periodic interval", async () => {
+  const commands: string[][] = [];
+  let terminateCalls = 0;
+  const stream = (text = "") => {
+    const readable = new ReadableStream<string>({
+      start(controller) {
+        if (text) controller.enqueue(text);
+        controller.close();
+      },
+    });
+    return Object.assign(readable, { readText: async () => text });
+  };
+  const sandbox = sandboxStub({
+    exec: async (command: string[]) => {
+      commands.push(command);
+      return {
+        stdout: stream(command[0] === "ps" ? "32 29 1024 claude\n" : ""),
+        stderr: stream(),
+        stdin: { writeText: async () => undefined },
+        closeStdin: async () => undefined,
+        wait: async () => 0,
+      };
+    },
+    terminate: async () => {
+      terminateCalls += 1;
+    },
+  });
+  const handle = new ModalHandle(sandbox);
+
+  const spawned = await handle.process.spawn("claude");
+  await new Promise<void>((resolve) => setImmediate(resolve));
+
+  assert.equal(commands[0]?.[0], "bash");
+  assert.deepEqual(commands[1], ["ps", "-eo", "pid=,ppid=,rss=,comm="]);
+  assert.equal(await spawned.wait(), 0);
+  await handle.destroy();
+  assert.equal(terminateCalls, 1);
 });
 
 test("snapshots thread state before terminating billed compute", async () => {

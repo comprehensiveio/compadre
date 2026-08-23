@@ -6,6 +6,8 @@ import {
 
 const SLACK_API = "https://slack.com/api";
 const FLUSH_INTERVAL_MS = 500;
+const NATIVE_STREAM_KEEPALIVE_MS = 4 * 60 * 1_000;
+const NATIVE_STREAM_KEEPALIVE = "\u200B";
 
 interface SlackStreamOptions {
   channel: string;
@@ -18,6 +20,7 @@ interface SlackStreamOptions {
   enableStatus?: boolean;
   fetchImpl?: typeof fetch;
   flushIntervalMs?: number;
+  nativeStreamKeepaliveMs?: number;
   logger?: Pick<Console, "info" | "warn" | "error">;
 }
 
@@ -32,17 +35,20 @@ export class SlackStream {
   private enableStatus: boolean;
   private fetchImpl: typeof fetch;
   private flushIntervalMs: number;
+  private nativeStreamKeepaliveMs: number;
   private logger: Pick<Console, "info" | "warn" | "error">;
   private lastStatus = "";
   private statusUpdating: Promise<void> = Promise.resolve();
   private activeStreamTs: string | null = null;
   private deliveryMode: DeliveryMode = "unstarted";
   private needsFinalRecovery = false;
+  private nativeStreamExpired = false;
   private streamEnded = false;
   private buffer = "";
   private fullText = "";
   private truncated = false;
   private flushTimer: ReturnType<typeof setTimeout> | null = null;
+  private keepaliveTimer: ReturnType<typeof setTimeout> | null = null;
   private flushing: Promise<void> = Promise.resolve();
 
   constructor({
@@ -54,6 +60,7 @@ export class SlackStream {
     enableStatus = true,
     fetchImpl = fetch,
     flushIntervalMs = FLUSH_INTERVAL_MS,
+    nativeStreamKeepaliveMs = NATIVE_STREAM_KEEPALIVE_MS,
     logger = console,
   }: SlackStreamOptions) {
     this.channel = channel;
@@ -64,6 +71,7 @@ export class SlackStream {
     this.enableStatus = enableStatus;
     this.fetchImpl = fetchImpl;
     this.flushIntervalMs = flushIntervalMs;
+    this.nativeStreamKeepaliveMs = nativeStreamKeepaliveMs;
     this.logger = logger;
   }
 
@@ -174,6 +182,10 @@ export class SlackStream {
 
   async stopStream(): Promise<void> {
     this.streamEnded = true;
+    if (this.keepaliveTimer) {
+      clearTimeout(this.keepaliveTimer);
+      this.keepaliveTimer = null;
+    }
     if (this.flushTimer) {
       clearTimeout(this.flushTimer);
       this.flushTimer = null;
@@ -214,6 +226,7 @@ export class SlackStream {
     this.activeStreamTs = null;
     this.deliveryMode = "unstarted";
     this.needsFinalRecovery = false;
+    this.nativeStreamExpired = false;
   }
 
   private async flush(): Promise<void> {
@@ -239,10 +252,12 @@ export class SlackStream {
       if (data.ok && typeof data.ts === "string") {
         this.activeStreamTs = data.ts;
         this.deliveryMode = "native";
+        this.nativeStreamExpired = false;
         this.logger.info("[slack-stream] native stream started", {
           ...this.logContext(),
           characters: text.length,
         });
+        this.scheduleNativeStreamKeepalive();
         return;
       }
 
@@ -258,12 +273,21 @@ export class SlackStream {
     }
 
     if (this.deliveryMode === "native" && this.activeStreamTs) {
+      if (this.nativeStreamExpired) {
+        if (await this.rotateNativeStream(text)) return;
+      }
       const data = await this.call("chat.appendStream", {
         channel: this.channel,
         ts: this.activeStreamTs,
         markdown_text: text,
       });
       if (!data.ok) {
+        if (
+          data.error === "message_not_in_streaming_state" &&
+          (await this.rotateNativeStream(text))
+        ) {
+          return;
+        }
         this.logger.warn(
           "[slack-stream] native stream interrupted; attempting update fallback",
           {
@@ -281,6 +305,8 @@ export class SlackStream {
         } else {
           this.needsFinalRecovery = true;
         }
+      } else {
+        this.scheduleNativeStreamKeepalive();
       }
       return;
     }
@@ -292,6 +318,91 @@ export class SlackStream {
         markdown_text: this.fullText,
       });
     }
+  }
+
+  private async rotateNativeStream(text: string): Promise<boolean> {
+    const startBody: Record<string, unknown> = {
+      channel: this.channel,
+      thread_ts: this.threadTs,
+      markdown_text: text,
+    };
+    if (this.recipientUserId) {
+      startBody.recipient_user_id = this.recipientUserId;
+    }
+    if (this.recipientTeamId) {
+      startBody.recipient_team_id = this.recipientTeamId;
+    }
+    const previousStreamTs = this.activeStreamTs;
+    const data = await this.call("chat.startStream", startBody);
+    if (!data.ok || typeof data.ts !== "string") return false;
+    this.activeStreamTs = data.ts;
+    this.nativeStreamExpired = false;
+    this.logger.info("[slack-stream] native stream rotated", {
+      ...this.logContext(),
+      previousStreamTs,
+      characters: text.length,
+    });
+    this.scheduleNativeStreamKeepalive();
+    return true;
+  }
+
+  private scheduleNativeStreamKeepalive(): void {
+    if (this.keepaliveTimer) clearTimeout(this.keepaliveTimer);
+    if (
+      this.nativeStreamKeepaliveMs <= 0 ||
+      this.streamEnded ||
+      this.deliveryMode !== "native"
+    ) {
+      this.keepaliveTimer = null;
+      return;
+    }
+    this.keepaliveTimer = setTimeout(() => {
+      this.keepaliveTimer = null;
+      this.flushing = this.flushing.then(() => this.keepNativeStreamAlive());
+    }, this.nativeStreamKeepaliveMs);
+    this.keepaliveTimer.unref();
+  }
+
+  private async keepNativeStreamAlive(): Promise<void> {
+    if (
+      this.streamEnded ||
+      this.deliveryMode !== "native" ||
+      !this.activeStreamTs
+    ) {
+      return;
+    }
+    const data = await this.call("chat.appendStream", {
+      channel: this.channel,
+      ts: this.activeStreamTs,
+      markdown_text: NATIVE_STREAM_KEEPALIVE,
+    });
+    if (data.ok) {
+      this.logger.info("[slack-stream] native stream keepalive accepted", {
+        ...this.logContext(),
+      });
+      this.scheduleNativeStreamKeepalive();
+      return;
+    }
+
+    if (data.error === "message_not_in_streaming_state") {
+      this.nativeStreamExpired = true;
+      this.logger.info("[slack-stream] native stream expired between deltas", {
+        ...this.logContext(),
+      });
+      return;
+    }
+
+    this.logger.warn(
+      "[slack-stream] native stream expired before keepalive; attempting update fallback",
+      { ...this.logContext(), error: data.error },
+    );
+    const update = await this.call("chat.update", {
+      channel: this.channel,
+      ts: this.activeStreamTs,
+      markdown_text: this.fullText,
+    });
+    if (update.ok) this.deliveryMode = "updates";
+    else this.needsFinalRecovery = true;
   }
 
   private async startUpdateFallback(): Promise<void> {

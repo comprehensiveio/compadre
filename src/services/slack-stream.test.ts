@@ -21,7 +21,10 @@ function createSlackFetch(
   responses: Record<string, Array<Record<string, unknown>>>,
 ) {
   const calls: SlackCall[] = [];
-  const fetchImpl = (async (input: string | URL | Request, init?: RequestInit) => {
+  const fetchImpl = (async (
+    input: string | URL | Request,
+    init?: RequestInit,
+  ) => {
     const method = new URL(String(input)).pathname.split("/").pop() || "";
     const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
     calls.push({ method, body });
@@ -152,10 +155,7 @@ test("publishes channel loading states without requiring assistant view", async 
 test("successful runs clear both live and stale terminal reactions idempotently", async () => {
   const errors: unknown[][] = [];
   const { calls, fetchImpl } = createSlackFetch({
-    "reactions.remove": [
-      { ok: false, error: "no_reaction" },
-      { ok: true },
-    ],
+    "reactions.remove": [{ ok: false, error: "no_reaction" }, { ok: true }],
   });
   const stream = new SlackStream({
     channel: "C123",
@@ -258,14 +258,86 @@ test("finishes with message updates if Slack closes a native stream", async () =
 
   assert.deepEqual(
     calls.map(({ method }) => method),
+    ["chat.startStream", "chat.appendStream", "chat.update", "chat.update"],
+  );
+  assert.equal(calls.at(-1)?.body.markdown_text, "One two three");
+});
+
+test("keeps a quiet native stream alive without adding visible text", async () => {
+  const { calls, fetchImpl } = createSlackFetch({
+    "chat.startStream": [{ ok: true, ts: "200.001" }],
+    "chat.appendStream": [{ ok: true }, { ok: true }],
+    "chat.stopStream": [{ ok: true }],
+  });
+  const stream = new SlackStream({
+    channel: "C123",
+    threadTs: "100.001",
+    botToken: "xoxb-test",
+    recipientUserId: "U123",
+    recipientTeamId: "T123",
+    fetchImpl,
+    flushIntervalMs: 0,
+    nativeStreamKeepaliveMs: 50,
+    logger: silentLogger,
+  });
+
+  stream.appendText("Checking dependencies.");
+  await new Promise((resolve) => setTimeout(resolve, 70));
+  stream.appendText(" Done.");
+  await stream.stopStream();
+
+  assert.deepEqual(
+    calls.map(({ method }) => method),
     [
       "chat.startStream",
       "chat.appendStream",
-      "chat.update",
-      "chat.update",
+      "chat.appendStream",
+      "chat.stopStream",
     ],
   );
-  assert.equal(calls.at(-1)?.body.markdown_text, "One two three");
+  assert.equal(calls[1]?.body.markdown_text, "\u200B");
+  assert.equal(calls[2]?.body.markdown_text, " Done.");
+});
+
+test("rotates an expired native stream instead of degrading to updates", async () => {
+  const { calls, fetchImpl } = createSlackFetch({
+    "chat.startStream": [
+      { ok: true, ts: "200.001" },
+      { ok: true, ts: "200.002" },
+    ],
+    "chat.appendStream": [
+      { ok: false, error: "message_not_in_streaming_state" },
+    ],
+    "chat.stopStream": [{ ok: true }],
+  });
+  const stream = new SlackStream({
+    channel: "C123",
+    threadTs: "100.001",
+    botToken: "xoxb-test",
+    recipientUserId: "U123",
+    recipientTeamId: "T123",
+    fetchImpl,
+    flushIntervalMs: 0,
+    nativeStreamKeepaliveMs: 0,
+    logger: silentLogger,
+  });
+
+  stream.appendText("First part.");
+  await new Promise((resolve) => setTimeout(resolve, 5));
+  stream.appendText(" Second part.");
+  await stream.stopStream();
+
+  assert.deepEqual(
+    calls.map(({ method }) => method),
+    [
+      "chat.startStream",
+      "chat.appendStream",
+      "chat.startStream",
+      "chat.stopStream",
+    ],
+  );
+  assert.equal(calls[2]?.body.markdown_text, " Second part.");
+  assert.equal(calls.at(-1)?.body.ts, "200.002");
 });
 
 test("salvages the final response if stopping a native stream fails", async () => {
@@ -298,10 +370,7 @@ test("recovers missing text when both append and its immediate update fail", asy
   const { calls, fetchImpl } = createSlackFetch({
     "chat.startStream": [{ ok: true, ts: "200.001" }],
     "chat.appendStream": [{ ok: false, error: "stream_closed" }],
-    "chat.update": [
-      { ok: false, error: "message_not_found" },
-      { ok: true },
-    ],
+    "chat.update": [{ ok: false, error: "message_not_found" }, { ok: true }],
     "chat.stopStream": [{ ok: true }],
   });
   const stream = new SlackStream({

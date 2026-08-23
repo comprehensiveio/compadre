@@ -17,6 +17,12 @@ import {
   type SandboxProvider,
   type SpawnHandle,
 } from "@tanstack/ai-sandbox";
+import {
+  context as otelContext,
+  metrics,
+  SpanStatusCode,
+  trace,
+} from "@opentelemetry/api";
 
 export const MODAL_CAPS: SandboxCapabilities = {
   fs: true,
@@ -34,6 +40,41 @@ export const MODAL_CAPS: SandboxCapabilities = {
   durableFilesystem: false,
   fork: false,
 };
+
+const MIB = 1024 * 1024;
+const MODAL_PROCESS_SAMPLE_INTERVAL_MS = 10_000;
+const modalMemoryUsage = metrics
+  .getMeter("compadre.runtime")
+  .createHistogram("compadre.agent.sandbox.memory.usage", {
+    unit: "By",
+    description: "Sampled aggregate process RSS inside the agent sandbox",
+  });
+
+export interface ModalProcessSample {
+  processCount: number;
+  rssBytes: number;
+  topProcess?: string;
+  topProcessRssBytes: number;
+}
+
+export function parseModalProcessTable(output: string): ModalProcessSample {
+  let processCount = 0;
+  let rssBytes = 0;
+  let topProcess: string | undefined;
+  let topProcessRssBytes = 0;
+  for (const line of output.split("\n")) {
+    const match = /^\s*\d+\s+\d+\s+(\d+)\s+(.+?)\s*$/.exec(line);
+    if (!match) continue;
+    const processRssBytes = Number(match[1]) * 1024;
+    processCount += 1;
+    rssBytes += processRssBytes;
+    if (processRssBytes > topProcessRssBytes) {
+      topProcessRssBytes = processRssBytes;
+      topProcess = match[2];
+    }
+  }
+  return { processCount, rssBytes, topProcess, topProcessRssBytes };
+}
 
 const DEFAULT_APP_NAME = "compadre";
 const DEFAULT_IMAGE = "node:22";
@@ -81,7 +122,9 @@ export function modalImageCommands(environment: NodeJS.ProcessEnv): string[] {
 }
 
 /** Share concurrent preparation while allowing a transient failure to retry. */
-export function cacheSuccessfulPromise<T>(task: () => Promise<T>): () => Promise<T> {
+export function cacheSuccessfulPromise<T>(
+  task: () => Promise<T>,
+): () => Promise<T> {
   let cached: Promise<T> | undefined;
   return () => {
     if (cached) return cached;
@@ -92,6 +135,48 @@ export function cacheSuccessfulPromise<T>(task: () => Promise<T>): () => Promise
     });
     return pending;
   };
+}
+
+async function timedModalPhase<T>(
+  phase: string,
+  task: () => Promise<T>,
+  logContext: { sandboxId?: string } = {},
+): Promise<T> {
+  return trace
+    .getTracer("compadre.runtime")
+    .startActiveSpan(
+      `compadre.agent.modal.${phase}`,
+      { attributes: { "compadre.phase": `modal.${phase}` } },
+      async (span) => {
+        const startedAt = Date.now();
+        let outcome = "success";
+        try {
+          return await task();
+        } catch (error) {
+          outcome = "error";
+          span.recordException(error instanceof Error ? error : String(error));
+          span.setStatus({
+            code: SpanStatusCode.ERROR,
+            message: error instanceof Error ? error.message : String(error),
+          });
+          throw error;
+        } finally {
+          const elapsedMs = Date.now() - startedAt;
+          span.setAttributes({
+            "compadre.outcome": outcome,
+            "compadre.phase.duration_ms": elapsedMs,
+          });
+          span.end();
+          console.log("[modal-timing]", {
+            traceId: span.spanContext().traceId,
+            ...logContext,
+            phase,
+            outcome,
+            elapsedMs,
+          });
+        }
+      },
+    );
 }
 
 async function processResult(
@@ -134,6 +219,7 @@ export class ModalHandle implements SandboxHandle {
   readonly env: SandboxHandle["env"];
 
   private readonly envVars: Record<string, string> = {};
+  private readonly stopProcessMonitors = new Set<() => void>();
 
   constructor(
     private readonly sandbox: Sandbox,
@@ -170,10 +256,9 @@ export class ModalHandle implements SandboxHandle {
         await sandbox.filesystem.remove(path, { recursive: true });
       },
       rename: async (from, to) => {
-        const result = await this.exec(
-          `mv -- ${quote(from)} ${quote(to)}`,
-        );
-        if (result.exitCode !== 0) throw new Error(result.stderr || result.stdout);
+        const result = await this.exec(`mv -- ${quote(from)} ${quote(to)}`);
+        if (result.exitCode !== 0)
+          throw new Error(result.stderr || result.stdout);
       },
       exists: async (path) => {
         try {
@@ -208,12 +293,20 @@ export class ModalHandle implements SandboxHandle {
     options?: ProcessOptions,
   ): Promise<ExecResult> {
     if (options?.signal?.aborted) throw options.signal.reason;
-    return processResult(
-      await this.sandbox.exec(shellCommand(command), {
-        workdir: options?.cwd ?? this.workspaceRoot,
-        env: { ...this.envVars, ...options?.env },
-      }),
-    );
+    const operation =
+      command.startsWith("git ") && command.includes(" clone ")
+        ? "repository.clone"
+        : undefined;
+    const execute = async () =>
+      processResult(
+        await this.sandbox.exec(shellCommand(command), {
+          workdir: options?.cwd ?? this.workspaceRoot,
+          env: { ...this.envVars, ...options?.env },
+        }),
+      );
+    return operation
+      ? timedModalPhase(operation, execute, { sandboxId: this.id })
+      : execute();
   }
 
   private async spawn(
@@ -221,10 +314,147 @@ export class ModalHandle implements SandboxHandle {
     options?: ProcessOptions,
   ): Promise<SpawnHandle> {
     if (options?.signal?.aborted) throw options.signal.reason;
-    const process = await this.sandbox.exec(shellCommand(command), {
-      workdir: options?.cwd ?? this.workspaceRoot,
-      env: { ...this.envVars, ...options?.env },
-    });
+    const process = await timedModalPhase(
+      "harness.spawn",
+      () =>
+        this.sandbox.exec(shellCommand(command), {
+          workdir: options?.cwd ?? this.workspaceRoot,
+          env: { ...this.envVars, ...options?.env },
+        }),
+      { sandboxId: this.id },
+    );
+    const startedAt = Date.now();
+    const parentContext = otelContext.active();
+    const runSpan = trace
+      .getTracer("compadre.runtime")
+      .startSpan(
+        "compadre.agent.modal.harness.run",
+        { attributes: { "compadre.phase": "modal.harness.run" } },
+        parentContext,
+      );
+    let peakRssBytes = 0;
+    let stopped = false;
+    let sampleInFlight = false;
+    const sample = async () => {
+      if (stopped || sampleInFlight) return;
+      sampleInFlight = true;
+      try {
+        const sampleProcess = await this.sandbox.exec([
+          "ps",
+          "-eo",
+          "pid=,ppid=,rss=,comm=",
+        ]);
+        const result = await processResult(sampleProcess);
+        if (stopped || result.exitCode !== 0) return;
+        const observation = parseModalProcessTable(result.stdout);
+        peakRssBytes = Math.max(peakRssBytes, observation.rssBytes);
+        const attributes = {
+          "sandbox.provider": "modal",
+          "sandbox.process.count": observation.processCount,
+        };
+        modalMemoryUsage.record(
+          observation.rssBytes,
+          { ...attributes, "memory.scope": "sandbox_processes" },
+          parentContext,
+        );
+        runSpan.addEvent("resource_sample", {
+          ...attributes,
+          "memory.rss_bytes": observation.rssBytes,
+          "process.top.name": observation.topProcess ?? "unknown",
+          "process.top.rss_bytes": observation.topProcessRssBytes,
+        });
+        console.log("[modal-process]", {
+          traceId: runSpan.spanContext().traceId,
+          sandboxId: this.id,
+          elapsedMs: Date.now() - startedAt,
+          processCount: observation.processCount,
+          rssMiB: Math.round(observation.rssBytes / MIB),
+          topProcess: observation.topProcess ?? "unknown",
+          topRssMiB: Math.round(observation.topProcessRssBytes / MIB),
+        });
+      } catch (error) {
+        console.warn("[modal-process] sample failed", {
+          traceId: runSpan.spanContext().traceId,
+          sandboxId: this.id,
+          errorName: error instanceof Error ? error.name : typeof error,
+          errorMessage: error instanceof Error ? error.message : String(error),
+        });
+      } finally {
+        sampleInFlight = false;
+      }
+    };
+    const timer = setInterval(
+      () => void sample(),
+      MODAL_PROCESS_SAMPLE_INTERVAL_MS,
+    );
+    timer.unref();
+    void sample();
+    let finalized = false;
+    const cancelMonitor = () => finalizeMonitor("cancelled");
+    const finalizeMonitor = (
+      outcome: "success" | "error" | "cancelled",
+      exitCode?: number,
+      error?: unknown,
+    ) => {
+      if (finalized) return;
+      finalized = true;
+      stopped = true;
+      clearInterval(timer);
+      this.stopProcessMonitors.delete(cancelMonitor);
+      runSpan.setAttributes({
+        "compadre.outcome": outcome,
+        "memory.process_tree.peak_rss_bytes": peakRssBytes,
+        ...(exitCode === undefined ? {} : { "process.exit.code": exitCode }),
+      });
+      if (outcome !== "success") {
+        const message =
+          error instanceof Error
+            ? error.message
+            : error === undefined
+              ? "sandbox cleanup before process exit"
+              : String(error);
+        if (error !== undefined) {
+          runSpan.recordException(
+            error instanceof Error ? error : String(error),
+          );
+        }
+        runSpan.setStatus({ code: SpanStatusCode.ERROR, message });
+      } else {
+        runSpan.setStatus({ code: SpanStatusCode.OK });
+      }
+      runSpan.end();
+      const log = outcome === "success" ? console.log : console.warn;
+      log("[modal-process] finalized", {
+        traceId: runSpan.spanContext().traceId,
+        sandboxId: this.id,
+        outcome,
+        ...(exitCode === undefined ? {} : { exitCode }),
+        elapsedMs: Date.now() - startedAt,
+        peakRssMiB: Math.round(peakRssBytes / MIB),
+        ...(error === undefined
+          ? {}
+          : {
+              errorName: error instanceof Error ? error.name : typeof error,
+              errorMessage:
+                error instanceof Error ? error.message : String(error),
+            }),
+      });
+    };
+    this.stopProcessMonitors.add(cancelMonitor);
+    let waitPromise: Promise<number> | undefined;
+    const wait = () => {
+      waitPromise ??= process.wait().then(
+        (exitCode) => {
+          finalizeMonitor(exitCode === 0 ? "success" : "error", exitCode);
+          return exitCode;
+        },
+        (error) => {
+          finalizeMonitor("error", undefined, error);
+          throw error;
+        },
+      );
+      return waitPromise;
+    };
     return {
       pid: -1,
       stdout: streamChunks(process.stdout),
@@ -233,7 +463,7 @@ export class ModalHandle implements SandboxHandle {
         write: (data) => process.stdin.writeText(data),
         end: () => process.closeStdin(),
       },
-      wait: () => process.wait(),
+      wait,
       // Modal's JS SDK does not expose per-exec termination. Callers branch on
       // killableProcesses=false when correctness depends on a real kill, but
       // generic cleanup still invokes this method best-effort.
@@ -242,14 +472,22 @@ export class ModalHandle implements SandboxHandle {
   }
 
   async snapshot(label?: string): Promise<{ id: string; label?: string }> {
-    const image = await this.sandbox.snapshotFilesystem({
-      timeoutMs: 5 * 60 * 1_000,
-      ttlMs: this.snapshotTtlMs,
-    });
+    for (const stop of [...this.stopProcessMonitors]) stop();
+    const image = await timedModalPhase(
+      "snapshot.capture",
+      () =>
+        this.sandbox.snapshotFilesystem({
+          timeoutMs: 5 * 60 * 1_000,
+          ttlMs: this.snapshotTtlMs,
+        }),
+      { sandboxId: this.id },
+    );
     // TanStack records the returned image ID immediately after this call. End
     // the billed compute while retaining that instance-store record so the
     // next turn restores this exact filesystem snapshot.
-    await this.sandbox.terminate().catch((error: unknown) => {
+    await timedModalPhase("sandbox.terminate", () => this.sandbox.terminate(), {
+      sandboxId: this.id,
+    }).catch((error: unknown) => {
       console.warn("[modal] sandbox termination after snapshot failed", {
         sandboxId: this.id,
         errorName: error instanceof Error ? error.name : typeof error,
@@ -259,7 +497,10 @@ export class ModalHandle implements SandboxHandle {
   }
 
   async destroy(): Promise<void> {
-    await this.sandbox.terminate();
+    for (const stop of [...this.stopProcessMonitors]) stop();
+    await timedModalPhase("sandbox.terminate", () => this.sandbox.terminate(), {
+      sandboxId: this.id,
+    });
   }
 }
 
@@ -274,9 +515,7 @@ interface ModalRuntime {
   baseImage(): Promise<Image>;
 }
 
-let sharedRuntime:
-  | { key: string; value: ModalRuntime }
-  | undefined;
+let sharedRuntime: { key: string; value: ModalRuntime } | undefined;
 
 function modalRuntime(
   environment: NodeJS.ProcessEnv,
@@ -364,27 +603,37 @@ export function modalSandboxProvider(
     environment.COMPADRE_MODAL_MEMORY_LIMIT_MIB,
     8192,
   );
-  const create = async (image: Image, id?: string, env?: Record<string, string>) => {
-    const sandbox = await client.sandboxes.create(await runtime.app(), image, {
-      ...(id ? { name: id } : {}),
-      command: ["sleep", "infinity"],
-      workdir,
-      timeoutMs,
-      cpu,
-      cpuLimit,
-      memoryMiB,
-      memoryLimitMiB,
-      ...(env ? { env } : {}),
-      tags: { managedBy: "compadre" },
-    });
+  const create = async (
+    image: Image,
+    id?: string,
+    env?: Record<string, string>,
+  ) => {
+    const sandbox = await timedModalPhase("sandbox.create", async () =>
+      client.sandboxes.create(await runtime.app(), image, {
+        ...(id ? { name: id } : {}),
+        command: ["sleep", "infinity"],
+        workdir,
+        timeoutMs,
+        cpu,
+        cpuLimit,
+        memoryMiB,
+        memoryLimitMiB,
+        ...(env ? { env } : {}),
+        tags: { managedBy: "compadre" },
+      }),
+    );
     return new ModalHandle(sandbox, workdir, snapshotTtlMs);
   };
 
   return {
     name: "modal",
     capabilities: () => MODAL_CAPS,
-    create: async (input) =>
-      create(await runtime.baseImage(), input.id, input.env),
+    create: async (input) => {
+      const image = await timedModalPhase("image.resolve", () =>
+        runtime.baseImage(),
+      );
+      return create(image, input.id, input.env);
+    },
     resume: async (input) => {
       try {
         const sandbox = await client.sandboxes.fromId(input.id);
@@ -395,8 +644,12 @@ export function modalSandboxProvider(
         throw error;
       }
     },
-    restoreSnapshot: async (input) =>
-      create(await client.images.fromId(input.snapshotId), undefined, input.env),
+    restoreSnapshot: async (input) => {
+      const image = await timedModalPhase("snapshot.resolve", () =>
+        client.images.fromId(input.snapshotId),
+      );
+      return create(image, undefined, input.env);
+    },
     destroy: async (input) => {
       try {
         await (await client.sandboxes.fromId(input.id)).terminate();
