@@ -71,6 +71,8 @@ See `.env.example` for the full list. Key notes:
 - **CODEX_API_KEY**: API key for the Codex CLI harness; a persisted Codex login is also supported for local development.
 - **COMPADRE_AGENT_PROVIDER**: Select the default Claude Code or Codex harness. `/prompt` and AG-UI callers may override it per request.
 - **DAYTONA_API_KEY / COMPADRE_DAYTONA_SNAPSHOT**: Daytona is the only coding-harness runtime. Authenticate it and optionally start from a prepared runtime snapshot. Without a snapshot, Compadre installs its pinned Claude Code and Codex CLI versions during sandbox setup.
+- **GITHUB_PERSONAL_ACCESS_TOKEN**: Required in production so Daytona can clone
+  the private repository and the relay can operate configured PR watches.
 - **COMPADRE_PUBLIC_URL**: Public HTTPS origin of the relay. TanStack exposes each run's bearer-authenticated host-tool bridge at this origin so Daytona can invoke tools that still execute on the relay. Individual tool definitions do not contain Daytona-specific code.
 - Fire-and-forget `/prompt` and webhook runs use background capacity. Interactive Slack and synchronous API runs preempt them instead of waiting behind automation; accepted background work retries after foreground capacity is released.
 - Daytona isolates harness resource usage from the persistent Render relay and

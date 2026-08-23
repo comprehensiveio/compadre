@@ -10,7 +10,7 @@ import {
   type ToolBridgeProvisioner,
 } from "@tanstack/ai-sandbox";
 
-const MAX_BRIDGE_REQUEST_BYTES = 1024 * 1024;
+export const MAX_BRIDGE_REQUEST_BYTES = 1024 * 1024;
 
 interface ActiveRelayToolBridge {
   core: ToolBridgeCore;

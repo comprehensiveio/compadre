@@ -44,11 +44,12 @@ within the sandbox disk budget. An agent can fetch more history when required.
 
 ## Configuration
 
-Keep the Workflow runner local so the persistent relay owns orchestration:
+The persistent relay owns orchestration. Production requires:
 
 ```bash
 DAYTONA_API_KEY=...
 COMPADRE_PUBLIC_URL=https://compadre.example.com
+GITHUB_PERSONAL_ACCESS_TOKEN=...
 ```
 
 Optional settings:

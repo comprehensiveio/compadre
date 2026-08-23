@@ -18,6 +18,8 @@ services:
         sync: false
       - key: DAYTONA_API_KEY
         sync: false
+      - key: GITHUB_PERSONAL_ACCESS_TOKEN
+        sync: false
       - key: COMPADRE_PUBLIC_URL
         sync: false
     previews:
