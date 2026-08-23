@@ -45,6 +45,7 @@ function daytonaSetupCommands(environment: NodeJS.ProcessEnv): string[] {
 export interface CreateHarnessSandboxOptions {
   worktreeId: string;
   localWorktreePath: string;
+  reuseThread?: boolean;
   environment?: NodeJS.ProcessEnv;
   uploads?: Array<{ path: string; data: Uint8Array }>;
 }
@@ -63,6 +64,17 @@ function daytonaAutoStopMinutes(environment: NodeJS.ProcessEnv): number {
   if (!Number.isInteger(value) || value < 36) {
     throw new Error(
       "COMPADRE_DAYTONA_AUTO_STOP_MINUTES must be an integer of at least 36",
+    );
+  }
+  return value;
+}
+
+function daytonaAutoDeleteMinutes(environment: NodeJS.ProcessEnv): number {
+  const raw = environment.COMPADRE_DAYTONA_AUTO_DELETE_MINUTES?.trim() || "10080";
+  const value = Number.parseInt(raw, 10);
+  if (!Number.isInteger(value) || value < 60) {
+    throw new Error(
+      "COMPADRE_DAYTONA_AUTO_DELETE_MINUTES must be an integer of at least 60",
     );
   }
   return value;
@@ -103,6 +115,7 @@ function managedDaytonaProvider(
   environment: NodeJS.ProcessEnv,
 ): SandboxProvider {
   const autoStopMinutes = daytonaAutoStopMinutes(environment);
+  const autoDeleteMinutes = daytonaAutoDeleteMinutes(environment);
   const config = daytonaConfig(environment);
   const daytona = new Daytona(config);
   const workdir = harnessWorkspacePath("/unused", environment);
@@ -118,8 +131,8 @@ function managedDaytonaProvider(
           ...(input.env ? { envVars: input.env } : {}),
           labels: { "compadre.managed": "true" },
           autoStopInterval: autoStopMinutes,
-          autoDeleteInterval: 0,
-          ephemeral: true,
+          autoDeleteInterval: autoDeleteMinutes,
+          ephemeral: false,
         }),
       );
       const quotedWorkdir = `'${workdir.replaceAll("'", `'\\''`)}'`;
@@ -139,6 +152,9 @@ function managedDaytonaProvider(
     async resume(input: SandboxResumeInput) {
       try {
         const sandbox = await withDaytonaRetry(() => daytona.get(input.id));
+        if (sandbox.state !== "started") {
+          await withDaytonaRetry(() => sandbox.start());
+        }
         return new DaytonaHandle({ sandbox, workdir });
       } catch (error) {
         if (isDaytonaNotFound(error)) return null;
@@ -160,6 +176,7 @@ function managedDaytonaProvider(
 export function createHarnessSandbox({
   worktreeId,
   localWorktreePath,
+  reuseThread = true,
   environment = process.env,
   uploads = [],
 }: CreateHarnessSandboxOptions): SandboxDefinition {
@@ -186,9 +203,14 @@ export function createHarnessSandbox({
         setup: daytonaSetupCommands(environment),
       }),
       lifecycle: {
-        reuse: "none",
+        reuse: reuseThread ? "thread" : "none",
         snapshot: "none",
-        destroyOnComplete: true,
+        ...(reuseThread
+          ? {
+              keepAlive: `${daytonaAutoStopMinutes(environment)}m`,
+              destroyOnComplete: false,
+            }
+          : { destroyOnComplete: true }),
       },
       hooks: {
         onReady: async (handle) => {

@@ -51,7 +51,7 @@ test("repository probe measures repository acquisition independently", async () 
   });
 });
 
-test("agent workflow runs the existing conversation stack after repository setup", async () => {
+test("agent workflow runs without preparing an application checkout in the relay", async () => {
   const events: string[] = [];
   const result = await executeAgentWorkflow(
     {
@@ -62,7 +62,7 @@ test("agent workflow runs the existing conversation stack after repository setup
     },
     dependencies({
       ensureRepository() {
-        events.push("repository");
+        events.push("unexpected-repository");
       },
       runConversation: async (options) => {
         events.push(`conversation:${options.threadId}:${options.provider}`);
@@ -79,17 +79,15 @@ test("agent workflow runs the existing conversation stack after repository setup
   );
 
   assert.deepEqual(events, [
-    "repository",
     "conversation:slack-thread:codex",
-    "release:slack-thread",
   ]);
   assert.equal(result.result, "hi");
-  assert.equal(result.repositoryRevision, "abc123");
+  assert.equal(result.repositoryRevision, null);
   assert.deepEqual(result.timings, {
-    repositoryMs: 10,
-    firstActivityMs: 40,
+    repositoryMs: 0,
+    firstActivityMs: 20,
     agentMs: 20,
-    totalMs: 50,
+    totalMs: 30,
   });
 });
 

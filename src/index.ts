@@ -15,12 +15,6 @@ import { webhookRoutes } from "./routes/webhook.js";
 import { aguiRoutes } from "./routes/agui.js";
 import { workflowRunRoutes } from "./routes/workflow-runs.js";
 import { toolBridgeRoutes } from "./routes/tool-bridge.js";
-import {
-  cleanupStaleWorktrees,
-  ensureRepo,
-  refreshRepo,
-  removeWorktree,
-} from "./repo.js";
 import { validateConversationConfiguration } from "./conversation.js";
 import {
   createSingleFlightSlackRecovery,
@@ -28,8 +22,6 @@ import {
   isSlackRecoveryOwner,
   recoverStaleSlackRuns,
 } from "./services/slack-run-recovery.js";
-import { harnessThreadStore } from "./tanstack/thread-state.js";
-import { harnessPreparedWorktrees } from "./tanstack/prepared-worktrees.js";
 import { startConfiguredPullRequestWatch } from "./services/pr-watch-runtime.js";
 import { getConfiguredThreadPersistence } from "./persistence/runtime.js";
 import { RUN_MEMORY_MODE } from "./tanstack/run-memory.js";
@@ -61,8 +53,6 @@ app.route("/", aguiRoutes);
 app.route("/", workflowRunRoutes);
 app.route("/", toolBridgeRoutes);
 
-// Refresh the repo clone periodically (every 15 minutes)
-const REPO_REFRESH_INTERVAL_MS = 15 * 60 * 1000;
 const SLACK_RECOVERY_DELAY_MS = 15_000;
 
 const port = Number(process.env.PORT) || 3100;
@@ -103,43 +93,9 @@ async function start() {
     }
   });
 
-  // Clone or update the repo in the background (can be slow)
-  let repositoryReady = false;
-  {
-    try {
-      ensureRepo();
-      repositoryReady = true;
-      void harnessPreparedWorktrees.refill().catch((error) =>
-        console.error("[worktree-pool] startup refill failed:", error),
-      );
-    } catch (err) {
-      console.error("[startup] repo setup failed — agent will have no codebase access:", err);
-    }
-
-    // Periodic repo refresh and stale worktree cleanup
-    const STALE_WORKTREE_MAX_AGE_MS = 60 * 60 * 1000; // 1 hour
-    const maintainRepo = async () => {
-      refreshRepo();
-      harnessPreparedWorktrees.reconcile();
-      harnessPreparedWorktrees.scheduleRefill();
-      const expiredThreads = await harnessThreadStore.deleteStale(
-        STALE_WORKTREE_MAX_AGE_MS
-      );
-      for (const thread of expiredThreads) removeWorktree(thread.worktreeId);
-      const retainedWorktreeIds = await harnessThreadStore.worktreeIds();
-      for (const worktreeId of harnessPreparedWorktrees.worktreeIds()) {
-        retainedWorktreeIds.add(worktreeId);
-      }
-      cleanupStaleWorktrees(STALE_WORKTREE_MAX_AGE_MS, retainedWorktreeIds);
-    };
-    setInterval(() => {
-      void maintainRepo().catch((error) =>
-        console.error("[repo] maintenance failed:", error)
-      );
-    }, REPO_REFRESH_INTERVAL_MS);
-  }
-
-  void startConfiguredPullRequestWatch(repositoryReady).catch((error) =>
+  // Agent repositories live in Daytona. The PR deployment watcher maintains
+  // its own read-only Git clone only when that optional service is configured.
+  void startConfiguredPullRequestWatch(false).catch((error) =>
     console.error("[pr-watch] initialization failed:", error),
   );
 }
