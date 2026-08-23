@@ -99,17 +99,17 @@ test("prepares Slack images for upload into a remote sandbox", async () => {
           };
         },
       },
-      promptDirectory: "/home/daytona/workspace/.attachments",
+      promptDirectory: "/workspace/.attachments",
     },
   );
 
   assert.match(
     materialized.prompt,
-    /\/home\/daytona\/workspace\/\.attachments\/1-diagram\.png/,
+    /\/workspace\/\.attachments\/1-diagram\.png/,
   );
   assert.deepEqual(materialized.uploads, [
     {
-      path: "/home/daytona/workspace/.attachments/1-diagram.png",
+      path: "/workspace/.attachments/1-diagram.png",
       data: new Uint8Array([1, 2, 3]),
     },
   ]);

@@ -145,7 +145,7 @@ export async function createHarnessStream({
 }: CreateHarnessStreamOptions): Promise<AsyncIterable<StreamChunk>> {
   if (!process.env.COMPADRE_PUBLIC_URL?.trim()) {
     throw new Error(
-      "COMPADRE_PUBLIC_URL is required for the Daytona host-tool bridge",
+      "COMPADRE_PUBLIC_URL is required for the sandbox host-tool bridge",
     );
   }
   const telemetry = createHarnessTelemetryMiddleware({
@@ -182,7 +182,7 @@ export async function createHarnessStream({
       withSandbox(sandbox, {
         ...(sandboxInstances ? { instances: sandboxInstances } : {}),
       }),
-      // A Daytona sandbox cannot reach the relay's loopback listener. The
+      // A Modal sandbox cannot reach the relay's loopback listener. The
       // provisioner publishes the same per-run authenticated TanStack bridge
       // through HTTPS; individual tools remain unaware of this transport.
       withRelayToolBridge,

@@ -10,7 +10,7 @@ test("serves an authenticated run-scoped TanStack tool bridge", async () => {
     NODE_ENV: "test",
     COMPADRE_PUBLIC_URL: "http://relay.test",
   });
-  const bridge = await provisioner.provision([], { provider: "daytona" });
+  const bridge = await provisioner.provision([], { provider: "modal" });
   const bridgeId = new URL(bridge.url).pathname.split("/").at(-1);
   assert.ok(bridgeId);
 
@@ -58,7 +58,7 @@ test("advertises eagerly discovered host MCP tools to the sandbox", async () => 
         },
       },
     ],
-    { provider: "daytona" },
+    { provider: "modal" },
   );
   const bridgeId = new URL(bridge.url).pathname.split("/").at(-1);
   assert.ok(bridgeId);
@@ -106,7 +106,7 @@ test("requires an HTTPS public relay origin outside tests", async () => {
     COMPADRE_PUBLIC_URL: "http://relay.example.com",
   });
   await assert.rejects(
-    provisioner.provision([], { provider: "daytona" }),
+    provisioner.provision([], { provider: "modal" }),
     /must use HTTPS/,
   );
 });

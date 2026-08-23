@@ -65,16 +65,16 @@ See `.env.example` for the full list. Key notes:
 - **SLACK_BOT_TOKEN**: `xoxb-*` token from the Compadre Slack app.
 - The Slack bot needs `reactions:read` in addition to `reactions:write` so a restarted instance can replace interrupted `compadre-thinking` reactions with `compadre-failure`.
 - **GOOGLE_WORKSPACE_USER_EMAIL / GOOGLE_OAUTH_CLIENT_ID / GOOGLE_OAUTH_CLIENT_SECRET / GOOGLE_OAUTH_REFRESH_TOKEN**: OAuth credentials for the Compadre Google Workspace bot user. When set, Compadre enables Google Workspace tools through `workspace-mcp`.
-- **REPO_PATH**: Local checkout used by development and the optional PR deployment watcher. Coding-agent checkouts live in Daytona and are not allocated on the Render request path.
+- **REPO_PATH**: Local checkout used by development and the optional PR deployment watcher. Coding-agent checkouts live in Modal and are not allocated on the Render request path.
 - **COMPADRE_API_KEY**: Auth token for the API. Generate with `openssl rand -hex 32`.
 - **CODEX_API_KEY**: API key for the Codex CLI harness; a persisted Codex login is also supported for local development.
 - **COMPADRE_AGENT_PROVIDER**: Select the default Claude Code or Codex harness. `/prompt` and AG-UI callers may override it per request.
-- **DAYTONA_API_KEY / COMPADRE_DAYTONA_SNAPSHOT**: Daytona is the only coding-harness runtime. Persisted conversation threads reuse one sandbox so filesystem changes survive follow-up messages; idle sandboxes stop after `COMPADRE_DAYTONA_AUTO_STOP_MINUTES` and are deleted after `COMPADRE_DAYTONA_AUTO_DELETE_MINUTES`. Without a snapshot, Compadre installs its pinned Claude Code and Codex CLI versions during initial sandbox setup.
-- **GITHUB_PERSONAL_ACCESS_TOKEN**: Required in production so Daytona can clone
+- **MODAL_TOKEN_ID / MODAL_TOKEN_SECRET**: Modal is the coding-harness runtime. After each successful persisted turn, Compadre snapshots the filesystem, stores its image ID with the thread, and terminates the billed sandbox. The next turn restores that snapshot. Without a prepared base image, Compadre installs its pinned Claude Code and Codex CLI versions during initial setup.
+- **GITHUB_PERSONAL_ACCESS_TOKEN**: Required in production so Modal can clone
   the private repository and the relay can operate configured PR watches.
-- **COMPADRE_PUBLIC_URL**: Public HTTPS origin of the relay. TanStack exposes each run's bearer-authenticated host-tool bridge at this origin so Daytona can invoke tools that still execute on the relay. Individual tool definitions do not contain Daytona-specific code.
-- Runs for the same thread serialize behind its distributed lock. Different threads use independent Daytona sandboxes and may execute concurrently.
-- Daytona isolates harness resource usage from the persistent Render relay and
+- **COMPADRE_PUBLIC_URL**: Public HTTPS origin of the relay. TanStack exposes each run's bearer-authenticated host-tool bridge at this origin so Modal can invoke tools that still execute on the relay. Individual tool definitions do not contain Modal-specific code.
+- Runs for the same thread serialize behind its distributed lock. Different threads use independent Modal sandboxes and may execute concurrently.
+- Modal isolates harness resource usage from the persistent Render relay and
   applies its own sandbox lifecycle limits.
 - **COMPADRE_TANSTACK_AI_ENABLED**: Expose the authenticated AG-UI endpoint without changing Slack routing.
 - **FABLE_MODEL**: Optional model ID used by Slack's `--fable` routing profile. Defaults to `claude-fable-5`; normal Claude Code prompts use `DEFAULT_MODEL` or the built-in default.
@@ -119,16 +119,16 @@ Google Workspace support uses `uvx` because `workspace-mcp` runs as a Python MCP
 
 On Render:
 - The relay accepts requests, persists conversations, and serves authenticated host tools.
-- Coding-agent repositories and shell processes live in Daytona, not Render `/tmp`.
-- Persisted threads reuse their Daytona sandbox; independent threads can run concurrently.
+- Coding-agent repositories and shell processes live in Modal, not Render `/tmp`.
+- Persisted threads restore their latest Modal filesystem snapshot; independent threads can run concurrently.
 - `REPO_PATH` is only needed for local development and the optional PR deployment watcher.
 
-### Daytona agent execution
+### Modal agent execution
 
 The Render Web Service is Compadre's persistent relay and controller. Slack and
 HTTP requests always enter its durable conversation path; the Claude Code or
 Codex process, repository checkout, shell commands, and tests always run in a
-Daytona sandbox. Persisted threads reuse their sandbox and filesystem; one-shot
+Modal sandbox. Persisted threads restore their filesystem snapshot; one-shot
 requests use a disposable sandbox. There is no Render Workflow service or
 runner selection flag.
 
@@ -152,14 +152,14 @@ in-process run and `GET /workflow-runs/:runId/events?offset=-1` serves its
 resumable AG-UI stream. A deployed relay uses the PostgreSQL durability
 backend; the HTTP and event contracts stay the same. Slack consumes that
 durable log through the existing `SlackStream`; it does not depend on the
-Daytona process staying connected to Slack.
-See [the Daytona harness cutover runbook](docs/daytona-harness-cutover.md) for
+Modal process staying connected to Slack.
+See [the Modal harness cutover runbook](docs/modal-harness-cutover.md) for
 the remote execution boundary and deployment checks.
 
 ## Architecture
 
 ```text
-Slack / HTTP -> persistent Render relay/controller -> Daytona harness
+Slack / HTTP -> persistent Render relay/controller -> Modal harness
                               |                         |
                               +-> Postgres              +-> repo/shell/tests
                               +-> MCP/private tools (via authenticated bridge)
@@ -168,19 +168,18 @@ Slack / HTTP -> persistent Render relay/controller -> Daytona harness
 
 The persistent relay keeps Postgres, Slack,
 MCP clients, and private-network tool execution on Render. Claude Code or Codex,
-the repository, shell commands, and tests run in Daytona. Persisted threads
-resume the same sandbox so changes to their working tree survive later messages.
+the repository, shell commands, and tests run in Modal. Persisted threads
+restore their latest snapshot so changes to their working tree survive later messages.
 
 When durability is configured, its persistence backend is the
 canonical source for the provider-neutral transcript and TanStack run/interrupt
 state. Production uses PostgreSQL for restart durability and cross-process
 advisory locking; memory mode is process-local and provides neither guarantee.
-Provider-native sessions and Daytona sandboxes are persisted for durable
+Provider-native sessions and Modal snapshot IDs are persisted for durable
 conversation threads; one-shot requests use disposable sandboxes that are
 destroyed after completion. After a provider switch the PostgreSQL runtime can
 reconstruct context from the neutral transcript. Different threads may run
 concurrently in independent sandboxes, while a distributed lock serializes
 messages within one thread. The runtime reconciles
 stale Slack reactions after a restart. Postgres stores run lifecycle and
-ordered AG-UI delivery events. Durable workspace snapshots and exact Slack
-message continuation remain deliberately deferred.
+ordered AG-UI delivery events.

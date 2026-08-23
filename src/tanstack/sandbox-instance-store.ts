@@ -5,7 +5,7 @@ import {
 } from "@tanstack/ai-sandbox";
 import type { MetadataStore } from "@tanstack/ai-persistence";
 
-const NAMESPACE = "compadre.daytona.sandbox-instances";
+const NAMESPACE = "compadre.modal.sandbox-instances";
 
 function isRecord(value: unknown): value is SandboxInstanceRecord {
   if (!value || typeof value !== "object") return false;
@@ -17,7 +17,7 @@ function isRecord(value: unknown): value is SandboxInstanceRecord {
     typeof record.updatedAt === "number";
 }
 
-/** Persist TanStack's thread-to-Daytona mapping in the existing metadata store. */
+/** Persist TanStack's thread-to-Modal mapping in the existing metadata store. */
 export function metadataSandboxInstanceStore(
   metadata: MetadataStore,
 ): SandboxInstanceStore {

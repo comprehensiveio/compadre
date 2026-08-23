@@ -38,9 +38,8 @@ export function resolveClaudeExecutable(): string {
   if (process.env.CLAUDE_CODE_EXECUTABLE) {
     return process.env.CLAUDE_CODE_EXECUTABLE;
   }
-  if (process.env.COMPADRE_DAYTONA_SKIP_CLI_SETUP === "true") return "claude";
+  if (process.env.COMPADRE_MODAL_SKIP_CLI_SETUP === "true") return "claude";
   const runtimeRoot =
-    process.env.COMPADRE_DAYTONA_CLI_ROOT?.trim() ||
-    "/home/daytona/.compadre-runtime";
+    process.env.COMPADRE_MODAL_CLI_ROOT?.trim() || "/opt/compadre-runtime";
   return `${runtimeRoot}/node_modules/.bin/claude`;
 }

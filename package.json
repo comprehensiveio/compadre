@@ -21,7 +21,6 @@
   "dependencies": {
     "@anthropic-ai/claude-code": "2.1.222",
     "@aws-sdk/client-s3": "^3.1103.0",
-    "@daytona/sdk": "0.191.0",
     "@hono/node-server": "2.1.0",
     "@modelcontextprotocol/sdk": "^1.30.0",
     "@openai/codex": "0.146.0",
@@ -37,12 +36,12 @@
     "@tanstack/ai-mcp": "0.3.0",
     "@tanstack/ai-persistence": "0.1.2",
     "@tanstack/ai-sandbox": "0.3.1",
-    "@tanstack/ai-sandbox-daytona": "0.2.1",
     "@tanstack/ai-sandbox-local-process": "0.2.1",
     "dd-trace": "^5.119.0",
     "dotenv": "^17.4.2",
     "drizzle-orm": "1.0.0-rc.4",
     "hono": "4.13.0",
+    "modal": "^0.9.0",
     "pg": "8.23.0",
     "pg-cursor": "2.22.0",
     "zod": "^4.4.3"

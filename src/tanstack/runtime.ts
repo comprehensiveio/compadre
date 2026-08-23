@@ -176,7 +176,7 @@ async function discardPreparation(
 
 /**
  * Run one AG-UI request through a selected TanStack coding harness. Sessions
- * serialize per thread while independent Daytona workspaces run concurrently.
+ * serialize per thread while independent Modal workspaces run concurrently.
  */
 export async function runAguiChat(
   params: AguiChatParams,

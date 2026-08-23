@@ -14,7 +14,7 @@ export interface WorkflowRunLauncher {
 /**
  * The persistent relay starts the controller in-process. The controller keeps
  * durability, MCP clients, and private-network access on Render; its harness
- * process runs in Daytona.
+ * process runs in Modal.
  */
 export function createLocalWorkflowRunLauncher(
   execute: typeof executeAgentWorkflow = executeAgentWorkflow,

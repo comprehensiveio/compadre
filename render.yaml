@@ -16,7 +16,9 @@ services:
         value: postgres
       - key: COMPADRE_DURABILITY_DATABASE_URL
         sync: false
-      - key: DAYTONA_API_KEY
+      - key: MODAL_TOKEN_ID
+        sync: false
+      - key: MODAL_TOKEN_SECRET
         sync: false
       - key: GITHUB_PERSONAL_ACCESS_TOKEN
         sync: false
