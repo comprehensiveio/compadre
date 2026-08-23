@@ -34,6 +34,12 @@ authenticated tool request fails.
    provider, and repository revision.
 5. For a tool failure, correlate the bridge ID and HTTP status without logging
    its bearer token, arguments, or result.
+   If the bridge registers but receives no request, inspect whether the harness
+   received an MCP server configuration and probe its complete per-run bridge
+   URL from inside the sandbox without credentials. An HTTP 401 proves routing
+   reached bridge authentication. Capture connection error details separately
+   when investigating DNS, TLS, tunnel, or egress failures; treat other HTTP
+   statuses as route or upstream responses before bearer validation.
 6. Correlate deploys or configuration changes only after identifying which
    boundary failed.
 

@@ -46,6 +46,11 @@ export function createRelayToolBridgeProvisioner(
         token,
         core: createToolBridgeCore(tools, coreOptions),
       });
+      console.log("[tool-bridge] registered", {
+        bridgeId,
+        provider: options.provider,
+        toolCount: tools.length,
+      });
       return {
         name: BRIDGED_MCP_SERVER_NAME,
         url: new URL(
@@ -55,6 +60,7 @@ export function createRelayToolBridgeProvisioner(
         token,
         close: async () => {
           activeBridges.delete(bridgeId);
+          console.log("[tool-bridge] closed", { bridgeId });
         },
       };
     },
@@ -83,6 +89,10 @@ export async function dispatchRelayToolBridgeRequest(input: {
   const bridge = activeBridges.get(input.bridgeId);
   if (!bridge) return { status: 404, body: { error: "not found" } };
   if (!timingSafeBearerEqual(input.authorization, bridge.token)) {
+    console.warn("[tool-bridge] request rejected", {
+      bridgeId: input.bridgeId,
+      status: 401,
+    });
     return { status: 401, body: { error: "unauthorized" } };
   }
   const contentLength = Number(input.contentLength);
@@ -92,6 +102,10 @@ export async function dispatchRelayToolBridgeRequest(input: {
   if (input.body === undefined) {
     return { status: 400, body: { error: "invalid JSON body" } };
   }
+  console.log("[tool-bridge] request accepted", {
+    bridgeId: input.bridgeId,
+    status: 200,
+  });
   return {
     status: 200,
     body: await handleBridgeJsonRpc(bridge.core, input.body),

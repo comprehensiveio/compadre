@@ -1,4 +1,5 @@
 import { createMCPClient, type MCPClient } from "@tanstack/ai-mcp";
+import type { AnyServerTool } from "@tanstack/ai";
 import { stdioTransport } from "@tanstack/ai-mcp/stdio";
 import { buildMcpServers } from "../mcp.js";
 
@@ -50,4 +51,25 @@ export async function buildTanStackMcpClients(): Promise<MCPClient[]> {
   );
 
   return clients.filter((client): client is MCPClient => client !== null);
+}
+
+/**
+ * Resolve host-side MCP clients into ordinary server tools before the coding
+ * adapter starts. Coding harness adapters bridge their `tools` input into the
+ * sandbox; making discovery explicit here avoids relying on a later implicit
+ * MCP-to-tools handoff at that process boundary.
+ */
+export async function discoverHarnessMcpTools(
+  clients: ReadonlyArray<MCPClient>,
+): Promise<AnyServerTool[]> {
+  const groups = await Promise.all(clients.map((client) => client.tools()));
+  const tools = groups.flat() as AnyServerTool[];
+  const names = new Set<string>();
+  for (const tool of tools) {
+    if (names.has(tool.name)) {
+      throw new Error(`Duplicate MCP tool name: ${tool.name}`);
+    }
+    names.add(tool.name);
+  }
+  return tools;
 }

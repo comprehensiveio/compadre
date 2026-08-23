@@ -32,6 +32,7 @@ import {
 import { harnessLockStore } from "./thread-lock.js";
 import { deferTerminalHooks } from "./middleware-order.js";
 import { withRelayToolBridge } from "./relay-tool-bridge.js";
+import { discoverHarnessMcpTools } from "./mcp.js";
 
 /** Trusted Compadre harnesses run non-interactively with no approval gates. */
 export const CODEX_DANGEROUS_PERMISSIONS = {
@@ -128,7 +129,7 @@ export function harnessEnvironment(
  * this function—transport, worktrees, MCP, sessions, cancellation, and
  * observability—is shared between harnesses.
  */
-export function createHarnessStream({
+export async function createHarnessStream({
   selection,
   params,
   sessionId,
@@ -141,7 +142,7 @@ export function createHarnessStream({
   persistence,
   locks = harnessLockStore,
   sandboxInstances,
-}: CreateHarnessStreamOptions): AsyncIterable<StreamChunk> {
+}: CreateHarnessStreamOptions): Promise<AsyncIterable<StreamChunk>> {
   if (!process.env.COMPADRE_PUBLIC_URL?.trim()) {
     throw new Error(
       "COMPADRE_PUBLIC_URL is required for the Daytona host-tool bridge",
@@ -164,11 +165,14 @@ export function createHarnessStream({
             : {}),
         })
       : undefined;
+  const tools = mergeAgentTools(
+    await discoverHarnessMcpTools(clients),
+    params.tools,
+  );
   const shared = {
     messages: params.messages,
     systemPrompts: [systemPrompt],
-    tools: mergeAgentTools([], params.tools),
-    mcp: { clients },
+    tools,
     middleware: [
       // Persistence loads history and provides pending-turn state before the
       // sandbox starts, but must save only after the sandbox reconciles tools.

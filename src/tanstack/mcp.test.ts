@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { mcpClientIdentity } from "./mcp.js";
+import type { MCPClient } from "@tanstack/ai-mcp";
+import { discoverHarnessMcpTools, mcpClientIdentity } from "./mcp.js";
 
 test("gives every MCP server a stable tool-name prefix", () => {
   assert.deepEqual(mcpClientIdentity("github"), {
@@ -14,5 +15,40 @@ test("gives every MCP server a stable tool-name prefix", () => {
   assert.notEqual(
     mcpClientIdentity("linear").prefix,
     mcpClientIdentity("github").prefix
+  );
+});
+
+function clientWithTools(names: string[]): MCPClient {
+  return {
+    tools: async () =>
+      names.map((name) => ({
+        name,
+        description: `${name} description`,
+        inputSchema: { type: "object", properties: {} },
+        execute: async () => ({ ok: true }),
+        metadata: { mcp: { title: name } },
+      })),
+  } as unknown as MCPClient;
+}
+
+test("discovers host MCP tools before the sandbox bridge starts", async () => {
+  const tools = await discoverHarnessMcpTools([
+    clientWithTools(["render_list_services"]),
+    clientWithTools(["slack_search"]),
+  ]);
+
+  assert.deepEqual(
+    tools.map((tool) => tool.name),
+    ["render_list_services", "slack_search"],
+  );
+});
+
+test("rejects duplicate host MCP tool names before provisioning", async () => {
+  await assert.rejects(
+    discoverHarnessMcpTools([
+      clientWithTools(["render_list_services"]),
+      clientWithTools(["render_list_services"]),
+    ]),
+    /Duplicate MCP tool name: render_list_services/,
   );
 });
