@@ -152,6 +152,42 @@ test("publishes channel loading states without requiring assistant view", async 
   ]);
 });
 
+test("refreshes a quiet thread status before Slack's two-minute expiry", async () => {
+  const { calls, fetchImpl } = createSlackFetch({
+    "assistant.threads.setStatus": [
+      { ok: true },
+      { ok: true },
+      { ok: true },
+    ],
+  });
+  const stream = new SlackStream({
+    channel: "C123",
+    threadTs: "100.001",
+    botToken: "xoxb-test",
+    fetchImpl,
+    statusRefreshIntervalMs: 50,
+    logger: silentLogger,
+  });
+
+  await stream.setStatus("is running checks...");
+  await new Promise((resolve) => setTimeout(resolve, 70));
+  await stream.clearStatus();
+  await new Promise((resolve) => setTimeout(resolve, 70));
+
+  assert.deepEqual(
+    calls.map(({ method }) => method),
+    [
+      "assistant.threads.setStatus",
+      "assistant.threads.setStatus",
+      "assistant.threads.setStatus",
+    ],
+  );
+  assert.deepEqual(
+    calls.map(({ body }) => body.status),
+    ["is running checks...", "is running checks...", ""],
+  );
+});
+
 test("successful runs clear both live and stale terminal reactions idempotently", async () => {
   const errors: unknown[][] = [];
   const { calls, fetchImpl } = createSlackFetch({

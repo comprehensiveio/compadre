@@ -6,6 +6,10 @@ import {
 
 const SLACK_API = "https://slack.com/api";
 const FLUSH_INTERVAL_MS = 500;
+// Slack removes assistant thread statuses after two minutes when no message has
+// been sent. Refresh comfortably inside that window so long-running tool work
+// remains visibly active before the first response text is available.
+const STATUS_REFRESH_INTERVAL_MS = 90 * 1_000;
 const NATIVE_STREAM_KEEPALIVE_MS = 4 * 60 * 1_000;
 const NATIVE_STREAM_KEEPALIVE = "\u200B";
 
@@ -20,6 +24,7 @@ interface SlackStreamOptions {
   enableStatus?: boolean;
   fetchImpl?: typeof fetch;
   flushIntervalMs?: number;
+  statusRefreshIntervalMs?: number;
   nativeStreamKeepaliveMs?: number;
   logger?: Pick<Console, "info" | "warn" | "error">;
 }
@@ -35,6 +40,7 @@ export class SlackStream {
   private enableStatus: boolean;
   private fetchImpl: typeof fetch;
   private flushIntervalMs: number;
+  private statusRefreshIntervalMs: number;
   private nativeStreamKeepaliveMs: number;
   private logger: Pick<Console, "info" | "warn" | "error">;
   private lastStatus = "";
@@ -48,6 +54,7 @@ export class SlackStream {
   private fullText = "";
   private truncated = false;
   private flushTimer: ReturnType<typeof setTimeout> | null = null;
+  private statusRefreshTimer: ReturnType<typeof setTimeout> | null = null;
   private keepaliveTimer: ReturnType<typeof setTimeout> | null = null;
   private flushing: Promise<void> = Promise.resolve();
 
@@ -60,6 +67,7 @@ export class SlackStream {
     enableStatus = true,
     fetchImpl = fetch,
     flushIntervalMs = FLUSH_INTERVAL_MS,
+    statusRefreshIntervalMs = STATUS_REFRESH_INTERVAL_MS,
     nativeStreamKeepaliveMs = NATIVE_STREAM_KEEPALIVE_MS,
     logger = console,
   }: SlackStreamOptions) {
@@ -71,6 +79,7 @@ export class SlackStream {
     this.enableStatus = enableStatus;
     this.fetchImpl = fetchImpl;
     this.flushIntervalMs = flushIntervalMs;
+    this.statusRefreshIntervalMs = statusRefreshIntervalMs;
     this.nativeStreamKeepaliveMs = nativeStreamKeepaliveMs;
     this.logger = logger;
   }
@@ -85,12 +94,19 @@ export class SlackStream {
         thread_ts: this.threadTs,
         status: text,
       });
+      if (this.lastStatus === text && !this.streamEnded) {
+        this.scheduleStatusRefresh();
+      }
     });
     await this.statusUpdating;
   }
 
   async clearStatus(): Promise<void> {
     if (!this.enableStatus) return;
+    if (this.statusRefreshTimer) {
+      clearTimeout(this.statusRefreshTimer);
+      this.statusRefreshTimer = null;
+    }
     this.lastStatus = "";
     this.statusUpdating = this.statusUpdating.then(async () => {
       await this.call("assistant.threads.setStatus", {
@@ -100,6 +116,38 @@ export class SlackStream {
       });
     });
     await this.statusUpdating;
+  }
+
+  private scheduleStatusRefresh(): void {
+    if (this.statusRefreshTimer) clearTimeout(this.statusRefreshTimer);
+    if (
+      this.statusRefreshIntervalMs <= 0 ||
+      this.streamEnded ||
+      !this.lastStatus
+    ) {
+      this.statusRefreshTimer = null;
+      return;
+    }
+    this.statusRefreshTimer = setTimeout(() => {
+      this.statusRefreshTimer = null;
+      this.statusUpdating = this.statusUpdating.then(() =>
+        this.refreshCurrentStatus(),
+      );
+    }, this.statusRefreshIntervalMs);
+    this.statusRefreshTimer.unref();
+  }
+
+  private async refreshCurrentStatus(): Promise<void> {
+    const status = this.lastStatus;
+    if (this.streamEnded || !status) return;
+    await this.call("assistant.threads.setStatus", {
+      channel_id: this.channel,
+      thread_ts: this.threadTs,
+      status,
+    });
+    if (this.lastStatus === status && !this.streamEnded) {
+      this.scheduleStatusRefresh();
+    }
   }
 
   async addReaction(name: string, messageTs: string): Promise<void> {
@@ -182,6 +230,10 @@ export class SlackStream {
 
   async stopStream(): Promise<void> {
     this.streamEnded = true;
+    if (this.statusRefreshTimer) {
+      clearTimeout(this.statusRefreshTimer);
+      this.statusRefreshTimer = null;
+    }
     if (this.keepaliveTimer) {
       clearTimeout(this.keepaliveTimer);
       this.keepaliveTimer = null;

@@ -81,6 +81,11 @@ Prefer exact identifiers and narrow time windows. Render service instance suffix
   active and can also indicate a stuck or runaway process. Require repeated
   samples plus completion, process exit, or sandbox-lifecycle evidence before
   declaring validation successful.
+- Slack automatically removes an `assistant.threads.setStatus` indicator after
+  two minutes if the app has not sent a message. This can make a healthy
+  pre-text tool run look abandoned even though no native `chat.startStream`
+  exists yet. Compadre refreshes the current thread status inside that window;
+  diagnose status expiry separately from native response-stream expiry.
 - Compare observed duration with `src/agent-timeouts.ts` and the configured
   Modal sandbox lifetime before calling a failure a timeout.
 - `message_not_in_streaming_state` means Slack closed that native delivery
