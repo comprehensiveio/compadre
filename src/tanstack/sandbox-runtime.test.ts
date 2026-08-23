@@ -40,4 +40,9 @@ test("keeps generated one-shot sandboxes ephemeral", () => {
     snapshot: "none",
     destroyOnComplete: true,
   });
+  const setup = sandbox.workspace?.setup;
+  assert.ok(Array.isArray(setup));
+  assert.equal(setup.length, 1);
+  assert.match(String(setup[0]), /^git .*clone/);
+  assert.doesNotMatch(String(setup[0]), /npm install/);
 });

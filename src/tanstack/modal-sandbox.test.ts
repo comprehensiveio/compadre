@@ -4,6 +4,7 @@ import { SandboxFilesystemNotFoundError, type Sandbox } from "modal";
 import {
   ModalHandle,
   MODAL_CAPS,
+  modalImageCommands,
   modalSandboxProvider,
 } from "./modal-sandbox.js";
 
@@ -75,5 +76,19 @@ test("rejects malformed Modal resource settings before provisioning", () => {
         environment: { COMPADRE_MODAL_MEMORY_MIB: "many" },
       }),
     /COMPADRE_MODAL_MEMORY_MIB must be a positive number/,
+  );
+});
+
+test("bakes pinned harness CLIs into the default Modal image", () => {
+  const commands = modalImageCommands({});
+  assert.match(commands.join("\n"), /claude-code@2\.1\.222/);
+  assert.match(commands.join("\n"), /codex@0\.146\.0/);
+  assert.match(commands.join("\n"), /--prefix '\/opt\/compadre-runtime'/);
+});
+
+test("allows a custom Modal image to supply its own harness CLIs", () => {
+  assert.doesNotMatch(
+    modalImageCommands({ COMPADRE_MODAL_SKIP_CLI_SETUP: "true" }).join("\n"),
+    /npm install/,
   );
 });

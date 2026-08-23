@@ -40,6 +40,8 @@ const DEFAULT_IMAGE = "node:22";
 const DEFAULT_WORKDIR = "/workspace";
 const DEFAULT_TIMEOUT_MS = 2 * 60 * 60 * 1_000;
 const DEFAULT_SNAPSHOT_TTL_MS = 7 * 24 * 60 * 60 * 1_000;
+const CLAUDE_CODE_VERSION = "2.1.222";
+const CODEX_VERSION = "0.146.0";
 
 function positiveNumberSetting(
   name: string,
@@ -60,6 +62,22 @@ function shellCommand(command: string): string[] {
 
 function quote(value: string): string {
   return `'${value.replaceAll("'", `'\\''`)}'`;
+}
+
+/** Build immutable image layers so per-request setup only clones the repository. */
+export function modalImageCommands(environment: NodeJS.ProcessEnv): string[] {
+  const workdir = environment.COMPADRE_MODAL_WORKDIR?.trim() || DEFAULT_WORKDIR;
+  const runtimeRoot =
+    environment.COMPADRE_MODAL_CLI_ROOT?.trim() || "/opt/compadre-runtime";
+  return [
+    "RUN apt-get update -qq && apt-get install -y -qq --no-install-recommends git ca-certificates curl && rm -rf /var/lib/apt/lists/*",
+    `RUN mkdir -p ${quote(workdir)} ${quote(runtimeRoot)}`,
+    ...(environment.COMPADRE_MODAL_SKIP_CLI_SETUP === "true"
+      ? []
+      : [
+          `RUN npm install --prefix ${quote(runtimeRoot)} --no-save @anthropic-ai/claude-code@${CLAUDE_CODE_VERSION} @openai/codex@${CODEX_VERSION}`,
+        ]),
+  ];
 }
 
 async function processResult(
@@ -236,18 +254,71 @@ export interface ModalSandboxProviderOptions {
   client?: ModalClient;
 }
 
-export function modalSandboxProvider(
-  options: ModalSandboxProviderOptions = {},
-): SandboxProvider {
-  const environment = options.environment ?? process.env;
+interface ModalRuntime {
+  client: ModalClient;
+  app(): Promise<App>;
+  baseImage(): Promise<Image>;
+}
+
+let sharedRuntime:
+  | { key: string; value: ModalRuntime }
+  | undefined;
+
+function modalRuntime(
+  environment: NodeJS.ProcessEnv,
+  providedClient?: ModalClient,
+): ModalRuntime {
+  const appName = environment.COMPADRE_MODAL_APP?.trim() || DEFAULT_APP_NAME;
+  const baseImageName =
+    environment.COMPADRE_MODAL_BASE_IMAGE?.trim() || DEFAULT_IMAGE;
+  const key = JSON.stringify([
+    environment.MODAL_TOKEN_ID,
+    environment.MODAL_ENVIRONMENT,
+    appName,
+    baseImageName,
+    ...modalImageCommands(environment),
+  ]);
+  if (!providedClient && sharedRuntime?.key === key) return sharedRuntime.value;
+
   const client =
-    options.client ??
+    providedClient ??
     new ModalClient({
       tokenId: environment.MODAL_TOKEN_ID,
       tokenSecret: environment.MODAL_TOKEN_SECRET,
       environment: environment.MODAL_ENVIRONMENT,
     });
-  const appName = environment.COMPADRE_MODAL_APP?.trim() || DEFAULT_APP_NAME;
+  let appPromise: Promise<App> | undefined;
+  let imagePromise: Promise<Image> | undefined;
+  const app = () =>
+    (appPromise ??= client.apps.fromName(appName, { createIfMissing: true }));
+  const value: ModalRuntime = {
+    client,
+    app,
+    baseImage: () =>
+      (imagePromise ??= (async () =>
+        client.images
+          .fromRegistry(baseImageName)
+          .dockerfileCommands(modalImageCommands(environment))
+          .build(await app()))()),
+  };
+  if (!providedClient) sharedRuntime = { key, value };
+  return value;
+}
+
+/** Resolve or build the cached Modal image without creating a billed sandbox. */
+export async function prepareModalBaseImage(
+  environment: NodeJS.ProcessEnv = process.env,
+): Promise<{ imageId: string }> {
+  const image = await modalRuntime(environment).baseImage();
+  return { imageId: image.imageId };
+}
+
+export function modalSandboxProvider(
+  options: ModalSandboxProviderOptions = {},
+): SandboxProvider {
+  const environment = options.environment ?? process.env;
+  const runtime = modalRuntime(environment, options.client);
+  const { client } = runtime;
   const workdir = environment.COMPADRE_MODAL_WORKDIR?.trim() || DEFAULT_WORKDIR;
   const timeoutMs = positiveNumberSetting(
     "COMPADRE_MODAL_TIMEOUT_MS",
@@ -279,24 +350,8 @@ export function modalSandboxProvider(
     environment.COMPADRE_MODAL_MEMORY_LIMIT_MIB,
     8192,
   );
-  let appPromise: Promise<App> | undefined;
-  let imagePromise: Promise<Image> | undefined;
-  const app = () =>
-    (appPromise ??= client.apps.fromName(appName, { createIfMissing: true }));
-  const baseImage = () =>
-    (imagePromise ??= (async () => {
-      const blueprint = client.images
-        .fromRegistry(
-          environment.COMPADRE_MODAL_BASE_IMAGE?.trim() || DEFAULT_IMAGE,
-        )
-        .dockerfileCommands([
-          "RUN apt-get update -qq && apt-get install -y -qq --no-install-recommends git ca-certificates curl && rm -rf /var/lib/apt/lists/*",
-          `RUN mkdir -p ${quote(workdir)} ${quote(environment.COMPADRE_MODAL_CLI_ROOT?.trim() || "/opt/compadre-runtime")}`,
-        ]);
-      return blueprint.build(await app());
-    })());
   const create = async (image: Image, id?: string, env?: Record<string, string>) => {
-    const sandbox = await client.sandboxes.create(await app(), image, {
+    const sandbox = await client.sandboxes.create(await runtime.app(), image, {
       ...(id ? { name: id } : {}),
       command: ["sleep", "infinity"],
       workdir,
@@ -314,7 +369,8 @@ export function modalSandboxProvider(
   return {
     name: "modal",
     capabilities: () => MODAL_CAPS,
-    create: async (input) => create(await baseImage(), input.id, input.env),
+    create: async (input) =>
+      create(await runtime.baseImage(), input.id, input.env),
     resume: async (input) => {
       try {
         const sandbox = await client.sandboxes.fromId(input.id);

@@ -22,13 +22,7 @@ function modalSetupCommands(environment: NodeJS.ProcessEnv): string[] {
   const clone = environment.GITHUB_PERSONAL_ACCESS_TOKEN
     ? `git -c credential.helper='!f() { echo "username=$GIT_ASKPASS_USER"; echo "password=$GIT_ASKPASS_TOKEN"; }; f' clone --depth 1 --single-branch --branch ${quote(branch)} -- ${quote(repositoryUrl)} .`
     : `git clone --depth 1 --single-branch --branch ${quote(branch)} -- ${quote(repositoryUrl)} .`;
-  if (environment.COMPADRE_MODAL_SKIP_CLI_SETUP === "true") return [clone];
-  const runtimeRoot =
-    environment.COMPADRE_MODAL_CLI_ROOT?.trim() || "/opt/compadre-runtime";
-  return [
-    clone,
-    `npm install --prefix ${JSON.stringify(runtimeRoot)} --no-save @anthropic-ai/claude-code@2.1.222 @openai/codex@0.146.0`,
-  ];
+  return [clone];
 }
 
 export interface CreateHarnessSandboxOptions {
