@@ -41,6 +41,19 @@ const DEFAULT_WORKDIR = "/workspace";
 const DEFAULT_TIMEOUT_MS = 2 * 60 * 60 * 1_000;
 const DEFAULT_SNAPSHOT_TTL_MS = 7 * 24 * 60 * 60 * 1_000;
 
+function positiveNumberSetting(
+  name: string,
+  raw: string | undefined,
+  fallback: number,
+): number {
+  if (!raw?.trim()) return fallback;
+  const value = Number(raw);
+  if (!Number.isFinite(value) || value <= 0) {
+    throw new Error(`${name} must be a positive number`);
+  }
+  return value;
+}
+
 function shellCommand(command: string): string[] {
   return ["bash", "-lc", command];
 }
@@ -236,14 +249,35 @@ export function modalSandboxProvider(
     });
   const appName = environment.COMPADRE_MODAL_APP?.trim() || DEFAULT_APP_NAME;
   const workdir = environment.COMPADRE_MODAL_WORKDIR?.trim() || DEFAULT_WORKDIR;
-  const timeoutMs = Number.parseInt(
-    environment.COMPADRE_MODAL_TIMEOUT_MS?.trim() || String(DEFAULT_TIMEOUT_MS),
-    10,
+  const timeoutMs = positiveNumberSetting(
+    "COMPADRE_MODAL_TIMEOUT_MS",
+    environment.COMPADRE_MODAL_TIMEOUT_MS,
+    DEFAULT_TIMEOUT_MS,
   );
-  const snapshotTtlMs = Number.parseInt(
-    environment.COMPADRE_MODAL_SNAPSHOT_TTL_MS?.trim() ||
-      String(DEFAULT_SNAPSHOT_TTL_MS),
-    10,
+  const snapshotTtlMs = positiveNumberSetting(
+    "COMPADRE_MODAL_SNAPSHOT_TTL_MS",
+    environment.COMPADRE_MODAL_SNAPSHOT_TTL_MS,
+    DEFAULT_SNAPSHOT_TTL_MS,
+  );
+  const cpu = positiveNumberSetting(
+    "COMPADRE_MODAL_CPU",
+    environment.COMPADRE_MODAL_CPU,
+    0.5,
+  );
+  const cpuLimit = positiveNumberSetting(
+    "COMPADRE_MODAL_CPU_LIMIT",
+    environment.COMPADRE_MODAL_CPU_LIMIT,
+    2,
+  );
+  const memoryMiB = positiveNumberSetting(
+    "COMPADRE_MODAL_MEMORY_MIB",
+    environment.COMPADRE_MODAL_MEMORY_MIB,
+    2048,
+  );
+  const memoryLimitMiB = positiveNumberSetting(
+    "COMPADRE_MODAL_MEMORY_LIMIT_MIB",
+    environment.COMPADRE_MODAL_MEMORY_LIMIT_MIB,
+    8192,
   );
   let appPromise: Promise<App> | undefined;
   let imagePromise: Promise<Image> | undefined;
@@ -267,12 +301,10 @@ export function modalSandboxProvider(
       command: ["sleep", "infinity"],
       workdir,
       timeoutMs,
-      cpu: Number(environment.COMPADRE_MODAL_CPU || "0.5"),
-      cpuLimit: Number(environment.COMPADRE_MODAL_CPU_LIMIT || "2"),
-      memoryMiB: Number(environment.COMPADRE_MODAL_MEMORY_MIB || "2048"),
-      memoryLimitMiB: Number(
-        environment.COMPADRE_MODAL_MEMORY_LIMIT_MIB || "8192",
-      ),
+      cpu,
+      cpuLimit,
+      memoryMiB,
+      memoryLimitMiB,
       ...(env ? { env } : {}),
       tags: { managedBy: "compadre" },
     });

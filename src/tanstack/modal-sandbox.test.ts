@@ -1,7 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { SandboxFilesystemNotFoundError, type Sandbox } from "modal";
-import { ModalHandle, MODAL_CAPS } from "./modal-sandbox.js";
+import {
+  ModalHandle,
+  MODAL_CAPS,
+  modalSandboxProvider,
+} from "./modal-sandbox.js";
 
 function sandboxStub(overrides: Record<string, unknown> = {}): Sandbox {
   return {
@@ -62,4 +66,14 @@ test("treats an absent Modal filesystem path as non-existent", async () => {
   const handle = new ModalHandle(sandbox);
 
   assert.equal(await handle.fs.exists("/workspace/pnpm-lock.yaml"), false);
+});
+
+test("rejects malformed Modal resource settings before provisioning", () => {
+  assert.throws(
+    () =>
+      modalSandboxProvider({
+        environment: { COMPADRE_MODAL_MEMORY_MIB: "many" },
+      }),
+    /COMPADRE_MODAL_MEMORY_MIB must be a positive number/,
+  );
 });

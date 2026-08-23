@@ -126,11 +126,12 @@ On Render:
 ### Modal agent execution
 
 The Render Web Service is Compadre's persistent relay and controller. Slack and
-HTTP requests always enter its durable conversation path; the Claude Code or
-Codex process, repository checkout, shell commands, and tests always run in a
-Modal sandbox. Persisted threads restore their filesystem snapshot; one-shot
-requests use a disposable sandbox. There is no Render Workflow service or
-runner selection flag.
+HTTP requests use its durable conversation path in the deployed configuration
+(and locally when durability is configured); the Claude Code or Codex process,
+repository checkout, shell commands, and tests always run in a Modal sandbox.
+Persisted threads restore their filesystem snapshot; one-shot requests use a
+disposable sandbox. There is no Render Workflow service or runner selection
+flag.
 
 Slack makes at most one automatic continuation turn when an agent returns a
 clean but incomplete terminal outcome. It reuses the persisted thread with a
