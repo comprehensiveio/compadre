@@ -30,6 +30,7 @@ import {
 } from "./run-memory.js";
 import { harnessLockStore } from "./thread-lock.js";
 import { deferTerminalHooks } from "./middleware-order.js";
+import { withRelayToolBridge } from "./relay-tool-bridge.js";
 
 /** Trusted Compadre harnesses run non-interactively with no approval gates. */
 export const CODEX_DANGEROUS_PERMISSIONS = {
@@ -105,9 +106,16 @@ function codexReasoningEffort(): "minimal" | "low" | "medium" | "high" {
 export function harnessEnvironment(
   worktreePath: string,
   environment: NodeJS.ProcessEnv = process.env,
+  provider?: AgentProvider,
 ): Record<string, string> {
   return {
     ...gitAuthenticationEnvironment(environment),
+    ...(provider === "claude-code" && environment.ANTHROPIC_API_KEY
+      ? { ANTHROPIC_API_KEY: environment.ANTHROPIC_API_KEY }
+      : {}),
+    ...(provider === "codex" && environment.CODEX_API_KEY
+      ? { CODEX_API_KEY: environment.CODEX_API_KEY }
+      : {}),
     COMPADRE_SKIP_WORKTREE_SETUP: "1",
     GIT_CEILING_DIRECTORIES: path.dirname(path.resolve(worktreePath)),
   };
@@ -131,6 +139,11 @@ export function createHarnessStream({
   persistence,
   locks = harnessLockStore,
 }: CreateHarnessStreamOptions): AsyncIterable<StreamChunk> {
+  if (!process.env.COMPADRE_PUBLIC_URL?.trim()) {
+    throw new Error(
+      "COMPADRE_PUBLIC_URL is required for the Daytona host-tool bridge",
+    );
+  }
   const telemetry = createHarnessTelemetryMiddleware({
     selection,
     threadId: params.threadId,
@@ -160,6 +173,10 @@ export function createHarnessStream({
       ...(runMemory ? [runMemory] : []),
       withLocks(locks),
       withSandbox(sandbox),
+      // A Daytona sandbox cannot reach the relay's loopback listener. The
+      // provisioner publishes the same per-run authenticated TanStack bridge
+      // through HTTPS; individual tools remain unaware of this transport.
+      withRelayToolBridge,
       ...(persistenceMiddleware ? [persistenceMiddleware.terminal] : []),
       ...telemetry,
     ],
@@ -181,7 +198,7 @@ export function createHarnessStream({
         networkAccessEnabled: true,
         webSearchMode: "live",
         modelReasoningEffort: codexReasoningEffort(),
-        env: harnessEnvironment(worktreePath),
+        env: harnessEnvironment(worktreePath, process.env, "codex"),
       }),
       modelOptions: {
         modelReasoningEffort: codexReasoningEffort(),
@@ -196,7 +213,7 @@ export function createHarnessStream({
       claudeExecutable: resolveClaudeExecutable(),
       ...CLAUDE_DANGEROUS_PERMISSIONS,
       systemPromptMode: "replace",
-      env: harnessEnvironment(worktreePath),
+      env: harnessEnvironment(worktreePath, process.env, "claude-code"),
     }),
     modelOptions: {
       ...(sessionId ? { sessionId } : {}),

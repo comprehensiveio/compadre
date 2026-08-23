@@ -5,18 +5,8 @@ import {
   createLocalWorkflowRunLauncher,
 } from "./workflow-run-launcher.js";
 
-test("uses the database-free in-process runner by default", () => {
-  assert.doesNotThrow(() => createConfiguredWorkflowRunLauncher({}));
-});
-
-test("requires an explicit Workflow slug for the Render runner", () => {
-  assert.throws(
-    () =>
-      createConfiguredWorkflowRunLauncher({
-        COMPADRE_WORKFLOW_RUNNER: "render",
-      }),
-    /COMPADRE_RENDER_WORKFLOW_SLUG/,
-  );
+test("always uses the in-process controller", () => {
+  assert.doesNotThrow(() => createConfiguredWorkflowRunLauncher());
 });
 
 test("lets a concurrent local waiter observe task completion", async () => {

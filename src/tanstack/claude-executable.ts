@@ -38,17 +38,9 @@ export function resolveClaudeExecutable(): string {
   if (process.env.CLAUDE_CODE_EXECUTABLE) {
     return process.env.CLAUDE_CODE_EXECUTABLE;
   }
-
-  const packageName = bundledPackageName();
-  if (packageName) {
-    try {
-      const filename = process.platform === "win32" ? "claude.exe" : "claude";
-      return require.resolve(`${packageName}/${filename}`);
-    } catch {
-      // Optional native packages may be omitted in slim installs. Let PATH be
-      // the final fallback so a separately installed Claude CLI still works.
-    }
-  }
-
-  return "claude";
+  if (process.env.COMPADRE_DAYTONA_SKIP_CLI_SETUP === "true") return "claude";
+  const runtimeRoot =
+    process.env.COMPADRE_DAYTONA_CLI_ROOT?.trim() ||
+    "/home/daytona/.compadre-runtime";
+  return `${runtimeRoot}/node_modules/.bin/claude`;
 }

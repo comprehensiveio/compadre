@@ -6,11 +6,6 @@ import {
   type ModelMessage,
   type StreamChunk,
 } from "@tanstack/ai";
-import {
-  defineSandbox,
-  defineWorkspace,
-} from "@tanstack/ai-sandbox";
-import { localProcessSandbox } from "@tanstack/ai-sandbox-local-process";
 import { getBaseSystemPrompt } from "../prompts/index.js";
 import { createChannelConversationPersistence } from "../persistence/conversation.js";
 import {
@@ -48,10 +43,11 @@ import {
 } from "./thread-lock.js";
 import { harnessPreparedWorktrees } from "./prepared-worktrees.js";
 import {
-  createAgentProcessMonitor,
-  type AgentProcessMonitor,
-} from "./process-supervisor.js";
-import { superviseSandboxProvider } from "./supervised-provider.js";
+  createHarnessSandbox,
+  harnessWorkspacePath,
+} from "./sandbox-runtime.js";
+
+export { createHarnessSandbox } from "./sandbox-runtime.js";
 import {
   HarnessRunTelemetry,
   type WorktreeSource,
@@ -80,37 +76,6 @@ function latestUserInput(
 interface ActiveRunLeases {
   capacity: ThreadRunLease;
   thread: ThreadRunLease;
-}
-
-/** Build the provider-neutral workspace boundary shared by every harness. */
-export function createHarnessSandbox(
-  worktreeId: string,
-  worktreePath: string,
-  processMonitor?: AgentProcessMonitor,
-) {
-  const localProvider = localProcessSandbox({
-    dir: worktreePath,
-    removeOnDestroy: false,
-  });
-  return defineSandbox({
-    id: `compadre-agui-${worktreeId}`,
-    provider: processMonitor
-      ? superviseSandboxProvider(localProvider, (pid) =>
-          processMonitor.trackRoot(pid),
-        )
-      : localProvider,
-    workspace: defineWorkspace({
-      source: { type: "local", path: worktreePath },
-    }),
-    lifecycle: {
-      reuse: "thread",
-      snapshot: "none",
-      destroyOnComplete: false,
-    },
-    // Harness events already describe edits. Disable the extra filesystem
-    // watcher to avoid duplicate events and watcher overhead.
-    fileEvents: false,
-  });
 }
 
 async function removeProjectionMarkers(worktreePath: string): Promise<void> {
@@ -378,8 +343,9 @@ async function prepareAguiChat(
     return { thread, worktreeId, worktreePath };
   });
   const { thread, worktreeId, worktreePath } = allocation;
+  const remoteAttachmentDirectory = `${harnessWorkspacePath(worktreePath)}/.compadre-attachments-${worktreeId}`;
   const attachments = await materializeSlackFiles(options.slackFiles ?? [], {
-    directoryPrefix: `${worktreePath}/.compadre-attachments-`,
+    promptDirectory: remoteAttachmentDirectory,
   });
   const inputParams = attachments.prompt
     ? {
@@ -452,20 +418,12 @@ async function prepareAguiChat(
     throw abortController.signal.reason;
   }
 
-  const processMonitor = createAgentProcessMonitor(
-    params.runId,
-    (sample) =>
-      telemetry.observeMemory(
-        sample.treeRssBytes,
-        sample.hostUsageBytes,
-        sample.hostLimitBytes,
-      ),
-  );
-  const sandbox = createHarnessSandbox(
+  const harnessWorktreePath = harnessWorkspacePath(worktreePath);
+  const sandbox = createHarnessSandbox({
     worktreeId,
-    worktreePath,
-    processMonitor,
-  );
+    localWorktreePath: worktreePath,
+    uploads: attachments.uploads,
+  });
 
   let stream: AsyncIterable<StreamChunk>;
   try {
@@ -474,19 +432,19 @@ async function prepareAguiChat(
         selection,
         params: effectiveParams,
         sessionId,
-        worktreePath,
+        worktreePath: harnessWorktreePath,
         worktreeId,
         clients,
         sandbox,
         abortController,
         systemPrompt:
-          options.systemPrompt?.(worktreePath) ?? getBaseSystemPrompt(worktreePath),
+          options.systemPrompt?.(harnessWorktreePath) ??
+          getBaseSystemPrompt(harnessWorktreePath),
         persistence,
         locks: threadPersistence?.locks,
       }),
     );
   } catch (error) {
-    processMonitor.stop();
     removeAbortListeners();
     await attachments.cleanup();
     await discardPreparation(params.threadId, worktreeId, clients);
@@ -530,7 +488,6 @@ async function prepareAguiChat(
       } catch (error) {
         failure ??= error;
       }
-      processMonitor.stop();
       removeAbortListeners();
       await attachments.cleanup();
       await Promise.allSettled(clients.map((client) => client.close()));
