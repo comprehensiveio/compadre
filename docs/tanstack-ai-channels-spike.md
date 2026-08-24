@@ -24,7 +24,8 @@ provider-neutral transcript continuity, MCP clients, and telemetry.
 # claude-code or codex
 COMPADRE_AGENT_PROVIDER=claude-code
 
-# Agent execution uses a code-owned 30-minute deadline.
+# Agent execution has no Compadre-owned wall-clock deadline. Callers and the
+# execution platform may still cancel a run explicitly.
 
 ANTHROPIC_API_KEY=...
 DEFAULT_MODEL=claude-opus-5
@@ -49,9 +50,10 @@ uses `bypassPermissions`; Codex uses `danger-full-access`, `approvalPolicy:
 never`, and automatic MCP approval. This service therefore assumes its process,
 credentials, prompts, and configured MCP servers are trusted.
 
-Both harnesses share the code-owned 30-minute wall-clock deadline. Render's
-Workflow envelope allows 35 minutes for cleanup and terminal persistence, and
-the relay monitors it for 36 minutes so it observes the platform outcome.
+Neither harness has a Compadre-owned wall-clock deadline. This lets long-running
+work, including GitHub Actions monitoring and follow-up fixes, finish normally.
+Callers can still cancel through the propagated abort signal, and Modal retains
+its platform and per-command safeguards.
 
 ## AG-UI
 

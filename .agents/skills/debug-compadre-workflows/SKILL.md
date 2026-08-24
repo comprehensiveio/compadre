@@ -86,8 +86,9 @@ Prefer exact identifiers and narrow time windows. Render service instance suffix
   pre-text tool run look abandoned even though no native `chat.startStream`
   exists yet. Compadre refreshes the current thread status inside that window;
   diagnose status expiry separately from native response-stream expiry.
-- Compare observed duration with `src/agent-timeouts.ts` and the configured
-  Modal sandbox lifetime before calling a failure a timeout.
+- Compadre does not impose a wall-clock agent deadline. Compare observed
+  duration with explicit caller cancellation and the configured Modal sandbox
+  lifetime before calling a failure a timeout.
 - `message_not_in_streaming_state` means Slack closed that native delivery
   stream; it does not establish whether the agent succeeded, failed, or is
   still running. Correlate the harness and workflow terminal evidence.
