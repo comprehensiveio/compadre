@@ -60,3 +60,21 @@ test("teaches harnesses to prepare dependencies only when needed", () => {
   assert.match(prompt, /scripts\/worktree-up\.sh --hook/);
   assert.match(prompt, /Reading, searching, editing, and git do not require setup/);
 });
+
+test("points harnesses at projected provider-neutral skills", () => {
+  const prompt = getBaseSystemPrompt("/tmp/test-repo");
+
+  assert.match(
+    prompt,
+    /\/opt\/compadre-skills\/query-database\/SKILL\.md/,
+  );
+  assert.match(
+    prompt,
+    /\/opt\/compadre-skills\/pull-request\/SKILL\.md/,
+  );
+  assert.match(
+    prompt,
+    /\/opt\/compadre-skills\/integration-debugging\/SKILL\.md/,
+  );
+  assert.doesNotMatch(prompt, /\/opt\/render\/project/);
+});

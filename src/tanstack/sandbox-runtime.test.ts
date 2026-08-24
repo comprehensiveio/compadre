@@ -46,3 +46,45 @@ test("keeps generated one-shot sandboxes ephemeral", () => {
   assert.match(String(setup[0]), /^git .*clone/);
   assert.doesNotMatch(String(setup[0]), /npm install/);
 });
+
+test("does not project skills before the setup-time clone", () => {
+  const sandbox = createHarnessSandbox({
+    worktreeId: "skill-workspace",
+    localWorktreePath: "/unused",
+    environment: { MODAL_TOKEN_ID: "test-id", MODAL_TOKEN_SECRET: "test-secret" },
+  });
+  assert.deepEqual(sandbox.workspace?.skills, undefined);
+});
+
+test("writes Compadre skills after the setup-time clone", async () => {
+  const sandbox = createHarnessSandbox({
+    worktreeId: "skill-workspace",
+    localWorktreePath: "/unused",
+    environment: { MODAL_TOKEN_ID: "test-id", MODAL_TOKEN_SECRET: "test-secret" },
+  });
+  const directories: string[] = [];
+  const files = new Map<string, Uint8Array>();
+  const onReady = sandbox.hooks?.onReady;
+  assert.ok(onReady);
+
+  await onReady({
+    fs: {
+      mkdir: async (path: string) => { directories.push(path); },
+      write: async (path: string, data: Uint8Array) => { files.set(path, data); },
+    },
+  } as never);
+
+  assert.deepEqual(directories, [
+    "/opt/compadre-skills/query-database",
+    "/opt/compadre-skills/pull-request",
+    "/opt/compadre-skills/integration-debugging",
+  ]);
+  assert.deepEqual([...files.keys()], [
+    "/opt/compadre-skills/query-database/SKILL.md",
+    "/opt/compadre-skills/pull-request/SKILL.md",
+    "/opt/compadre-skills/integration-debugging/SKILL.md",
+  ]);
+  for (const data of files.values()) {
+    assert.match(Buffer.from(data).toString("utf8"), /^---\nname:/);
+  }
+});

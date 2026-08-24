@@ -1,11 +1,5 @@
-import path from "node:path";
-import { fileURLToPath } from "node:url";
 import { REPO_PATH } from "../config.js";
-
-const COMPADRE_ROOT = path.resolve(
-  path.dirname(fileURLToPath(import.meta.url)),
-  "../.."
-);
+import { sandboxCompadreSkillPath } from "../compadre-skills.js";
 
 function currentTimestamp() {
   const now = new Date();
@@ -202,9 +196,9 @@ Users often use informal terms. Map them to the correct database tables and conc
 You have skills available via /skill-name syntax. Skills contain critical domain knowledge that prevents mistakes. **Always invoke the matching skill BEFORE starting work in that domain** — not after you've already made errors.
 
 If the active harness does not support the slash command, read the matching provider-neutral workflow file directly before acting:
-- query-database: \`${COMPADRE_ROOT}/skills/query-database/SKILL.md\`
-- pull-request: \`${COMPADRE_ROOT}/skills/pull-request/SKILL.md\`
-- integration-debugging: \`${COMPADRE_ROOT}/skills/integration-debugging/SKILL.md\`
+- query-database: \`${sandboxCompadreSkillPath("query-database")}\`
+- pull-request: \`${sandboxCompadreSkillPath("pull-request")}\`
+- integration-debugging: \`${sandboxCompadreSkillPath("integration-debugging")}\`
 
 Required skills (invoke BEFORE your first action in the domain):
 - /compadre:query-database — BEFORE any database query. The database has complex patterns (snapshot records, soft deletes, multi-tenant filtering) that will cause wrong answers if you don't understand them first.

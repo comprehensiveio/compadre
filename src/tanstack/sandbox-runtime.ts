@@ -1,9 +1,11 @@
+import path from "node:path";
 import {
   createSecrets,
   defineSandbox,
   defineWorkspace,
   type SandboxDefinition,
 } from "@tanstack/ai-sandbox";
+import { compadreSkillUploads } from "../compadre-skills.js";
 import { configuredRepositoryUrl } from "../repo.js";
 import { modalSandboxProvider } from "./modal-sandbox.js";
 
@@ -42,6 +44,7 @@ export function createHarnessSandbox({
   uploads = [],
 }: CreateHarnessSandboxOptions): SandboxDefinition {
   const workdir = harnessWorkspacePath(localWorktreePath, environment);
+  const skillUploads = compadreSkillUploads();
   const secrets = createSecrets({
       ...(environment.GITHUB_PERSONAL_ACCESS_TOKEN
         ? {
@@ -68,6 +71,10 @@ export function createHarnessSandbox({
       },
       hooks: {
         onReady: async (handle) => {
+          for (const upload of skillUploads) {
+            await handle.fs.mkdir(path.posix.dirname(upload.path));
+            await handle.fs.write(upload.path, upload.data);
+          }
           for (const upload of uploads) {
             await handle.fs.write(upload.path, upload.data);
           }
