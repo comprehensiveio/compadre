@@ -18,13 +18,14 @@ import { toolBridgeRoutes } from "./routes/tool-bridge.js";
 import { validateConversationConfiguration } from "./conversation.js";
 import {
   createSingleFlightSlackRecovery,
-  DEFAULT_SLACK_RECOVERY_MIN_AGE_MS,
+  DEFAULT_SLACK_RECONCILIATION_INTERVAL_MS,
   isSlackRecoveryOwner,
   recoverStaleSlackRuns,
 } from "./services/slack-run-recovery.js";
 import { startConfiguredPullRequestWatch } from "./services/pr-watch-runtime.js";
 import { getConfiguredThreadPersistence } from "./persistence/runtime.js";
 import { RUN_MEMORY_MODE } from "./tanstack/run-memory.js";
+import { SlackRunStateStore } from "./services/slack-run-state.js";
 
 const app = new Hono();
 
@@ -72,9 +73,22 @@ async function start() {
     console.log(`[agent] server running on port ${info.port}`);
     const botToken = process.env.SLACK_BOT_TOKEN;
     if (botToken && isSlackRecoveryOwner()) {
-      const recoverSlackRuns = createSingleFlightSlackRecovery(() =>
-        recoverStaleSlackRuns({ botToken }),
-      );
+      const slackRuns = threadPersistence
+        ? new SlackRunStateStore(
+            threadPersistence.persistence.stores.metadata,
+            threadPersistence.persistence.stores.runs,
+          )
+        : null;
+      const recoverSlackRuns = createSingleFlightSlackRecovery(() => {
+        if (!slackRuns) return Promise.resolve({ recovered: 0, scanned: 0 });
+        return recoverStaleSlackRuns({
+          botToken,
+          resolveRun: (channel, messageTs) =>
+            slackRuns.resolve(channel, messageTs),
+          forgetRun: (channel, messageTs) =>
+            slackRuns.forget(channel, messageTs),
+        });
+      });
       const scheduleSlackRecovery = () => {
         void recoverSlackRuns().catch((error) =>
           console.error("[slack-recovery] recovery failed:", error),
@@ -87,7 +101,7 @@ async function start() {
       recoveryTimer.unref();
       const recoveryInterval = setInterval(
         scheduleSlackRecovery,
-        DEFAULT_SLACK_RECOVERY_MIN_AGE_MS,
+        DEFAULT_SLACK_RECONCILIATION_INTERVAL_MS,
       );
       recoveryInterval.unref();
     }

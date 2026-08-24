@@ -41,6 +41,7 @@ test("automatically continues one incomplete run on the same thread", async () =
     return result("The final answer.", "stop");
   };
   const delivered: string[] = [];
+  const startedRuns: string[] = [];
   let continuations = 0;
 
   const outcome = await runSlackConversation({
@@ -61,6 +62,9 @@ test("automatically continues one incomplete run on the same thread", async () =
       onAutoContinue() {
         continuations += 1;
       },
+      onRunStart(runId) {
+        startedRuns.push(runId);
+      },
     },
   });
 
@@ -71,7 +75,9 @@ test("automatically continues one incomplete run on the same thread", async () =
   assert.equal(continuations, 1);
   assert.equal(attempts.length, 2);
   assert.equal(attempts[0]?.runId, "first-run");
-  assert.equal(attempts[1]?.runId, undefined);
+  assert.match(attempts[1]?.runId ?? "", /^[0-9a-f-]{36}$/);
+  assert.notEqual(attempts[1]?.runId, attempts[0]?.runId);
+  assert.deepEqual(startedRuns, ["first-run", attempts[1]?.runId]);
   assert.equal(attempts[1]?.threadId, "slack-thread");
   assert.equal(attempts[1]?.prompt, AUTO_CONTINUE_PROMPT);
   assert.deepEqual(delivered, ["I'll investigate.", "The final answer."]);

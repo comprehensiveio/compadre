@@ -154,11 +154,7 @@ test("publishes channel loading states without requiring assistant view", async 
 
 test("refreshes a quiet thread status before Slack's two-minute expiry", async () => {
   const { calls, fetchImpl } = createSlackFetch({
-    "assistant.threads.setStatus": [
-      { ok: true },
-      { ok: true },
-      { ok: true },
-    ],
+    "assistant.threads.setStatus": [{ ok: true }, { ok: true }, { ok: true }],
   });
   const stream = new SlackStream({
     channel: "C123",
@@ -226,6 +222,29 @@ test("successful runs clear both live and stale terminal reactions idempotently"
     },
   ]);
   assert.deepEqual(errors, []);
+});
+
+test("starting a run clears a stale failure before marking it active", async () => {
+  const { calls, fetchImpl } = createSlackFetch({
+    "reactions.remove": [{ ok: true }],
+    "reactions.add": [{ ok: true }],
+  });
+  const stream = new SlackStream({
+    channel: "C123",
+    threadTs: "100.001",
+    botToken: "xoxb-test",
+    fetchImpl,
+    logger: silentLogger,
+  });
+
+  await stream.markRunStarted("200.002");
+
+  assert.deepEqual(
+    calls.map(({ method }) => method),
+    ["reactions.remove", "reactions.add"],
+  );
+  assert.equal(calls[0]?.body.name, "compadre-failure");
+  assert.equal(calls[1]?.body.name, "compadre-thinking");
 });
 
 test("falls back to a normal thread message when native streaming is unavailable", async () => {

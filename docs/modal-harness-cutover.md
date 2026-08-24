@@ -66,9 +66,13 @@ COMPADRE_MODAL_SNAPSHOT_TTL_MS=604800000
 COMPADRE_MODAL_CPU=0.5
 COMPADRE_MODAL_CPU_LIMIT=2
 COMPADRE_MODAL_MEMORY_MIB=2048
-COMPADRE_MODAL_MEMORY_LIMIT_MIB=8192
+COMPADRE_MODAL_MEMORY_LIMIT_MIB=16384
 COMPADRE_MODAL_SKIP_CLI_SETUP=false
 ```
+
+The 2 GiB memory request controls the minimum billed reservation. The 16 GiB
+limit permits short validation bursts; Modal bills actual usage above the
+request rather than the configured ceiling itself.
 
 Compadre installs the pinned Claude Code and Codex CLIs while Modal builds its
 cached image, rather than during each sandbox bootstrap. Set

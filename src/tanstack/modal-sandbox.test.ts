@@ -6,6 +6,7 @@ import {
   ModalHandle,
   MODAL_CAPS,
   modalImageCommands,
+  modalResourceSettings,
   modalSandboxProvider,
   parseModalProcessTable,
 } from "./modal-sandbox.js";
@@ -132,6 +133,12 @@ test("rejects malformed Modal resource settings before provisioning", () => {
       }),
     /COMPADRE_MODAL_MEMORY_MIB must be a positive number/,
   );
+});
+
+test("keeps the 2 GiB request while allowing a 16 GiB memory burst", () => {
+  const resources = modalResourceSettings({});
+  assert.equal(resources.memoryMiB, 2048);
+  assert.equal(resources.memoryLimitMiB, 16384);
 });
 
 test("bakes pinned harness CLIs into the default Modal image", () => {

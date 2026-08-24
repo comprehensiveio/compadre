@@ -86,6 +86,14 @@ Prefer exact identifiers and narrow time windows. Render service instance suffix
   pre-text tool run look abandoned even though no native `chat.startStream`
   exists yet. Compadre refreshes the current thread status inside that window;
   diagnose status expiry separately from native response-stream expiry.
+- A `compadre-thinking` reaction's age does not prove its run was interrupted.
+  Slack reaction recovery must correlate the message to the durable run ID and
+  reconcile from its lifecycle status. For a false `compadre-failure` marker,
+  confirm the run is still `running` or `interrupted` before restoring the
+  thinking reaction.
+- Modal process-tree RSS approaching the configured memory limit immediately
+  before a sandbox `WaitPID` EOF strongly supports a sandbox OOM, even when the
+  terminal error is only exit 128 rather than an explicit OOM label.
 - Compadre does not impose a wall-clock agent deadline. Compare observed
   duration with explicit caller cancellation and the configured Modal sandbox
   lifetime before calling a failure a timeout.

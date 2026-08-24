@@ -6,15 +6,15 @@ MCP access to our infrastructure.
 
 ## MCP Servers
 
-| Server | Transport | What it does |
-|--------|-----------|-------------|
-| **Datadog** | HTTP (service access token) | Logs, metrics, traces, APM, error tracking, incidents, monitors |
-| **Slack** | stdio (built in) | Read Slack, send standard Markdown, and upload files via bot token |
-| **Linear** | HTTP | Issue tracking, project management |
-| **GitHub** | HTTP (Copilot MCP) | Repos, PRs, issues |
-| **Render** | HTTP (`mcp.render.com`) | Service management, deploys, logs |
-| **Postgres** | stdio (`@modelcontextprotocol/server-postgres`) | Read-only database access |
-| **Google Workspace** | stdio (`workspace-mcp`) | Google Docs, Drive, Sheets, Slides, Forms, Tasks, and Calendar access as the Compadre bot user |
+| Server               | Transport                                       | What it does                                                                                   |
+| -------------------- | ----------------------------------------------- | ---------------------------------------------------------------------------------------------- |
+| **Datadog**          | HTTP (service access token)                     | Logs, metrics, traces, APM, error tracking, incidents, monitors                                |
+| **Slack**            | stdio (built in)                                | Read Slack, send standard Markdown, and upload files via bot token                             |
+| **Linear**           | HTTP                                            | Issue tracking, project management                                                             |
+| **GitHub**           | HTTP (Copilot MCP)                              | Repos, PRs, issues                                                                             |
+| **Render**           | HTTP (`mcp.render.com`)                         | Service management, deploys, logs                                                              |
+| **Postgres**         | stdio (`@modelcontextprotocol/server-postgres`) | Read-only database access                                                                      |
+| **Google Workspace** | stdio (`workspace-mcp`)                         | Google Docs, Drive, Sheets, Slides, Forms, Tasks, and Calendar access as the Compadre bot user |
 
 Each harness gets its native coding tools plus the shared MCP tools above, with
 the comp repo cloned into a thread-scoped worktree.
@@ -42,6 +42,7 @@ npm run test:thread-persistence # database-free two-turn persistence regression
 ```
 
 Test with curl:
+
 ```bash
 curl -X POST http://localhost:3100/prompt \
   -H "Authorization: Bearer $COMPADRE_API_KEY" \
@@ -63,7 +64,7 @@ See `.env.example` for the full list. Key notes:
 - The Slack agent can register durable production watches for `comprehensiveio/comp` PRs. Watches use `COMPADRE_DURABILITY_DATABASE_URL`, confirm the primary `cm-app-*` web service in Render's `CM → Prod` environment, and reconcile every two minutes. They recognize normal merges, squash merges, and patch-equivalent cherry-picks.
 - **READONLY_DATABASE_URL**: Must use a dedicated least-privilege role with only `CONNECT`, required schema `USAGE`, and `SELECT` grants. Revoke ownership, DML, DDL, and elevated server-file privileges; the MCP server's read-only transaction and bounded cursor are defense in depth.
 - **SLACK_BOT_TOKEN**: `xoxb-*` token from the Compadre Slack app.
-- The Slack bot needs `reactions:read` in addition to `reactions:write` so a restarted instance can replace interrupted `compadre-thinking` reactions with `compadre-failure`.
+- The Slack bot needs `reactions:read` in addition to `reactions:write` so the relay can reconcile `compadre-thinking` and `compadre-failure` against durable run state after a restart. Elapsed time alone never marks a run failed.
 - **GOOGLE_WORKSPACE_USER_EMAIL / GOOGLE_OAUTH_CLIENT_ID / GOOGLE_OAUTH_CLIENT_SECRET / GOOGLE_OAUTH_REFRESH_TOKEN**: OAuth credentials for the Compadre Google Workspace bot user. When set, Compadre enables Google Workspace tools through `workspace-mcp`.
 - **REPO_PATH**: Local checkout used by development and the optional PR deployment watcher. Coding-agent checkouts live in Modal and are not allocated on the Render request path.
 - **COMPADRE_API_KEY**: Auth token for the API. Generate with `openssl rand -hex 32`.
@@ -122,6 +123,7 @@ Render setup; subsequent service configuration changes and deploys sync from
 Google Workspace support uses `uvx` because `workspace-mcp` runs as a Python MCP server. `npm start` installs `uvx` at startup when Google Workspace env vars are present and `uvx` is not already available.
 
 On Render:
+
 - The relay accepts requests, persists conversations, and serves authenticated host tools.
 - Coding-agent repositories and shell processes live in Modal, not Render `/tmp`.
 - Persisted threads restore their latest Modal filesystem snapshot; independent threads can run concurrently.
@@ -185,6 +187,7 @@ conversation threads; one-shot requests use disposable sandboxes that are
 destroyed after completion. After a provider switch the PostgreSQL runtime can
 reconstruct context from the neutral transcript. Different threads may run
 concurrently in independent sandboxes, while a distributed lock serializes
-messages within one thread. The runtime reconciles
-stale Slack reactions after a restart. Postgres stores run lifecycle and
-ordered AG-UI delivery events.
+messages within one thread. The runtime correlates each Slack request with its
+durable run ID and reconciles stale reactions against that authoritative
+lifecycle after a restart. Postgres stores run lifecycle and ordered AG-UI
+delivery events.

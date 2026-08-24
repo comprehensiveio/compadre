@@ -1,3 +1,4 @@
+import crypto from "node:crypto";
 import type {
   ConversationOptions,
   ConversationResult,
@@ -23,6 +24,7 @@ export interface SlackConversationDelivery {
   hasTruncatedContent(): boolean;
   onToolStart(name: string): void;
   onAutoContinue(): void | Promise<void>;
+  onRunStart?(runId: string): void | Promise<void>;
 }
 
 export interface SlackConversationOutcome {
@@ -68,6 +70,7 @@ export async function runSlackConversation({
   delivery,
 }: RunSlackConversationOptions): Promise<SlackConversationOutcome> {
   let tracker = new TerminalResponseTracker();
+  if (options.runId) await delivery.onRunStart?.(options.runId);
   let result = await runner({
     ...options,
     stream: streamCallbacks(tracker, delivery),
@@ -81,8 +84,11 @@ export async function runSlackConversation({
       throw new IncompleteTerminalResponseError(result.finishReason);
     }
     tracker = new TerminalResponseTracker();
-    const continuationOptions = { ...options };
-    delete continuationOptions.runId;
+    const continuationOptions = {
+      ...options,
+      runId: crypto.randomUUID(),
+    };
+    await delivery.onRunStart?.(continuationOptions.runId);
     const continuedResult = await runner({
       ...continuationOptions,
       prompt: AUTO_CONTINUE_PROMPT,

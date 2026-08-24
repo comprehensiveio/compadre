@@ -1,7 +1,7 @@
 const SLACK_API = "https://slack.com/api";
 const THINKING_REACTION = "compadre-thinking";
 const FAILURE_REACTION = "compadre-failure";
-export const DEFAULT_SLACK_RECOVERY_MIN_AGE_MS = 20 * 60 * 1000;
+export const DEFAULT_SLACK_RECONCILIATION_INTERVAL_MS = 5 * 60 * 1000;
 export const DEFAULT_SLACK_RECOVERY_REQUEST_TIMEOUT_MS = 30_000;
 const MAX_SLACK_RECOVERY_REQUEST_TIMEOUT_MS = 20 * 60 * 1000;
 
@@ -35,10 +35,13 @@ export interface SlackRunRecoveryResult {
 
 interface SlackRunRecoveryOptions {
   botToken: string;
+  resolveRun(
+    channel: string,
+    messageTs: string,
+  ): Promise<{ status: string } | null>;
+  forgetRun?(channel: string, messageTs: string): Promise<void>;
   fetchImpl?: typeof fetch;
   logger?: Pick<Console, "info" | "warn">;
-  now?: () => number;
-  minimumAgeMs?: number;
   requestTimeoutMs?: number;
 }
 
@@ -56,17 +59,14 @@ export function createSingleFlightSlackRecovery(
   let active: Promise<SlackRunRecoveryResult> | undefined;
   return () => {
     if (active) return active;
-    const current = Promise.resolve().then(recover).finally(() => {
-      if (active === current) active = undefined;
-    });
+    const current = Promise.resolve()
+      .then(recover)
+      .finally(() => {
+        if (active === current) active = undefined;
+      });
     active = current;
     return current;
   };
-}
-
-function slackTimestampMs(timestamp: string): number | undefined {
-  const value = Number(timestamp);
-  return Number.isFinite(value) && value > 0 ? value * 1000 : undefined;
 }
 
 async function slackCall(
@@ -106,9 +106,10 @@ async function fetchSlackJsonWithDeadline(
 ): Promise<SlackApiResponse> {
   const abortController = new AbortController();
   const timer = setTimeout(
-    () => abortController.abort(
-      new Error(`Slack recovery request timed out after ${timeoutMs}ms`),
-    ),
+    () =>
+      abortController.abort(
+        new Error(`Slack recovery request timed out after ${timeoutMs}ms`),
+      ),
     timeoutMs,
   );
   try {
@@ -123,20 +124,18 @@ async function fetchSlackJsonWithDeadline(
 }
 
 /**
- * Slack retains reactions across container restarts, so the bot's thinking
- * reaction acts as a durable record of work that did not reach a terminal
- * state. A relay converts only markers older than a complete run's normal
- * lifetime; fresh markers may still belong to an active Workflow task.
+ * Reconcile Slack's durable reactions with the authoritative durable run.
+ * Missing correlations remain untouched: elapsed time is never evidence that
+ * a long-running agent failed.
  */
 export async function recoverStaleSlackRuns({
   botToken,
+  resolveRun,
+  forgetRun,
   fetchImpl = fetch,
   logger = console,
-  now = Date.now,
-  minimumAgeMs = DEFAULT_SLACK_RECOVERY_MIN_AGE_MS,
   requestTimeoutMs = DEFAULT_SLACK_RECOVERY_REQUEST_TIMEOUT_MS,
 }: SlackRunRecoveryOptions): Promise<SlackRunRecoveryResult> {
-  const recoveryStartedAt = now();
   const boundedTimeoutMs = boundedRequestTimeoutMs(requestTimeoutMs);
   const auth = await slackCall(
     fetchImpl,
@@ -153,7 +152,13 @@ export async function recoverStaleSlackRuns({
 
   const stale = new Map<
     string,
-    { channel: string; messageTs: string; threadTs: string }
+    {
+      channel: string;
+      messageTs: string;
+      threadTs: string;
+      botIsThinking: boolean;
+      botMarkedFailed: boolean;
+    }
   >();
   let cursor = "";
   let scanned = 0;
@@ -182,26 +187,28 @@ export async function recoverStaleSlackRuns({
       const message = item.message;
       const channel = item.channel;
       const messageTs = message?.ts;
-      const messageCreatedAt = messageTs
-        ? slackTimestampMs(messageTs)
-        : undefined;
       const botIsThinking = message?.reactions?.some(
         (reaction) =>
           reaction.name === THINKING_REACTION &&
+          reaction.users?.includes(auth.user_id!),
+      );
+      const botMarkedFailed = message?.reactions?.some(
+        (reaction) =>
+          reaction.name === FAILURE_REACTION &&
           reaction.users?.includes(auth.user_id!),
       );
       if (
         item.type === "message" &&
         channel &&
         messageTs &&
-        botIsThinking &&
-        messageCreatedAt !== undefined &&
-        recoveryStartedAt - messageCreatedAt >= minimumAgeMs
+        (botIsThinking || botMarkedFailed)
       ) {
         stale.set(`${channel}:${messageTs}`, {
           channel,
           messageTs,
           threadTs: message.thread_ts ?? messageTs,
+          botIsThinking: botIsThinking === true,
+          botMarkedFailed: botMarkedFailed === true,
         });
       }
     }
@@ -211,67 +218,148 @@ export async function recoverStaleSlackRuns({
 
   let recovered = 0;
   for (const run of stale.values()) {
-    const removed = await slackCall(
-      fetchImpl,
-      botToken,
-      "reactions.remove",
-      boundedTimeoutMs,
-      {
-        channel: run.channel,
-        timestamp: run.messageTs,
-        name: THINKING_REACTION,
-      },
-    );
-    // Another still-live instance may have completed the run after our list
-    // call. Only mark failure if this instance actually removed the marker.
-    if (!removed.ok) continue;
+    let record = await resolveRun(run.channel, run.messageTs);
+    if (!record) continue;
+    let mutated = false;
 
-    const failed = await slackCall(
-      fetchImpl,
-      botToken,
-      "reactions.add",
-      boundedTimeoutMs,
-      {
-        channel: run.channel,
-        timestamp: run.messageTs,
-        name: FAILURE_REACTION,
-      },
-    );
-    if (!failed.ok) {
-      logger.warn(
-        `[slack-recovery] reactions.add failed: ${failed.error ?? "unknown error"}`,
+    const remove = async (name: string) => {
+      const response = await slackCall(
+        fetchImpl,
+        botToken,
+        "reactions.remove",
+        boundedTimeoutMs,
+        { channel: run.channel, timestamp: run.messageTs, name },
       );
-      // Preserve the durable marker so a later recovery attempt can retry.
-      await slackCall(
+      return response.ok === true || response.error === "no_reaction";
+    };
+    const add = async (name: string) => {
+      const response = await slackCall(
         fetchImpl,
         botToken,
         "reactions.add",
         boundedTimeoutMs,
-        {
-          channel: run.channel,
-          timestamp: run.messageTs,
-          name: THINKING_REACTION,
-        },
+        { channel: run.channel, timestamp: run.messageTs, name },
       );
+      return response.ok === true || response.error === "already_reacted";
+    };
+
+    let reconciled = false;
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const active =
+        record.status === "running" || record.status === "interrupted";
+      const succeeded = record.status === "completed";
+      const failed = record.status === "failed" || record.status === "aborted";
+      if (!active && !succeeded && !failed) break;
+
+      let mutationSucceeded = true;
+      if (active) {
+        if (run.botMarkedFailed) {
+          mutationSucceeded = await remove(FAILURE_REACTION);
+          if (mutationSucceeded) {
+            run.botMarkedFailed = false;
+            mutated = true;
+          }
+        }
+        if (mutationSucceeded && !run.botIsThinking) {
+          mutationSucceeded = await add(THINKING_REACTION);
+          if (mutationSucceeded) {
+            run.botIsThinking = true;
+            mutated = true;
+          }
+        }
+      } else if (succeeded) {
+        if (run.botIsThinking) {
+          mutationSucceeded = await remove(THINKING_REACTION);
+          if (mutationSucceeded) {
+            run.botIsThinking = false;
+            mutated = true;
+          }
+        }
+        if (mutationSucceeded && run.botMarkedFailed) {
+          mutationSucceeded = await remove(FAILURE_REACTION);
+          if (mutationSucceeded) {
+            run.botMarkedFailed = false;
+            mutated = true;
+          }
+        }
+      } else {
+        if (run.botIsThinking) {
+          mutationSucceeded = await remove(THINKING_REACTION);
+          if (mutationSucceeded) {
+            run.botIsThinking = false;
+            mutated = true;
+          }
+        }
+        if (mutationSucceeded && !run.botMarkedFailed) {
+          mutationSucceeded = await add(FAILURE_REACTION);
+          if (mutationSucceeded) {
+            run.botMarkedFailed = true;
+            mutated = true;
+          }
+        }
+      }
+      if (!mutationSucceeded) break;
+
+      if (!active) {
+        await slackCall(
+          fetchImpl,
+          botToken,
+          "assistant.threads.setStatus",
+          boundedTimeoutMs,
+          {
+            channel_id: run.channel,
+            thread_ts: run.threadTs,
+            status: "",
+          },
+        );
+        await forgetRun?.(run.channel, run.messageTs);
+        reconciled = true;
+        break;
+      }
+
+      const latest = await resolveRun(run.channel, run.messageTs);
+      if (!latest) {
+        // Successful delivery removes its durable correlation only after it
+        // clears both reactions. If that raced this active reconciliation,
+        // restore the completed state rather than resurrecting activity.
+        if (run.botIsThinking) {
+          reconciled = await remove(THINKING_REACTION);
+          if (reconciled) {
+            run.botIsThinking = false;
+            mutated = true;
+          }
+        } else {
+          reconciled = true;
+        }
+        if (reconciled && run.botMarkedFailed) {
+          reconciled = await remove(FAILURE_REACTION);
+          if (reconciled) {
+            run.botMarkedFailed = false;
+            mutated = true;
+          }
+        }
+        break;
+      }
+      if (latest.status === record.status) {
+        reconciled = true;
+        break;
+      }
+      record = latest;
+    }
+    if (!reconciled) {
+      logger.warn("[slack-recovery] reaction reconciliation failed", {
+        channel: run.channel,
+        messageTs: run.messageTs,
+        status: record.status,
+      });
       continue;
     }
-    await slackCall(
-      fetchImpl,
-      botToken,
-      "assistant.threads.setStatus",
-      boundedTimeoutMs,
-      {
-        channel_id: run.channel,
-        thread_ts: run.threadTs,
-        status: "",
-      },
-    );
-    recovered += 1;
+    if (mutated) recovered += 1;
   }
 
   if (recovered > 0) {
     logger.info(
-      `[slack-recovery] marked ${recovered} interrupted run${recovered === 1 ? "" : "s"} as failed`,
+      `[slack-recovery] reconciled ${recovered} durable run reaction${recovered === 1 ? "" : "s"}`,
     );
   }
   return { recovered, scanned };

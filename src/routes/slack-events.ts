@@ -1,9 +1,13 @@
+import crypto from "node:crypto";
 import { Hono } from "hono";
 import {
   configuredAgentProvider,
   type ConversationOptions,
 } from "../conversation.js";
-import { getSlackSystemPrompt, getSlackStreamingSystemPrompt } from "../prompts/index.js";
+import {
+  getSlackSystemPrompt,
+  getSlackStreamingSystemPrompt,
+} from "../prompts/index.js";
 import { resolveSlackChannelName } from "../services/slack-context.js";
 import { parseAgentRouteDirective } from "../services/agent-routing.js";
 import { buildSlackAgentInput } from "../services/slack-prompt.js";
@@ -13,6 +17,8 @@ import { providerForAgentProfile } from "../tanstack/protocol.js";
 import { humanizeToolName } from "../services/tool-labels.js";
 import { slackFailureNotice } from "../services/terminal-response.js";
 import { runSlackConversation } from "../services/slack-conversation.js";
+import { SlackRunStateStore } from "../services/slack-run-state.js";
+import { getRequiredThreadPersistence } from "../persistence/runtime.js";
 import { verifySlackSignature } from "../services/slack-verify.js";
 import {
   mergeSlackFileReferences,
@@ -74,7 +80,12 @@ slackEventsRoutes.post("/slack/events", async (c) => {
   const signature = c.req.header("X-Slack-Signature") || "";
   const timestamp = c.req.header("X-Slack-Request-Timestamp") || "";
   if (
-    !verifySlackSignature({ signingSecret, signature, timestamp, body: rawBody })
+    !verifySlackSignature({
+      signingSecret,
+      signature,
+      timestamp,
+      body: rawBody,
+    })
   ) {
     return c.json({ error: "invalid signature" }, 401);
   }
@@ -156,12 +167,7 @@ async function handleAIMessage(
 
   const [thread, channelName] = await Promise.all([
     event.thread_ts && botToken
-      ? fetchThreadContext(
-          event.channel,
-          event.thread_ts,
-          event.ts,
-          botToken,
-        )
+      ? fetchThreadContext(event.channel, event.thread_ts, event.ts, botToken)
       : null,
     botToken
       ? resolveSlackChannelName({
@@ -188,9 +194,16 @@ async function handleAIMessage(
 
   const slackStream = createSlackStream(event, threadTs, botToken, teamId);
 
+  const runId = crypto.randomUUID();
+  const runtime = await getRequiredThreadPersistence();
+  const slackRuns = new SlackRunStateStore(
+    runtime.persistence.stores.metadata,
+    runtime.persistence.stores.runs,
+  );
+
   // In non-DM contexts, use a reaction to indicate processing
   if (!isDM && slackStream) {
-    await slackStream.addReaction("compadre-thinking", event.ts);
+    await slackStream.markRunStarted(event.ts);
   }
   if (slackStream) {
     await slackStream.setStatus("is thinking...");
@@ -202,6 +215,7 @@ async function handleAIMessage(
 
   const runner = configuredConversationRunner();
   const conversationOptions: Omit<ConversationOptions, "stream"> = {
+    runId,
     prompt,
     transcriptUserMessage,
     threadId: threadKey,
@@ -225,6 +239,8 @@ async function handleAIMessage(
             slackStream.appendText("\n\n");
             await slackStream.setStatus("is continuing automatically...");
           },
+          onRunStart: (nextRunId) =>
+            slackRuns.record(event.channel, event.ts, nextRunId),
         },
       })
     : runner(conversationOptions).then((result) => ({
@@ -241,6 +257,7 @@ async function handleAIMessage(
       if (!isDM && slackStream) {
         await slackStream.markRunSucceeded(event.ts);
       }
+      await slackRuns.forget(event.channel, event.ts);
       console.log(
         `[slack-events] completed for ${event.user}: provider=${result.provider} turns=${result.numTurns} cost=$${result.costUsd.toFixed(3)} duration=${result.durationMs}ms autoContinued=${autoContinued}`,
       );
@@ -375,9 +392,6 @@ async function forwardProdSupportLinks(event: SlackEvent) {
       console.error(`[slack-events] debug-links returned ${res.status}`);
     }
   } catch (err) {
-    console.error(
-      "[slack-events] failed to forward prod-support links:",
-      err,
-    );
+    console.error("[slack-events] failed to forward prod-support links:", err);
   }
 }

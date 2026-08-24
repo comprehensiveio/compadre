@@ -21,7 +21,10 @@ function createSlackFetch(
   responses: Record<string, Array<Record<string, unknown>>>,
 ) {
   const calls: SlackCall[] = [];
-  const fetchImpl = (async (input: string | URL | Request, init?: RequestInit) => {
+  const fetchImpl = (async (
+    input: string | URL | Request,
+    init?: RequestInit,
+  ) => {
     const url = new URL(String(input));
     const method = url.pathname.split("/").pop() || "";
     calls.push({
@@ -39,16 +42,14 @@ function createSlackFetch(
   return { calls, fetchImpl };
 }
 
-test("marks paginated, deduplicated thinking reactions as failed", async () => {
+test("marks a durably failed run as failed across paginated reactions", async () => {
   const thinkingMessage = {
     type: "message",
     channel: "C123",
     message: {
       ts: "200.002",
       thread_ts: "100.001",
-      reactions: [
-        { name: "compadre-thinking", users: ["UCOMPADRE"] },
-      ],
+      reactions: [{ name: "compadre-thinking", users: ["UCOMPADRE"] }],
     },
   };
   const { calls, fetchImpl } = createSlackFetch({
@@ -68,6 +69,7 @@ test("marks paginated, deduplicated thinking reactions as failed", async () => {
 
   const result = await recoverStaleSlackRuns({
     botToken: "xoxb-test",
+    resolveRun: async () => ({ status: "failed" }),
     fetchImpl,
     logger: silentLogger,
   });
@@ -102,7 +104,81 @@ test("marks paginated, deduplicated thinking reactions as failed", async () => {
   });
 });
 
-test("does not create a false failure when the thinking reaction is already gone", async () => {
+test("repairs a false failure reaction while the durable run is active", async () => {
+  const { calls, fetchImpl } = createSlackFetch({
+    "auth.test": [{ ok: true, user_id: "UCOMPADRE" }],
+    "reactions.list": [
+      {
+        ok: true,
+        items: [
+          {
+            type: "message",
+            channel: "C123",
+            message: {
+              ts: "100.001",
+              reactions: [{ name: "compadre-failure", users: ["UCOMPADRE"] }],
+            },
+          },
+        ],
+      },
+    ],
+    "reactions.remove": [{ ok: true }],
+    "reactions.add": [{ ok: true }],
+  });
+
+  const result = await recoverStaleSlackRuns({
+    botToken: "xoxb-test",
+    resolveRun: async () => ({ status: "running" }),
+    fetchImpl,
+    logger: silentLogger,
+  });
+
+  assert.deepEqual(result, { recovered: 1, scanned: 1 });
+  assert.deepEqual(
+    calls.map(({ method }) => method),
+    ["auth.test", "reactions.list", "reactions.remove", "reactions.add"],
+  );
+  assert.equal(calls[2]?.body?.name, "compadre-failure");
+  assert.equal(calls[3]?.body?.name, "compadre-thinking");
+});
+
+test("leaves an uncorrelated reaction untouched regardless of age", async () => {
+  const { calls, fetchImpl } = createSlackFetch({
+    "auth.test": [{ ok: true, user_id: "UCOMPADRE" }],
+    "reactions.list": [
+      {
+        ok: true,
+        items: [
+          {
+            type: "message",
+            channel: "C123",
+            message: {
+              ts: "1786569273.591439",
+              thread_ts: "1786396388.889109",
+              reactions: [{ name: "compadre-thinking", users: ["UCOMPADRE"] }],
+            },
+          },
+        ],
+      },
+    ],
+  });
+
+  const result = await recoverStaleSlackRuns({
+    botToken: "xoxb-test",
+    resolveRun: async () => null,
+    fetchImpl,
+    logger: silentLogger,
+  });
+
+  assert.deepEqual(result, { recovered: 0, scanned: 1 });
+  assert.deepEqual(
+    calls.map(({ method }) => method),
+    ["auth.test", "reactions.list"],
+  );
+});
+
+test("clears both reactions and durable correlation for a completed run", async () => {
+  const forgotten: string[] = [];
   const { calls, fetchImpl } = createSlackFetch({
     "auth.test": [{ ok: true, user_id: "UCOMPADRE" }],
     "reactions.list": [
@@ -116,29 +192,43 @@ test("does not create a false failure when the thinking reaction is already gone
               ts: "100.001",
               reactions: [
                 { name: "compadre-thinking", users: ["UCOMPADRE"] },
+                { name: "compadre-failure", users: ["UCOMPADRE"] },
               ],
             },
           },
         ],
       },
     ],
-    "reactions.remove": [{ ok: false, error: "no_reaction" }],
+    "reactions.remove": [{ ok: true }, { ok: true }],
+    "assistant.threads.setStatus": [{ ok: true }],
   });
 
   const result = await recoverStaleSlackRuns({
     botToken: "xoxb-test",
+    resolveRun: async () => ({ status: "completed" }),
+    forgetRun: async (channel, messageTs) => {
+      forgotten.push(`${channel}:${messageTs}`);
+    },
     fetchImpl,
     logger: silentLogger,
   });
 
-  assert.deepEqual(result, { recovered: 0, scanned: 1 });
+  assert.deepEqual(result, { recovered: 1, scanned: 1 });
   assert.deepEqual(
     calls.map(({ method }) => method),
-    ["auth.test", "reactions.list", "reactions.remove"],
+    [
+      "auth.test",
+      "reactions.list",
+      "reactions.remove",
+      "reactions.remove",
+      "assistant.threads.setStatus",
+    ],
   );
+  assert.deepEqual(forgotten, ["C123:100.001"]);
 });
 
-test("leaves fresh thinking reactions owned by a live run untouched", async () => {
+test("rechecks durable state when a run finishes during reconciliation", async () => {
+  const statuses = ["running", "completed"];
   const { calls, fetchImpl } = createSlackFetch({
     "auth.test": [{ ok: true, user_id: "UCOMPADRE" }],
     "reactions.list": [
@@ -149,35 +239,121 @@ test("leaves fresh thinking reactions owned by a live run untouched", async () =
             type: "message",
             channel: "C123",
             message: {
-              ts: "1786569273.591439",
-              thread_ts: "1786396388.889109",
-              reactions: [
-                { name: "compadre-thinking", users: ["UCOMPADRE"] },
-              ],
+              ts: "100.001",
+              reactions: [{ name: "compadre-failure", users: ["UCOMPADRE"] }],
             },
           },
         ],
       },
     ],
+    "reactions.remove": [{ ok: true }, { ok: true }],
+    "reactions.add": [{ ok: true }],
+    "assistant.threads.setStatus": [{ ok: true }],
   });
 
   const result = await recoverStaleSlackRuns({
     botToken: "xoxb-test",
+    resolveRun: async () => ({ status: statuses.shift() ?? "completed" }),
     fetchImpl,
     logger: silentLogger,
-    now: () => 1_786_569_273_591 + 5 * 60_000,
   });
 
-  assert.deepEqual(result, { recovered: 0, scanned: 1 });
+  assert.deepEqual(result, { recovered: 1, scanned: 1 });
   assert.deepEqual(
     calls.map(({ method }) => method),
-    ["auth.test", "reactions.list"],
+    [
+      "auth.test",
+      "reactions.list",
+      "reactions.remove",
+      "reactions.add",
+      "reactions.remove",
+      "assistant.threads.setStatus",
+    ],
   );
+});
+
+test("removes a restored thinking reaction when correlation disappears", async () => {
+  const records = [{ status: "running" as const }, null];
+  const { calls, fetchImpl } = createSlackFetch({
+    "auth.test": [{ ok: true, user_id: "UCOMPADRE" }],
+    "reactions.list": [
+      {
+        ok: true,
+        items: [
+          {
+            type: "message",
+            channel: "C123",
+            message: {
+              ts: "100.001",
+              reactions: [{ name: "compadre-failure", users: ["UCOMPADRE"] }],
+            },
+          },
+        ],
+      },
+    ],
+    "reactions.remove": [{ ok: true }, { ok: true }],
+    "reactions.add": [{ ok: true }],
+  });
+
+  const result = await recoverStaleSlackRuns({
+    botToken: "xoxb-test",
+    resolveRun: async () => records.shift() ?? null,
+    fetchImpl,
+    logger: silentLogger,
+  });
+
+  assert.deepEqual(result, { recovered: 1, scanned: 1 });
+  assert.deepEqual(
+    calls.map(({ method }) => method),
+    [
+      "auth.test",
+      "reactions.list",
+      "reactions.remove",
+      "reactions.add",
+      "reactions.remove",
+    ],
+  );
+});
+
+test("treats an already-present target reaction as reconciled", async () => {
+  const { fetchImpl } = createSlackFetch({
+    "auth.test": [{ ok: true, user_id: "UCOMPADRE" }],
+    "reactions.list": [
+      {
+        ok: true,
+        items: [
+          {
+            type: "message",
+            channel: "C123",
+            message: {
+              ts: "100.001",
+              reactions: [{ name: "compadre-thinking", users: ["UCOMPADRE"] }],
+            },
+          },
+        ],
+      },
+    ],
+    "reactions.remove": [{ ok: true }],
+    "reactions.add": [{ ok: false, error: "already_reacted" }],
+    "assistant.threads.setStatus": [{ ok: true }],
+  });
+
+  const result = await recoverStaleSlackRuns({
+    botToken: "xoxb-test",
+    resolveRun: async () => ({ status: "failed" }),
+    fetchImpl,
+    logger: silentLogger,
+  });
+
+  assert.deepEqual(result, { recovered: 1, scanned: 1 });
 });
 
 test("only the explicitly configured relay owns startup recovery", () => {
   assert.equal(isSlackRecoveryOwner({ COMPADRE_PROCESS_ROLE: "relay" }), true);
-  assert.equal(isSlackRecoveryOwner({ COMPADRE_PROCESS_ROLE: "workflow" }), false);
+  assert.equal(
+    isSlackRecoveryOwner({ COMPADRE_PROCESS_ROLE: "workflow" }),
+    false,
+  );
   assert.equal(isSlackRecoveryOwner({}), false);
 });
 
@@ -226,16 +402,22 @@ test("aborts a hung Slack request at its configured deadline", async () => {
   const fetchImpl = (async (
     _input: string | URL | Request,
     init?: RequestInit,
-  ) => new Promise<Response>((_resolve, reject) => {
-    init?.signal?.addEventListener("abort", () => {
-      requestWasAborted = true;
-      reject(init.signal?.reason);
-    }, { once: true });
-  })) as typeof fetch;
+  ) =>
+    new Promise<Response>((_resolve, reject) => {
+      init?.signal?.addEventListener(
+        "abort",
+        () => {
+          requestWasAborted = true;
+          reject(init.signal?.reason);
+        },
+        { once: true },
+      );
+    })) as typeof fetch;
 
   await assert.rejects(
     recoverStaleSlackRuns({
       botToken: "xoxb-test",
+      resolveRun: async () => null,
       fetchImpl,
       logger: silentLogger,
       requestTimeoutMs: 5,

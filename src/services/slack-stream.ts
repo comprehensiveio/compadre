@@ -173,6 +173,13 @@ export class SlackStream {
     await this.removeReactionIfPresent("compadre-failure", messageTs);
   }
 
+  async markRunStarted(messageTs: string): Promise<void> {
+    // A previous relay may have incorrectly terminalized this message while
+    // the durable run remained active. Starting is authoritative.
+    await this.removeReactionIfPresent("compadre-failure", messageTs);
+    await this.addReaction("compadre-thinking", messageTs);
+  }
+
   async markRunFailed(messageTs: string): Promise<void> {
     await this.removeReactionIfPresent("compadre-thinking", messageTs);
     await this.addReaction("compadre-failure", messageTs);

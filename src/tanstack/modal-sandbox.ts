@@ -566,6 +566,48 @@ export async function prepareModalBaseImage(
   return { imageId: image.imageId };
 }
 
+export function modalResourceSettings(environment: NodeJS.ProcessEnv): {
+  timeoutMs: number;
+  snapshotTtlMs: number;
+  cpu: number;
+  cpuLimit: number;
+  memoryMiB: number;
+  memoryLimitMiB: number;
+} {
+  return {
+    timeoutMs: positiveNumberSetting(
+      "COMPADRE_MODAL_TIMEOUT_MS",
+      environment.COMPADRE_MODAL_TIMEOUT_MS,
+      DEFAULT_TIMEOUT_MS,
+    ),
+    snapshotTtlMs: positiveNumberSetting(
+      "COMPADRE_MODAL_SNAPSHOT_TTL_MS",
+      environment.COMPADRE_MODAL_SNAPSHOT_TTL_MS,
+      DEFAULT_SNAPSHOT_TTL_MS,
+    ),
+    cpu: positiveNumberSetting(
+      "COMPADRE_MODAL_CPU",
+      environment.COMPADRE_MODAL_CPU,
+      0.5,
+    ),
+    cpuLimit: positiveNumberSetting(
+      "COMPADRE_MODAL_CPU_LIMIT",
+      environment.COMPADRE_MODAL_CPU_LIMIT,
+      2,
+    ),
+    memoryMiB: positiveNumberSetting(
+      "COMPADRE_MODAL_MEMORY_MIB",
+      environment.COMPADRE_MODAL_MEMORY_MIB,
+      2048,
+    ),
+    memoryLimitMiB: positiveNumberSetting(
+      "COMPADRE_MODAL_MEMORY_LIMIT_MIB",
+      environment.COMPADRE_MODAL_MEMORY_LIMIT_MIB,
+      16384,
+    ),
+  };
+}
+
 export function modalSandboxProvider(
   options: ModalSandboxProviderOptions = {},
 ): SandboxProvider {
@@ -573,36 +615,8 @@ export function modalSandboxProvider(
   const runtime = modalRuntime(environment, options.client);
   const { client } = runtime;
   const workdir = environment.COMPADRE_MODAL_WORKDIR?.trim() || DEFAULT_WORKDIR;
-  const timeoutMs = positiveNumberSetting(
-    "COMPADRE_MODAL_TIMEOUT_MS",
-    environment.COMPADRE_MODAL_TIMEOUT_MS,
-    DEFAULT_TIMEOUT_MS,
-  );
-  const snapshotTtlMs = positiveNumberSetting(
-    "COMPADRE_MODAL_SNAPSHOT_TTL_MS",
-    environment.COMPADRE_MODAL_SNAPSHOT_TTL_MS,
-    DEFAULT_SNAPSHOT_TTL_MS,
-  );
-  const cpu = positiveNumberSetting(
-    "COMPADRE_MODAL_CPU",
-    environment.COMPADRE_MODAL_CPU,
-    0.5,
-  );
-  const cpuLimit = positiveNumberSetting(
-    "COMPADRE_MODAL_CPU_LIMIT",
-    environment.COMPADRE_MODAL_CPU_LIMIT,
-    2,
-  );
-  const memoryMiB = positiveNumberSetting(
-    "COMPADRE_MODAL_MEMORY_MIB",
-    environment.COMPADRE_MODAL_MEMORY_MIB,
-    2048,
-  );
-  const memoryLimitMiB = positiveNumberSetting(
-    "COMPADRE_MODAL_MEMORY_LIMIT_MIB",
-    environment.COMPADRE_MODAL_MEMORY_LIMIT_MIB,
-    8192,
-  );
+  const { timeoutMs, snapshotTtlMs, cpu, cpuLimit, memoryMiB, memoryLimitMiB } =
+    modalResourceSettings(environment);
   const create = async (
     image: Image,
     id?: string,
