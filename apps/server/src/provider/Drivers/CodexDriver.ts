@@ -36,6 +36,7 @@ import { ServerConfig } from "../../config.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import { ProviderDriverError } from "../Errors.ts";
 import { makeCodexAdapter } from "../Layers/CodexAdapter.ts";
+import { makeCompadreAdapter } from "../Layers/CompadreAdapter.ts";
 import { checkCodexProviderStatus, makePendingCodexProvider } from "../Layers/CodexProvider.ts";
 import { ProviderEventLoggers } from "../Layers/ProviderEventLoggers.ts";
 import { makeManagedServerProvider } from "../makeManagedServerProvider.ts";
@@ -155,11 +156,22 @@ export const CodexDriver: ProviderDriver<CodexSettings, CodexDriverEnv> = {
       // here; the registry only has to worry about snapshot-build and
       // spawner-availability failures surfaced from `checkCodexProviderStatus`
       // below.
-      const adapter = yield* makeCodexAdapter(effectiveConfig, {
-        instanceId,
-        environment: processEnv,
-        ...(eventLoggers.native ? { nativeEventLogger: eventLoggers.native } : {}),
-      });
+      const compadreEndpoint = processEnv.COMPADRE_PROVIDER_URL?.trim();
+      const compadreProvider = processEnv.COMPADRE_PROVIDER_AGENT?.trim();
+      const adapter = compadreEndpoint
+        ? yield* makeCompadreAdapter({
+            endpoint: compadreEndpoint,
+            instanceId,
+            ...(processEnv.COMPADRE_API_KEY ? { apiKey: processEnv.COMPADRE_API_KEY } : {}),
+            ...(compadreProvider === "claude-code" || compadreProvider === "codex"
+              ? { provider: compadreProvider }
+              : {}),
+          })
+        : yield* makeCodexAdapter(effectiveConfig, {
+            instanceId,
+            environment: processEnv,
+            ...(eventLoggers.native ? { nativeEventLogger: eventLoggers.native } : {}),
+          });
       const textGeneration = yield* makeCodexTextGeneration(effectiveConfig, processEnv);
 
       // Build a managed snapshot whose settings never change — mutations come
