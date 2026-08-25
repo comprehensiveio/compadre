@@ -4,11 +4,11 @@ This branch tests the product shape suggested by T3 Code: a coding-agent
 conversation that can be opened from a browser, while Compadre remains the
 hosted controller and Modal remains the execution boundary.
 
-It deliberately does not fork T3 Code yet. The first experiment reuses the
-useful seams—the chat interaction model, streamed tool activity, durable thread
-identity, and resumable client behavior—on top of Compadre's existing TanStack
-AI event log. That proves the backend contract before we inherit a second
-application's server runtime and release cadence.
+The first experiment reused the useful seams—the chat interaction model,
+streamed tool activity, durable thread identity, and resumable client
+behavior—on top of Compadre's existing TanStack AI event log. A reproducible
+T3 provider-adapter patch now proves that contract without requiring a remote
+fork yet.
 
 ## Architecture
 
@@ -50,6 +50,9 @@ To open a Slack-originated conversation, use its canonical Compadre thread ID
 when the browser and production relay share the same Postgres durability
 database. To make new browser turns appear in Slack, enter the channel ID and
 thread timestamp in “Mirror to Slack” once. The binding is durable metadata.
+That operation also aliases the browser/T3-native id to the Slack-backed
+canonical thread, so history, locks, provider sessions, and Modal snapshot
+lineage are shared in both directions.
 
 ## Parallel deployment
 
@@ -77,6 +80,8 @@ Important isolation rules:
   for browser-started runs must return to the service that owns that run.
 - Set `SLACK_BOT_TOKEN` only if browser-started turns should mirror into linked
   Slack threads.
+- Set `COMPADRE_HOSTED_SLACK_DELIVERY_ENABLED=false` to suppress outbound Slack
+  delivery during a synthetic probe while retaining Slack MCP credentials.
 - Do not make the experiment a Slack recovery owner. Its distinct
   `COMPADRE_PROCESS_ROLE` keeps the primary relay responsible for recovery.
 - Use the same database only for the real-thread trial. A separate database is
@@ -95,9 +100,11 @@ API key is not retained in browser storage.
 The comparison is complete: T3's server exposes a provider-adapter boundary
 that can consume Compadre's AG-UI stream through a small opt-in adapter. A real
 two-turn T3 web -> local Compadre -> Modal run succeeded, including Compadre
-session resumption. The reproducible upstream patch and current limitations are
-documented in [`experiments/t3code/README.md`](../experiments/t3code/README.md).
+session resumption. A paired-id Modal probe also restored one Slack-backed
+workspace from a T3-native id and hydrated the combined transcript. The
+reproducible upstream patch and current limitations are documented in
+[`experiments/t3code/README.md`](../experiments/t3code/README.md).
 
 Do not publish a fork until its owner and update policy are explicit. The next
-decision gate is Slack/thread identity plus an HTTPS tunnel for host tools, not
-whether the core web-to-Modal path is technically possible.
+decision gate is Slack-thread discovery/pairing UX plus an HTTPS tunnel for host
+tools, not whether shared Slack/T3/Modal identity is technically possible.

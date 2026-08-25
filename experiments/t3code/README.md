@@ -29,6 +29,13 @@ The local smoke test completed two turns through this path. The first rendered
 previous reply; Compadre reported `resumed=true` and T3 rendered the same
 answer, proving that conversation continuity survives across turns.
 
+A second local proof paired the T3 id `t3-local-pair-proof` with a synthetic
+Slack thread id. A first Modal sandbox wrote `PAIRING-SNAPSHOT-OK`, snapshotted,
+and terminated. A turn sent under the T3 id then resolved to the Slack-backed
+canonical conversation, logged `resumed=true`, restored the snapshot into a
+new physical sandbox, and returned `PAIRING-SNAPSHOT-OK SECOND SIDE COMPLETE`.
+Hydration through the T3 id returned the combined six-message transcript.
+
 ## Apply the T3 patch
 
 ```bash
@@ -50,6 +57,7 @@ COMPADRE_HOSTED_T3_ENABLED=true \
 COMPADRE_DURABILITY_BACKEND=memory \
 COMPADRE_PUBLIC_URL=https://compadre.invalid \
 COMPADRE_AGENT_PROVIDER=claude-code \
+COMPADRE_HOSTED_SLACK_DELIVERY_ENABLED=false \
 GITHUB_REPO_URL=https://github.com/octocat/Hello-World.git \
 REPO_BRANCH=master \
 JAM_MCP_PAT=local-placeholder \
@@ -59,6 +67,31 @@ npm run dev
 The placeholder public URL is sufficient only for a no-tool smoke test. Modal
 cannot reach loopback, so any turn that invokes a relayed host tool needs a real
 HTTPS tunnel pointing at the local Compadre server.
+
+`COMPADRE_HOSTED_SLACK_DELIVERY_ENABLED=false` suppresses browser-to-Slack
+mirroring during local probes without removing `SLACK_BOT_TOKEN`, which the
+agent may still need for Slack MCP access. Omit the flag or set it to `true`
+when testing real cross-surface delivery.
+
+## Pair a T3 thread with Slack
+
+Once both native ids are known, bind them through Compadre:
+
+```bash
+curl --request POST \
+  --header "Authorization: Bearer $COMPADRE_API_KEY" \
+  --header "Content-Type: application/json" \
+  --data '{"channelId":"C123","threadTs":"1712345678.000100"}' \
+  http://127.0.0.1:3100/hosted/threads/T3_THREAD_ID/slack
+```
+
+Compadre keeps the T3 id as an alias and uses the Slack thread id as the
+canonical conversation id. Subsequent T3 turns and hydration resolve the alias
+before transcript lookup, run creation, locking, provider-session resumption,
+or Modal snapshot restoration. A thread cannot be silently rebound to a
+different workspace. Pair a newly created T3 thread before its first Compadre
+turn; pairing returns `409` rather than orphaning an independently accumulated
+T3 transcript. Automatic history merging is not part of this slice.
 
 ## Run T3 locally
 
@@ -104,9 +137,9 @@ in T3 remain unchanged.
   first-class mappings.
 - T3's local project/worktree is display and orchestration metadata only;
   Compadre still selects and clones the repository used in Modal.
-- Existing Slack threads are not yet discoverable in T3. The next slice needs
-  an explicit T3-thread to Compadre-thread binding and transcript import so
-  Slack and T3 truly become interchangeable entry points.
+- Explicit T3-to-Slack thread pairing now shares the canonical transcript and
+  Modal snapshot lineage. T3 still lacks Slack-thread discovery, a pairing UI,
+  and automatic import of Slack history into its own local event database.
 - The adapter currently occupies T3's Codex driver slot. A durable fork should
   add Compadre as its own provider driver and snapshot instead.
 

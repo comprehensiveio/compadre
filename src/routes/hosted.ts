@@ -50,6 +50,8 @@ export interface HostedRoutesDependencies {
   getDurability(): Promise<AgentRunDurability | null>;
   getThreadPersistence(): Promise<ThreadPersistenceRuntime | null>;
   getLauncher(): WorkflowRunLauncher;
+  resolveThreadId(threadId: string): Promise<string>;
+  bindThreadAlias(aliasThreadId: string, canonicalThreadId: string): Promise<void>;
   getSlackBinding(threadId: string): Promise<HostedSlackBinding | null>;
   bindSlack(threadId: string, binding: HostedSlackBinding): Promise<void>;
   startSlackDelivery(input: HostedSlackDeliveryStart): void;
@@ -63,6 +65,20 @@ const defaultDependencies: HostedRoutesDependencies = {
   getThreadPersistence: getConfiguredThreadPersistence,
   getLauncher: () =>
     (configuredLauncher ??= createConfiguredWorkflowRunLauncher()),
+  async resolveThreadId(threadId) {
+    const runtime = await getConfiguredThreadPersistence();
+    if (!runtime) return threadId;
+    return new HostedThreadBindingStore(
+      runtime.persistence.stores.metadata,
+    ).resolve(threadId);
+  },
+  async bindThreadAlias(aliasThreadId, canonicalThreadId) {
+    const runtime = await getConfiguredThreadPersistence();
+    if (!runtime) throw new Error("thread persistence requires durability");
+    await new HostedThreadBindingStore(
+      runtime.persistence.stores.metadata,
+    ).bindAlias(aliasThreadId, canonicalThreadId);
+  },
   async getSlackBinding(threadId) {
     const runtime = await getConfiguredThreadPersistence();
     if (!runtime) return null;
@@ -78,6 +94,7 @@ const defaultDependencies: HostedRoutesDependencies = {
     ).bindSlack(threadId, binding);
   },
   startSlackDelivery(input) {
+    if (process.env.COMPADRE_HOSTED_SLACK_DELIVERY_ENABLED === "false") return;
     const botToken = process.env.SLACK_BOT_TOKEN;
     if (!botToken) return;
     startHostedSlackDelivery({ ...input, botToken });
@@ -122,6 +139,12 @@ function latestUserMessage(messages: unknown[]): string | null {
   return null;
 }
 
+function requestForThread(request: Request, threadId: string): Request {
+  const url = new URL(request.url);
+  url.searchParams.set("threadId", threadId);
+  return new Request(url, request);
+}
+
 export function createHostedRoutes(
   dependencies: HostedRoutesDependencies = defaultDependencies,
 ): Hono {
@@ -159,7 +182,14 @@ export function createHostedRoutes(
     if (!runtime) {
       return c.json({ error: "thread persistence requires durability" }, 503);
     }
-    return reconstructChat(runtime.persistence, c.req.raw, {
+    const requestedThreadId = c.req.query("threadId");
+    const request = requestedThreadId
+      ? requestForThread(
+          c.req.raw,
+          await dependencies.resolveThreadId(requestedThreadId),
+        )
+      : c.req.raw;
+    return reconstructChat(runtime.persistence, request, {
       // The experiment remains behind the shared key. A public deployment must
       // replace this with user and thread ownership checks.
       authorize: () => true,
@@ -197,8 +227,39 @@ export function createHostedRoutes(
         ? { recipientTeamId: value.recipientTeamId }
         : {}),
     };
-    await dependencies.bindSlack(c.req.param("threadId"), binding);
-    return c.json({ ok: true, binding });
+    // Slack already uses its root timestamp as the persisted conversation id.
+    // Keep the T3-native id as an alias so both surfaces share the transcript,
+    // thread lock, provider session, and Modal snapshot lineage.
+    const canonicalThreadId = await dependencies.resolveThreadId(
+      binding.threadTs,
+    );
+    const nativeThreadId = c.req.param("threadId");
+    const existingThreadId = await dependencies.resolveThreadId(nativeThreadId);
+    if (
+      existingThreadId === nativeThreadId &&
+      nativeThreadId !== canonicalThreadId
+    ) {
+      const runtime = await dependencies.getThreadPersistence();
+      const nativeMessages = runtime
+        ? await runtime.persistence.stores.messages.loadThread(nativeThreadId)
+        : [];
+      if (nativeMessages.length > 0) {
+        return c.json(
+          {
+            error: "thread already has history",
+            detail:
+              "Pair a new T3 thread before its first turn; automatic history merging is not implemented.",
+          },
+          409,
+        );
+      }
+    }
+    await dependencies.bindThreadAlias(
+      nativeThreadId,
+      canonicalThreadId,
+    );
+    await dependencies.bindSlack(canonicalThreadId, binding);
+    return c.json({ ok: true, canonicalThreadId, binding });
   });
 
   routes.post("/hosted/chat", async (c) => {
@@ -253,7 +314,7 @@ export function createHostedRoutes(
       return c.json({ error: "agent run durability is not configured" }, 503);
     }
     const runId = params.runId || dependencies.createId();
-    const threadId = params.threadId;
+    const threadId = await dependencies.resolveThreadId(params.threadId);
     const binding = await dependencies.getSlackBinding(threadId);
     const provider = requestedProfile
       ? providerForAgentProfile(requestedProfile)

@@ -82,6 +82,7 @@ See `.env.example` for the full list. Key notes:
   applies its own sandbox lifecycle limits.
 - **COMPADRE_TANSTACK_AI_ENABLED**: Expose the authenticated AG-UI endpoint without changing Slack routing.
 - **COMPADRE_HOSTED_T3_ENABLED**: Serve the experimental browser conversation surface and its authenticated chat routes at `/hosted`. It uses the same durable thread and Modal workflow path as Slack. See [the hosted T3 experiment runbook](docs/hosted-t3-experiment.md).
+- **COMPADRE_HOSTED_SLACK_DELIVERY_ENABLED**: Set to `false` to suppress browser-to-Slack mirroring during synthetic hosted probes without removing the Slack token used by agent tools. Defaults to enabled.
 - **FABLE_MODEL**: Optional model ID used by Slack's `--fable` routing profile. Defaults to `claude-fable-5`; normal Claude Code prompts use `DEFAULT_MODEL` or the built-in default.
 
 Run `npm run modal:prepare-image` to build or resolve the same cached Modal

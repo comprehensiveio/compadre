@@ -54,6 +54,9 @@ test("a web turn starts one durable run and fans a Slack-bound thread back to Sl
         locks: {} as never,
         sandboxInstances: {} as never,
       }),
+      resolveThreadId: async (threadId) =>
+        threadId === "t3-thread" ? "slack-thread" : threadId,
+      bindThreadAlias: async () => {},
       getSlackBinding: async (threadId) =>
         threadId === "slack-thread" ? slackBinding : null,
       bindSlack: async () => {},
@@ -122,7 +125,7 @@ test("a web turn starts one durable run and fans a Slack-bound thread back to Sl
   const response = await app.request(
     "/hosted/chat",
     authorizedJson({
-      threadId: "slack-thread",
+      threadId: "t3-thread",
       runId: "web-run",
       messages: [
         {
@@ -152,7 +155,7 @@ test("a web turn starts one durable run and fans a Slack-bound thread back to Sl
   ]);
 
   const hydration = await app.request(
-    "/hosted/chat?threadId=slack-thread",
+    "/hosted/chat?threadId=t3-thread",
     { headers: { Authorization: "Bearer test-key" } },
   );
   assert.equal(hydration.status, 200);
@@ -182,6 +185,7 @@ test("a browser can explicitly link an existing Compadre thread to Slack", async
   });
 
   const bindings: Array<{ threadId: string; binding: HostedSlackBinding }> = [];
+  const aliases: Array<{ aliasThreadId: string; canonicalThreadId: string }> = [];
   const app = new Hono();
   app.route(
     "/",
@@ -189,6 +193,10 @@ test("a browser can explicitly link an existing Compadre thread to Slack", async
       enabled: () => true,
       getDurability: async () => null,
       getThreadPersistence: async () => null,
+      resolveThreadId: async (threadId) => threadId,
+      bindThreadAlias: async (aliasThreadId, canonicalThreadId) => {
+        aliases.push({ aliasThreadId, canonicalThreadId });
+      },
       getSlackBinding: async () => null,
       bindSlack: async (threadId, binding) => {
         bindings.push({ threadId, binding });
@@ -210,15 +218,73 @@ test("a browser can explicitly link an existing Compadre thread to Slack", async
     authorizedJson({ channelId: "C123", threadTs: "1712345678.000100" }),
   );
   assert.equal(response.status, 200);
+  assert.deepEqual(aliases, [
+    {
+      aliasThreadId: "slack-thread",
+      canonicalThreadId: "1712345678.000100",
+    },
+  ]);
   assert.deepEqual(bindings, [
     {
-      threadId: "slack-thread",
+      threadId: "1712345678.000100",
       binding: {
         channelId: "C123",
         threadTs: "1712345678.000100",
       },
     },
   ]);
+});
+
+test("pairing refuses to orphan an existing T3-side transcript", async (t) => {
+  const previousApiKey = process.env.COMPADRE_API_KEY;
+  process.env.COMPADRE_API_KEY = "test-key";
+  t.after(() => {
+    if (previousApiKey === undefined) delete process.env.COMPADRE_API_KEY;
+    else process.env.COMPADRE_API_KEY = previousApiKey;
+  });
+
+  const persistence = memoryPersistence();
+  await persistence.stores.messages.saveThread("t3-with-history", [
+    { role: "user", content: "an existing turn" },
+  ]);
+  const app = new Hono();
+  app.route(
+    "/",
+    createHostedRoutes({
+      enabled: () => true,
+      getDurability: async () => null,
+      getThreadPersistence: async () => ({
+        persistence,
+        locks: {} as never,
+        sandboxInstances: {} as never,
+      }),
+      resolveThreadId: async (threadId) => threadId,
+      bindThreadAlias: async () => {
+        throw new Error("should not bind");
+      },
+      getSlackBinding: async () => null,
+      bindSlack: async () => {
+        throw new Error("should not bind Slack");
+      },
+      createId: () => "unused",
+      getLauncher: () => ({
+        async start() {
+          throw new Error("should not start");
+        },
+      }),
+      startSlackDelivery() {
+        throw new Error("should not deliver");
+      },
+    }),
+  );
+
+  const response = await app.request(
+    "/hosted/threads/t3-with-history/slack",
+    authorizedJson({ channelId: "C123", threadTs: "1712345678.000100" }),
+  );
+
+  assert.equal(response.status, 409);
+  assert.match(await response.text(), /automatic history merging/);
 });
 
 test("a browser turn waits through a cold harness start in memory mode", async (t) => {
@@ -240,6 +306,8 @@ test("a browser turn waits through a cold harness start in memory mode", async (
       enabled: () => true,
       getDurability: async () => durability,
       getThreadPersistence: async () => null,
+      resolveThreadId: async (threadId) => threadId,
+      bindThreadAlias: async () => {},
       getSlackBinding: async () => null,
       bindSlack: async () => {},
       createId: () => "slow-web-run",
@@ -314,6 +382,8 @@ test("the hosted interface stays dark and fails closed when disabled", async () 
       enabled: () => false,
       getDurability: async () => null,
       getThreadPersistence: async () => null,
+      resolveThreadId: async (threadId) => threadId,
+      bindThreadAlias: async () => {},
       getSlackBinding: async () => null,
       bindSlack: async () => {},
       createId: () => "unused",
