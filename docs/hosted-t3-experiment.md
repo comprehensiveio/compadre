@@ -90,11 +90,14 @@ thread or run ID can read it. Before broader use, replace that boundary with
 user identity, thread ownership, audit logging, and a server-side session so an
 API key is not retained in browser storage.
 
-## Fork decision
+## T3 provider-adapter result
 
-Do not create or publish a T3 Code fork for this stage. If the trial validates
-the experience, the next comparison should identify whether T3's UI can consume
-Compadre's AG-UI contract through a small adapter. Fork only if its UI is too
-tightly coupled to its local server or if we need sustained changes that the
-upstream project cannot accept. Keep Compadre's controller, durability,
-authorization, Slack delivery, and Modal lifecycle outside that fork.
+The comparison is complete: T3's server exposes a provider-adapter boundary
+that can consume Compadre's AG-UI stream through a small opt-in adapter. A real
+two-turn T3 web -> local Compadre -> Modal run succeeded, including Compadre
+session resumption. The reproducible upstream patch and current limitations are
+documented in [`experiments/t3code/README.md`](../experiments/t3code/README.md).
+
+Do not publish a fork until its owner and update policy are explicit. The next
+decision gate is Slack/thread identity plus an HTTPS tunnel for host tools, not
+whether the core web-to-Modal path is technically possible.
