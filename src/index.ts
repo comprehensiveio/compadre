@@ -5,6 +5,7 @@ if (!process.env.PATH?.includes(process.execPath.replace(/\/node$/, ""))) {
 }
 
 import { serve } from "@hono/node-server";
+import { serveStatic } from "@hono/node-server/serve-static";
 import ddTrace from "dd-trace";
 import { Hono } from "hono";
 import { logger } from "hono/logger";
@@ -15,6 +16,7 @@ import { webhookRoutes } from "./routes/webhook.js";
 import { aguiRoutes } from "./routes/agui.js";
 import { workflowRunRoutes } from "./routes/workflow-runs.js";
 import { toolBridgeRoutes } from "./routes/tool-bridge.js";
+import { hostedRoutes } from "./routes/hosted.js";
 import { validateConversationConfiguration } from "./conversation.js";
 import {
   createSingleFlightSlackRecovery,
@@ -53,6 +55,25 @@ app.route("/", webhookRoutes);
 app.route("/", aguiRoutes);
 app.route("/", workflowRunRoutes);
 app.route("/", toolBridgeRoutes);
+app.route("/", hostedRoutes);
+
+const hostedAssets = serveStatic({
+  root: "./dist-web",
+  rewriteRequestPath: (path) => path.replace(/^\/hosted/, ""),
+});
+const hostedIndex = serveStatic({ path: "./dist-web/index.html" });
+app.use("/hosted/assets/*", async (c, next) => {
+  if (process.env.COMPADRE_HOSTED_T3_ENABLED !== "true") return next();
+  return hostedAssets(c, next);
+});
+app.get("/hosted", async (c, next) => {
+  if (process.env.COMPADRE_HOSTED_T3_ENABLED !== "true") return c.notFound();
+  return hostedIndex(c, next);
+});
+app.get("/hosted/", async (c, next) => {
+  if (process.env.COMPADRE_HOSTED_T3_ENABLED !== "true") return c.notFound();
+  return hostedIndex(c, next);
+});
 
 const SLACK_RECOVERY_DELAY_MS = 15_000;
 

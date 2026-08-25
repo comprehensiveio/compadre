@@ -19,6 +19,7 @@ import { slackFailureNotice } from "../services/terminal-response.js";
 import { runSlackConversation } from "../services/slack-conversation.js";
 import { SlackRunStateStore } from "../services/slack-run-state.js";
 import { getRequiredThreadPersistence } from "../persistence/runtime.js";
+import { HostedThreadBindingStore } from "../services/hosted-thread-bindings.js";
 import { verifySlackSignature } from "../services/slack-verify.js";
 import {
   mergeSlackFileReferences,
@@ -200,6 +201,16 @@ async function handleAIMessage(
     runtime.persistence.stores.metadata,
     runtime.persistence.stores.runs,
   );
+  await new HostedThreadBindingStore(
+    runtime.persistence.stores.metadata,
+  ).bindSlack(threadKey, {
+    channelId: event.channel,
+    threadTs,
+    ...(event.user ? { recipientUserId: event.user } : {}),
+    ...((event.user_team || event.team || teamId)
+      ? { recipientTeamId: event.user_team || event.team || teamId }
+      : {}),
+  });
 
   // In non-DM contexts, use a reaction to indicate processing
   if (!isDM && slackStream) {

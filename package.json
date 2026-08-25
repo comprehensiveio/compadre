@@ -5,7 +5,10 @@
   "type": "module",
   "scripts": {
     "dev": "tsx watch src/start.ts",
-    "build": "tsc",
+    "dev:web": "vite --config web/vite.config.ts",
+    "build": "npm run build:server && npm run build:web",
+    "build:server": "tsc",
+    "build:web": "vite build --config web/vite.config.ts",
     "start": "node dist/start.js",
     "workflow:relay-probe": "tsx scripts/probe-workflow-relay.ts",
     "benchmark:cold-start": "tsx scripts/benchmark-cold-start.ts",
@@ -14,7 +17,7 @@
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
     "db:studio": "drizzle-kit studio",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p web/tsconfig.json",
     "test": "tsx --test src/*.test.ts src/**/*.test.ts",
     "test:thread-persistence": "tsx --test src/persistence/conversation.test.ts src/persistence/conversation.integration.test.ts",
     "test:persistence": "vitest run src/persistence/postgres.conformance.spec.ts"
@@ -36,6 +39,7 @@
     "@tanstack/ai-codex": "0.3.1",
     "@tanstack/ai-mcp": "0.3.0",
     "@tanstack/ai-persistence": "0.1.2",
+    "@tanstack/ai-react": "^0.19.2",
     "@tanstack/ai-sandbox": "0.3.1",
     "@tanstack/ai-sandbox-local-process": "0.2.1",
     "dd-trace": "^5.119.0",
@@ -45,6 +49,8 @@
     "modal": "^0.9.0",
     "pg": "8.23.0",
     "pg-cursor": "2.22.0",
+    "react": "^19.1.1",
+    "react-dom": "^19.1.1",
     "zod": "^4.4.3"
   },
   "devDependencies": {
@@ -52,9 +58,13 @@
     "@types/node": "^22.20.1",
     "@types/pg": "8.21.0",
     "@types/pg-cursor": "2.7.2",
+    "@types/react": "^19.1.10",
+    "@types/react-dom": "^19.1.7",
+    "@vitejs/plugin-react": "^6.1.0",
     "drizzle-kit": "1.0.0-rc.4",
     "tsx": "^4.23.5",
     "typescript": "^5.7.0",
+    "vite": "^8.2.2",
     "vitest": "4.1.10"
   }
 }

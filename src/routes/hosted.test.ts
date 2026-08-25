@@ -1,0 +1,333 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+import { EventType } from "@tanstack/ai";
+import { memoryPersistence } from "@tanstack/ai-persistence";
+import { Hono } from "hono";
+import { createAgentRunDurability } from "../durability/runtime.js";
+import type { HostedSlackBinding } from "../services/hosted-thread-bindings.js";
+import { createHostedRoutes } from "./hosted.js";
+
+const slackBinding: HostedSlackBinding = {
+  channelId: "C123",
+  threadTs: "1712345678.000100",
+  recipientUserId: "U123",
+  recipientTeamId: "T123",
+};
+
+function authorizedJson(body: unknown): RequestInit {
+  return {
+    method: "POST",
+    headers: {
+      Authorization: "Bearer test-key",
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(body),
+  };
+}
+
+test("a web turn starts one durable run and fans a Slack-bound thread back to Slack", async (t) => {
+  const previousApiKey = process.env.COMPADRE_API_KEY;
+  process.env.COMPADRE_API_KEY = "test-key";
+  t.after(() => {
+    if (previousApiKey === undefined) delete process.env.COMPADRE_API_KEY;
+    else process.env.COMPADRE_API_KEY = previousApiKey;
+  });
+
+  const durability = await createAgentRunDurability({
+    COMPADRE_DURABILITY_BACKEND: "memory",
+  });
+  assert.ok(durability);
+  const persistence = memoryPersistence();
+  const deliveries: Array<{
+    binding: HostedSlackBinding;
+    message: string;
+    runId: string;
+  }> = [];
+  const app = new Hono();
+  app.route(
+    "/",
+    createHostedRoutes({
+      enabled: () => true,
+      getDurability: async () => durability,
+      getThreadPersistence: async () => ({
+        persistence,
+        locks: {} as never,
+        sandboxInstances: {} as never,
+      }),
+      getSlackBinding: async (threadId) =>
+        threadId === "slack-thread" ? slackBinding : null,
+      bindSlack: async () => {},
+      createId: () => "generated-id",
+      getLauncher: () => ({
+        async start(input) {
+          assert.equal(input.runId, "web-run");
+          assert.equal(input.threadId, "slack-thread");
+          assert.equal(input.prompt, "hello from the browser");
+          assert.equal(input.transcriptUserMessage, "hello from the browser");
+          assert.equal(input.persistThread, true);
+          assert.equal(input.responseMode, "slack-streaming");
+          await persistence.stores.messages.saveThread("slack-thread", [
+            { role: "user", content: "hello from the browser" },
+            { role: "assistant", content: "hello from Compadre" },
+          ]);
+          await durability.stream("web-run").append([
+            {
+              type: EventType.RUN_STARTED,
+              runId: "web-run",
+              threadId: "slack-thread",
+              timestamp: 1,
+            },
+            {
+              type: EventType.TEXT_MESSAGE_START,
+              messageId: "assistant-message",
+              role: "assistant",
+              timestamp: 2,
+            },
+            {
+              type: EventType.TEXT_MESSAGE_CONTENT,
+              messageId: "assistant-message",
+              delta: "hello from Compadre",
+              timestamp: 3,
+            },
+            {
+              type: EventType.TEXT_MESSAGE_END,
+              messageId: "assistant-message",
+              timestamp: 4,
+            },
+            {
+              type: EventType.RUN_FINISHED,
+              runId: "web-run",
+              threadId: "slack-thread",
+              timestamp: 5,
+            },
+          ]);
+          await durability.runs.update("web-run", {
+            status: "completed",
+            finishedAt: 5,
+          });
+          await durability.stream("web-run").close();
+          return { taskRunId: "task-1" };
+        },
+      }),
+      startSlackDelivery(input) {
+        deliveries.push({
+          binding: input.binding,
+          message: input.userMessage,
+          runId: input.runId,
+        });
+      },
+    }),
+  );
+
+  const response = await app.request(
+    "/hosted/chat",
+    authorizedJson({
+      threadId: "slack-thread",
+      runId: "web-run",
+      messages: [
+        {
+          id: "user-message",
+          role: "user",
+          content: "hello from the browser",
+        },
+      ],
+      tools: [],
+      context: [],
+      forwardedProps: { provider: "codex" },
+      state: {},
+    }),
+  );
+
+  assert.equal(response.status, 200, await response.clone().text());
+  assert.equal(response.headers.get("content-type"), "text/event-stream");
+  const stream = await response.text();
+  assert.match(stream, /"type":"TEXT_MESSAGE_CONTENT"/);
+  assert.match(stream, /"delta":"hello from Compadre"/);
+  assert.deepEqual(deliveries, [
+    {
+      binding: slackBinding,
+      message: "hello from the browser",
+      runId: "web-run",
+    },
+  ]);
+
+  const hydration = await app.request(
+    "/hosted/chat?threadId=slack-thread",
+    { headers: { Authorization: "Bearer test-key" } },
+  );
+  assert.equal(hydration.status, 200);
+  const hydrated = (await hydration.json()) as {
+    messages: Array<{ role: string; parts: Array<{ content?: string }> }>;
+  };
+  assert.equal(hydrated.messages[0]?.role, "user");
+  assert.equal(hydrated.messages[0]?.parts[0]?.content, "hello from the browser");
+  assert.equal(hydrated.messages[1]?.role, "assistant");
+  assert.equal(hydrated.messages[1]?.parts[0]?.content, "hello from Compadre");
+
+  const resumed = await app.request(
+    "/hosted/chat?threadId=slack-thread&runId=web-run&offset=-1",
+    { headers: { Authorization: "Bearer test-key" } },
+  );
+  assert.equal(resumed.status, 200);
+  assert.equal(resumed.headers.get("content-type"), "text/event-stream");
+  assert.match(await resumed.text(), /"delta":"hello from Compadre"/);
+});
+
+test("a browser can explicitly link an existing Compadre thread to Slack", async (t) => {
+  const previousApiKey = process.env.COMPADRE_API_KEY;
+  process.env.COMPADRE_API_KEY = "test-key";
+  t.after(() => {
+    if (previousApiKey === undefined) delete process.env.COMPADRE_API_KEY;
+    else process.env.COMPADRE_API_KEY = previousApiKey;
+  });
+
+  const bindings: Array<{ threadId: string; binding: HostedSlackBinding }> = [];
+  const app = new Hono();
+  app.route(
+    "/",
+    createHostedRoutes({
+      enabled: () => true,
+      getDurability: async () => null,
+      getThreadPersistence: async () => null,
+      getSlackBinding: async () => null,
+      bindSlack: async (threadId, binding) => {
+        bindings.push({ threadId, binding });
+      },
+      createId: () => "unused",
+      getLauncher: () => ({
+        async start() {
+          throw new Error("should not start");
+        },
+      }),
+      startSlackDelivery() {
+        throw new Error("should not deliver");
+      },
+    }),
+  );
+
+  const response = await app.request(
+    "/hosted/threads/slack-thread/slack",
+    authorizedJson({ channelId: "C123", threadTs: "1712345678.000100" }),
+  );
+  assert.equal(response.status, 200);
+  assert.deepEqual(bindings, [
+    {
+      threadId: "slack-thread",
+      binding: {
+        channelId: "C123",
+        threadTs: "1712345678.000100",
+      },
+    },
+  ]);
+});
+
+test("a browser turn waits through a cold harness start in memory mode", async (t) => {
+  const previousApiKey = process.env.COMPADRE_API_KEY;
+  process.env.COMPADRE_API_KEY = "test-key";
+  t.after(() => {
+    if (previousApiKey === undefined) delete process.env.COMPADRE_API_KEY;
+    else process.env.COMPADRE_API_KEY = previousApiKey;
+  });
+
+  const durability = await createAgentRunDurability({
+    COMPADRE_DURABILITY_BACKEND: "memory",
+  });
+  assert.ok(durability);
+  const app = new Hono();
+  app.route(
+    "/",
+    createHostedRoutes({
+      enabled: () => true,
+      getDurability: async () => durability,
+      getThreadPersistence: async () => null,
+      getSlackBinding: async () => null,
+      bindSlack: async () => {},
+      createId: () => "slow-web-run",
+      getLauncher: () => ({
+        async start() {
+          setTimeout(() => {
+            void (async () => {
+              await durability.stream("slow-web-run").append([
+                {
+                  type: EventType.RUN_STARTED,
+                  runId: "slow-web-run",
+                  threadId: "slow-web-thread",
+                  timestamp: 1,
+                },
+                {
+                  type: EventType.TEXT_MESSAGE_START,
+                  messageId: "assistant-message",
+                  role: "assistant",
+                  timestamp: 2,
+                },
+                {
+                  type: EventType.TEXT_MESSAGE_CONTENT,
+                  messageId: "assistant-message",
+                  delta: "started after the local fail-fast",
+                  timestamp: 3,
+                },
+                {
+                  type: EventType.TEXT_MESSAGE_END,
+                  messageId: "assistant-message",
+                  timestamp: 4,
+                },
+                {
+                  type: EventType.RUN_FINISHED,
+                  runId: "slow-web-run",
+                  threadId: "slow-web-thread",
+                  timestamp: 5,
+                },
+              ]);
+              await durability.stream("slow-web-run").close();
+            })();
+          }, 250);
+          return { taskRunId: "slow-task" };
+        },
+      }),
+      startSlackDelivery() {},
+    }),
+  );
+
+  const response = await app.request(
+    "/hosted/chat",
+    authorizedJson({
+      threadId: "slow-web-thread",
+      runId: "slow-web-run",
+      messages: [
+        { id: "slow-user-message", role: "user", content: "start slowly" },
+      ],
+      tools: [],
+      context: [],
+      forwardedProps: {},
+      state: {},
+    }),
+  );
+  assert.equal(response.status, 200);
+  assert.match(await response.text(), /started after the local fail-fast/);
+});
+
+test("the hosted interface stays dark and fails closed when disabled", async () => {
+  const app = new Hono();
+  app.route(
+    "/",
+    createHostedRoutes({
+      enabled: () => false,
+      getDurability: async () => null,
+      getThreadPersistence: async () => null,
+      getSlackBinding: async () => null,
+      bindSlack: async () => {},
+      createId: () => "unused",
+      getLauncher: () => ({
+        async start() {
+          throw new Error("should not start");
+        },
+      }),
+      startSlackDelivery() {
+        throw new Error("should not deliver");
+      },
+    }),
+  );
+
+  const response = await app.request("/hosted/chat", { method: "POST" });
+  assert.equal(response.status, 404);
+});
