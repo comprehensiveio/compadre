@@ -69,6 +69,10 @@ interface CompadreSessionContext {
   stopped: boolean;
 }
 
+function isCompadreProvider(value: string | undefined): value is "claude-code" | "codex" {
+  return value === "claude-code" || value === "codex";
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -218,7 +222,11 @@ export function makeCompadreAdapter(options: CompadreAdapterOptions) {
           status: "ready",
           runtimeMode: input.runtimeMode,
           ...(input.cwd ? { cwd: input.cwd } : {}),
-          ...(input.modelSelection?.model ? { model: input.modelSelection.model } : {}),
+          ...(input.modelSelection?.instanceId === boundInstanceId && input.modelSelection.model
+            ? { model: input.modelSelection.model }
+            : options.provider
+              ? { model: options.provider }
+              : {}),
           threadId: input.threadId,
           resumeCursor: { transport: "compadre", threadId: input.threadId },
           createdAt: now,
@@ -276,6 +284,14 @@ export function makeCompadreAdapter(options: CompadreAdapterOptions) {
           });
         }
 
+        const selectedModel =
+          input.modelSelection?.instanceId === boundInstanceId
+            ? input.modelSelection.model
+            : context.session.model;
+        const selectedProvider = isCompadreProvider(selectedModel)
+          ? selectedModel
+          : options.provider;
+
         const turnId = TurnId.make(yield* randomId);
         const runId = yield* randomId;
         const messageId = yield* randomId;
@@ -284,6 +300,7 @@ export function makeCompadreAdapter(options: CompadreAdapterOptions) {
           ...context.session,
           status: "running",
           activeTurnId: turnId,
+          ...(selectedProvider ? { model: selectedProvider } : {}),
           updatedAt: yield* nowIso,
         };
         yield* publish({
@@ -509,7 +526,7 @@ export function makeCompadreAdapter(options: CompadreAdapterOptions) {
               runId,
               messageId,
               input: text,
-              provider: options.provider,
+              provider: selectedProvider,
             }),
             handleEvent,
           ).pipe(
@@ -603,7 +620,7 @@ export function makeCompadreAdapter(options: CompadreAdapterOptions) {
 
     return {
       provider: PROVIDER,
-      capabilities: { sessionModelSwitch: "unsupported" },
+      capabilities: { sessionModelSwitch: "in-session" },
       startSession,
       sendTurn,
       interruptTurn,

@@ -417,7 +417,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
             },
             {
               COMPADRE_PROVIDER_URL: "https://compadre.example/hosted/chat",
-              COMPADRE_PROVIDER_MODEL: "claude-code",
+              COMPADRE_PROVIDER_AGENT: "claude-code",
             },
           );
 
@@ -432,9 +432,16 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
           assert.deepStrictEqual(status.models, [
             {
               slug: "claude-code",
-              name: "claude-code",
+              name: "Claude Code",
               isCustom: true,
               isDefault: true,
+              capabilities: null,
+            },
+            {
+              slug: "codex",
+              name: "Codex",
+              isCustom: true,
+              isDefault: false,
               capabilities: null,
             },
           ]);

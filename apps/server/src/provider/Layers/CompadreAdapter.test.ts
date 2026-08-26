@@ -19,12 +19,20 @@ it.layer(Layer.merge(NodeServices.layer, FetchHttpClient.layer))("CompadreAdapte
   it.effect("maps a Compadre AG-UI text turn to T3 runtime events", () =>
     Effect.gen(function* () {
       const threadId = ThreadId.make("compadre-thread");
-      const requests: Array<{ readonly input: string; readonly threadId: string }> = [];
+      const requests: Array<{
+        readonly input: string;
+        readonly threadId: string;
+        readonly provider: "claude-code" | "codex" | undefined;
+      }> = [];
       const adapter = yield* makeCompadreAdapter({
         endpoint: "http://compadre.test/hosted/chat",
         instanceId: ProviderInstanceId.make("codex"),
         transport: (request) => {
-          requests.push({ input: request.input, threadId: request.threadId });
+          requests.push({
+            input: request.input,
+            threadId: request.threadId,
+            provider: request.provider,
+          });
           return Stream.fromIterable([
             { type: "RUN_STARTED", runId: request.runId, threadId: request.threadId },
             {
@@ -62,15 +70,28 @@ it.layer(Layer.merge(NodeServices.layer, FetchHttpClient.layer))("CompadreAdapte
         provider: ProviderDriverKind.make("codex"),
         cwd: process.cwd(),
         runtimeMode: "full-access",
+        modelSelection: {
+          instanceId: ProviderInstanceId.make("codex"),
+          model: "claude-code",
+        },
       });
-      const turn = yield* adapter.sendTurn({ threadId, input: "inspect the repo" });
+      const turn = yield* adapter.sendTurn({
+        threadId,
+        input: "inspect the repo",
+        modelSelection: {
+          instanceId: ProviderInstanceId.make("codex"),
+          model: "codex",
+        },
+      });
 
       yield* Deferred.await(completed);
       yield* Fiber.interrupt(eventsFiber);
 
       assert.equal(session.provider, "codex");
       assert.equal(turn.threadId, threadId);
-      assert.deepStrictEqual(requests, [{ input: "inspect the repo", threadId }]);
+      assert.deepStrictEqual(requests, [
+        { input: "inspect the repo", threadId, provider: "codex" },
+      ]);
       assert.deepStrictEqual(
         events.map((event) => event.type),
         [

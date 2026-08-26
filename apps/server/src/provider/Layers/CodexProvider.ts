@@ -549,19 +549,24 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
 
   const compadreEndpoint = resolvedEnvironment.COMPADRE_PROVIDER_URL?.trim();
   if (compadreEndpoint) {
-    const configuredModel = resolvedEnvironment.COMPADRE_PROVIDER_MODEL?.trim();
-    const models =
-      emptyModels.length > 0
-        ? emptyModels
-        : [
-            {
-              slug: configuredModel || "compadre",
-              name: configuredModel || "Compadre",
-              isCustom: true,
-              isDefault: true,
-              capabilities: null,
-            },
-          ];
+    const configuredProvider = resolvedEnvironment.COMPADRE_PROVIDER_AGENT?.trim();
+    const defaultProvider = configuredProvider === "codex" ? "codex" : "claude-code";
+    const models = [
+      {
+        slug: "claude-code",
+        name: "Claude Code",
+        isCustom: true,
+        isDefault: defaultProvider === "claude-code",
+        capabilities: null,
+      },
+      {
+        slug: "codex",
+        name: "Codex",
+        isCustom: true,
+        isDefault: defaultProvider === "codex",
+        capabilities: null,
+      },
+    ];
     return buildServerProvider({
       presentation: CODEX_PRESENTATION,
       enabled: true,
