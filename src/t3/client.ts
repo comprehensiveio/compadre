@@ -18,10 +18,15 @@ export type T3RuntimeMode =
   | "full-access";
 export type T3InteractionMode = "default" | "plan";
 
+export interface T3ProviderOptionSelection {
+  id: string;
+  value: string | boolean;
+}
+
 export interface T3ModelSelection {
   instanceId: string;
   model: string;
-  options?: ReadonlyArray<unknown>;
+  options?: ReadonlyArray<T3ProviderOptionSelection>;
 }
 
 export interface T3Project {
@@ -110,7 +115,10 @@ export class T3GatewayError extends Error {
 const modelSelectionSchema = z.object({
   instanceId: z.string().min(1),
   model: z.string().min(1),
-  options: z.array(z.unknown()).optional(),
+  options: z.array(z.object({
+    id: z.string().min(1),
+    value: z.union([z.string().min(1), z.boolean()]),
+  })).optional(),
 });
 
 const projectSchema = z.object({

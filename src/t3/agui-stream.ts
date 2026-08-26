@@ -2,7 +2,7 @@ import {
   EventType,
   type StreamChunk,
 } from "@tanstack/ai";
-import type { T3ThreadSnapshot } from "./client.js";
+import type { T3ModelSelection, T3ThreadSnapshot } from "./client.js";
 import type { T3GatewayTurn } from "./gateway.js";
 
 export interface NativeT3AguiGateway {
@@ -10,7 +10,7 @@ export interface NativeT3AguiGateway {
     canonicalThreadId: string;
     title: string;
     text: string;
-    modelSelection: { instanceId: string; model: string };
+    modelSelection: T3ModelSelection;
     signal?: AbortSignal;
   }): Promise<T3GatewayTurn>;
   waitForTerminal(input: {
@@ -27,7 +27,7 @@ export interface NativeT3AguiStreamInput {
   runId: string;
   title: string;
   text: string;
-  modelSelection: { instanceId: string; model: string };
+  modelSelection: T3ModelSelection;
   signal?: AbortSignal;
   onTurn?(turn: T3GatewayTurn): void | Promise<void>;
   onTerminal?(): void | Promise<void>;

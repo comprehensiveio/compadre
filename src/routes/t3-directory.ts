@@ -120,7 +120,27 @@ function modelSelection(value: unknown): T3ModelSelection | null {
   const model = nonEmptyString(record.model, 200);
   if (!instanceId || !model) return null;
   if (instanceId !== "codex" && instanceId !== "claudeAgent") return null;
-  return { instanceId, model };
+  const options = providerOptions(record.options);
+  return { instanceId, model, ...(options.length > 0 ? { options } : {}) };
+}
+
+function providerOptions(value: unknown): NonNullable<T3ModelSelection["options"]> {
+  if (!Array.isArray(value)) return [];
+  const options: Array<NonNullable<T3ModelSelection["options"]>[number]> = [];
+  for (const entry of value.slice(0, 20)) {
+    if (!entry || typeof entry !== "object") continue;
+    const record = entry as Record<string, unknown>;
+    const id = nonEmptyString(record.id, 100);
+    const optionValue = record.value;
+    if (!id || (typeof optionValue !== "string" && typeof optionValue !== "boolean")) continue;
+    if (typeof optionValue === "string") {
+      const normalized = nonEmptyString(optionValue, 200);
+      if (normalized) options.push({ id, value: normalized });
+      continue;
+    }
+    options.push({ id, value: optionValue });
+  }
+  return options;
 }
 
 async function requestBody(request: Request): Promise<Record<string, unknown> | null> {
@@ -168,8 +188,10 @@ async function latestUserMessage(messages: unknown): Promise<string | null> {
 function nativeModelSelection(
   provider: "claude-code" | "codex",
   requestedModel: unknown,
+  requestedOptions: unknown,
 ): T3ModelSelection {
   const model = nonEmptyString(requestedModel, 200);
+  const options = providerOptions(requestedOptions);
   if (provider === "codex") {
     return {
       instanceId: "codex",
@@ -177,6 +199,7 @@ function nativeModelSelection(
         model && model !== "codex"
           ? model
           : process.env.COMPADRE_T3_CODEX_MODEL?.trim() || "gpt-5.6-sol",
+      ...(options.length > 0 ? { options } : {}),
     };
   }
   return {
@@ -185,6 +208,7 @@ function nativeModelSelection(
       model && model !== "claude-code"
         ? model
         : process.env.COMPADRE_T3_CLAUDE_MODEL?.trim() || "claude-opus-5",
+    ...(options.length > 0 ? { options } : {}),
   };
 }
 
@@ -290,6 +314,7 @@ export function createT3DirectoryRoutes(
       modelSelection: nativeModelSelection(
         provider,
         params.forwardedProps.model,
+        params.forwardedProps.modelOptions,
       ),
       signal: c.req.raw.signal,
       onTurn(turn) {

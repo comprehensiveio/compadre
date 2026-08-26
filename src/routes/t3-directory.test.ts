@@ -310,7 +310,11 @@ test("streams a native Modal T3 turn through the central provider endpoint", asy
     tools: [],
     context: [],
     state: {},
-    forwardedProps: { provider: "claude-code" },
+    forwardedProps: {
+      provider: "claude-code",
+      model: "claude-sonnet-5",
+      modelOptions: [{ id: "effort", value: "high" }],
+    },
   }));
 
   assert.equal(response.status, 200, await response.clone().text());
@@ -322,7 +326,8 @@ test("streams a native Modal T3 turn through the central provider endpoint", asy
   assert.match(body, /"type":"RUN_FINISHED"/);
   assert.deepEqual(selection, {
     instanceId: "claudeAgent",
-    model: "claude-opus-5",
+    model: "claude-sonnet-5",
+    options: [{ id: "effort", value: "high" }],
   });
 });
 
