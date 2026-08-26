@@ -308,6 +308,7 @@ it.layer(NodeServices.layer)("decider project scripts", (it) => {
             messageId: asMessageId("message-user-1"),
             role: "user",
             text: "hello",
+            providerPrompt: "hello with Slack routing context",
             attachments: [],
           },
           modelSelection: createModelSelection(ProviderInstanceId.make("codex"), "gpt-5.3-codex", [
@@ -334,6 +335,7 @@ it.layer(NodeServices.layer)("decider project scripts", (it) => {
       expect(turnStartEvent.payload).toMatchObject({
         threadId: ThreadId.make("thread-1"),
         messageId: asMessageId("message-user-1"),
+        providerPrompt: "hello with Slack routing context",
         modelSelection: createModelSelection(ProviderInstanceId.make("codex"), "gpt-5.3-codex", [
           { id: "reasoningEffort", value: "high" },
           { id: "fastMode", value: true },

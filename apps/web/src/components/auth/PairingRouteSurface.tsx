@@ -207,6 +207,10 @@ export function HostedPairingRouteSurface() {
       pairingCode: request.token,
     });
     if (result._tag === "Success") {
+      if (request.threadId) {
+        window.location.href = `/${encodeURIComponent(result.value)}/${encodeURIComponent(request.threadId)}`;
+        return;
+      }
       setStatus("paired");
       setMessage(`${request.label || "The environment"} is saved in this browser.`);
       return;

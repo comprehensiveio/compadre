@@ -319,6 +319,7 @@ it.effect("accepts bootstrap metadata in thread.turn.start", () =>
         messageId: "msg-bootstrap",
         role: "user",
         text: "hello",
+        providerPrompt: "hello with hidden transport context",
         attachments: [],
       },
       bootstrap: {
@@ -346,6 +347,7 @@ it.effect("accepts bootstrap metadata in thread.turn.start", () =>
       createdAt: "2026-01-01T00:00:00.000Z",
     });
     assert.strictEqual(parsed.bootstrap?.createThread?.projectId, "project-1");
+    assert.strictEqual(parsed.message.providerPrompt, "hello with hidden transport context");
     assert.strictEqual(parsed.bootstrap?.prepareWorktree?.baseBranch, "main");
     assert.strictEqual(parsed.bootstrap?.prepareWorktree?.startFromOrigin, true);
     assert.strictEqual(parsed.bootstrap?.runSetupScript, true);

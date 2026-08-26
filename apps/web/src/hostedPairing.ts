@@ -6,6 +6,7 @@ export interface HostedPairingRequest {
   readonly host: string;
   readonly token: string;
   readonly label: string;
+  readonly threadId: string;
 }
 
 export type HostedAppChannel = "latest" | "nightly";
@@ -48,6 +49,7 @@ export function readHostedPairingRequest(url: URL = new URL(window.location.href
   const host = url.searchParams.get("host")?.trim() ?? "";
   const token = getPairingTokenFromUrl(url)?.trim() ?? "";
   const label = url.searchParams.get("label")?.trim() ?? "";
+  const threadId = url.searchParams.get("threadId")?.trim() ?? "";
 
   if (!host || !token) {
     return null;
@@ -57,6 +59,7 @@ export function readHostedPairingRequest(url: URL = new URL(window.location.href
     host,
     token,
     label,
+    threadId,
   } satisfies HostedPairingRequest;
 }
 
@@ -68,6 +71,7 @@ export function buildHostedPairingUrl(input: {
   readonly host: string;
   readonly token: string;
   readonly label?: string | null;
+  readonly threadId?: string | null;
 }): string {
   const url = new URL("/pair", configuredHostedAppUrl());
   url.searchParams.set("host", input.host);
@@ -75,6 +79,11 @@ export function buildHostedPairingUrl(input: {
   const label = input.label?.trim();
   if (label) {
     url.searchParams.set("label", label);
+  }
+
+  const threadId = input.threadId?.trim();
+  if (threadId) {
+    url.searchParams.set("threadId", threadId);
   }
 
   return setPairingTokenOnUrl(url, input.token).toString();

@@ -20,6 +20,7 @@ describe("hostedPairing", () => {
       host: "100.64.1.2:3773",
       token: "ABCD1234",
       label: "",
+      threadId: "",
     });
     expect(hasHostedPairingRequest(url)).toBe(true);
   });
@@ -32,6 +33,7 @@ describe("hostedPairing", () => {
         host: "https://backend.example.com:3773",
         token: "pairing-token",
         label: "Workstation",
+        threadId: "thread-slack-123",
       }),
     );
 
@@ -39,6 +41,7 @@ describe("hostedPairing", () => {
     expect(url.pathname).toBe("/pair");
     expect(url.searchParams.get("host")).toBe("https://backend.example.com:3773");
     expect(url.searchParams.get("label")).toBe("Workstation");
+    expect(url.searchParams.get("threadId")).toBe("thread-slack-123");
     expect(url.searchParams.has("token")).toBe(false);
     expect(url.hash).toBe("#token=pairing-token");
   });
