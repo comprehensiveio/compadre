@@ -74,6 +74,20 @@ test("does not replace a newer centralized snapshot with a stale poll", async ()
   assert.equal((await store.get(binding.canonicalThreadId))?.snapshot.snapshotSequence, 12);
 });
 
+test("does not rewrite an identical centralized snapshot", async () => {
+  const persistence = memoryPersistence();
+  const store = new T3ThreadSnapshotStore(persistence.stores.metadata);
+
+  const first = await store.save(binding, snapshot(12));
+  const retained = await store.save(binding, {
+    ...snapshot(12),
+    thread: { ...snapshot(12).thread, title: "Same sequence, later poll" },
+  });
+
+  assert.equal(retained.capturedAt, first.capturedAt);
+  assert.equal(retained.snapshot.thread.title, "Thread");
+});
+
 test("rejects snapshots from a different native T3 thread", async () => {
   const persistence = memoryPersistence();
   const store = new T3ThreadSnapshotStore(persistence.stores.metadata);

@@ -76,7 +76,7 @@ export class T3ThreadSnapshotStore {
         if (
           existing &&
           existing.t3ThreadId === binding.t3ThreadId &&
-          existing.snapshot.snapshotSequence > snapshot.snapshotSequence
+          existing.snapshot.snapshotSequence >= snapshot.snapshotSequence
         ) {
           return existing;
         }
