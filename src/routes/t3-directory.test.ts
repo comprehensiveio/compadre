@@ -230,6 +230,102 @@ test("creates, reads, sends, opens, and cancels one native T3 thread", async (t)
   assert.deepEqual(await cancelled.json(), { ok: true, sequence: 7 });
 });
 
+test("streams a native Modal T3 turn through the central provider endpoint", async (t) => {
+  const previousApiKey = process.env.COMPADRE_API_KEY;
+  process.env.COMPADRE_API_KEY = "test-key";
+  t.after(() => {
+    if (previousApiKey === undefined) delete process.env.COMPADRE_API_KEY;
+    else process.env.COMPADRE_API_KEY = previousApiKey;
+  });
+
+  let selection: unknown;
+  const turnSnapshot: T3ThreadSnapshot = {
+    ...snapshot,
+    snapshotSequence: 9,
+    thread: {
+      ...snapshot.thread,
+      messages: [
+        {
+          id: "message-1",
+          role: "user",
+          text: "run pwd",
+          turnId: "turn-1",
+          streaming: false,
+          createdAt: "2026-08-26T15:00:01.000Z",
+          updatedAt: "2026-08-26T15:00:01.000Z",
+        },
+        ...snapshot.thread.messages,
+      ],
+      activities: [{
+        id: "tool-complete",
+        kind: "tool.completed",
+        turnId: "turn-1",
+        summary: "Command run",
+        createdAt: "2026-08-26T15:00:01.500Z",
+        payload: {
+          toolCallId: "tool-1",
+          detail: "Bash: pwd",
+          status: "completed",
+          data: { command: "pwd" },
+        },
+      }],
+    },
+  };
+  const gateway = {
+    async list() { return []; },
+    async send(input: { modelSelection: unknown }): Promise<T3GatewayTurn> {
+      selection = input.modelSelection;
+      return {
+        binding: { ...binding, status: "working" as const },
+        dispatch: {
+          sequence: 3,
+          commandId: "command-1",
+          messageId: "message-1",
+          threadId: "native-thread-1",
+          createdAt: "2026-08-26T15:00:01.000Z",
+        },
+      };
+    },
+    async snapshot() { return null; },
+    async open() { return null; },
+    async cancel() { return 7; },
+    async waitForTerminal(input: {
+      onSnapshot?(snapshot: T3ThreadSnapshot): void | Promise<void>;
+    }) {
+      await input.onSnapshot?.(turnSnapshot);
+      return turnSnapshot;
+    },
+  };
+  const app = new Hono();
+  app.route("/", createT3DirectoryRoutes({
+    enabled: () => true,
+    createId: () => "generated",
+    getGateway: async () => gateway,
+    watchTurn() {},
+  }));
+  const response = await app.request("/hosted/t3/chat", authorized({
+    threadId: "central-thread",
+    runId: "run-1",
+    messages: [{ id: "input-1", role: "user", content: "run pwd" }],
+    tools: [],
+    context: [],
+    state: {},
+    forwardedProps: { provider: "claude-code" },
+  }));
+
+  assert.equal(response.status, 200, await response.clone().text());
+  assert.match(response.headers.get("content-type") ?? "", /text\/event-stream/);
+  const body = await response.text();
+  assert.match(body, /"type":"RUN_STARTED"/);
+  assert.match(body, /"type":"TOOL_CALL_START"/);
+  assert.match(body, /"type":"TEXT_MESSAGE_CONTENT"/);
+  assert.match(body, /"type":"RUN_FINISHED"/);
+  assert.deepEqual(selection, {
+    instanceId: "claudeAgent",
+    model: "claude-opus-5",
+  });
+});
+
 test("does not expose Modal bootstrap details when provisioning fails", async (t) => {
   const previousApiKey = process.env.COMPADRE_API_KEY;
   process.env.COMPADRE_API_KEY = "test-key";

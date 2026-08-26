@@ -1,4 +1,10 @@
 import crypto from "node:crypto";
+import {
+  chatParamsFromRequestBody,
+  convertMessagesToModelMessages,
+  toServerSentEventsResponse,
+  type ModelMessage,
+} from "@tanstack/ai";
 import { Hono, type Context, type Handler } from "hono";
 import type { T3ThreadBinding } from "../services/t3-thread-bindings.js";
 import type {
@@ -12,10 +18,19 @@ import {
 } from "../t3/gateway.js";
 import { getConfiguredT3Gateway } from "../t3/runtime.js";
 import { requireCompadreApiKey } from "./auth.js";
+import {
+  createNativeT3AguiStream,
+} from "../t3/agui-stream.js";
+import { isAgentProvider } from "../tanstack/protocol.js";
 
 const MAX_TITLE_LENGTH = 200;
 const MAX_MESSAGE_LENGTH = 100_000;
 const TERMINAL_WAIT_TIMEOUT_MS = 20 * 60 * 1000;
+
+export interface ActiveNativeT3Run {
+  gateway: T3DirectoryGateway;
+  turn: T3GatewayTurn;
+}
 
 interface T3DirectoryGateway {
   list(): Promise<T3ThreadBinding[]>;
@@ -49,6 +64,7 @@ interface T3DirectoryGateway {
     turn: T3GatewayTurn;
     timeoutMs?: number;
     signal?: AbortSignal;
+    onSnapshot?(snapshot: T3ThreadSnapshot): void | Promise<void>;
   }): Promise<T3ThreadSnapshot>;
 }
 
@@ -128,6 +144,50 @@ function routeParam(c: Context, name: string): string {
   return value;
 }
 
+function textContent(message: ModelMessage | undefined): string | null {
+  if (!message || message.role !== "user") return null;
+  if (typeof message.content === "string") return message.content.trim() || null;
+  if (!Array.isArray(message.content)) return null;
+  const text = message.content
+    .filter((part) => part.type === "text")
+    .map((part) => part.content)
+    .join("\n")
+    .trim();
+  return text || null;
+}
+
+async function latestUserMessage(messages: unknown): Promise<string | null> {
+  const converted = await convertMessagesToModelMessages(messages as never);
+  for (let index = converted.length - 1; index >= 0; index -= 1) {
+    const message = converted[index];
+    if (message?.role === "user") return textContent(message);
+  }
+  return null;
+}
+
+function nativeModelSelection(
+  provider: "claude-code" | "codex",
+  requestedModel: unknown,
+): T3ModelSelection {
+  const model = nonEmptyString(requestedModel, 200);
+  if (provider === "codex") {
+    return {
+      instanceId: "codex",
+      model:
+        model && model !== "codex"
+          ? model
+          : process.env.COMPADRE_T3_CODEX_MODEL?.trim() || "gpt-5.6-sol",
+    };
+  }
+  return {
+    instanceId: "claudeAgent",
+    model:
+      model && model !== "claude-code"
+        ? model
+        : process.env.COMPADRE_T3_CLAUDE_MODEL?.trim() || "claude-opus-5",
+  };
+}
+
 function guarded(handler: (c: Context) => Promise<Response>): Handler {
   return async (c) => {
     try {
@@ -143,6 +203,7 @@ function guarded(handler: (c: Context) => Promise<Response>): Handler {
 
 export function createT3DirectoryRoutes(
   dependencies: T3DirectoryRoutesDependencies = defaultDependencies,
+  activeRuns: Map<string, ActiveNativeT3Run> = new Map(),
 ): Hono {
   const routes = new Hono();
 
@@ -189,6 +250,75 @@ export function createT3DirectoryRoutes(
       { thread: publicBinding(turn.binding), dispatch: turn.dispatch },
       202,
     );
+  }));
+
+  routes.post("/hosted/t3/chat", async (c) => {
+    if (!dependencies.enabled()) return c.notFound();
+    const authError = requireCompadreApiKey(c);
+    if (authError) return authError;
+    let params;
+    try {
+      params = await chatParamsFromRequestBody(await c.req.json());
+    } catch (error) {
+      return c.json({
+        error: "invalid native T3 provider body",
+        detail: error instanceof Error ? error.message : String(error),
+      }, 400);
+    }
+    const provider = params.forwardedProps.provider;
+    if (!isAgentProvider(provider)) {
+      return c.json({
+        error: "forwardedProps.provider must be 'claude-code' or 'codex'",
+      }, 400);
+    }
+    const text = await latestUserMessage(params.messages);
+    if (!text) return c.json({ error: "a text user message is required" }, 400);
+    const gateway = await dependencies.getGateway();
+    if (!gateway) {
+      return c.json({ error: "thread persistence requires durability" }, 503);
+    }
+    const runId = params.runId || dependencies.createId();
+    const canonicalThreadId = params.threadId || dependencies.createId();
+    const stream = createNativeT3AguiStream({
+      gateway,
+      canonicalThreadId,
+      runId,
+      title:
+        nonEmptyString(params.forwardedProps.title, MAX_TITLE_LENGTH) ??
+        "T3 thread",
+      text,
+      modelSelection: nativeModelSelection(
+        provider,
+        params.forwardedProps.model,
+      ),
+      signal: c.req.raw.signal,
+      onTurn(turn) {
+        activeRuns.set(runId, { gateway, turn });
+      },
+      onTerminal() {
+        activeRuns.delete(runId);
+      },
+    });
+    return toServerSentEventsResponse(stream, {
+      headers: {
+        "X-Accel-Buffering": "no",
+        "X-Content-Type-Options": "nosniff",
+      },
+    });
+  });
+
+  routes.post("/hosted/t3/runs/:runId/cancel", guarded(async (c) => {
+    const runId = routeParam(c, "runId");
+    const active = activeRuns.get(runId);
+    if (!active) {
+      return c.json({ error: "native T3 run is not active", runId }, 409);
+    }
+    const sequence = await active.gateway.cancel({
+      canonicalThreadId: active.turn.binding.canonicalThreadId,
+      providerInstanceId: active.turn.binding.providerInstanceId,
+      signal: c.req.raw.signal,
+    });
+    return c.json({ ok: true, sequence }, 202);
   }));
 
   routes.post(
