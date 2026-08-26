@@ -56,11 +56,18 @@ export function projectedProviderEnvironment(
 
 async function configureNativeHarnessAuthentication(
   handle: SandboxHandle,
-  providerEnvironment: Record<string, string>,
 ): Promise<void> {
-  if (!providerEnvironment.OPENAI_API_KEY) return;
   const login = await handle.process.exec(
-    `printf '%s' "$OPENAI_API_KEY" | setpriv --reuid=node --regid=node --init-groups codex login --with-api-key >/dev/null`,
+    [
+      'if [ -n "${CODEX_AUTH_JSON_BASE64:-}" ]; then',
+      "install -d -m 700 -o node -g node /home/node/.codex &&",
+      "printf '%s' \"$CODEX_AUTH_JSON_BASE64\" | base64 -d > /home/node/.codex/auth.json &&",
+      "chown node:node /home/node/.codex/auth.json &&",
+      "chmod 600 /home/node/.codex/auth.json",
+      'elif [ -n "${OPENAI_API_KEY:-}" ]; then',
+      `printf '%s' "$OPENAI_API_KEY" | setpriv --reuid=node --regid=node --init-groups codex login --with-api-key >/dev/null`,
+      "fi",
+    ].join("\n"),
   );
   if (login.exitCode !== 0) {
     throw new Error(
@@ -275,11 +282,11 @@ export async function launchManagedT3ModalEnvironment(
       if (ownership.exitCode !== 0) {
         throw new Error(ownership.stderr || ownership.stdout);
       }
-      await configureNativeHarnessAuthentication(handle, providerEnvironment);
+      await configureNativeHarnessAuthentication(handle);
       await bootstrapT3Project(handle, workspaceRoot);
 
       const command = [
-        "setpriv --reuid=node --regid=node --init-groups t3 serve",
+        "env -u CODEX_AUTH_JSON_BASE64 setpriv --reuid=node --regid=node --init-groups t3 serve",
         "--host 0.0.0.0",
         `--port ${port}`,
         `--base-dir ${quote(DEFAULT_T3_BASE_DIR)}`,

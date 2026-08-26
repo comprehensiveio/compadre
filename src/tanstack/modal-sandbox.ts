@@ -537,6 +537,18 @@ export interface ModalSandboxProviderOptions {
   encryptedPorts?: number[];
 }
 
+/** Named Modal secrets injected only into newly-created sandboxes. */
+export function modalSecretNames(environment: NodeJS.ProcessEnv): string[] {
+  return [
+    ...new Set(
+      (environment.COMPADRE_MODAL_SECRET_NAMES ?? "")
+        .split(",")
+        .map((name) => name.trim())
+        .filter(Boolean),
+    ),
+  ];
+}
+
 function normalizePorts(ports: readonly number[] | undefined): number[] {
   const normalized = [...new Set(ports ?? [])];
   for (const port of normalized) {
@@ -659,6 +671,10 @@ export function modalSandboxProvider(
   };
   const runtime = modalRuntime(environment, options.client);
   const { client } = runtime;
+  const secretNames = modalSecretNames(environment);
+  const resolveSecrets = cacheSuccessfulPromise(() =>
+    Promise.all(secretNames.map((name) => client.secrets.fromName(name))),
+  );
   const workdir = environment.COMPADRE_MODAL_WORKDIR?.trim() || DEFAULT_WORKDIR;
   const { timeoutMs, snapshotTtlMs, cpu, cpuLimit, memoryMiB, memoryLimitMiB } =
     modalResourceSettings(environment);
@@ -667,6 +683,7 @@ export function modalSandboxProvider(
     id?: string,
     env?: Record<string, string>,
   ) => {
+    const secrets = await resolveSecrets();
     const sandbox = await timedModalPhase("sandbox.create", async () =>
       client.sandboxes.create(await runtime.app(), image, {
         ...(id ? { name: id } : {}),
@@ -678,6 +695,7 @@ export function modalSandboxProvider(
         memoryMiB,
         memoryLimitMiB,
         ...(encryptedPorts.length > 0 ? { encryptedPorts } : {}),
+        ...(secrets.length > 0 ? { secrets } : {}),
         ...(env ? { env } : {}),
         tags: { managedBy: "compadre" },
       }),

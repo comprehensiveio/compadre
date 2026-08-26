@@ -8,6 +8,7 @@ import {
   modalImageCommands,
   modalResourceSettings,
   modalSandboxProvider,
+  modalSecretNames,
   parseModalProcessTable,
 } from "./modal-sandbox.js";
 
@@ -193,6 +194,17 @@ test("advertises ports only for tunnel-enabled Modal providers", () => {
     () => modalSandboxProvider({ environment, encryptedPorts: [70_000] }),
     /1 to 65535/,
   );
+});
+
+test("normalizes named Modal secrets without exposing their values", () => {
+  assert.deepEqual(
+    modalSecretNames({
+      COMPADRE_MODAL_SECRET_NAMES:
+        "compadre-t3-auth, shared-tools,compadre-t3-auth, ,",
+    }),
+    ["compadre-t3-auth", "shared-tools"],
+  );
+  assert.deepEqual(modalSecretNames({}), []);
 });
 
 test("bakes the app repository's required command-line tools", () => {
