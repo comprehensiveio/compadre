@@ -159,9 +159,20 @@ export async function buildMcpServers() {
   const datadogServer = buildDatadogMcpServer();
   const googleWorkspaceCredentialsDir =
     await prepareGoogleWorkspaceCredentials();
+  const allowPartial = process.env.COMPADRE_MCP_ALLOW_PARTIAL === "true";
+  const configured = (name: string, keys: string[]): boolean => {
+    const missing = keys.filter((key) => !process.env[key]);
+    if (missing.length === 0) return true;
+    if (!allowPartial) return true;
+    console.warn(
+      `[mcp] ${name} MCP disabled in partial mode: missing ${missing.join(", ")}`,
+    );
+    return false;
+  };
 
-  const servers: Record<string, CompadreMcpServerConfig> = {
-    slack: {
+  const servers: Record<string, CompadreMcpServerConfig> = {};
+  if (configured("Slack", ["SLACK_BOT_TOKEN", "SLACK_TEAM_ID"])) {
+    servers.slack = {
       command: "node",
       args: [path.join(__dirname, "..", "dist", "mcp-servers", "slack.js")],
       env: {
@@ -177,40 +188,48 @@ export async function buildMcpServers() {
             }
           : {}),
       },
-    },
+    };
+  }
 
-    linear: {
+  if (configured("Linear", ["LINEAR_MCP_ACCESS_TOKEN"])) {
+    servers.linear = {
       type: "http" as const,
       url: "https://mcp.linear.app/mcp",
       headers: {
         Authorization: `Bearer ${env("LINEAR_MCP_ACCESS_TOKEN")}`,
       },
-    },
+    };
+  }
 
-    github: {
+  if (configured("GitHub", ["GITHUB_PERSONAL_ACCESS_TOKEN"])) {
+    servers.github = {
       type: "http" as const,
       url: "https://api.githubcopilot.com/mcp/",
       headers: {
         Authorization: `Bearer ${env("GITHUB_PERSONAL_ACCESS_TOKEN")}`,
       },
-    },
+    };
+  }
 
-    render: {
+  if (configured("Render", ["RENDER_API_KEY"])) {
+    servers.render = {
       type: "http" as const,
       url: "https://mcp.render.com/mcp",
       headers: {
         Authorization: `Bearer ${env("RENDER_API_KEY")}`,
       },
-    },
+    };
+  }
 
-    jam: {
+  if (configured("Jam", ["JAM_MCP_PAT"])) {
+    servers.jam = {
       type: "http" as const,
       url: "https://mcp.jam.dev/mcp",
       headers: {
         Authorization: `Bearer ${env("JAM_MCP_PAT")}`,
       },
-    },
-  };
+    };
+  }
 
   const compAppServer = buildCompMcpServer();
   if (compAppServer) {
