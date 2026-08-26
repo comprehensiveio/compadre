@@ -210,7 +210,16 @@ COMPADRE_HOSTED_T3_ENABLED=true
 COMPADRE_DURABILITY_BACKEND=postgres
 COMPADRE_PUBLIC_URL=https://<experiment-host>
 COMPADRE_PROCESS_ROLE=hosted-experiment
+COMPADRE_MODAL_SECRET_NAMES=compadre-t3-codex-auth-experiment
 ```
+
+The named Modal secret supplies `CODEX_AUTH_JSON_BASE64`, a base64-encoded
+Codex `auth.json`. The worker materializes it as `/home/node/.codex/auth.json`
+before starting T3, then removes the encoded value from the T3 server's
+environment. This preserves T3's native Codex subscription-auth flow without
+copying the credential into Git, Render, the central event log, or the worker
+snapshot archive. If the named secret is absent, the experiment retains the
+existing `OPENAI_API_KEY` login fallback.
 
 Important isolation rules:
 
