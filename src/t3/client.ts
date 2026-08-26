@@ -374,6 +374,7 @@ export class T3Client {
     projectId: string;
     title: string;
     text: string;
+    displayText?: string;
     modelSelection: T3ModelSelection;
     runtimeMode?: T3RuntimeMode;
     interactionMode?: T3InteractionMode;
@@ -408,6 +409,7 @@ export class T3Client {
     return this.startTurn({
       threadId,
       text: input.text,
+      displayText: input.displayText,
       modelSelection: input.modelSelection,
       runtimeMode,
       interactionMode,
@@ -418,6 +420,7 @@ export class T3Client {
   async startTurn(input: {
     threadId: string;
     text: string;
+    displayText?: string;
     modelSelection: T3ModelSelection;
     runtimeMode?: T3RuntimeMode;
     interactionMode?: T3InteractionMode;
@@ -434,7 +437,10 @@ export class T3Client {
         message: {
           messageId,
           role: "user",
-          text: input.text,
+          text: input.displayText ?? input.text,
+          ...(input.displayText && input.displayText !== input.text
+            ? { providerPrompt: input.text }
+            : {}),
           attachments: [],
         },
         modelSelection: input.modelSelection,
@@ -478,6 +484,7 @@ export class T3Client {
     timeoutMs?: number;
     pollIntervalMs?: number;
     signal?: AbortSignal;
+    onSnapshot?(snapshot: T3ThreadSnapshot): void | Promise<void>;
   }): Promise<T3ThreadSnapshot> {
     const timeoutMs = input.timeoutMs ?? 30 * 60_000;
     const deadline = Date.now() + timeoutMs;
@@ -491,6 +498,7 @@ export class T3Client {
         );
       }
       const snapshot = await this.threadSnapshot(input.threadId, input.signal);
+      await input.onSnapshot?.(snapshot);
       const requestedMessage = input.messageId
         ? snapshot.thread.messages.find(
             (message) => message.id === input.messageId && message.role === "user",

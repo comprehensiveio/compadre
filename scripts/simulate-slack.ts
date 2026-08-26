@@ -9,7 +9,7 @@ if (
   process.env.COMPADRE_DURABILITY_BACKEND = "memory";
 }
 
-const { runSlackSimulation, slackSimulationSummary } = await import(
+const { runSlackSimulation, runT3SlackSimulation, slackSimulationSummary } = await import(
   "../src/services/slack-simulation.js"
 );
 const messageText =
@@ -20,7 +20,14 @@ process.stderr.write(
   "[slack-simulation] using an in-memory Slack delivery sink; no Slack API calls will be made\n",
 );
 
-const simulation = await runSlackSimulation({
+const simulation = process.env.COMPADRE_T3_SLACK_ENABLED === "true"
+  ? await runT3SlackSimulation({
+      messageText,
+      onTextDelta(text) {
+        process.stdout.write(text);
+      },
+    })
+  : await runSlackSimulation({
   messageText,
   onTextDelta(text) {
     process.stdout.write(text);
@@ -31,8 +38,8 @@ const simulation = await runSlackSimulation({
   onAutoContinue() {
     process.stderr.write("[slack-simulation] auto-continuing\n");
   },
-});
+  });
 
 process.stdout.write(
-  `\n${JSON.stringify(slackSimulationSummary(simulation), null, 2)}\n`,
+  `\n${JSON.stringify("outcome" in simulation ? slackSimulationSummary(simulation) : simulation, null, 2)}\n`,
 );

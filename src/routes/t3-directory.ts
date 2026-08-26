@@ -1,10 +1,6 @@
 import crypto from "node:crypto";
 import { Hono, type Context, type Handler } from "hono";
-import { getConfiguredThreadPersistence } from "../persistence/runtime.js";
-import {
-  T3ThreadBindingStore,
-  type T3ThreadBinding,
-} from "../services/t3-thread-bindings.js";
+import type { T3ThreadBinding } from "../services/t3-thread-bindings.js";
 import type {
   T3ModelSelection,
   T3ThreadSnapshot,
@@ -14,7 +10,7 @@ import {
   T3Gateway,
   type T3GatewayTurn,
 } from "../t3/gateway.js";
-import { T3ModalEnvironmentManager } from "../t3/modal-environments.js";
+import { getConfiguredT3Gateway } from "../t3/runtime.js";
 import { requireCompadreApiKey } from "./auth.js";
 
 const MAX_TITLE_LENGTH = 200;
@@ -57,34 +53,6 @@ export interface T3DirectoryRoutesDependencies {
   getGateway(): Promise<T3DirectoryGateway | null>;
   createId(): string;
   watchTurn(gateway: T3DirectoryGateway, turn: T3GatewayTurn): void;
-}
-
-let configuredGateway: Promise<T3Gateway | null> | undefined;
-
-async function getConfiguredT3Gateway(): Promise<T3Gateway | null> {
-  if (!configuredGateway) {
-    const initialization = getConfiguredThreadPersistence()
-      .then((runtime) => {
-        if (!runtime) return null;
-        const bindings = new T3ThreadBindingStore(
-          runtime.persistence.stores.metadata,
-          runtime.locks,
-        );
-        return new T3Gateway(
-          bindings,
-          new T3ModalEnvironmentManager(),
-          crypto.randomUUID,
-          () => new Date(),
-          runtime.locks,
-        );
-      })
-      .catch((error) => {
-        if (configuredGateway === initialization) configuredGateway = undefined;
-        throw error;
-      });
-    configuredGateway = initialization;
-  }
-  return configuredGateway;
 }
 
 const defaultDependencies: T3DirectoryRoutesDependencies = {

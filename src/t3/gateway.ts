@@ -18,12 +18,14 @@ export interface T3CommandClient {
     projectId: string;
     title: string;
     text: string;
+    displayText?: string;
     modelSelection: T3ModelSelection;
     signal?: AbortSignal;
   }): Promise<T3TurnDispatch>;
   startTurn(input: {
     threadId: string;
     text: string;
+    displayText?: string;
     modelSelection: T3ModelSelection;
     signal?: AbortSignal;
   }): Promise<T3TurnDispatch>;
@@ -39,6 +41,7 @@ export interface T3CommandClient {
     requestedAt?: string;
     timeoutMs?: number;
     signal?: AbortSignal;
+    onSnapshot?(snapshot: T3ThreadSnapshot): void | Promise<void>;
   }): Promise<T3ThreadSnapshot>;
   threadSnapshot(
     threadId: string,
@@ -71,6 +74,23 @@ export interface T3GatewayTurn {
   dispatch: T3TurnDispatch;
 }
 
+const DEFAULT_T3_HOSTED_APP_URL = "https://app.t3.codes";
+
+export function buildT3HostedThreadUrl(input: {
+  hostedAppUrl: string;
+  environmentUrl: string;
+  pairingCredential: string;
+  threadId: string;
+  label: string;
+}): string {
+  const url = new URL("/pair", input.hostedAppUrl);
+  url.searchParams.set("host", input.environmentUrl);
+  url.searchParams.set("label", input.label);
+  url.searchParams.set("threadId", input.threadId);
+  url.hash = new URLSearchParams([["token", input.pairingCredential]]).toString();
+  return url.toString();
+}
+
 /**
  * Provider-neutral entry point used by Slack, HTTP, and the hosted UI.
  * T3 remains responsible for native Codex/Claude lifecycle and transcript
@@ -83,25 +103,25 @@ export class T3Gateway {
     private readonly idFactory: () => string = randomUUID,
     private readonly now: () => Date = () => new Date(),
     private readonly locks: LockStore = new InMemoryLockStore(),
+    private readonly hostedAppUrl: string =
+      process.env.COMPADRE_T3_HOSTED_APP_URL?.trim() ||
+      DEFAULT_T3_HOSTED_APP_URL,
   ) {}
 
-  private lockKey(canonicalThreadId: string, providerInstanceId: string) {
-    return `compadre:t3-environment:${JSON.stringify([
-      canonicalThreadId,
-      providerInstanceId,
-    ])}`;
+  private lockKey(canonicalThreadId: string) {
+    return `compadre:t3-environment:${canonicalThreadId}`;
   }
 
   async send(input: {
     canonicalThreadId: string;
     title: string;
     text: string;
+    displayText?: string;
     modelSelection: T3ModelSelection;
     signal?: AbortSignal;
   }): Promise<T3GatewayTurn> {
-    const providerInstanceId = input.modelSelection.instanceId;
     return this.locks.withLock(
-      this.lockKey(input.canonicalThreadId, providerInstanceId),
+      this.lockKey(input.canonicalThreadId),
       async (lockSignal) => {
         if (lockSignal.aborted) throw lockSignal.reason;
         return this.sendUnlocked(input);
@@ -113,19 +133,23 @@ export class T3Gateway {
     canonicalThreadId: string;
     title: string;
     text: string;
+    displayText?: string;
     modelSelection: T3ModelSelection;
     signal?: AbortSignal;
   }): Promise<T3GatewayTurn> {
     const providerInstanceId = input.modelSelection.instanceId;
-    const existing = await this.bindings.get(
-      input.canonicalThreadId,
-      providerInstanceId,
-    );
+    const existing = await this.bindings.get(input.canonicalThreadId);
     if (existing) {
+      if (existing.providerInstanceId !== providerInstanceId) {
+        throw new Error(
+          `This T3 thread is already using ${existing.providerInstanceId}; start a new thread to use ${providerInstanceId}.`,
+        );
+      }
       const environment = await this.environments.reconnect(existing);
       const dispatch = await environment.client.startTurn({
         threadId: existing.t3ThreadId,
         text: input.text,
+        displayText: input.displayText,
         modelSelection: input.modelSelection,
         signal: input.signal,
       });
@@ -151,6 +175,7 @@ export class T3Gateway {
         projectId: environment.projectId,
         title: input.title,
         text: input.text,
+        displayText: input.displayText,
         modelSelection: input.modelSelection,
         signal: input.signal,
       });
@@ -185,10 +210,7 @@ export class T3Gateway {
     providerInstanceId: string;
     signal?: AbortSignal;
   }): Promise<{ binding: T3ThreadBinding; snapshot: T3ThreadSnapshot } | null> {
-    const binding = await this.bindings.get(
-      input.canonicalThreadId,
-      input.providerInstanceId,
-    );
+    const binding = await this.bindings.get(input.canonicalThreadId);
     if (!binding) return null;
     try {
       const environment = await this.environments.reconnect(binding);
@@ -235,10 +257,7 @@ export class T3Gateway {
     providerInstanceId: string;
     signal?: AbortSignal;
   }): Promise<{ binding: T3ThreadBinding; pairingUrl: string } | null> {
-    const binding = await this.bindings.get(
-      input.canonicalThreadId,
-      input.providerInstanceId,
-    );
+    const binding = await this.bindings.get(input.canonicalThreadId);
     if (!binding) return null;
     const environment = await this.environments.reconnect(binding);
     const pairing = await environment.client.mintPairingCredential({
@@ -247,7 +266,13 @@ export class T3Gateway {
     });
     return {
       binding,
-      pairingUrl: `${environment.client.baseUrl.replace(/\/$/, "")}/pair#token=${pairing.credential}`,
+      pairingUrl: buildT3HostedThreadUrl({
+        hostedAppUrl: this.hostedAppUrl,
+        environmentUrl: environment.client.baseUrl,
+        pairingCredential: pairing.credential,
+        threadId: binding.t3ThreadId,
+        label: binding.title ?? `Compadre thread ${binding.canonicalThreadId}`,
+      }),
     };
   }
 
@@ -257,10 +282,7 @@ export class T3Gateway {
     turnId?: string;
     signal?: AbortSignal;
   }): Promise<number | null> {
-    const binding = await this.bindings.get(
-      input.canonicalThreadId,
-      input.providerInstanceId,
-    );
+    const binding = await this.bindings.get(input.canonicalThreadId);
     if (!binding) return null;
     const environment = await this.environments.reconnect(binding);
     return environment.client.interruptTurn({
@@ -274,6 +296,7 @@ export class T3Gateway {
     turn: T3GatewayTurn;
     timeoutMs?: number;
     signal?: AbortSignal;
+    onSnapshot?(snapshot: T3ThreadSnapshot): void | Promise<void>;
   }): Promise<T3ThreadSnapshot> {
     const environment = await this.environments.reconnect(input.turn.binding);
     const snapshot = await environment.client.waitForTurnTerminal({
@@ -283,6 +306,7 @@ export class T3Gateway {
       requestedAt: input.turn.dispatch.createdAt,
       timeoutMs: input.timeoutMs,
       signal: input.signal,
+      onSnapshot: input.onSnapshot,
     });
     const latestState = snapshot.thread.latestTurn?.state;
     await this.bindings.bind({

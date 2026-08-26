@@ -4,6 +4,28 @@ This branch tests the product shape suggested by T3 Code: a coding-agent
 conversation that can be opened from a browser, while Compadre remains the
 hosted controller and Modal remains the execution boundary.
 
+## Current native-T3 direction
+
+The current experiment no longer treats Compadre as a T3 provider. Slack, the
+HTTP coordinator, and the simulator dispatch into T3's built-in Codex or Claude
+provider. Each external conversation owns one native T3 thread in one Modal
+sandbox. The hosted T3 web app pairs directly with that environment and renders
+the canonical transcript, reasoning, tool calls, diffs, terminal, and native
+controls. Slack is a concise projection of the same turn: assistant text plus a
+one-time “View details in T3” link.
+
+```text
+Slack ──> Compadre coordinator ──> native T3 server in Modal ──> Codex/Claude
+  ^                 |                         |
+  |                 └── assistant text       └── full T3 event stream
+  └── hosted T3 deep link ────────────────────────────────┘
+```
+
+T3 chooses the provider when the thread starts and does not switch providers
+inside an established thread. A new Slack thread is therefore required to move
+between Codex and Claude; T3's normal model picker remains available for the
+chosen provider. This is a native T3 invariant, not a Compadre restriction.
+
 The first experiment reused the useful seams—the chat interaction model,
 streamed tool activity, durable thread identity, and resumable client
 behavior—on top of Compadre's existing TanStack AI event log. A reproducible
@@ -53,17 +75,19 @@ surface:
 
 ```bash
 COMPADRE_T3_DIRECTORY_ENABLED=true \
+COMPADRE_T3_SLACK_ENABLED=true \
+COMPADRE_T3_HOSTED_APP_URL=http://localhost:5733 \
 COMPADRE_DURABILITY_BACKEND=memory \
 npm run dev
 ```
 
-In this mode `/hosted` is one central thread UI, but Render stores only the
-credential-free directory and routing metadata. The first message creates one
+Render stores only the credential-free directory and routing metadata. The first message creates one
 Modal sandbox containing one native T3 server and one native T3 thread.
 Follow-up messages, refresh, cancellation, and “Open native T3” all resolve the
-same binding. Merely listing the sidebar does not wake any sandbox. Codex and
-Claude Code remain T3-native harnesses; selecting the harness and model does
-not route execution back through TanStack AI.
+same binding. The central UI is T3's existing hosted web app—not Compadre's
+diagnostic directory UI. Merely listing metadata does not wake a sandbox. Codex
+and Claude Code remain T3-native harnesses and do not route execution back
+through TanStack AI.
 
 The current local/deployed limitation is hard sandbox expiry: reconnect is
 proven while Modal still exposes the sandbox, but T3's data directory is not
@@ -72,14 +96,15 @@ yet snapshotted and restored into a replacement sandbox.
 To exercise the Slack ingress shape without sending anything to Slack, run:
 
 ```bash
+COMPADRE_T3_SLACK_ENABLED=true \
+COMPADRE_T3_HOSTED_APP_URL=http://localhost:5733 \
 npm run slack:simulate -- --claude-code Reply with exactly: SLACK-SIM-OK
 ```
 
-The simulator uses the real workflow conversation runner, AG-UI durability,
-thread persistence, Modal sandbox, routing directives, Slack prompt, streaming,
-and auto-continuation. It defaults to in-memory durability when the local
-configuration is off; a configured PostgreSQL backend is retained. Only the
-Slack delivery sink is synthetic.
+The native simulator uses the real T3 gateway, thread persistence, Modal
+sandbox, T3 provider driver, Slack prompt, assistant streaming, and hosted deep
+link. Only Slack API delivery is synthetic. Without the native flag it retains
+the legacy TanStack workflow simulator for checkpoint comparison.
 
 To open a Slack-originated conversation, use its canonical Compadre thread ID
 (currently the Slack thread timestamp). The existing transcript will hydrate

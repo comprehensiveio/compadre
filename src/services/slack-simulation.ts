@@ -10,6 +10,13 @@ import {
   type SlackConversationOutcome,
 } from "./slack-conversation.js";
 import { buildSlackAgentInput } from "./slack-prompt.js";
+import type { T3SlackGateway } from "./t3-slack-conversation.js";
+import {
+  canonicalSlackThreadId,
+  runT3SlackConversation,
+  t3SlackDetailsMarkdown,
+} from "./t3-slack-conversation.js";
+import { getConfiguredT3Gateway } from "../t3/runtime.js";
 
 export interface SlackSimulationOptions {
   messageText: string;
@@ -34,6 +41,17 @@ export interface SlackSimulationResult {
   tools: string[];
   runIds: string[];
   outcome: SlackConversationOutcome;
+}
+
+export interface T3SlackSimulationResult {
+  channel: string;
+  threadTs: string;
+  canonicalThreadId: string;
+  prompt: string;
+  transcriptUserMessage: string;
+  output: string;
+  detailsUrl: string;
+  modelSelection: { instanceId: string; model: string };
 }
 
 /**
@@ -108,6 +126,67 @@ export async function runSlackSimulation({
     tools,
     runIds,
     outcome,
+  };
+}
+
+/** Simulate Slack transport while executing the conversation in native T3. */
+export async function runT3SlackSimulation({
+  messageText,
+  channel = "D_SLACK_SIMULATION",
+  channelName = "compadre-simulation",
+  threadTs = `simulation-${Date.now()}`,
+  threadContext = null,
+  userId = "U_SLACK_SIMULATION",
+  teamId = "T_SLACK_SIMULATION",
+  gateway,
+  onTextDelta,
+}: Omit<SlackSimulationOptions, "runId" | "runner" | "onToolStart" | "onAutoContinue"> & {
+  teamId?: string;
+  gateway?: T3SlackGateway;
+}): Promise<T3SlackSimulationResult> {
+  const route = parseAgentRouteDirective(messageText.trim());
+  if (!route.ok) throw new Error(route.error);
+  const input = buildSlackAgentInput({
+    messageText: route.messageText,
+    threadContext,
+    channel,
+    channelName,
+    threadTs,
+    userId,
+  });
+  const canonicalThreadId = canonicalSlackThreadId({ teamId, channel, threadTs });
+  const configuredGateway = gateway ?? (await getConfiguredT3Gateway());
+  if (!configuredGateway) {
+    throw new Error("Native T3 Slack simulation requires durable thread persistence.");
+  }
+  let output = "";
+  const result = await runT3SlackConversation({
+    gateway: configuredGateway,
+    canonicalThreadId,
+    title: input.transcriptUserMessage.slice(0, 200) || "Slack simulation",
+    prompt: input.prompt,
+    displayText: input.transcriptUserMessage,
+    profile: route.profile,
+    onTextDelta(text) {
+      output += text;
+      onTextDelta?.(text);
+    },
+  });
+  if (!result.detailsUrl) {
+    throw new Error("Native T3 Slack simulation did not receive a details link.");
+  }
+  const details = `\n\n${t3SlackDetailsMarkdown(result.detailsUrl)}`;
+  output += details;
+  onTextDelta?.(details);
+  return {
+    channel,
+    threadTs,
+    canonicalThreadId,
+    prompt: input.prompt,
+    transcriptUserMessage: input.transcriptUserMessage,
+    output,
+    detailsUrl: result.detailsUrl,
+    modelSelection: result.modelSelection,
   };
 }
 

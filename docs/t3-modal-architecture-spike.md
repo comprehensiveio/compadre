@@ -139,7 +139,7 @@ separate `.mcp.json` and Codex TOML files containing credentials.
 - `T3Gateway` maps a provider-neutral conversation to one provider-native T3
   thread and routes repeat messages, snapshots, fresh browser pairing,
   cancellation, and terminal waits behind a distributed per-thread lock.
-- `T3ThreadBindingStore` persists credential-free provider-specific mappings
+- `T3ThreadBindingStore` persists one credential-free mapping per external conversation
   plus a locked central directory index. Listing the directory never resumes a
   sandbox.
 - `T3ModalEnvironmentManager` provisions one isolated environment per mapping,
@@ -158,13 +158,9 @@ separate `.mcp.json` and Codex TOML files containing credentials.
 
 1. Persist and restore the T3 data directory when a Modal sandbox reaches its
    hard timeout; current reconnect works while the sandbox remains resumable.
-2. Add a live subscription adapter for T3 thread events so Slack and the API can
-   stream without polling snapshots.
-3. Route the existing API endpoint through `T3Gateway` behind an experiment
-   flag, preserving its current request and response contract.
-4. Route the Slack simulator through the same gateway and prove browser,
-   Slack, and API transcript consistency.
-5. Package the forked T3 server as a reproducible Modal image artifact. The
+2. Replace snapshot polling with T3's native event subscription for lower-latency Slack streaming.
+3. Port Slack attachment materialization into the native T3 command path.
+4. Package the forked T3 server as a reproducible Modal image artifact. The
    local spike currently accepts `COMPADRE_T3_PACKAGE_PATH` to overlay a tested
    tarball.
 

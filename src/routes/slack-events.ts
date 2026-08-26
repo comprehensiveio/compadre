@@ -22,6 +22,13 @@ import { getRequiredThreadPersistence } from "../persistence/runtime.js";
 import { HostedThreadBindingStore } from "../services/hosted-thread-bindings.js";
 import { verifySlackSignature } from "../services/slack-verify.js";
 import {
+  canonicalSlackThreadId,
+  nativeT3SlackEnabled,
+  runT3SlackConversation,
+  t3SlackDetailsMarkdown,
+} from "../services/t3-slack-conversation.js";
+import { getConfiguredT3Gateway } from "../t3/runtime.js";
+import {
   mergeSlackFileReferences,
   slackFileReferences,
   type SlackEventFile,
@@ -223,6 +230,62 @@ async function handleAIMessage(
   console.log(
     `[slack-events] routing user=${event.user ?? "unknown"} provider=${profile ? providerForAgentProfile(profile) : configuredAgentProvider()} profile=${profile ?? "default"}`,
   );
+
+  if (nativeT3SlackEnabled()) {
+    const canonicalThreadId = canonicalSlackThreadId({
+      teamId: event.user_team || event.team || teamId,
+      channel: event.channel,
+      threadTs,
+    });
+    const nativeConversation = getConfiguredT3Gateway().then(async (gateway) => {
+      if (!gateway) {
+        throw new Error("Native T3 Slack requires durable thread persistence.");
+      }
+      return runT3SlackConversation({
+        gateway,
+        canonicalThreadId,
+        title: transcriptUserMessage.slice(0, 200) || "Slack request",
+        prompt,
+        displayText: transcriptUserMessage,
+        profile,
+        onTextDelta: slackStream
+          ? (text) => {
+              slackStream.appendText(text);
+            }
+          : undefined,
+      });
+    });
+
+    nativeConversation
+      .then(async (result) => {
+        if (slackStream) {
+          if (result.detailsUrl) {
+            slackStream.appendText(`\n\n${t3SlackDetailsMarkdown(result.detailsUrl)}`);
+          }
+          await slackStream.stopStream();
+          await slackStream.clearStatus();
+        }
+        if (!isDM && slackStream) {
+          await slackStream.markRunSucceeded(event.ts);
+        }
+        await slackRuns.forget(event.channel, event.ts);
+        console.log(
+          `[slack-events] native T3 completed user=${event.user ?? "unknown"} thread=${canonicalThreadId} provider=${result.modelSelection.instanceId} model=${result.modelSelection.model}`,
+        );
+      })
+      .catch(async (err) => {
+        console.error(`[slack-events] native T3 error for ${event.user}:`, err);
+        if (slackStream) {
+          await slackStream.stopStream();
+          await slackStream.clearStatus();
+          await slackStream.postThreadMessage(slackFailureNotice(err));
+        }
+        if (!isDM && slackStream) {
+          await slackStream.markRunFailed(event.ts);
+        }
+      });
+    return;
+  }
 
   const runner = configuredConversationRunner();
   const conversationOptions: Omit<ConversationOptions, "stream"> = {

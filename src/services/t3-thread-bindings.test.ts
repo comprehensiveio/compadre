@@ -18,28 +18,27 @@ const binding: T3ThreadBinding = {
   updatedAt: "2026-08-26T15:00:00.000Z",
 };
 
-test("persists separate native T3 threads for each provider harness", async () => {
+test("does not reassign a native T3 thread to another provider", async () => {
   const persistence = memoryPersistence();
   const store = new T3ThreadBindingStore(persistence.stores.metadata);
   await store.bind(binding);
-  await store.bind({
-    ...binding,
-    providerInstanceId: "claudeAgent",
-    t3ThreadId: "t3-claude-thread",
-    modelSelection: {
-      instanceId: "claudeAgent",
-      model: "claude-opus-4-6",
-    },
-  });
+  await assert.rejects(
+    store.bind({
+      ...binding,
+      providerInstanceId: "claudeAgent",
+      modelSelection: {
+        instanceId: "claudeAgent",
+        model: "claude-opus-4-6",
+      },
+    }),
+    /already assigned to provider codex/,
+  );
 
   assert.equal(
-    (await store.get("slack-thread", "codex"))?.t3ThreadId,
+    (await store.get("slack-thread"))?.t3ThreadId,
     "t3-codex-thread",
   );
-  assert.equal(
-    (await store.get("slack-thread", "claudeAgent"))?.t3ThreadId,
-    "t3-claude-thread",
-  );
+  assert.equal((await store.get("slack-thread"))?.providerInstanceId, "codex");
 });
 
 test("does not silently reassign a provider conversation", async () => {
@@ -70,7 +69,7 @@ test("lists the credential-free thread directory in most-recent order", async ()
     (await store.list()).map((record) => record.canonicalThreadId),
     ["newer-thread", "slack-thread"],
   );
-  await store.delete("newer-thread", "codex");
+  await store.delete("newer-thread");
   assert.deepEqual(
     (await store.list()).map((record) => record.canonicalThreadId),
     ["slack-thread"],

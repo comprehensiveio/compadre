@@ -90,7 +90,11 @@ See `.env.example` for the full list. Key notes:
   applies its own sandbox lifecycle limits.
 - **COMPADRE_TANSTACK_AI_ENABLED**: Expose the authenticated AG-UI endpoint without changing Slack routing.
 - **COMPADRE_HOSTED_T3_ENABLED**: Serve the experimental browser conversation surface and its authenticated chat routes at `/hosted`. It uses the same durable thread and Modal workflow path as Slack. See [the hosted T3 experiment runbook](docs/hosted-t3-experiment.md).
-- **COMPADRE_T3_DIRECTORY_ENABLED**: Replace that browser surface with the native-T3 directory experiment. Render lists credential-free thread metadata without waking Modal; each provider-bound thread owns exactly one Modal sandbox and native T3 thread, which is resumed only for transcript, send, cancel, or pairing operations.
+- **COMPADRE_T3_DIRECTORY_ENABLED**: Enable the native-T3 coordinator API. Render stores credential-free routing metadata; every external conversation owns one Modal sandbox and one native T3 thread.
+- **COMPADRE_T3_SLACK_ENABLED**: Route Slack and `npm run slack:simulate` through T3's native Codex/Claude harnesses. Slack receives assistant text plus a one-time “View details in T3” link to the same thread; it does not receive tool-call detail.
+- **COMPADRE_T3_API_ENABLED**: Preserve the authenticated `/prompt` contract while executing new API runs through the same native-T3 coordinator. Synchronous responses also include `threadId` and `detailsUrl`; async responses return the accepted canonical `threadId`.
+- **COMPADRE_T3_HOSTED_APP_URL**: Hosted T3 web origin used for deep links, for example `https://t3code-compadre-experiment.onrender.com`. The pairing secret is placed in the URL fragment and consumed once.
+- **COMPADRE_T3_PACKAGE_PATH**: Local-only archive used to overlay the experiment fork into a new Modal environment. Production should bake the same fork artifact into the Modal image instead of depending on a host path.
 - **COMPADRE_HOSTED_SLACK_DELIVERY_ENABLED**: Set to `false` to suppress browser-to-Slack mirroring during synthetic hosted probes without removing the Slack token used by agent tools. Defaults to enabled.
 - **FABLE_MODEL**: Optional model ID used by Slack's `--fable` routing profile. Defaults to `claude-fable-5`; normal Claude Code prompts use `DEFAULT_MODEL` or the built-in default.
 
@@ -98,10 +102,12 @@ Run `npm run modal:prepare-image` to build or resolve the same cached Modal
 image ahead of a local benchmark or deployment. It creates no sandbox and
 prints only the image ID and elapsed time.
 
-Slack messages can override the default for one turn with `--sol` or `--codex`
+Slack messages choose the native T3 provider on a thread's first turn with `--sol` or `--codex`
 for Codex, `--fable` for Fable through Claude Code, and `--claude-code` or `--cc`
-for the normal Claude Code model. Routing directives are removed before the
-agent prompt and conversation transcript are created.
+for the normal Claude Code model. T3 fixes the provider harness after a thread
+starts; use a new Slack thread to switch between Codex and Claude. Models within
+the chosen provider remain selectable in T3. Routing directives are removed
+before the agent prompt and conversation transcript are created.
 
 ## Database schema and migrations
 

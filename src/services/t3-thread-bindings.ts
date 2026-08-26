@@ -2,7 +2,7 @@ import type { MetadataStore } from "@tanstack/ai-persistence";
 import { InMemoryLockStore, type LockStore } from "@tanstack/ai/locks";
 import type { T3ModelSelection } from "../t3/client.js";
 
-const NAMESPACE = "compadre.t3.thread-bindings.v1";
+const NAMESPACE = "compadre.t3.thread-bindings.v2";
 const INDEX_KEY = "__index__";
 const INDEX_LOCK = "compadre:t3-thread-bindings:index";
 
@@ -29,11 +29,10 @@ export interface T3ThreadBinding {
 
 interface T3ThreadBindingIndexEntry {
   canonicalThreadId: string;
-  providerInstanceId: string;
 }
 
-function key(canonicalThreadId: string, providerInstanceId: string): string {
-  return JSON.stringify([canonicalThreadId, providerInstanceId]);
+function key(canonicalThreadId: string): string {
+  return canonicalThreadId;
 }
 
 function isModelSelection(value: unknown): value is T3ModelSelection {
@@ -80,15 +79,14 @@ function isIndexEntry(value: unknown): value is T3ThreadBindingIndexEntry {
   const record = value as Record<string, unknown>;
   return (
     typeof record.canonicalThreadId === "string" &&
-    record.canonicalThreadId.length > 0 &&
-    typeof record.providerInstanceId === "string" &&
-    record.providerInstanceId.length > 0
+    record.canonicalThreadId.length > 0
   );
 }
 
 /**
- * Durable, credential-free mapping from an external conversation to one T3
- * native provider thread. Environment credentials stay in the connection
+ * Durable, credential-free mapping from an external conversation to one native
+ * T3 thread. The provider harness is fixed by T3's first turn; models within
+ * that provider can change without moving the conversation. Environment credentials stay in the connection
  * manager rather than being written to generic chat metadata.
  */
 export class T3ThreadBindingStore {
@@ -99,9 +97,8 @@ export class T3ThreadBindingStore {
 
   get(
     canonicalThreadId: string,
-    providerInstanceId: string,
   ): Promise<T3ThreadBinding | null> {
-    return this.read(key(canonicalThreadId, providerInstanceId));
+    return this.read(key(canonicalThreadId));
   }
 
   private async read(bindingKey: string): Promise<T3ThreadBinding | null> {
@@ -125,9 +122,7 @@ export class T3ThreadBindingStore {
   async list(): Promise<T3ThreadBinding[]> {
     const entries = await this.readIndex();
     const bindings = await Promise.all(
-      entries.map((entry) =>
-        this.get(entry.canonicalThreadId, entry.providerInstanceId),
-      ),
+      entries.map((entry) => this.get(entry.canonicalThreadId)),
     );
     return bindings
       .filter((binding): binding is T3ThreadBinding => binding !== null)
@@ -135,56 +130,53 @@ export class T3ThreadBindingStore {
   }
 
   async bind(binding: T3ThreadBinding): Promise<void> {
-    if (binding.modelSelection.instanceId !== binding.providerInstanceId) {
-      throw new Error("T3 binding provider does not match its model selection");
-    }
     await this.locks.withLock(INDEX_LOCK, async (signal) => {
       if (signal.aborted) throw signal.reason;
-      const bindingKey = key(
-        binding.canonicalThreadId,
-        binding.providerInstanceId,
-      );
+      const bindingKey = key(binding.canonicalThreadId);
       const existing = await this.read(bindingKey);
       if (existing && existing.t3ThreadId !== binding.t3ThreadId) {
         throw new Error(
           `T3 thread binding is already assigned to ${existing.t3ThreadId}`,
         );
       }
+      if (
+        existing &&
+        existing.providerInstanceId !== binding.providerInstanceId
+      ) {
+        throw new Error(
+          `T3 thread binding is already assigned to provider ${existing.providerInstanceId}`,
+        );
+      }
       await this.metadata.set(NAMESPACE, bindingKey, binding);
       const index = await this.readIndex();
       if (
         !index.some(
-          (entry) =>
-            entry.canonicalThreadId === binding.canonicalThreadId &&
-            entry.providerInstanceId === binding.providerInstanceId,
+          (entry) => entry.canonicalThreadId === binding.canonicalThreadId,
         )
       ) {
         await this.metadata.set(NAMESPACE, INDEX_KEY, [
           ...index,
           {
             canonicalThreadId: binding.canonicalThreadId,
-            providerInstanceId: binding.providerInstanceId,
           },
         ] satisfies T3ThreadBindingIndexEntry[]);
       }
     });
   }
 
-  delete(canonicalThreadId: string, providerInstanceId: string): Promise<void> {
+  delete(canonicalThreadId: string): Promise<void> {
     return this.locks.withLock(INDEX_LOCK, async (signal) => {
       if (signal.aborted) throw signal.reason;
       await this.metadata.delete(
         NAMESPACE,
-        key(canonicalThreadId, providerInstanceId),
+        key(canonicalThreadId),
       );
       const index = await this.readIndex();
       await this.metadata.set(
         NAMESPACE,
         INDEX_KEY,
         index.filter(
-          (entry) =>
-            entry.canonicalThreadId !== canonicalThreadId ||
-            entry.providerInstanceId !== providerInstanceId,
+          (entry) => entry.canonicalThreadId !== canonicalThreadId,
         ),
       );
     });

@@ -1,5 +1,12 @@
 # T3 Code + Compadre provider experiment
 
+> Historical checkpoint: the provider-adapter architecture below remains for
+> rollback and comparison. The active branch direction now uses T3's built-in
+> Codex and Claude providers inside one Modal-hosted T3 environment per external
+> conversation. Slack receives assistant text plus a hosted-T3 deep link; the
+> T3 UI connects to the same environment/thread and shows native tool detail.
+> Compadre is coordinator and MCP/tool host, not a provider.
+
 This experiment keeps T3 Code's web client, project/thread orchestration, and
 canonical runtime events while sending native Compadre-provider turns to Compadre's hosted
 AG-UI route. Compadre remains responsible for durable conversation state,

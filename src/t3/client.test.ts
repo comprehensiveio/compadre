@@ -69,7 +69,8 @@ test("creates a native T3 thread before dispatching its first HTTP turn", async 
   const dispatch = await client.startNewThread({
     projectId: "project-1",
     title: "Slack thread",
-    text: "Please fix the failing test",
+    text: "Please fix the failing test\n\nSlack routing metadata",
+    displayText: "Please fix the failing test",
     modelSelection: { instanceId: "codex", model: "gpt-5.6-sol" },
   });
 
@@ -106,6 +107,7 @@ test("creates a native T3 thread before dispatching its first HTTP turn", async 
       messageId: "message-1",
       role: "user",
       text: "Please fix the failing test",
+      providerPrompt: "Please fix the failing test\n\nSlack routing metadata",
       attachments: [],
     },
     modelSelection: { instanceId: "codex", model: "gpt-5.6-sol" },
