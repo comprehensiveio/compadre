@@ -150,6 +150,15 @@ skills and prompts, all configured MCP tools, plus the same practical command
 line set used by the app (`git`, `curl`, `jq`, `psql`, `gh`, `rg`, `pnpm`, and
 the pinned Claude/Codex CLIs).
 
+The T3 fork now exposes Compadre as its own provider instead of disguising it
+as Codex. Its auxiliary commit, PR, branch, and thread-title generation also
+uses Compadre's authenticated `/prompt` API. For Slack-bound browser turns, the
+agent prompt includes the canonical channel and thread coordinates required by
+custom Slack tools such as `slack_watch_comp_pr_deployment`. TanStack's Slack
+tool names are normalized to the historical Compadre names, and generated
+Modal files are temporarily materialized on the relay when
+`slack_upload_file` executes there.
+
 The isolated Render canary has also exercised read-only calls through S3,
 Vitally, Google Workspace, and Postgres. Postgres uses the production database's
 dedicated read-only role over its external TLS endpoint; no write-capable

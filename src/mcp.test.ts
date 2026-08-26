@@ -75,3 +75,37 @@ test("Comp MCP can use an app credential distinct from the relay API key", async
     }
   }
 });
+
+test("Slack custom tools receive the durable store needed for deployment watches", async () => {
+  const keys = [
+    "SLACK_BOT_TOKEN",
+    "SLACK_TEAM_ID",
+    "COMPADRE_DURABILITY_DATABASE_URL",
+    "COMPADRE_MCP_ALLOW_PARTIAL",
+  ] as const;
+  const previous = new Map(keys.map((key) => [key, process.env[key]]));
+  try {
+    process.env.COMPADRE_MCP_ALLOW_PARTIAL = "true";
+    process.env.SLACK_BOT_TOKEN = "xoxb-test";
+    process.env.SLACK_TEAM_ID = "T123";
+    process.env.COMPADRE_DURABILITY_DATABASE_URL =
+      "postgres://durable.example/compadre";
+
+    const servers = await buildMcpServers();
+    const slack = servers.slack;
+    assert.ok(slack && "command" in slack);
+    if (!slack || !("command" in slack)) return;
+    assert.equal(slack.env?.SLACK_BOT_TOKEN, "xoxb-test");
+    assert.equal(slack.env?.SLACK_TEAM_ID, "T123");
+    assert.equal(
+      slack.env?.COMPADRE_DURABILITY_DATABASE_URL,
+      "postgres://durable.example/compadre",
+    );
+  } finally {
+    for (const key of keys) {
+      const value = previous.get(key);
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  }
+});

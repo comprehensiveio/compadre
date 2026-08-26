@@ -4,6 +4,7 @@ import {
   defineSandbox,
   defineWorkspace,
   type SandboxDefinition,
+  type SandboxHandle,
 } from "@tanstack/ai-sandbox";
 import { compadreSkillUploads } from "../compadre-skills.js";
 import { configuredRepositoryUrl } from "../repo.js";
@@ -33,6 +34,7 @@ export interface CreateHarnessSandboxOptions {
   reuseThread?: boolean;
   environment?: NodeJS.ProcessEnv;
   uploads?: Array<{ path: string; data: Uint8Array }>;
+  onReady?: (handle: SandboxHandle) => void | Promise<void>;
 }
 
 /** Build the provider-neutral harness boundary used by Claude Code and Codex. */
@@ -42,6 +44,7 @@ export function createHarnessSandbox({
   reuseThread = true,
   environment = process.env,
   uploads = [],
+  onReady,
 }: CreateHarnessSandboxOptions): SandboxDefinition {
   const workdir = harnessWorkspacePath(localWorktreePath, environment);
   const skillUploads = compadreSkillUploads();
@@ -78,6 +81,7 @@ export function createHarnessSandbox({
           for (const upload of uploads) {
             await handle.fs.write(upload.path, upload.data);
           }
+          await onReady?.(handle);
         },
       },
       fileEvents: false,

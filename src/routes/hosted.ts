@@ -21,6 +21,7 @@ import {
 } from "../persistence/runtime.js";
 import { configuredAgentProvider } from "../conversation.js";
 import { startHostedSlackDelivery } from "../services/hosted-slack-delivery.js";
+import { buildSlackAgentInput } from "../services/slack-prompt.js";
 import {
   HostedThreadBindingStore,
   type HostedSlackBinding,
@@ -372,13 +373,23 @@ export function createHostedRoutes(
     });
 
     const launcher = dependencies.getLauncher();
+    const agentInput = binding
+      ? buildSlackAgentInput({
+          messageText: userMessage,
+          threadContext: null,
+          channel: binding.channelId,
+          channelName: null,
+          threadTs: binding.threadTs,
+          userId: binding.recipientUserId,
+        })
+      : { prompt: userMessage, transcriptUserMessage: userMessage };
     let started: Awaited<ReturnType<WorkflowRunLauncher["start"]>>;
     try {
       started = await launcher.start({
         runId,
         threadId,
-        prompt: userMessage,
-        transcriptUserMessage: userMessage,
+        prompt: agentInput.prompt,
+        transcriptUserMessage: agentInput.transcriptUserMessage,
         provider: isAgentProvider(requestedProvider)
           ? requestedProvider
           : undefined,

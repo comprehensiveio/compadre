@@ -43,6 +43,25 @@ test("discovers host MCP tools before the sandbox bridge starts", async () => {
   );
 });
 
+test("removes the redundant Slack prefix from legacy Slack MCP tool names", async () => {
+  const tools = await discoverHarnessMcpTools([
+    clientWithTools([
+      "slack_slack_upload_file",
+      "slack_slack_reply_to_thread",
+      "slack_watch_comp_pr_deployment",
+    ]),
+  ]);
+
+  assert.deepEqual(
+    tools.map((tool) => tool.name),
+    [
+      "slack_upload_file",
+      "slack_reply_to_thread",
+      "slack_watch_comp_pr_deployment",
+    ],
+  );
+});
+
 test("rejects duplicate host MCP tool names before provisioning", async () => {
   await assert.rejects(
     discoverHarnessMcpTools([

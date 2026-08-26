@@ -1,22 +1,25 @@
 # T3 Code + Compadre provider experiment
 
 This experiment keeps T3 Code's web client, project/thread orchestration, and
-canonical runtime events while sending provider turns to Compadre's hosted
+canonical runtime events while sending native Compadre-provider turns to Compadre's hosted
 AG-UI route. Compadre remains responsible for durable conversation state,
 Modal sandbox execution, Slack delivery, and provider selection.
 
-The companion patch records the initial adapter based on upstream T3 Code commit
+The companion patch records the initial adapter checkpoint based on upstream T3 Code commit
 `994372ba43810e64027c537231da200988faa7ca` and was proven locally on
 2026-08-25. It adds an opt-in provider adapter behind
 `COMPADRE_PROVIDER_URL`; without that variable, T3's Codex driver is
 unchanged. The maintained fork branch is the source of truth for the later
-hosted-readiness, model-selection, terminal-state, cancellation, and attachment
-commits.
+hosted-readiness, model-selection, terminal-state, cancellation, attachment,
+and native-provider commits. Apply the patch only to reproduce the first local
+spike; use the maintained fork branch for the current experiment.
 
 The maintained experiment branch is
 `https://github.com/comprehensiveio/t3code/tree/experiment/compadre-modal-provider`.
-It also marks the provider ready when `COMPADRE_PROVIDER_URL` is configured, so
-a hosted T3 server does not need a local Codex executable or OpenAI login.
+It registers `compadre` as a distinct provider when `COMPADRE_PROVIDER_URL` is
+configured, so a hosted T3 server does not need a local Codex executable or
+OpenAI login. Claude Code and Codex remain model choices inside that provider;
+T3's actual Codex driver is no longer repurposed.
 
 ## Proven flow
 
@@ -136,8 +139,8 @@ cd apps/server
 ```
 
 The focused adapter tests cover successful text streaming, failed runs,
-backend cancellation, and image forwarding.
-The hosted-provider status behavior is covered in `ProviderRegistry.test.ts`.
+backend cancellation, and image forwarding. Native-provider hydration and
+Compadre-backed title generation have their own focused tests.
 Both focused suites and the server typecheck pass; existing Effect diagnostic
 suggestions elsewhere in T3 remain unchanged.
 
@@ -158,11 +161,6 @@ suggestions elsewhere in T3 remain unchanged.
 - Explicit T3-to-Slack thread pairing now shares the canonical transcript and
   Modal snapshot lineage. T3 still lacks Slack-thread discovery, a pairing UI,
   and automatic import of Slack history into its own local event database.
-- The adapter currently occupies T3's Codex driver slot. A durable fork should
-  add Compadre as its own provider driver and snapshot instead.
-- T3's auxiliary title-generation reactor still attempts to launch a local
-  Codex CLI. Turn execution succeeds, but automatic thread titles fall back to
-  the user prompt until text generation is routed through Compadre.
 - A direct Render service restart left the disk-backed T3 service returning
   502s during this trial. A normal Render redeploy recovered the service and
   retained all disk state; use redeploy for canary maintenance until this is

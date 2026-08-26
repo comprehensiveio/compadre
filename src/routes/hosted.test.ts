@@ -65,7 +65,10 @@ test("a web turn starts one durable run and fans a Slack-bound thread back to Sl
         async start(input) {
           assert.equal(input.runId, "web-run");
           assert.equal(input.threadId, "slack-thread");
-          assert.equal(input.prompt, "hello from the browser");
+          assert.match(input.prompt, /User query:\nhello from the browser/);
+          assert.match(input.prompt, /Reply to:/);
+          assert.match(input.prompt, /- channel: C123/);
+          assert.match(input.prompt, /- thread_ts: 1712345678\.000100/);
           assert.equal(input.transcriptUserMessage, "hello from the browser");
           assert.equal(input.persistThread, true);
           assert.equal(input.responseMode, "slack-streaming");

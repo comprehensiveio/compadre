@@ -10,6 +10,7 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { z } from "zod";
 import { SlackClient } from "../services/slack-client.js";
 import { PullRequestWatchService } from "../services/pr-watch.js";
+import { watchCompPrDeployment } from "../services/slack-deployment-watch-tool.js";
 
 const botToken = process.env.SLACK_BOT_TOKEN;
 const teamId = process.env.SLACK_TEAM_ID;
@@ -103,22 +104,20 @@ server.tool(
       "The thread timestamp from the Reply to section of the Slack prompt",
     ),
   },
-  async ({ pr_number, channel_id, thread_ts }) => {
-    const watchService = await getPullRequestWatchService();
-    const prUrl = `https://github.com/comprehensiveio/comp/pull/${pr_number}`;
-    const result = await watchService.register(
-      { prNumber: pr_number, prUrl },
-      { teamId, channelId: channel_id, threadTs: thread_ts },
-    );
-    return jsonResult({
-      ...result,
-      pr_number,
-      pr_url: prUrl,
-      message: result.created
-        ? `Watching PR #${pr_number} for production deployment.`
-        : `PR #${pr_number} is already being watched in this thread.`,
-    });
-  },
+  async ({ pr_number, channel_id, thread_ts }) =>
+    jsonResult(
+      await watchCompPrDeployment(
+        {
+          prNumber: pr_number,
+          channelId: channel_id,
+          threadTs: thread_ts,
+        },
+        {
+          teamId,
+          getWatchService: getPullRequestWatchService,
+        },
+      ),
+    ),
 );
 
 server.tool(

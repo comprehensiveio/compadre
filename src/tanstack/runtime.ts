@@ -5,6 +5,7 @@ import {
   type ModelMessage,
   type StreamChunk,
 } from "@tanstack/ai";
+import type { SandboxHandle } from "@tanstack/ai-sandbox";
 import { getBaseSystemPrompt } from "../prompts/index.js";
 import { createChannelConversationPersistence } from "../persistence/conversation.js";
 import {
@@ -355,11 +356,15 @@ async function prepareAguiChat(
   }
 
   const harnessWorktreePath = harnessWorkspacePath(worktreePath);
+  let activeSandbox: SandboxHandle | undefined;
   const sandbox = createHarnessSandbox({
     worktreeId,
     localWorktreePath: worktreePath,
     uploads: attachments.uploads,
     reuseThread: shouldReuseThreadSandbox(threadPersistence),
+    onReady: (handle) => {
+      activeSandbox = handle;
+    },
   });
 
   let stream: AsyncIterable<StreamChunk>;
@@ -380,6 +385,12 @@ async function prepareAguiChat(
         persistence,
         locks: threadPersistence?.locks,
         sandboxInstances: threadPersistence?.sandboxInstances,
+        readSandboxFile: async (filePath) => {
+          if (!activeSandbox) {
+            throw new Error("The Modal sandbox is not ready for file transfer");
+          }
+          return activeSandbox.fs.readBytes(filePath);
+        },
       }),
     );
   } catch (error) {
