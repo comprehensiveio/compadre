@@ -46,6 +46,29 @@ Open `http://localhost:3100/hosted` and enter `COMPADRE_API_KEY`. For frontend
 iteration, run `npm run dev:web` alongside `npm run dev` and open Vite on port
 5173.
 
+### Native T3 directory mode
+
+The newer architecture is available independently of the original AG-UI
+surface:
+
+```bash
+COMPADRE_T3_DIRECTORY_ENABLED=true \
+COMPADRE_DURABILITY_BACKEND=memory \
+npm run dev
+```
+
+In this mode `/hosted` is one central thread UI, but Render stores only the
+credential-free directory and routing metadata. The first message creates one
+Modal sandbox containing one native T3 server and one native T3 thread.
+Follow-up messages, refresh, cancellation, and “Open native T3” all resolve the
+same binding. Merely listing the sidebar does not wake any sandbox. Codex and
+Claude Code remain T3-native harnesses; selecting the harness and model does
+not route execution back through TanStack AI.
+
+The current local/deployed limitation is hard sandbox expiry: reconnect is
+proven while Modal still exposes the sandbox, but T3's data directory is not
+yet snapshotted and restored into a replacement sandbox.
+
 To exercise the Slack ingress shape without sending anything to Slack, run:
 
 ```bash

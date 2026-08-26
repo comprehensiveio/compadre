@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { InMemoryLockStore, type LockStore } from "@tanstack/ai/locks";
 import type {
   T3Client,
   T3ModelSelection,
@@ -39,6 +40,15 @@ export interface T3CommandClient {
     timeoutMs?: number;
     signal?: AbortSignal;
   }): Promise<T3ThreadSnapshot>;
+  threadSnapshot(
+    threadId: string,
+    signal?: AbortSignal,
+  ): Promise<T3ThreadSnapshot>;
+  mintPairingCredential(input: {
+    label: string;
+    scopes?: ReadonlyArray<string>;
+    signal?: AbortSignal;
+  }): Promise<{ id: string; credential: string; expiresAt: string }>;
 }
 
 export interface T3EnvironmentConnection {
@@ -72,9 +82,34 @@ export class T3Gateway {
     private readonly environments: T3EnvironmentConnectionManager,
     private readonly idFactory: () => string = randomUUID,
     private readonly now: () => Date = () => new Date(),
+    private readonly locks: LockStore = new InMemoryLockStore(),
   ) {}
 
+  private lockKey(canonicalThreadId: string, providerInstanceId: string) {
+    return `compadre:t3-environment:${JSON.stringify([
+      canonicalThreadId,
+      providerInstanceId,
+    ])}`;
+  }
+
   async send(input: {
+    canonicalThreadId: string;
+    title: string;
+    text: string;
+    modelSelection: T3ModelSelection;
+    signal?: AbortSignal;
+  }): Promise<T3GatewayTurn> {
+    const providerInstanceId = input.modelSelection.instanceId;
+    return this.locks.withLock(
+      this.lockKey(input.canonicalThreadId, providerInstanceId),
+      async (lockSignal) => {
+        if (lockSignal.aborted) throw lockSignal.reason;
+        return this.sendUnlocked(input);
+      },
+    );
+  }
+
+  private async sendUnlocked(input: {
     canonicalThreadId: string;
     title: string;
     text: string;
@@ -96,6 +131,8 @@ export class T3Gateway {
       });
       const updated: T3ThreadBinding = {
         ...existing,
+        title: existing.title ?? input.title,
+        status: "working",
         modelSelection: input.modelSelection,
         updatedAt: this.now().toISOString(),
       };
@@ -126,6 +163,8 @@ export class T3Gateway {
         sandboxId: environment.sandboxId,
         baseUrl: environment.client.baseUrl,
         modelSelection: input.modelSelection,
+        title: input.title,
+        status: "working",
         createdAt: timestamp,
         updatedAt: timestamp,
       };
@@ -135,6 +174,81 @@ export class T3Gateway {
       await this.environments.discard?.(environment).catch(() => undefined);
       throw error;
     }
+  }
+
+  list(): Promise<T3ThreadBinding[]> {
+    return this.bindings.list();
+  }
+
+  async snapshot(input: {
+    canonicalThreadId: string;
+    providerInstanceId: string;
+    signal?: AbortSignal;
+  }): Promise<{ binding: T3ThreadBinding; snapshot: T3ThreadSnapshot } | null> {
+    const binding = await this.bindings.get(
+      input.canonicalThreadId,
+      input.providerInstanceId,
+    );
+    if (!binding) return null;
+    try {
+      const environment = await this.environments.reconnect(binding);
+      const snapshot = await environment.client.threadSnapshot(
+        binding.t3ThreadId,
+        input.signal,
+      );
+      const latestState = snapshot.thread.latestTurn?.state;
+      const status =
+        latestState === "running"
+          ? "working"
+          : latestState === "error"
+            ? "error"
+            : latestState === "interrupted"
+              ? "interrupted"
+              : "ready";
+      const updated: T3ThreadBinding = {
+        ...binding,
+        title: snapshot.thread.title || binding.title,
+        modelSelection: snapshot.thread.modelSelection,
+        status,
+        // Reading a selected transcript is not new thread activity. Keeping
+        // this stable lets the central directory signal real cross-surface
+        // changes without creating a snapshot/poll feedback loop.
+        updatedAt: binding.updatedAt,
+        baseUrl: environment.client.baseUrl,
+      };
+      await this.bindings.bind(updated);
+      return { binding: updated, snapshot };
+    } catch (error) {
+      await this.bindings
+        .bind({
+          ...binding,
+          status: "unavailable",
+          updatedAt: this.now().toISOString(),
+        })
+        .catch(() => undefined);
+      throw error;
+    }
+  }
+
+  async open(input: {
+    canonicalThreadId: string;
+    providerInstanceId: string;
+    signal?: AbortSignal;
+  }): Promise<{ binding: T3ThreadBinding; pairingUrl: string } | null> {
+    const binding = await this.bindings.get(
+      input.canonicalThreadId,
+      input.providerInstanceId,
+    );
+    if (!binding) return null;
+    const environment = await this.environments.reconnect(binding);
+    const pairing = await environment.client.mintPairingCredential({
+      label: `Compadre thread ${binding.canonicalThreadId}`,
+      signal: input.signal,
+    });
+    return {
+      binding,
+      pairingUrl: `${environment.client.baseUrl.replace(/\/$/, "")}/pair#token=${pairing.credential}`,
+    };
   }
 
   async cancel(input: {
@@ -162,7 +276,7 @@ export class T3Gateway {
     signal?: AbortSignal;
   }): Promise<T3ThreadSnapshot> {
     const environment = await this.environments.reconnect(input.turn.binding);
-    return environment.client.waitForTurnTerminal({
+    const snapshot = await environment.client.waitForTurnTerminal({
       threadId: input.turn.binding.t3ThreadId,
       minimumSequence: input.turn.dispatch.sequence,
       messageId: input.turn.dispatch.messageId,
@@ -170,6 +284,20 @@ export class T3Gateway {
       timeoutMs: input.timeoutMs,
       signal: input.signal,
     });
+    const latestState = snapshot.thread.latestTurn?.state;
+    await this.bindings.bind({
+      ...input.turn.binding,
+      title: snapshot.thread.title || input.turn.binding.title,
+      modelSelection: snapshot.thread.modelSelection,
+      status:
+        latestState === "error"
+          ? "error"
+          : latestState === "interrupted"
+            ? "interrupted"
+            : "ready",
+      updatedAt: this.now().toISOString(),
+    });
+    return snapshot;
   }
 }
 

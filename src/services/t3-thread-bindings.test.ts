@@ -51,3 +51,28 @@ test("does not silently reassign a provider conversation", async () => {
     /already assigned to t3-codex-thread/,
   );
 });
+
+test("lists the credential-free thread directory in most-recent order", async () => {
+  const persistence = memoryPersistence();
+  const store = new T3ThreadBindingStore(persistence.stores.metadata);
+  await store.bind(binding);
+  await store.bind({
+    ...binding,
+    canonicalThreadId: "newer-thread",
+    t3ThreadId: "newer-t3-thread",
+    title: "Newer work",
+    status: "working",
+    createdAt: "2026-08-26T16:00:00.000Z",
+    updatedAt: "2026-08-26T16:00:00.000Z",
+  });
+
+  assert.deepEqual(
+    (await store.list()).map((record) => record.canonicalThreadId),
+    ["newer-thread", "slack-thread"],
+  );
+  await store.delete("newer-thread", "codex");
+  assert.deepEqual(
+    (await store.list()).map((record) => record.canonicalThreadId),
+    ["slack-thread"],
+  );
+});

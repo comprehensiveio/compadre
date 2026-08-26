@@ -13,6 +13,7 @@ export default defineConfig({
     port: 5173,
     proxy: {
       "/hosted/chat": "http://localhost:3100",
+      "/hosted/t3": "http://localhost:3100",
       "/hosted/threads": "http://localhost:3100",
     },
   },

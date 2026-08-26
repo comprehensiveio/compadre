@@ -5,6 +5,7 @@ import {
 } from "../experiments/t3-modal.js";
 import { modalSandboxProvider } from "../tanstack/modal-sandbox.js";
 import { T3Client } from "./client.js";
+import type { T3OrchestrationSnapshot } from "./client.js";
 import type {
   T3EnvironmentConnection,
   T3EnvironmentConnectionManager,
@@ -12,6 +13,27 @@ import type {
 import type { T3ThreadBinding } from "../services/t3-thread-bindings.js";
 
 const T3_PORT = 3773;
+
+export function assertIsolatedT3Environment(
+  binding: T3ThreadBinding,
+  snapshot: T3OrchestrationSnapshot,
+): void {
+  if (!snapshot.projects.some((project) => project.id === binding.projectId)) {
+    throw new Error(
+      `T3 Modal sandbox ${binding.sandboxId} no longer contains its assigned project`,
+    );
+  }
+  if (!snapshot.threads.some((thread) => thread.id === binding.t3ThreadId)) {
+    throw new Error(
+      `T3 Modal sandbox ${binding.sandboxId} no longer contains its assigned thread`,
+    );
+  }
+  if (snapshot.threads.some((thread) => thread.id !== binding.t3ThreadId)) {
+    throw new Error(
+      `T3 Modal sandbox ${binding.sandboxId} violates one-thread isolation`,
+    );
+  }
+}
 
 export interface T3ModalProvisionedEnvironment {
   canonicalThreadId: string;
@@ -75,11 +97,7 @@ export class T3ModalEnvironmentManager
     const channel = await handle.ports.connect(T3_PORT);
     const client = new T3Client(channel.url, accessToken);
     const snapshot = await client.snapshot();
-    if (!snapshot.projects.some((project) => project.id === binding.projectId)) {
-      throw new Error(
-        `T3 Modal sandbox ${binding.sandboxId} no longer contains project ${binding.projectId}`,
-      );
-    }
+    assertIsolatedT3Environment(binding, snapshot);
     return {
       sandboxId: binding.sandboxId,
       projectId: binding.projectId,

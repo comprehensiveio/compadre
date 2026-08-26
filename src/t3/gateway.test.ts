@@ -40,6 +40,12 @@ test("routes repeat messages to the same provider-native T3 thread", async () =>
     async waitForTurnTerminal() {
       throw new Error("unused");
     },
+    async threadSnapshot() {
+      throw new Error("unused");
+    },
+    async mintPairingCredential() {
+      throw new Error("unused");
+    },
   };
   const environments: T3EnvironmentConnectionManager = {
     async provision() {
@@ -115,6 +121,12 @@ test("discards a newly provisioned Modal environment when its first turn fails",
       throw new Error("unused");
     },
     async waitForTurnTerminal() {
+      throw new Error("unused");
+    },
+    async threadSnapshot() {
+      throw new Error("unused");
+    },
+    async mintPairingCredential() {
       throw new Error("unused");
     },
   } satisfies T3CommandClient;
