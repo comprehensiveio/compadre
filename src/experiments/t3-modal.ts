@@ -1,4 +1,5 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
+import fs from "node:fs/promises";
 import type { SandboxHandle } from "@tanstack/ai-sandbox";
 import { COMPADRE_SKILL_NAMES } from "../compadre-skills.js";
 import { gitAuthenticationEnvironment } from "../repo.js";
@@ -13,6 +14,7 @@ const DEFAULT_T3_LOG = "/var/log/compadre/t3.log";
 const STARTUP_TIMEOUT_MS = 120_000;
 const T3_INSTALL_ROOT = "/opt/compadre-runtime/node_modules/t3";
 const T3_FORK_ARCHIVE = "/tmp/compadre-t3-fork.tgz";
+const MAX_T3_FORK_ARCHIVE_BYTES = 50 * 1024 * 1024;
 export const T3_GATEWAY_CREDENTIAL_PATH =
   "/var/lib/t3/compadre-gateway-access-token";
 
@@ -84,6 +86,59 @@ async function installLocalT3Fork(
       `T3 fork installation failed: ${installed.stderr || installed.stdout}`,
     );
   }
+}
+
+function sha256(data: Uint8Array): string {
+  return createHash("sha256").update(data).digest("hex");
+}
+
+export async function resolveT3ForkArchive(
+  environment: NodeJS.ProcessEnv,
+  options: {
+    fetch?: typeof globalThis.fetch;
+    cacheDirectory?: string;
+  } = {},
+): Promise<string | undefined> {
+  const localPath = environment.COMPADRE_T3_PACKAGE_PATH?.trim();
+  if (localPath) return localPath;
+
+  const packageUrl = environment.COMPADRE_T3_PACKAGE_URL?.trim();
+  if (!packageUrl) return undefined;
+  const expectedSha256 = environment.COMPADRE_T3_PACKAGE_SHA256?.trim().toLowerCase();
+  if (!/^[a-f0-9]{64}$/.test(expectedSha256 ?? "")) {
+    throw new Error(
+      "COMPADRE_T3_PACKAGE_SHA256 must be set to a 64-character SHA-256 when COMPADRE_T3_PACKAGE_URL is configured",
+    );
+  }
+  const parsed = new URL(packageUrl);
+  if (parsed.protocol !== "https:") {
+    throw new Error("COMPADRE_T3_PACKAGE_URL must use HTTPS");
+  }
+  const cachePath = `${options.cacheDirectory ?? "/tmp"}/compadre-t3-${expectedSha256}.tgz`;
+  try {
+    const cached = await fs.readFile(cachePath);
+    if (sha256(cached) === expectedSha256) return cachePath;
+  } catch {
+    // Cache misses and stale partial files are replaced below.
+  }
+
+  const response = await (options.fetch ?? globalThis.fetch)(parsed);
+  if (!response.ok) {
+    throw new Error(`T3 fork download failed with HTTP ${response.status}`);
+  }
+  const declaredLength = Number(response.headers.get("content-length") ?? "0");
+  if (declaredLength > MAX_T3_FORK_ARCHIVE_BYTES) {
+    throw new Error("T3 fork archive exceeds the 50 MiB limit");
+  }
+  const archive = new Uint8Array(await response.arrayBuffer());
+  if (archive.byteLength > MAX_T3_FORK_ARCHIVE_BYTES) {
+    throw new Error("T3 fork archive exceeds the 50 MiB limit");
+  }
+  if (sha256(archive) !== expectedSha256) {
+    throw new Error("T3 fork archive SHA-256 does not match the pinned digest");
+  }
+  await fs.writeFile(cachePath, archive, { mode: 0o600 });
+  return cachePath;
 }
 
 async function bootstrapT3Project(
@@ -180,6 +235,7 @@ export async function launchManagedT3ModalEnvironment(
     COMPADRE_MODAL_APP:
       environment.COMPADRE_T3_MODAL_APP?.trim() || "compadre-t3-experiment",
   };
+  const forkArchivePath = await resolveT3ForkArchive(experimentEnvironment);
   let startupToken: string | undefined;
   const sandbox = createHarnessSandbox({
     worktreeId: `t3-modal-${randomUUID()}`,
@@ -194,7 +250,7 @@ export async function launchManagedT3ModalEnvironment(
       );
       await installLocalT3Fork(
         handle,
-        experimentEnvironment.COMPADRE_T3_PACKAGE_PATH,
+        forkArchivePath,
       );
       await handle.env.set({
         ...providerEnvironment,

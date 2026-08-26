@@ -95,6 +95,7 @@ See `.env.example` for the full list. Key notes:
 - **COMPADRE_T3_API_ENABLED**: Preserve the authenticated `/prompt` contract while executing new API runs through the same native-T3 coordinator. Synchronous responses also include `threadId` and `detailsUrl`; async responses return the accepted canonical `threadId`.
 - **COMPADRE_T3_HOSTED_APP_URL**: Hosted T3 web origin used for deep links, for example `https://t3code-compadre-experiment.onrender.com`. The pairing secret is placed in the URL fragment and consumed once.
 - **COMPADRE_T3_PACKAGE_PATH**: Local-only archive used to overlay the experiment fork into a new Modal environment. Production should bake the same fork artifact into the Modal image instead of depending on a host path.
+- **COMPADRE_T3_PACKAGE_URL / COMPADRE_T3_PACKAGE_SHA256**: HTTPS release archive and required digest for reproducible Render-to-Modal fork installation. The controller caches the verified artifact locally before copying it into a new sandbox.
 - **COMPADRE_HOSTED_SLACK_DELIVERY_ENABLED**: Set to `false` to suppress browser-to-Slack mirroring during synthetic hosted probes without removing the Slack token used by agent tools. Defaults to enabled.
 - **FABLE_MODEL**: Optional model ID used by Slack's `--fable` routing profile. Defaults to `claude-fable-5`; normal Claude Code prompts use `DEFAULT_MODEL` or the built-in default.
 
