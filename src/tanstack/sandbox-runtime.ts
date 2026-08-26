@@ -23,8 +23,8 @@ function modalSetupCommands(environment: NodeJS.ProcessEnv): string[] {
   const quote = (value: string): string =>
     `'${value.replaceAll("'", `'\\''`)}'`;
   const clone = environment.GITHUB_PERSONAL_ACCESS_TOKEN
-    ? `git -c credential.helper='!f() { echo "username=$GIT_ASKPASS_USER"; echo "password=$GIT_ASKPASS_TOKEN"; }; f' clone --depth 1 --single-branch --branch ${quote(branch)} -- ${quote(repositoryUrl)} .`
-    : `git clone --depth 1 --single-branch --branch ${quote(branch)} -- ${quote(repositoryUrl)} .`;
+    ? `git -c credential.helper='!f() { echo "username=$GIT_ASKPASS_USER"; echo "password=$GIT_ASKPASS_TOKEN"; }; f' clone --depth 1 --single-branch --branch ${quote(branch)} -- ${quote(repositoryUrl)} . 2>&1`
+    : `git clone --depth 1 --single-branch --branch ${quote(branch)} -- ${quote(repositoryUrl)} . 2>&1`;
   return [clone];
 }
 

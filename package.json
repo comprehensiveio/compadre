@@ -15,6 +15,8 @@
     "benchmark:cold-start": "tsx scripts/benchmark-cold-start.ts",
     "modal:prepare-image": "tsx scripts/prepare-modal-image.ts",
     "experiment:t3-modal": "tsx scripts/launch-t3-modal.ts",
+    "experiment:t3-gateway-probe": "tsx scripts/probe-t3-gateway.ts",
+    "experiment:t3-reconnect-probe": "tsx scripts/probe-t3-reconnect.ts",
     "db:check": "drizzle-kit check",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",

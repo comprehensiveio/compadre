@@ -1,0 +1,609 @@
+import { randomUUID } from "node:crypto";
+import { z } from "zod";
+
+const TOKEN_EXCHANGE_GRANT =
+  "urn:ietf:params:oauth:grant-type:token-exchange";
+const ACCESS_TOKEN_TYPE =
+  "urn:ietf:params:oauth:token-type:access_token";
+const ENVIRONMENT_BOOTSTRAP_TOKEN_TYPE =
+  "urn:t3:params:oauth:token-type:environment-bootstrap";
+
+const DEFAULT_TIMEOUT_MS = 15_000;
+const DEFAULT_POLL_INTERVAL_MS = 350;
+
+export type T3RuntimeMode =
+  | "approval-required"
+  | "auto-accept-edits"
+  | "auto"
+  | "full-access";
+export type T3InteractionMode = "default" | "plan";
+
+export interface T3ModelSelection {
+  instanceId: string;
+  model: string;
+  options?: ReadonlyArray<unknown>;
+}
+
+export interface T3Project {
+  id: string;
+  title: string;
+  workspaceRoot: string;
+  defaultModelSelection: T3ModelSelection | null;
+}
+
+export interface T3Message {
+  id: string;
+  role: "user" | "assistant" | "system";
+  text: string;
+  turnId: string | null;
+  streaming: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface T3LatestTurn {
+  turnId: string;
+  state: "running" | "interrupted" | "completed" | "error";
+  requestedAt: string;
+  startedAt: string | null;
+  completedAt: string | null;
+  assistantMessageId: string | null;
+}
+
+export interface T3Thread {
+  id: string;
+  projectId: string;
+  title: string;
+  modelSelection: T3ModelSelection;
+  latestTurn: T3LatestTurn | null;
+  messages: ReadonlyArray<T3Message>;
+  session: {
+    status:
+      | "idle"
+      | "starting"
+      | "running"
+      | "ready"
+      | "interrupted"
+      | "stopped"
+      | "error";
+    activeTurnId: string | null;
+    lastError: string | null;
+  } | null;
+}
+
+export interface T3ThreadSnapshot {
+  snapshotSequence: number;
+  thread: T3Thread;
+}
+
+export interface T3OrchestrationSnapshot {
+  snapshotSequence: number;
+  projects: ReadonlyArray<T3Project>;
+  threads: ReadonlyArray<T3Thread>;
+  updatedAt: string;
+}
+
+export type T3GatewayErrorKind =
+  | "transport"
+  | "http"
+  | "protocol"
+  | "timeout"
+  | "aborted";
+
+export class T3GatewayError extends Error {
+  constructor(
+    readonly kind: T3GatewayErrorKind,
+    readonly operation: string,
+    message: string,
+    readonly status?: number,
+    readonly code?: string,
+  ) {
+    super(message);
+    this.name = "T3GatewayError";
+  }
+}
+
+const modelSelectionSchema = z.object({
+  instanceId: z.string().min(1),
+  model: z.string().min(1),
+  options: z.array(z.unknown()).optional(),
+});
+
+const projectSchema = z.object({
+  id: z.string().min(1),
+  title: z.string(),
+  workspaceRoot: z.string().min(1),
+  defaultModelSelection: modelSelectionSchema.nullable(),
+});
+
+const messageSchema = z.object({
+  id: z.string().min(1),
+  role: z.enum(["user", "assistant", "system"]),
+  text: z.string(),
+  turnId: z.string().nullable(),
+  streaming: z.boolean(),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+});
+
+const latestTurnSchema = z.object({
+  turnId: z.string().min(1),
+  state: z.enum(["running", "interrupted", "completed", "error"]),
+  requestedAt: z.string(),
+  startedAt: z.string().nullable(),
+  completedAt: z.string().nullable(),
+  assistantMessageId: z.string().nullable(),
+});
+
+const threadSchema = z.object({
+  id: z.string().min(1),
+  projectId: z.string().min(1),
+  title: z.string(),
+  modelSelection: modelSelectionSchema,
+  latestTurn: latestTurnSchema.nullable(),
+  messages: z.array(messageSchema),
+  session: z
+    .object({
+      status: z.enum([
+        "idle",
+        "starting",
+        "running",
+        "ready",
+        "interrupted",
+        "stopped",
+        "error",
+      ]),
+      activeTurnId: z.string().nullable(),
+      lastError: z.string().nullable(),
+    })
+    .nullable(),
+});
+
+const orchestrationSnapshotSchema = z.object({
+  snapshotSequence: z.number().int().nonnegative(),
+  projects: z.array(projectSchema),
+  threads: z.array(threadSchema),
+  updatedAt: z.string(),
+});
+
+const threadSnapshotSchema = z.object({
+  snapshotSequence: z.number().int().nonnegative(),
+  thread: threadSchema,
+});
+
+const dispatchResultSchema = z.object({
+  sequence: z.number().int().nonnegative(),
+});
+
+const accessTokenSchema = z.object({
+  access_token: z.string().min(1),
+  issued_token_type: z.literal(ACCESS_TOKEN_TYPE),
+  token_type: z.enum(["Bearer", "DPoP"]),
+  expires_in: z.number(),
+  scope: z.string(),
+});
+
+const pairingCredentialSchema = z.object({
+  id: z.string().min(1),
+  credential: z.string().min(1),
+  label: z.string().optional(),
+  expiresAt: z.string(),
+});
+
+type Fetch = typeof globalThis.fetch;
+type IdFactory = () => string;
+type Now = () => Date;
+
+interface ClientOptions {
+  fetch?: Fetch;
+  idFactory?: IdFactory;
+  now?: Now;
+  timeoutMs?: number;
+}
+
+interface RequestOptions {
+  method?: "GET" | "POST";
+  body?: unknown;
+  form?: URLSearchParams;
+  schema: z.ZodType;
+  signal?: AbortSignal;
+  authenticated?: boolean;
+}
+
+function normalizedBaseUrl(baseUrl: string): string {
+  const parsed = new URL(baseUrl);
+  if (parsed.username || parsed.password) {
+    throw new Error("T3 base URL must not contain credentials");
+  }
+  return parsed.toString().replace(/\/$/, "");
+}
+
+function errorCode(value: unknown): string | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const record = value as Record<string, unknown>;
+  if (typeof record._tag === "string") return record._tag;
+  if (typeof record.code === "string") return record.code;
+  if (typeof record.reason === "string") return record.reason;
+  return undefined;
+}
+
+function terminalTurn(thread: T3Thread): boolean {
+  return (
+    thread.latestTurn !== null &&
+    ["completed", "error", "interrupted"].includes(thread.latestTurn.state)
+  );
+}
+
+export interface T3TurnDispatch {
+  sequence: number;
+  commandId: string;
+  messageId: string;
+  threadId: string;
+  createdAt: string;
+}
+
+export class T3Client {
+  readonly baseUrl: string;
+  private readonly fetch: Fetch;
+  private readonly idFactory: IdFactory;
+  private readonly now: Now;
+  private readonly timeoutMs: number;
+
+  constructor(
+    baseUrl: string,
+    private readonly accessToken: string,
+    options: ClientOptions = {},
+  ) {
+    this.baseUrl = normalizedBaseUrl(baseUrl);
+    this.fetch = options.fetch ?? globalThis.fetch;
+    this.idFactory = options.idFactory ?? randomUUID;
+    this.now = options.now ?? (() => new Date());
+    this.timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+  }
+
+  private async request<T>(
+    operation: string,
+    pathname: string,
+    options: RequestOptions,
+  ): Promise<T> {
+    const timeoutSignal = AbortSignal.timeout(this.timeoutMs);
+    const signal = options.signal
+      ? AbortSignal.any([options.signal, timeoutSignal])
+      : timeoutSignal;
+    const headers = new Headers({ accept: "application/json" });
+    if (options.authenticated !== false) {
+      headers.set("authorization", `Bearer ${this.accessToken}`);
+    }
+    let body: string | undefined;
+    if (options.form) {
+      headers.set("content-type", "application/x-www-form-urlencoded");
+      body = options.form.toString();
+    } else if (options.body !== undefined) {
+      headers.set("content-type", "application/json");
+      body = JSON.stringify(options.body);
+    }
+
+    let response: Response;
+    try {
+      response = await this.fetch(new URL(pathname, `${this.baseUrl}/`), {
+        method: options.method ?? "GET",
+        headers,
+        body,
+        signal,
+      });
+    } catch (cause) {
+      const aborted = signal.aborted;
+      const callerAborted = options.signal?.aborted === true;
+      throw new T3GatewayError(
+        callerAborted ? "aborted" : aborted ? "timeout" : "transport",
+        operation,
+        callerAborted
+          ? `T3 ${operation} was aborted`
+          : aborted
+            ? `T3 ${operation} timed out`
+            : `T3 ${operation} could not reach the environment`,
+      );
+    }
+
+    let payload: unknown;
+    try {
+      payload = await response.json();
+    } catch {
+      throw new T3GatewayError(
+        "protocol",
+        operation,
+        `T3 ${operation} returned a non-JSON response`,
+        response.status,
+      );
+    }
+    if (!response.ok) {
+      throw new T3GatewayError(
+        "http",
+        operation,
+        `T3 ${operation} failed with HTTP ${response.status}`,
+        response.status,
+        errorCode(payload),
+      );
+    }
+    const decoded = options.schema.safeParse(payload);
+    if (!decoded.success) {
+      throw new T3GatewayError(
+        "protocol",
+        operation,
+        `T3 ${operation} returned an incompatible payload`,
+        response.status,
+      );
+    }
+    return decoded.data as T;
+  }
+
+  snapshot(signal?: AbortSignal): Promise<T3OrchestrationSnapshot> {
+    return this.request("snapshot", "/api/orchestration/snapshot", {
+      schema: orchestrationSnapshotSchema,
+      signal,
+    });
+  }
+
+  threadSnapshot(
+    threadId: string,
+    signal?: AbortSignal,
+  ): Promise<T3ThreadSnapshot> {
+    return this.request(
+      "thread snapshot",
+      `/api/orchestration/threads/${encodeURIComponent(threadId)}`,
+      { schema: threadSnapshotSchema, signal },
+    );
+  }
+
+  async dispatch(command: unknown, signal?: AbortSignal): Promise<number> {
+    const result = await this.request<{ sequence: number }>(
+      "command dispatch",
+      "/api/orchestration/dispatch",
+      {
+        method: "POST",
+        body: command,
+        schema: dispatchResultSchema,
+        signal,
+      },
+    );
+    return result.sequence;
+  }
+
+  async startNewThread(input: {
+    threadId?: string;
+    projectId: string;
+    title: string;
+    text: string;
+    modelSelection: T3ModelSelection;
+    runtimeMode?: T3RuntimeMode;
+    interactionMode?: T3InteractionMode;
+    branch?: string | null;
+    worktreePath?: string | null;
+    signal?: AbortSignal;
+  }): Promise<T3TurnDispatch> {
+    const threadId = input.threadId ?? this.idFactory();
+    const createCommandId = this.idFactory();
+    const createdAt = this.now().toISOString();
+    const runtimeMode = input.runtimeMode ?? "full-access";
+    const interactionMode = input.interactionMode ?? "default";
+    // T3's WebSocket dispatcher expands turn.bootstrap, but its HTTP
+    // dispatcher currently sends commands directly to the engine. Keep the
+    // headless HTTP path portable by creating the thread explicitly first.
+    await this.dispatch(
+      {
+        type: "thread.create",
+        commandId: createCommandId,
+        threadId,
+        projectId: input.projectId,
+        title: input.title,
+        modelSelection: input.modelSelection,
+        runtimeMode,
+        interactionMode,
+        branch: input.branch ?? null,
+        worktreePath: input.worktreePath ?? null,
+        createdAt,
+      },
+      input.signal,
+    );
+    return this.startTurn({
+      threadId,
+      text: input.text,
+      modelSelection: input.modelSelection,
+      runtimeMode,
+      interactionMode,
+      signal: input.signal,
+    });
+  }
+
+  async startTurn(input: {
+    threadId: string;
+    text: string;
+    modelSelection: T3ModelSelection;
+    runtimeMode?: T3RuntimeMode;
+    interactionMode?: T3InteractionMode;
+    signal?: AbortSignal;
+  }): Promise<T3TurnDispatch> {
+    const commandId = this.idFactory();
+    const messageId = this.idFactory();
+    const createdAt = this.now().toISOString();
+    const sequence = await this.dispatch(
+      {
+        type: "thread.turn.start",
+        commandId,
+        threadId: input.threadId,
+        message: {
+          messageId,
+          role: "user",
+          text: input.text,
+          attachments: [],
+        },
+        modelSelection: input.modelSelection,
+        runtimeMode: input.runtimeMode ?? "full-access",
+        interactionMode: input.interactionMode ?? "default",
+        createdAt,
+      },
+      input.signal,
+    );
+    return {
+      sequence,
+      commandId,
+      messageId,
+      threadId: input.threadId,
+      createdAt,
+    };
+  }
+
+  async interruptTurn(input: {
+    threadId: string;
+    turnId?: string;
+    signal?: AbortSignal;
+  }): Promise<number> {
+    return this.dispatch(
+      {
+        type: "thread.turn.interrupt",
+        commandId: this.idFactory(),
+        threadId: input.threadId,
+        ...(input.turnId ? { turnId: input.turnId } : {}),
+        createdAt: this.now().toISOString(),
+      },
+      input.signal,
+    );
+  }
+
+  async waitForTurnTerminal(input: {
+    threadId: string;
+    minimumSequence: number;
+    messageId?: string;
+    requestedAt?: string;
+    timeoutMs?: number;
+    pollIntervalMs?: number;
+    signal?: AbortSignal;
+  }): Promise<T3ThreadSnapshot> {
+    const timeoutMs = input.timeoutMs ?? 30 * 60_000;
+    const deadline = Date.now() + timeoutMs;
+    const pollIntervalMs = input.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS;
+    while (Date.now() < deadline) {
+      if (input.signal?.aborted) {
+        throw new T3GatewayError(
+          "aborted",
+          "wait for turn",
+          "T3 wait for turn was aborted",
+        );
+      }
+      const snapshot = await this.threadSnapshot(input.threadId, input.signal);
+      const requestedMessage = input.messageId
+        ? snapshot.thread.messages.find(
+            (message) => message.id === input.messageId && message.role === "user",
+          )
+        : undefined;
+      const latestTurn = snapshot.thread.latestTurn;
+      // T3 normalizes the persisted user-message timestamp on the server. Use
+      // that value once available so a few milliseconds of host/Modal clock
+      // skew cannot keep a completed turn looking perpetually in-flight.
+      const correlationTimestamp =
+        requestedMessage?.createdAt ?? input.requestedAt;
+      const matchesRequestedTurn =
+        (!input.messageId || requestedMessage !== undefined) &&
+        (!correlationTimestamp ||
+          (latestTurn !== null &&
+            Date.parse(latestTurn.requestedAt) >=
+              Date.parse(correlationTimestamp))) &&
+        (requestedMessage?.turnId == null ||
+          requestedMessage.turnId === latestTurn?.turnId);
+      if (
+        snapshot.snapshotSequence >= input.minimumSequence &&
+        matchesRequestedTurn &&
+        terminalTurn(snapshot.thread)
+      ) {
+        return snapshot;
+      }
+      await new Promise<void>((resolve, reject) => {
+        const onAbort = () => {
+          clearTimeout(timer);
+          reject(
+            new T3GatewayError(
+              "aborted",
+              "wait for turn",
+              "T3 wait for turn was aborted",
+            ),
+          );
+        };
+        const timer = setTimeout(() => {
+          input.signal?.removeEventListener("abort", onAbort);
+          resolve();
+        }, pollIntervalMs);
+        input.signal?.addEventListener("abort", onAbort, { once: true });
+      });
+    }
+    throw new T3GatewayError(
+      "timeout",
+      "wait for turn",
+      `T3 turn did not reach a terminal state within ${timeoutMs}ms`,
+    );
+  }
+
+  async mintPairingCredential(input: {
+    label: string;
+    scopes?: ReadonlyArray<string>;
+    signal?: AbortSignal;
+  }): Promise<{ id: string; credential: string; label?: string; expiresAt: string }> {
+    return this.request("pairing credential creation", "/api/auth/pairing-token", {
+      method: "POST",
+      body: {
+        label: input.label,
+        ...(input.scopes ? { scopes: input.scopes } : {}),
+      },
+      schema: pairingCredentialSchema,
+      signal: input.signal,
+    });
+  }
+}
+
+export async function exchangeT3PairingToken(input: {
+  baseUrl: string;
+  pairingToken: string;
+  scopes?: ReadonlyArray<string>;
+  fetch?: Fetch;
+  timeoutMs?: number;
+  signal?: AbortSignal;
+}): Promise<{
+  client: T3Client;
+  /** Sensitive: persist only in the isolated environment or a secret store. */
+  accessToken: string;
+  expiresIn: number;
+  scopes: ReadonlyArray<string>;
+}> {
+  const client = new T3Client(input.baseUrl, "", {
+    fetch: input.fetch,
+    timeoutMs: input.timeoutMs,
+  });
+  const form = new URLSearchParams({
+    grant_type: TOKEN_EXCHANGE_GRANT,
+    subject_token: input.pairingToken,
+    subject_token_type: ENVIRONMENT_BOOTSTRAP_TOKEN_TYPE,
+    requested_token_type: ACCESS_TOKEN_TYPE,
+    client_label: "Compadre gateway",
+    client_device_type: "bot",
+  });
+  if (input.scopes) form.set("scope", input.scopes.join(" "));
+  const result = await client["request"]<z.infer<typeof accessTokenSchema>>(
+    "pairing token exchange",
+    "/oauth/token",
+    {
+      method: "POST",
+      form,
+      schema: accessTokenSchema,
+      signal: input.signal,
+      authenticated: false,
+    },
+  );
+  return {
+    client: new T3Client(input.baseUrl, result.access_token, {
+      fetch: input.fetch,
+      timeoutMs: input.timeoutMs,
+    }),
+    accessToken: result.access_token,
+    expiresIn: result.expires_in,
+    scopes: result.scope.split(/\s+/).filter(Boolean),
+  };
+}

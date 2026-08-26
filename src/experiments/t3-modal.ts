@@ -5,6 +5,7 @@ import { gitAuthenticationEnvironment } from "../repo.js";
 import { ModalHandle } from "../tanstack/modal-sandbox.js";
 import { configuredEnvironmentBridgeToken } from "../tanstack/relay-tool-bridge.js";
 import { createHarnessSandbox } from "../tanstack/sandbox-runtime.js";
+import { exchangeT3PairingToken, type T3Client } from "../t3/client.js";
 
 const DEFAULT_T3_PORT = 3773;
 const DEFAULT_T3_BASE_DIR = "/var/lib/t3";
@@ -12,6 +13,8 @@ const DEFAULT_T3_LOG = "/var/log/compadre/t3.log";
 const STARTUP_TIMEOUT_MS = 120_000;
 const T3_INSTALL_ROOT = "/opt/compadre-runtime/node_modules/t3";
 const T3_FORK_ARCHIVE = "/tmp/compadre-t3-fork.tgz";
+export const T3_GATEWAY_CREDENTIAL_PATH =
+  "/var/lib/t3/compadre-gateway-access-token";
 
 function quote(value: string): string {
   return `'${value.replaceAll("'", `'\\''`)}'`;
@@ -157,15 +160,20 @@ export interface T3ModalExperiment {
   workspaceRoot: string;
 }
 
+export interface ManagedT3ModalEnvironment extends T3ModalExperiment {
+  projectId: string;
+  client: T3Client;
+}
+
 /**
  * Launch T3's native headless server inside an isolated Modal sandbox.
  *
  * This intentionally bypasses Compadre's TanStack harness adapters. TanStack
  * remains only as the existing sandbox provisioning layer for this spike.
  */
-export async function launchT3ModalExperiment(
+export async function launchManagedT3ModalEnvironment(
   environment: NodeJS.ProcessEnv = process.env,
-): Promise<T3ModalExperiment> {
+): Promise<ManagedT3ModalEnvironment> {
   const port = DEFAULT_T3_PORT;
   const experimentEnvironment: NodeJS.ProcessEnv = {
     ...environment,
@@ -246,17 +254,60 @@ export async function launchT3ModalExperiment(
     await handle.destroy().catch(() => undefined);
     throw error;
   }
-  const pairingToken = startupToken as string | undefined;
-  if (!pairingToken) {
+  try {
+    const pairingToken = startupToken as string | undefined;
+    if (!pairingToken) {
+      throw new Error("T3 startup completed without issuing a pairing token");
+    }
+    const channel = await handle.ports.connect(port);
+    const baseUrl = channel.url.replace(/\/$/, "");
+    const gatewaySession = await exchangeT3PairingToken({
+      baseUrl,
+      pairingToken,
+    });
+    const snapshot = await gatewaySession.client.snapshot();
+    const project = snapshot.projects.find(
+      (candidate) =>
+        candidate.workspaceRoot === (handle.workspaceRoot ?? "/workspace"),
+    );
+    if (!project) {
+      throw new Error("T3 project bootstrap completed without a workspace project");
+    }
+    const browserPairing = await gatewaySession.client.mintPairingCredential({
+      label: "Compadre experiment browser",
+    });
+    await handle.fs.write(
+      T3_GATEWAY_CREDENTIAL_PATH,
+      gatewaySession.accessToken,
+    );
+    const protectedCredential = await handle.process.exec(
+      `chown node:node ${quote(T3_GATEWAY_CREDENTIAL_PATH)} && chmod 600 ${quote(T3_GATEWAY_CREDENTIAL_PATH)}`,
+    );
+    if (protectedCredential.exitCode !== 0) {
+      throw new Error("Could not protect the T3 gateway credential in Modal");
+    }
+    return {
+      sandboxId: handle.id,
+      baseUrl,
+      pairingUrl: `${baseUrl}/pair#token=${browserPairing.credential}`,
+      workspaceRoot: handle.workspaceRoot ?? "/workspace",
+      projectId: project.id,
+      client: gatewaySession.client,
+    };
+  } catch (error) {
     await handle.destroy().catch(() => undefined);
-    throw new Error("T3 startup completed without issuing a pairing token");
+    throw error;
   }
-  const channel = await handle.ports.connect(port);
-  const baseUrl = channel.url.replace(/\/$/, "");
+}
+
+export async function launchT3ModalExperiment(
+  environment: NodeJS.ProcessEnv = process.env,
+): Promise<T3ModalExperiment> {
+  const managed = await launchManagedT3ModalEnvironment(environment);
   return {
-    sandboxId: handle.id,
-    baseUrl,
-    pairingUrl: `${baseUrl}/pair#token=${pairingToken}`,
-    workspaceRoot: handle.workspaceRoot ?? "/workspace",
+    sandboxId: managed.sandboxId,
+    baseUrl: managed.baseUrl,
+    pairingUrl: managed.pairingUrl,
+    workspaceRoot: managed.workspaceRoot,
   };
 }

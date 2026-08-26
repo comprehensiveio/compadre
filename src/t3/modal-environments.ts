@@ -1,0 +1,107 @@
+import {
+  launchManagedT3ModalEnvironment,
+  T3_GATEWAY_CREDENTIAL_PATH,
+  type ManagedT3ModalEnvironment,
+} from "../experiments/t3-modal.js";
+import { modalSandboxProvider } from "../tanstack/modal-sandbox.js";
+import { T3Client } from "./client.js";
+import type {
+  T3EnvironmentConnection,
+  T3EnvironmentConnectionManager,
+} from "./gateway.js";
+import type { T3ThreadBinding } from "../services/t3-thread-bindings.js";
+
+const T3_PORT = 3773;
+
+export interface T3ModalProvisionedEnvironment {
+  canonicalThreadId: string;
+  providerInstanceId: string;
+  sandboxId: string;
+  pairingUrl: string;
+}
+
+/**
+ * Gives every external-conversation/provider pair its own Modal-hosted T3
+ * environment. The reconnect credential lives inside that sandbox, so it is
+ * not copied into Compadre's generic metadata rows.
+ */
+export class T3ModalEnvironmentManager
+  implements T3EnvironmentConnectionManager
+{
+  constructor(
+    private readonly environment: NodeJS.ProcessEnv = process.env,
+    private readonly onProvisioned?: (
+      environment: T3ModalProvisionedEnvironment,
+    ) => void | Promise<void>,
+  ) {}
+
+  private experimentEnvironment(): NodeJS.ProcessEnv {
+    return {
+      ...this.environment,
+      COMPADRE_MODAL_APP:
+        this.environment.COMPADRE_T3_MODAL_APP?.trim() ||
+        "compadre-t3-experiment",
+    };
+  }
+
+  async provision(input: {
+    canonicalThreadId: string;
+    providerInstanceId: string;
+  }): Promise<T3EnvironmentConnection> {
+    const launched = await launchManagedT3ModalEnvironment(this.environment);
+    await this.onProvisioned?.({
+      ...input,
+      sandboxId: launched.sandboxId,
+      pairingUrl: launched.pairingUrl,
+    });
+    return this.connection(launched);
+  }
+
+  async reconnect(binding: T3ThreadBinding): Promise<T3EnvironmentConnection> {
+    const provider = modalSandboxProvider({
+      environment: this.experimentEnvironment(),
+      encryptedPorts: [T3_PORT],
+    });
+    const handle = await provider.resume({ id: binding.sandboxId });
+    if (!handle) {
+      throw new Error(`T3 Modal sandbox ${binding.sandboxId} is unavailable`);
+    }
+    const accessToken = (await handle.fs.read(T3_GATEWAY_CREDENTIAL_PATH)).trim();
+    if (!accessToken) {
+      throw new Error(
+        `T3 Modal sandbox ${binding.sandboxId} has no gateway credential`,
+      );
+    }
+    const channel = await handle.ports.connect(T3_PORT);
+    const client = new T3Client(channel.url, accessToken);
+    const snapshot = await client.snapshot();
+    if (!snapshot.projects.some((project) => project.id === binding.projectId)) {
+      throw new Error(
+        `T3 Modal sandbox ${binding.sandboxId} no longer contains project ${binding.projectId}`,
+      );
+    }
+    return {
+      sandboxId: binding.sandboxId,
+      projectId: binding.projectId,
+      client,
+    };
+  }
+
+  async discard(connection: T3EnvironmentConnection): Promise<void> {
+    const provider = modalSandboxProvider({
+      environment: this.experimentEnvironment(),
+      encryptedPorts: [T3_PORT],
+    });
+    await provider.destroy({ id: connection.sandboxId });
+  }
+
+  private connection(
+    launched: ManagedT3ModalEnvironment,
+  ): T3EnvironmentConnection {
+    return {
+      sandboxId: launched.sandboxId,
+      projectId: launched.projectId,
+      client: launched.client,
+    };
+  }
+}

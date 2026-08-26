@@ -40,6 +40,21 @@ change the production Compadre service.
   rejects full-access mode when its process runs as root.
 - Git credentials can remain process-environment configuration, allowing T3's
   background fetch and later pushes without writing a credentialed remote URL.
+- Compadre now has a narrow authenticated T3 orchestration client for snapshots,
+  thread creation, turn dispatch, terminal polling, and interruption. It uses
+  T3's supported HTTP API for commands instead of vendoring T3's private Effect
+  RPC client packages.
+- A live gateway probe created a Codex thread, received
+  `comprehensiveio/comp`, restarted the local gateway process, reconnected to
+  the same Modal sandbox and T3 thread, and received `RECONNECTED` on a second
+  turn.
+- Human browser pairing and the Compadre gateway use separate credentials. The
+  reconnect credential is mode `0600` inside the isolated Modal sandbox rather
+  than in generic thread metadata; the one-time browser token remains safe to
+  consume independently.
+- Terminal polling correlates the dispatched user message with the latest T3
+  turn. This avoids accepting a previous completed turn during the short
+  projection window after a new dispatch.
 
 ## Important constraints
 
@@ -72,7 +87,7 @@ Slack / browser / API
         |
 Compadre gateway ---- company MCPs + custom durable tools
         |                         ^
-        | T3 WebSocket            | one authenticated HTTP MCP
+        | T3 HTTP + WebSocket     | one authenticated HTTP MCP
         v                         |
 T3 server in Modal ---------------+
         |
@@ -88,14 +103,16 @@ separate `.mcp.json` and Codex TOML files containing credentials.
 
 ### State and routing
 
-- One durable environment record must own the Modal sandbox ID, tunnel URL,
-  T3 environment identity, and gateway authentication material.
+- One durable environment record owns the Modal sandbox ID, tunnel URL, and T3
+  environment identity. The gateway credential remains in the sandbox and is
+  recovered through Modal's authenticated filesystem API on reconnect.
 - T3's SQLite state and provider sessions live inside the sandbox filesystem.
   Snapshot/restore must preserve that data and issue a fresh tunnel route when
   the sandbox wakes.
-- Browser, Slack, and API messages should all enter through the gateway and use
-  T3's typed WebSocket protocol. Slack rendering is a projection of the same
-  T3 events the browser receives; it is not a second agent run.
+- Browser, Slack, and API messages should all enter through the gateway. The
+  implemented command/snapshot path uses T3's authenticated orchestration HTTP
+  API; live fan-out will use T3's event subscription. Slack rendering is a
+  projection of the same T3 state the browser receives, not a second agent run.
 - Disconnecting a browser or Slack request must not cancel a T3 turn. Explicit
   cancellation should send T3's cancel command and wait for its terminal event.
 
@@ -114,15 +131,27 @@ separate `.mcp.json` and Codex TOML files containing credentials.
 | Run status/cancellation | T3 event stream | Gateway stores terminal state and fans it out to every surface |
 | Deployment follow-up | Compadre durable tool service | Exposed through the shared MCP bridge |
 
+## Current gateway slice
+
+- `T3Client` exchanges pairing credentials, dispatches supported HTTP commands,
+  reads snapshots, interrupts turns, and waits for the exact dispatched turn.
+- `T3Gateway` maps a provider-neutral conversation to one provider-native T3
+  thread and routes repeat messages, cancellation, and terminal waits.
+- `T3ThreadBindingStore` persists credential-free provider-specific mappings.
+- `T3ModalEnvironmentManager` provisions one isolated environment per mapping,
+  reconnects after a gateway restart, and destroys failed first-turn sandboxes.
+
 ## Recommended next slice
 
-1. Package the forked T3 server as a reproducible Modal image artifact. The
-   local spike accepts `COMPADRE_T3_PACKAGE_PATH` to overlay a tested tarball.
-2. Implement a Compadre T3 WebSocket client that can create/select a native
-   thread, submit a turn, subscribe/reconnect, and cancel.
-3. Route the existing API endpoint and Slack simulation through that client.
-4. Persist the Slack thread to provider-specific T3 thread mapping and prove
-   browser/Slack/API consistency across a sandbox restart.
+1. Add a live subscription adapter for T3 thread events so Slack and the API can
+   stream without polling snapshots.
+2. Route the existing API endpoint through `T3Gateway` behind an experiment
+   flag, preserving its current request and response contract.
+3. Route the Slack simulator through the same gateway and prove browser,
+   Slack, and API transcript consistency.
+4. Package the forked T3 server as a reproducible Modal image artifact. The
+   local spike currently accepts `COMPADRE_T3_PACKAGE_PATH` to overlay a tested
+   tarball.
 
 TanStack AI does not need to own harness execution on this path. The spike still
 reuses `@tanstack/ai-sandbox` as a convenient provisioning wrapper around Modal;
