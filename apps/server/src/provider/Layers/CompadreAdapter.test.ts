@@ -153,4 +153,40 @@ it.layer(Layer.merge(NodeServices.layer, FetchHttpClient.layer))("CompadreAdapte
       assert.equal(terminal?.payload.errorMessage, "Modal failed");
     }),
   );
+
+  it.effect("cancels the hosted Compadre run when a T3 turn is interrupted", () =>
+    Effect.gen(function* () {
+      const threadId = ThreadId.make("compadre-cancel-thread");
+      const cancelledRunIds: string[] = [];
+      const adapter = yield* makeCompadreAdapter({
+        endpoint: "http://compadre.test/hosted/chat",
+        transport: () => Stream.never,
+        cancelTransport: ({ runId }) =>
+          Effect.sync(() => {
+            cancelledRunIds.push(runId);
+          }),
+      });
+      const events: ProviderRuntimeEvent[] = [];
+      const eventsFiber = yield* Stream.runForEach(adapter.streamEvents, (event) =>
+        Effect.sync(() => events.push(event)),
+      ).pipe(Effect.forkChild);
+      yield* Effect.yieldNow;
+
+      yield* adapter.startSession({
+        threadId,
+        cwd: process.cwd(),
+        runtimeMode: "full-access",
+      });
+      yield* adapter.sendTurn({ threadId, input: "keep working" });
+      yield* Effect.yieldNow;
+      yield* adapter.interruptTurn(threadId);
+      yield* Effect.yieldNow;
+      yield* Fiber.interrupt(eventsFiber);
+
+      assert.equal(cancelledRunIds.length, 1);
+      assert.isNotEmpty(cancelledRunIds[0]);
+      const terminal = events.find((event) => event.type === "turn.completed");
+      assert.equal(terminal?.payload.state, "cancelled");
+    }),
+  );
 });

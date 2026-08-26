@@ -54,18 +54,30 @@ export type CompadreTransport = (
   request: CompadreTurnRequest,
 ) => Stream.Stream<CompadreStreamEvent, ProviderAdapterRequestError>;
 
+export interface CompadreCancelRequest {
+  readonly endpoint: string;
+  readonly apiKey: string | undefined;
+  readonly runId: string;
+}
+
+export type CompadreCancelTransport = (
+  request: CompadreCancelRequest,
+) => Effect.Effect<void, ProviderAdapterRequestError>;
+
 export interface CompadreAdapterOptions {
   readonly endpoint: string;
   readonly apiKey?: string;
   readonly instanceId?: ProviderInstanceId;
   readonly provider?: "claude-code" | "codex";
   readonly transport?: CompadreTransport;
+  readonly cancelTransport?: CompadreCancelTransport;
 }
 
 interface CompadreSessionContext {
   session: ProviderSession;
   readonly turns: Array<{ id: TurnId; items: Array<unknown> }>;
   activeFiber: Fiber.Fiber<void, ProviderAdapterRequestError> | undefined;
+  activeRunId: string | undefined;
   stopped: boolean;
 }
 
@@ -159,12 +171,44 @@ function makeLiveTransport(httpClient: HttpClient.HttpClient): CompadreTransport
   };
 }
 
+function cancelEndpoint(endpoint: string, runId: string): string {
+  const url = new URL(endpoint);
+  url.pathname = url.pathname.replace(/\/chat\/?$/u, `/runs/${encodeURIComponent(runId)}/cancel`);
+  return url.toString();
+}
+
+function makeLiveCancelTransport(httpClient: HttpClient.HttpClient): CompadreCancelTransport {
+  return (input) => {
+    let request = HttpClientRequest.post(cancelEndpoint(input.endpoint, input.runId));
+    if (input.apiKey) {
+      request = request.pipe(
+        HttpClientRequest.setHeader("authorization", `Bearer ${input.apiKey}`),
+      );
+    }
+    return httpClient.execute(request).pipe(
+      Effect.flatMap(HttpClientResponse.filterStatusOk),
+      Effect.asVoid,
+      Effect.mapError(
+        (cause) =>
+          new ProviderAdapterRequestError({
+            provider: PROVIDER,
+            method: "compadre/cancel",
+            detail: "Could not cancel the active Compadre run.",
+            cause,
+          }),
+      ),
+    );
+  };
+}
+
 export function makeCompadreAdapter(options: CompadreAdapterOptions) {
   return Effect.gen(function* () {
     const boundInstanceId = options.instanceId ?? ProviderInstanceId.make("codex");
     const crypto = yield* Crypto.Crypto;
     const adapterScope = yield* Scope.make("sequential");
-    const transport = options.transport ?? makeLiveTransport(yield* HttpClient.HttpClient);
+    const httpClient = yield* HttpClient.HttpClient;
+    const transport = options.transport ?? makeLiveTransport(httpClient);
+    const cancelTransport = options.cancelTransport ?? makeLiveCancelTransport(httpClient);
     const sessions = new Map<ThreadId, CompadreSessionContext>();
     const runtimeEvents = yield* PubSub.unbounded<ProviderRuntimeEvent>();
 
@@ -201,7 +245,17 @@ export function makeCompadreAdapter(options: CompadreAdapterOptions) {
       Effect.gen(function* () {
         const { activeTurnId: _activeTurnId, ...session } = context.session;
         context.session = { ...session, status: "ready", updatedAt: yield* nowIso };
+        context.activeRunId = undefined;
       });
+
+    const cancelActiveRun = (context: CompadreSessionContext) =>
+      context.activeRunId
+        ? cancelTransport({
+            endpoint: options.endpoint,
+            apiKey: options.apiKey,
+            runId: context.activeRunId,
+          })
+        : Effect.void;
 
     const startSession: ProviderAdapterShape<ProviderAdapterError>["startSession"] = (input) =>
       Effect.gen(function* () {
@@ -236,6 +290,7 @@ export function makeCompadreAdapter(options: CompadreAdapterOptions) {
           session,
           turns: [],
           activeFiber: undefined,
+          activeRunId: undefined,
           stopped: false,
         });
         yield* publish({
@@ -296,6 +351,7 @@ export function makeCompadreAdapter(options: CompadreAdapterOptions) {
         const runId = yield* randomId;
         const messageId = yield* randomId;
         context.turns.push({ id: turnId, items: [] });
+        context.activeRunId = runId;
         context.session = {
           ...context.session,
           status: "running",
@@ -552,14 +608,22 @@ export function makeCompadreAdapter(options: CompadreAdapterOptions) {
     const interruptTurn: ProviderAdapterShape<ProviderAdapterError>["interruptTurn"] = (threadId) =>
       Effect.gen(function* () {
         const context = yield* requireSession(threadId);
-        if (context.activeFiber) yield* Fiber.interrupt(context.activeFiber);
+        if (context.activeFiber) {
+          yield* cancelActiveRun(context).pipe(
+            Effect.ensuring(Fiber.interrupt(context.activeFiber)),
+          );
+        }
       });
 
     const stopSession: ProviderAdapterShape<ProviderAdapterError>["stopSession"] = (threadId) =>
       Effect.gen(function* () {
         const context = yield* requireSession(threadId);
         context.stopped = true;
-        if (context.activeFiber) yield* Fiber.interrupt(context.activeFiber);
+        if (context.activeFiber) {
+          yield* cancelActiveRun(context).pipe(
+            Effect.ensuring(Fiber.interrupt(context.activeFiber)),
+          );
+        }
         sessions.delete(threadId);
         yield* publish({
           type: "session.exited",
