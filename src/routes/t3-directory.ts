@@ -30,7 +30,11 @@ interface T3DirectoryGateway {
     canonicalThreadId: string;
     providerInstanceId: string;
     signal?: AbortSignal;
-  }): Promise<{ binding: T3ThreadBinding; snapshot: T3ThreadSnapshot } | null>;
+  }): Promise<{
+    binding: T3ThreadBinding;
+    snapshot: T3ThreadSnapshot;
+    source: "central" | "worker";
+  } | null>;
   open(input: {
     canonicalThreadId: string;
     providerInstanceId: string;
@@ -237,6 +241,7 @@ export function createT3DirectoryRoutes(
       return c.json({
         thread: publicBinding(result.binding),
         snapshot: result.snapshot,
+        source: result.source,
       });
     }),
   );

@@ -211,12 +211,16 @@ export class T3Gateway {
     canonicalThreadId: string;
     providerInstanceId: string;
     signal?: AbortSignal;
-  }): Promise<{ binding: T3ThreadBinding; snapshot: T3ThreadSnapshot } | null> {
+  }): Promise<{
+    binding: T3ThreadBinding;
+    snapshot: T3ThreadSnapshot;
+    source: "central" | "worker";
+  } | null> {
     const binding = await this.bindings.get(input.canonicalThreadId);
     if (!binding) return null;
     const archived = await this.snapshots?.get(input.canonicalThreadId);
     if (archived && binding.status !== "working") {
-      return { binding, snapshot: archived.snapshot };
+      return { binding, snapshot: archived.snapshot, source: "central" };
     }
     try {
       const environment = await this.environments.reconnect(binding);
@@ -246,7 +250,7 @@ export class T3Gateway {
         baseUrl: environment.client.baseUrl,
       };
       await this.bindings.bind(updated);
-      return { binding: updated, snapshot };
+      return { binding: updated, snapshot, source: "worker" };
     } catch (error) {
       const unavailable: T3ThreadBinding = {
         ...binding,
@@ -255,7 +259,11 @@ export class T3Gateway {
       };
       await this.bindings.bind(unavailable).catch(() => undefined);
       if (archived) {
-        return { binding: unavailable, snapshot: archived.snapshot };
+        return {
+          binding: unavailable,
+          snapshot: archived.snapshot,
+          source: "central",
+        };
       }
       throw error;
     }

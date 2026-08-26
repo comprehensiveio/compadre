@@ -149,7 +149,11 @@ test("creates, reads, sends, opens, and cancels one native T3 thread", async (t)
       };
     },
     async snapshot() {
-      return { binding: { ...binding, status: "ready" as const }, snapshot };
+      return {
+        binding: { ...binding, status: "ready" as const },
+        snapshot,
+        source: "central" as const,
+      };
     },
     async open() {
       return { binding, pairingUrl: "https://sandbox.example/pair#token=one-time" };
@@ -201,7 +205,12 @@ test("creates, reads, sends, opens, and cancels one native T3 thread", async (t)
     authorized(),
   );
   assert.equal(read.status, 200);
-  assert.equal(((await read.json()) as { snapshot: T3ThreadSnapshot }).snapshot.thread.messages[0]?.text, "Done");
+  const readBody = (await read.json()) as {
+    snapshot: T3ThreadSnapshot;
+    source: "central" | "worker";
+  };
+  assert.equal(readBody.snapshot.thread.messages[0]?.text, "Done");
+  assert.equal(readBody.source, "central");
 
   const opened = await app.request(
     "/hosted/t3/threads/codex/thread-1/open",

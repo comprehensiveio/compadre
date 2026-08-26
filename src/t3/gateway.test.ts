@@ -305,6 +305,7 @@ test("serves a completed thread from central storage without reconnecting Modal"
   });
 
   assert.equal(reconnects, 1);
+  assert.equal(result?.source, "central");
   assert.equal(result?.snapshot.snapshotSequence, 15);
   assert.deepEqual(result?.snapshot.thread.activities, [
     { id: "activity-1", type: "command.completed", title: "pwd" },
