@@ -20,11 +20,19 @@ export const inputFileSchema = z
     dataBase64: z.string().min(1).max(MAX_BASE64_CHARS),
   })
   .superRefine((file, context) => {
-    if (!/^[A-Za-z0-9+/]*={0,2}$/u.test(file.dataBase64)) {
+    if (
+      file.dataBase64.length % 4 !== 0 ||
+      !/^[A-Za-z0-9+/]*={0,2}$/u.test(file.dataBase64)
+    ) {
       context.addIssue({ code: "custom", message: "dataBase64 is not valid base64" });
       return;
     }
-    if (Buffer.byteLength(file.dataBase64, "base64") !== file.sizeBytes) {
+    const decoded = Buffer.from(file.dataBase64, "base64");
+    if (decoded.toString("base64") !== file.dataBase64) {
+      context.addIssue({ code: "custom", message: "dataBase64 is not canonical base64" });
+      return;
+    }
+    if (decoded.byteLength !== file.sizeBytes) {
       context.addIssue({
         code: "custom",
         message: "sizeBytes does not match the decoded attachment size",

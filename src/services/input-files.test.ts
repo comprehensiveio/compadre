@@ -27,3 +27,15 @@ test("rejects browser attachment sizes that do not match their bytes", () => {
   });
   assert.equal(parsed.success, false);
 });
+
+test("rejects malformed base64 even when it decodes to the declared size", () => {
+  assert.equal(
+    inputFileSchema.safeParse({
+      name: "probe.png",
+      mimetype: "image/png",
+      sizeBytes: 0,
+      dataBase64: "a",
+    }).success,
+    false,
+  );
+});

@@ -5,11 +5,13 @@ canonical runtime events while sending provider turns to Compadre's hosted
 AG-UI route. Compadre remains responsible for durable conversation state,
 Modal sandbox execution, Slack delivery, and provider selection.
 
-The companion patch is based on upstream T3 Code commit
+The companion patch records the initial adapter based on upstream T3 Code commit
 `994372ba43810e64027c537231da200988faa7ca` and was proven locally on
 2026-08-25. It adds an opt-in provider adapter behind
 `COMPADRE_PROVIDER_URL`; without that variable, T3's Codex driver is
-unchanged.
+unchanged. The maintained fork branch is the source of truth for the later
+hosted-readiness, model-selection, terminal-state, cancellation, and attachment
+commits.
 
 The maintained experiment branch is
 `https://github.com/comprehensiveio/t3code/tree/experiment/compadre-modal-provider`.
@@ -117,10 +119,9 @@ COMPADRE_API_KEY="$COMPADRE_API_KEY" \
 npm run dev -- --home-dir "$PWD/.t3"
 ```
 
-Open the pairing URL printed by T3, add a local project, and choose a Codex
-model. The Codex selection is currently the UI slot that activates the
-experimental adapter; `COMPADRE_PROVIDER_AGENT` determines which harness
-Compadre actually runs.
+Open the pairing URL printed by T3 and add a local project. The model picker
+offers Claude Code and Codex for each turn; `COMPADRE_PROVIDER_AGENT` supplies
+the default when a turn does not make an explicit selection.
 
 ## Verification
 
@@ -134,20 +135,22 @@ cd apps/server
 ../../node_modules/.bin/vp run typecheck
 ```
 
-The focused adapter tests cover successful text streaming and failed runs.
+The focused adapter tests cover successful text streaming, failed runs,
+backend cancellation, and image forwarding.
 The hosted-provider status behavior is covered in `ProviderRegistry.test.ts`.
 Both focused suites and the server typecheck pass; existing Effect diagnostic
 suggestions elsewhere in T3 remain unchanged.
 
 ## Known gaps
 
-- T3's selected model/provider label does not yet reflect the harness Compadre
-  actually runs.
-- Interrupting in T3 stops local consumption but does not yet cancel the
-  corresponding Compadre/Modal workflow.
 - Text messages and basic tool lifecycle events are translated. Approvals,
   structured user input, usage, diffs, plans, and richer tool output still need
   first-class mappings.
+- T3 Stop now cancels the corresponding Compadre run and Modal harness. The
+  controller-side cancellation registry is process-local, so keep the canary at
+  one Compadre instance until cancellation ownership is distributed.
+- T3 image attachments are validated and copied into the Modal workspace.
+  Non-image attachment types remain unsupported by T3's own attachment schema.
 - T3's local project/worktree is display and orchestration metadata only;
   Compadre still selects and clones the repository used in Modal.
 - Explicit T3-to-Slack thread pairing now shares the canonical transcript and
@@ -166,6 +169,6 @@ suggestions elsewhere in T3 remain unchanged.
 ## Fork status
 
 The experiment now uses a Comprehensive-owned fork and an isolated Render
-project. The fork is intentionally limited to the provider adapter and hosted
-readiness behavior. The next slice should add Slack-thread discovery and
-pairing UX before treating it as a product surface.
+project. The fork is intentionally limited to the provider adapter and its
+hosted integration behavior. Slack-thread discovery/pairing UX and user-scoped
+authentication remain the main productization gates.
