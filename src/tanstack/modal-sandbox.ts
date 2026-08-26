@@ -309,6 +309,11 @@ export class ModalHandle implements SandboxHandle {
     };
   }
 
+  /** Copy a host artifact into this Modal sandbox for local architecture spikes. */
+  copyFromLocal(localPath: string, remotePath: string): Promise<void> {
+    return this.sandbox.filesystem.copyFromLocal(localPath, remotePath);
+  }
+
   private async exec(
     command: string,
     options?: ProcessOptions,

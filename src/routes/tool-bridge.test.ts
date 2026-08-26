@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   createRelayToolBridgeProvisioner,
+  dispatchEnvironmentToolBridgeRequest,
   MAX_BRIDGE_REQUEST_BYTES,
 } from "../tanstack/relay-tool-bridge.js";
 import { toolBridgeRoutes } from "./tool-bridge.js";
@@ -73,4 +74,41 @@ test("acknowledges MCP notifications with 202 and no response body", async () =>
   } finally {
     await bridge.close();
   }
+});
+
+test("protects the environment bridge and dispatches MCP messages", async () => {
+  const core = {
+    listTools: () => [
+      {
+        name: "slack_watch_comp_pr_deployment",
+        description: "Watch a deployment",
+        inputSchema: { type: "object" as const, properties: {} },
+      },
+    ],
+    callTool: async () => ({ content: [{ type: "text" as const, text: "ok" }] }),
+  };
+  const environment = { COMPADRE_T3_MCP_BEARER_TOKEN: "environment-token" };
+
+  assert.deepEqual(
+    await dispatchEnvironmentToolBridgeRequest({
+      authorization: "Bearer wrong-token",
+      body: { jsonrpc: "2.0", id: 1, method: "tools/list" },
+      environment,
+      core,
+    }),
+    { status: 401, body: { error: "unauthorized" } },
+  );
+
+  const result = await dispatchEnvironmentToolBridgeRequest({
+    authorization: "Bearer environment-token",
+    body: { jsonrpc: "2.0", id: 2, method: "tools/list" },
+    environment,
+    core,
+  });
+  assert.equal(result.status, 200);
+  assert.deepEqual(result.body, {
+    jsonrpc: "2.0",
+    id: 2,
+    result: { tools: core.listTools() },
+  });
 });

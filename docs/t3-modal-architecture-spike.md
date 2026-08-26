@@ -26,6 +26,12 @@ change the production Compadre service.
   no stale stop control).
 - The same Compadre skill sources can be projected into `.agents/skills` for
   Codex and `.claude/skills` for the published Claude integration.
+- The T3 fork now accepts one `COMPADRE_MCP_URL`/bearer-token pair and injects
+  it into both native adapters without replacing T3's own per-thread MCP.
+- Compadre exposes its existing provider-neutral MCP/custom-tool inventory at
+  the authenticated, environment-lived `/internal/t3-mcp` endpoint. A
+  dedicated `COMPADRE_T3_MCP_BEARER_TOKEN` is preferred; the isolated
+  experiment can fall back to its existing `COMPADRE_API_KEY`.
 - T3 must run as the image's unprivileged `node` user. Claude intentionally
   rejects full-access mode when its process runs as root.
 - Git credentials can remain process-environment configuration, allowing T3's
@@ -106,13 +112,12 @@ separate `.mcp.json` and Codex TOML files containing credentials.
 
 ## Recommended next slice
 
-1. Generalize the relay tool bridge into an environment-scoped MCP endpoint.
-2. Add the small external-MCP injection seam to the T3 fork for Claude and
-   Codex, with focused adapter tests.
-3. Implement a Compadre T3 WebSocket client that can create/select a native
+1. Package the forked T3 server as a reproducible Modal image artifact. The
+   local spike accepts `COMPADRE_T3_PACKAGE_PATH` to overlay a tested tarball.
+2. Implement a Compadre T3 WebSocket client that can create/select a native
    thread, submit a turn, subscribe/reconnect, and cancel.
-4. Route the existing API endpoint and Slack simulation through that client.
-5. Persist the Slack thread to provider-specific T3 thread mapping and prove
+3. Route the existing API endpoint and Slack simulation through that client.
+4. Persist the Slack thread to provider-specific T3 thread mapping and prove
    browser/Slack/API consistency across a sandbox restart.
 
 TanStack AI does not need to own harness execution on this path. The spike still

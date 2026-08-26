@@ -2,18 +2,22 @@ import { randomUUID } from "node:crypto";
 import type { SandboxHandle } from "@tanstack/ai-sandbox";
 import { COMPADRE_SKILL_NAMES } from "../compadre-skills.js";
 import { gitAuthenticationEnvironment } from "../repo.js";
+import { ModalHandle } from "../tanstack/modal-sandbox.js";
+import { configuredEnvironmentBridgeToken } from "../tanstack/relay-tool-bridge.js";
 import { createHarnessSandbox } from "../tanstack/sandbox-runtime.js";
 
 const DEFAULT_T3_PORT = 3773;
 const DEFAULT_T3_BASE_DIR = "/var/lib/t3";
 const DEFAULT_T3_LOG = "/var/log/compadre/t3.log";
 const STARTUP_TIMEOUT_MS = 120_000;
+const T3_INSTALL_ROOT = "/opt/compadre-runtime/node_modules/t3";
+const T3_FORK_ARCHIVE = "/tmp/compadre-t3-fork.tgz";
 
 function quote(value: string): string {
   return `'${value.replaceAll("'", `'\\''`)}'`;
 }
 
-function projectedProviderEnvironment(
+export function projectedProviderEnvironment(
   environment: NodeJS.ProcessEnv,
 ): Record<string, string> {
   const result: Record<string, string> = {};
@@ -31,6 +35,17 @@ function projectedProviderEnvironment(
     result.GITHUB_TOKEN = environment.GITHUB_PERSONAL_ACCESS_TOKEN;
     Object.assign(result, gitAuthenticationEnvironment(environment));
   }
+  const bridgeToken = configuredEnvironmentBridgeToken(environment);
+  const publicUrl = environment.COMPADRE_PUBLIC_URL?.trim();
+  if (bridgeToken) {
+    if (!publicUrl) {
+      throw new Error(
+        "COMPADRE_T3_MCP_BEARER_TOKEN/COMPADRE_API_KEY and COMPADRE_PUBLIC_URL must be configured together for the T3 MCP bridge",
+      );
+    }
+    result.COMPADRE_MCP_URL = new URL("/internal/t3-mcp", publicUrl).toString();
+    result.COMPADRE_MCP_BEARER_TOKEN = bridgeToken;
+  }
   return result;
 }
 
@@ -45,6 +60,25 @@ async function configureNativeHarnessAuthentication(
   if (login.exitCode !== 0) {
     throw new Error(
       `Codex CLI authentication failed: ${login.stderr || login.stdout}`,
+    );
+  }
+}
+
+async function installLocalT3Fork(
+  handle: SandboxHandle,
+  archivePath: string | undefined,
+): Promise<void> {
+  if (!archivePath?.trim()) return;
+  if (!(handle instanceof ModalHandle)) {
+    throw new Error("COMPADRE_T3_PACKAGE_PATH requires a Modal sandbox");
+  }
+  await handle.copyFromLocal(archivePath, T3_FORK_ARCHIVE);
+  const installed = await handle.process.exec(
+    `tar -xzf ${quote(T3_FORK_ARCHIVE)} --strip-components=1 -C ${quote(T3_INSTALL_ROOT)}`,
+  );
+  if (installed.exitCode !== 0) {
+    throw new Error(
+      `T3 fork installation failed: ${installed.stderr || installed.stdout}`,
     );
   }
 }
@@ -149,6 +183,10 @@ export async function launchT3ModalExperiment(
       const workspaceRoot = handle.workspaceRoot ?? "/workspace";
       const providerEnvironment = projectedProviderEnvironment(
         experimentEnvironment,
+      );
+      await installLocalT3Fork(
+        handle,
+        experimentEnvironment.COMPADRE_T3_PACKAGE_PATH,
       );
       await handle.env.set({
         ...providerEnvironment,

@@ -1,5 +1,6 @@
 import { Hono } from "hono";
 import {
+  dispatchEnvironmentToolBridgeRequest,
   dispatchRelayToolBridgeRequest,
   MAX_BRIDGE_REQUEST_BYTES,
 } from "../tanstack/relay-tool-bridge.js";
@@ -68,6 +69,23 @@ toolBridgeRoutes.post("/internal/tanstack-tool-bridge/:bridgeId", async (c) => {
   // Streamable HTTP notifications have no JSON-RPC response body and must be
   // acknowledged with 202. Returning 200 with an empty body causes strict MCP
   // clients (including Codex CLI) to discard initialization and reconnect.
+  if (result.body === null) return c.body(null, 202);
+  return c.json(result.body, result.status);
+});
+
+toolBridgeRoutes.post("/internal/t3-mcp", async (c) => {
+  const parsed = await readLimitedJson(c.req.raw);
+  if (parsed.status === 413) {
+    return c.json({ error: "request too large" }, 413);
+  }
+  if (parsed.status === 400) {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  const result = await dispatchEnvironmentToolBridgeRequest({
+    authorization: c.req.header("Authorization"),
+    contentLength: c.req.header("Content-Length"),
+    body: parsed.body,
+  });
   if (result.body === null) return c.body(null, 202);
   return c.json(result.body, result.status);
 });
