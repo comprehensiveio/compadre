@@ -89,7 +89,6 @@ test("marks Compadre harness startup as dependency-lazy", () => {
     COMPADRE_SKIP_WORKTREE_SETUP: "1",
     GIT_CEILING_DIRECTORIES: "/tmp/worktrees",
     GIT_TERMINAL_PROMPT: "0",
-    PATH: "/opt/compadre-runtime/node_modules/.bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
   });
 });
 
@@ -137,19 +136,4 @@ test("gives a remote harness only its selected model credential", () => {
   }, "codex");
   assert.equal(codexEnvironment.CODEX_API_KEY, "codex-secret");
   assert.equal(codexEnvironment.ANTHROPIC_API_KEY, undefined);
-});
-
-test("exposes the pinned harness CLIs to sandbox shell commands", () => {
-  const environment = harnessEnvironment("/workspace", {
-    COMPADRE_MODAL_CLI_ROOT: "/custom/runtime",
-  });
-  assert.equal(
-    environment.PATH,
-    "/custom/runtime/node_modules/.bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
-  );
-
-  const customImageEnvironment = harnessEnvironment("/workspace", {
-    COMPADRE_MODAL_SKIP_CLI_SETUP: "true",
-  });
-  assert.equal(customImageEnvironment.PATH, undefined);
 });

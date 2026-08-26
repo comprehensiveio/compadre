@@ -146,6 +146,14 @@ test("bakes pinned harness CLIs into the default Modal image", () => {
   assert.match(commands.join("\n"), /claude-code@2\.1\.222/);
   assert.match(commands.join("\n"), /codex@0\.146\.0/);
   assert.match(commands.join("\n"), /--prefix '\/opt\/compadre-runtime'/);
+  assert.match(
+    commands.join("\n"),
+    /\/opt\/compadre-runtime\/node_modules\/\.bin\/claude' \/usr\/local\/bin\/claude/,
+  );
+  assert.match(
+    commands.join("\n"),
+    /\/opt\/compadre-runtime\/node_modules\/\.bin\/codex' \/usr\/local\/bin\/codex/,
+  );
 });
 
 test("bakes the app repository's required command-line tools", () => {

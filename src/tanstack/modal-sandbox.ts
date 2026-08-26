@@ -1,3 +1,4 @@
+import path from "node:path";
 import {
   ModalClient,
   NotFoundError,
@@ -119,6 +120,7 @@ export function modalImageCommands(environment: NodeJS.ProcessEnv): string[] {
       ? []
       : [
           `RUN npm install --prefix ${quote(runtimeRoot)} --no-save @anthropic-ai/claude-code@${CLAUDE_CODE_VERSION} @openai/codex@${CODEX_VERSION}`,
+          `RUN ln -sf ${quote(path.posix.join(runtimeRoot, "node_modules", ".bin", "claude"))} /usr/local/bin/claude && ln -sf ${quote(path.posix.join(runtimeRoot, "node_modules", ".bin", "codex"))} /usr/local/bin/codex`,
         ]),
   ];
 }

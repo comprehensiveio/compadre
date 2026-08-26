@@ -48,9 +48,6 @@ export const CLAUDE_DANGEROUS_PERMISSIONS = {
   permissionMode: "bypassPermissions",
 } as const;
 
-const DEFAULT_SANDBOX_PATH =
-  "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin";
-
 export interface HarnessSelection {
   provider: AgentProvider;
   model: string;
@@ -116,15 +113,8 @@ export function harnessEnvironment(
   environment: NodeJS.ProcessEnv = process.env,
   provider?: AgentProvider,
 ): Record<string, string> {
-  const runtimeRoot =
-    environment.COMPADRE_MODAL_CLI_ROOT?.trim() || "/opt/compadre-runtime";
   return {
     ...gitAuthenticationEnvironment(environment),
-    ...(environment.COMPADRE_MODAL_SKIP_CLI_SETUP === "true"
-      ? {}
-      : {
-          PATH: `${path.posix.join(runtimeRoot, "node_modules", ".bin")}:${DEFAULT_SANDBOX_PATH}`,
-        }),
     ...(provider === "claude-code" && environment.ANTHROPIC_API_KEY
       ? { ANTHROPIC_API_KEY: environment.ANTHROPIC_API_KEY }
       : {}),
