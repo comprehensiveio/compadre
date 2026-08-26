@@ -327,6 +327,17 @@ export function makeCompadreAdapter(options: CompadreAdapterOptions) {
                   ...(errorMessage ? { errorMessage } : {}),
                 },
               });
+              yield* publish({
+                type: "session.state.changed",
+                ...(yield* makeEventStamp()),
+                provider: PROVIDER,
+                providerInstanceId: boundInstanceId,
+                threadId: input.threadId,
+                payload: {
+                  state: "ready",
+                  reason: `Compadre turn ${state}`,
+                },
+              });
             });
 
           const completeOpenItems = () =>

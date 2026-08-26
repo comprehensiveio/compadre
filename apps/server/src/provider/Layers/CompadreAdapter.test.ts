@@ -48,7 +48,10 @@ it.layer(Layer.merge(NodeServices.layer, FetchHttpClient.layer))("CompadreAdapte
       const eventsFiber = yield* Stream.runForEach(adapter.streamEvents, (event) =>
         Effect.sync(() => events.push(event)).pipe(
           Effect.andThen(
-            event.type === "turn.completed" ? Deferred.succeed(completed, undefined) : Effect.void,
+            event.type === "session.state.changed" &&
+              event.payload.reason === "Compadre turn completed"
+              ? Deferred.succeed(completed, undefined)
+              : Effect.void,
           ),
         ),
       ).pipe(Effect.forkChild);
@@ -79,10 +82,17 @@ it.layer(Layer.merge(NodeServices.layer, FetchHttpClient.layer))("CompadreAdapte
           "content.delta",
           "item.completed",
           "turn.completed",
+          "session.state.changed",
         ],
       );
       const delta = events.find((event) => event.type === "content.delta");
       assert.equal(delta?.payload.delta, "hello from Modal");
+      const terminalSessionState = events.at(-1);
+      assert.equal(terminalSessionState?.type, "session.state.changed");
+      if (terminalSessionState?.type === "session.state.changed") {
+        assert.equal(terminalSessionState.payload.state, "ready");
+        assert.equal(terminalSessionState.payload.reason, "Compadre turn completed");
+      }
     }),
   );
 
