@@ -150,8 +150,17 @@ skills and prompts, all configured MCP tools, plus the same practical command
 line set used by the app (`git`, `curl`, `jq`, `psql`, `gh`, `rg`, `pnpm`, and
 the pinned Claude/Codex CLIs).
 
+The isolated Render canary has also exercised read-only calls through S3,
+Vitally, Google Workspace, and Postgres. Postgres uses the production database's
+dedicated read-only role over its external TLS endpoint; no write-capable
+database credentials were added to the experiment.
+
 Remaining product gaps are user-scoped authentication, a Slack discovery and
-pairing UI, multi-instance cancellation ownership, and T3-native presentation
-for remote workspace diffs, checkpoints, shells, and interactive approval or
-elicitation requests. These are integration/productization work rather than
-evidence that the shared T3/Slack/Modal thread model is infeasible.
+pairing UI, multi-instance cancellation and tool-bridge ownership, and
+T3-native presentation for remote workspace diffs, checkpoints, shells, and
+interactive approval or elicitation requests. Until the in-memory tool bridge
+is distributed, keep the canary at one instance and avoid starting a run during
+a rolling deploy: a Modal callback can otherwise land on the replacement
+instance before the bridge registration moves. These are
+integration/productization work rather than evidence that the shared
+T3/Slack/Modal thread model is infeasible.

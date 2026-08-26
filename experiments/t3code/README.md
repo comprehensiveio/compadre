@@ -147,8 +147,10 @@ suggestions elsewhere in T3 remain unchanged.
   structured user input, usage, diffs, plans, and richer tool output still need
   first-class mappings.
 - T3 Stop now cancels the corresponding Compadre run and Modal harness. The
-  controller-side cancellation registry is process-local, so keep the canary at
-  one Compadre instance until cancellation ownership is distributed.
+  controller-side cancellation and MCP tool-bridge registries are process-local,
+  so keep the canary at one Compadre instance until ownership is distributed.
+  Do not begin canary runs during a rolling Compadre deploy; callbacks from a
+  run on the draining instance can otherwise reach the replacement instance.
 - T3 image attachments are validated and copied into the Modal workspace.
   Non-image attachment types remain unsupported by T3's own attachment schema.
 - T3's local project/worktree is display and orchestration metadata only;
