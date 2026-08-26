@@ -16,6 +16,7 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
+import * as FileSystem from "effect/FileSystem";
 import * as PubSub from "effect/PubSub";
 import * as Scope from "effect/Scope";
 import * as Schema from "effect/Schema";
@@ -33,6 +34,7 @@ import {
   type ProviderAdapterError,
 } from "../Errors.ts";
 import type { ProviderAdapterShape, ProviderThreadSnapshot } from "../Services/ProviderAdapter.ts";
+import { resolveAttachmentPath } from "../../attachmentStore.ts";
 
 const PROVIDER = ProviderDriverKind.make("codex");
 
@@ -43,6 +45,12 @@ export interface CompadreTurnRequest {
   readonly runId: string;
   readonly messageId: string;
   readonly input: string;
+  readonly inputFiles: ReadonlyArray<{
+    readonly name: string;
+    readonly mimetype: string;
+    readonly sizeBytes: number;
+    readonly dataBase64: string;
+  }>;
   readonly provider: "claude-code" | "codex" | undefined;
 }
 
@@ -71,6 +79,7 @@ export interface CompadreAdapterOptions {
   readonly provider?: "claude-code" | "codex";
   readonly transport?: CompadreTransport;
   readonly cancelTransport?: CompadreCancelTransport;
+  readonly attachmentsDir?: string;
 }
 
 interface CompadreSessionContext {
@@ -102,7 +111,10 @@ function makeLiveTransport(httpClient: HttpClient.HttpClient): CompadreTransport
       messages: [{ id: input.messageId, role: "user", content: input.input }],
       tools: [],
       context: [],
-      forwardedProps: input.provider ? { provider: input.provider } : {},
+      forwardedProps: {
+        ...(input.provider ? { provider: input.provider } : {}),
+        ...(input.inputFiles.length > 0 ? { inputFiles: input.inputFiles } : {}),
+      },
       state: {},
     };
     let request = HttpClientRequest.post(input.endpoint, {
@@ -207,6 +219,7 @@ export function makeCompadreAdapter(options: CompadreAdapterOptions) {
     const crypto = yield* Crypto.Crypto;
     const adapterScope = yield* Scope.make("sequential");
     const httpClient = yield* HttpClient.HttpClient;
+    const fileSystem = yield* FileSystem.FileSystem;
     const transport = options.transport ?? makeLiveTransport(httpClient);
     const cancelTransport = options.cancelTransport ?? makeLiveCancelTransport(httpClient);
     const sessions = new Map<ThreadId, CompadreSessionContext>();
@@ -323,7 +336,10 @@ export function makeCompadreAdapter(options: CompadreAdapterOptions) {
     const sendTurn: ProviderAdapterShape<ProviderAdapterError>["sendTurn"] = (input) =>
       Effect.gen(function* () {
         const context = yield* requireSession(input.threadId);
-        const text = input.input?.trim();
+        const attachments = input.attachments ?? [];
+        const text =
+          input.input?.trim() ||
+          (attachments.length > 0 ? "Please inspect the attached image(s)." : undefined);
         if (!text) {
           return yield* new ProviderAdapterValidationError({
             provider: PROVIDER,
@@ -331,6 +347,54 @@ export function makeCompadreAdapter(options: CompadreAdapterOptions) {
             issue: "A non-empty text input is required for the Compadre experiment.",
           });
         }
+        const inputFiles = yield* Effect.forEach(attachments, (attachment) =>
+          Effect.gen(function* () {
+            if (!options.attachmentsDir) {
+              return yield* new ProviderAdapterValidationError({
+                provider: PROVIDER,
+                operation: "sendTurn",
+                issue: "The Compadre attachment directory is not configured.",
+              });
+            }
+            if (
+              !["image/gif", "image/jpeg", "image/png", "image/webp"].includes(attachment.mimeType)
+            ) {
+              return yield* new ProviderAdapterValidationError({
+                provider: PROVIDER,
+                operation: "sendTurn",
+                issue: `Unsupported Compadre image attachment type '${attachment.mimeType}'.`,
+              });
+            }
+            const attachmentPath = resolveAttachmentPath({
+              attachmentsDir: options.attachmentsDir,
+              attachment,
+            });
+            if (!attachmentPath) {
+              return yield* new ProviderAdapterValidationError({
+                provider: PROVIDER,
+                operation: "sendTurn",
+                issue: `Invalid attachment id '${attachment.id}'.`,
+              });
+            }
+            const bytes = yield* fileSystem.readFile(attachmentPath).pipe(
+              Effect.mapError(
+                (cause) =>
+                  new ProviderAdapterRequestError({
+                    provider: PROVIDER,
+                    method: "compadre/attachment",
+                    detail: "Failed to read a Compadre attachment file.",
+                    cause,
+                  }),
+              ),
+            );
+            return {
+              name: attachment.name,
+              mimetype: attachment.mimeType,
+              sizeBytes: bytes.byteLength,
+              dataBase64: Buffer.from(bytes).toString("base64"),
+            };
+          }),
+        );
         if (context.activeFiber) {
           return yield* new ProviderAdapterValidationError({
             provider: PROVIDER,
@@ -582,6 +646,7 @@ export function makeCompadreAdapter(options: CompadreAdapterOptions) {
               runId,
               messageId,
               input: text,
+              inputFiles,
               provider: selectedProvider,
             }),
             handleEvent,

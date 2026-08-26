@@ -9,8 +9,10 @@ import {
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
+import * as FileSystem from "effect/FileSystem";
 import * as Stream from "effect/Stream";
 import * as Layer from "effect/Layer";
+import * as Path from "effect/Path";
 import { FetchHttpClient } from "effect/unstable/http";
 
 import { makeCompadreAdapter } from "./CompadreAdapter.ts";
@@ -152,6 +154,74 @@ it.layer(Layer.merge(NodeServices.layer, FetchHttpClient.layer))("CompadreAdapte
       assert.equal(terminal?.payload.state, "failed");
       assert.equal(terminal?.payload.errorMessage, "Modal failed");
     }),
+  );
+
+  it.effect("forwards T3 image attachments to hosted Compadre", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const attachmentsDir = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "t3-compadre-attachments-",
+        });
+        const attachmentId = "compadre-image-00000000-0000-4000-8000-000000000001";
+        yield* fileSystem.writeFile(
+          path.join(attachmentsDir, `${attachmentId}.png`),
+          new Uint8Array([137, 80, 78, 71]),
+        );
+        const received: Array<{
+          name: string;
+          mimetype: string;
+          sizeBytes: number;
+          dataBase64: string;
+        }> = [];
+        const threadId = ThreadId.make("compadre-attachment-thread");
+        const completed = yield* Deferred.make<void>();
+        const adapter = yield* makeCompadreAdapter({
+          endpoint: "http://compadre.test/hosted/chat",
+          attachmentsDir,
+          transport: (request) => {
+            received.push(...request.inputFiles);
+            return Stream.make({
+              type: "RUN_FINISHED",
+              runId: request.runId,
+              threadId: request.threadId,
+            });
+          },
+        });
+        const eventsFiber = yield* Stream.runForEach(adapter.streamEvents, (event) =>
+          event.type === "turn.completed" ? Deferred.succeed(completed, undefined) : Effect.void,
+        ).pipe(Effect.forkChild);
+        yield* Effect.yieldNow;
+        yield* adapter.startSession({
+          threadId,
+          cwd: process.cwd(),
+          runtimeMode: "full-access",
+        });
+        yield* adapter.sendTurn({
+          threadId,
+          attachments: [
+            {
+              type: "image",
+              id: attachmentId,
+              name: "probe.png",
+              mimeType: "image/png",
+              sizeBytes: 4,
+            },
+          ],
+        });
+        yield* Deferred.await(completed);
+        yield* Fiber.interrupt(eventsFiber);
+        assert.deepStrictEqual(received, [
+          {
+            name: "probe.png",
+            mimetype: "image/png",
+            sizeBytes: 4,
+            dataBase64: "iVBORw==",
+          },
+        ]);
+      }),
+    ),
   );
 
   it.effect("cancels the hosted Compadre run when a T3 turn is interrupted", () =>

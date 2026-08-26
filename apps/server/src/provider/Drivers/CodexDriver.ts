@@ -119,6 +119,7 @@ export const CodexDriver: ProviderDriver<CodexSettings, CodexDriverEnv> = {
       const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
       const httpClient = yield* HttpClient.HttpClient;
       const serverSettings = yield* ServerSettingsService;
+      const serverConfig = yield* ServerConfig;
       const eventLoggers = yield* ProviderEventLoggers;
       const processEnv = mergeProviderInstanceEnvironment(environment);
       const homeLayout = yield* resolveCodexHomeLayout(config);
@@ -162,6 +163,7 @@ export const CodexDriver: ProviderDriver<CodexSettings, CodexDriverEnv> = {
         ? yield* makeCompadreAdapter({
             endpoint: compadreEndpoint,
             instanceId,
+            attachmentsDir: serverConfig.attachmentsDir,
             ...(processEnv.COMPADRE_API_KEY ? { apiKey: processEnv.COMPADRE_API_KEY } : {}),
             ...(compadreProvider === "claude-code" || compadreProvider === "codex"
               ? { provider: compadreProvider }
