@@ -96,12 +96,12 @@ export const deriveProviderInstanceConfigMap = (
       continue;
     }
 
-    // This internal hosted build historically mounted Compadre behind the
-    // default Codex slot. Once the native driver is configured, omit the
-    // legacy Codex mirror so persisted selections fall back to Compadre
-    // instead of continuing to present the hosted service as Codex. An
-    // explicit providerInstances.codex entry still wins above.
-    if (compadreHosted && driver.driverKind === ProviderDriverKind.make("codex")) {
+    // A hosted Compadre environment delegates every turn to the remote
+    // controller, so synthesized local providers are misleading (and are
+    // commonly unavailable on the web-service host). Explicit instance
+    // entries still win above for installations that intentionally mix a
+    // native provider with Compadre.
+    if (compadreHosted) {
       continue;
     }
 

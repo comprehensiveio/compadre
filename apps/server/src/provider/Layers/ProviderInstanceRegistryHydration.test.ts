@@ -20,6 +20,8 @@ describe("deriveProviderInstanceConfigMap", () => {
       config: {},
     });
     expect(configMap[ProviderInstanceId.make("codex")]).toBeUndefined();
+    expect(configMap[ProviderInstanceId.make("claudeAgent")]).toBeUndefined();
+    expect(Object.keys(configMap)).toEqual(["compadre"]);
   });
 
   it("does not advertise Compadre in ordinary T3 installations", () => {
@@ -47,5 +49,24 @@ describe("deriveProviderInstanceConfigMap", () => {
 
     expect(configMap[ProviderInstanceId.make("compadre")]?.displayName).toBe("Explicit Compadre");
     expect(configMap[ProviderInstanceId.make("compadre")]?.enabled).toBe(false);
+  });
+
+  it("preserves explicitly configured native providers in hosted environments", () => {
+    const settings = {
+      ...DEFAULT_SERVER_SETTINGS,
+      providerInstances: {
+        ...DEFAULT_SERVER_SETTINGS.providerInstances,
+        codex: {
+          driver: ProviderDriverKind.make("codex"),
+          displayName: "Explicit Codex",
+          config: {},
+        },
+      },
+    };
+    const configMap = deriveProviderInstanceConfigMap(settings, {
+      COMPADRE_PROVIDER_URL: "https://compadre.example/hosted/chat",
+    });
+
+    expect(configMap[ProviderInstanceId.make("codex")]?.displayName).toBe("Explicit Codex");
   });
 });
