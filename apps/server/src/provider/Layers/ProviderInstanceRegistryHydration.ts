@@ -43,6 +43,7 @@
  */
 import {
   defaultInstanceIdForDriver,
+  ProviderDriverKind,
   type ProviderInstanceConfig,
   type ProviderInstanceConfigMap,
   ServerSettings,
@@ -72,14 +73,35 @@ import { ProviderInstanceRegistryMutableLayer } from "./ProviderInstanceRegistry
  */
 export const deriveProviderInstanceConfigMap = (
   settings: ServerSettings,
+  environment: NodeJS.ProcessEnv = process.env,
 ): ProviderInstanceConfigMap => {
   const merged: Record<string, ProviderInstanceConfig> = { ...settings.providerInstances };
+
+  const compadreDriver = ProviderDriverKind.make("compadre");
+  const compadreInstanceId = defaultInstanceIdForDriver(compadreDriver);
+  const compadreHosted = Boolean(environment.COMPADRE_PROVIDER_URL?.trim());
+  if (compadreHosted && !(compadreInstanceId in merged)) {
+    merged[compadreInstanceId] = {
+      driver: compadreDriver,
+      displayName: "Compadre",
+      config: {},
+    };
+  }
 
   for (const driver of BUILT_IN_DRIVERS) {
     const instanceId = defaultInstanceIdForDriver(driver.driverKind);
     if (instanceId in merged) {
       // Explicit `providerInstances` entry for this slot — user-authored
       // config always wins over the legacy mirror.
+      continue;
+    }
+
+    // This internal hosted build historically mounted Compadre behind the
+    // default Codex slot. Once the native driver is configured, omit the
+    // legacy Codex mirror so persisted selections fall back to Compadre
+    // instead of continuing to present the hosted service as Codex. An
+    // explicit providerInstances.codex entry still wins above.
+    if (compadreHosted && driver.driverKind === ProviderDriverKind.make("codex")) {
       continue;
     }
 

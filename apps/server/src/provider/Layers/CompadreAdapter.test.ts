@@ -28,7 +28,7 @@ it.layer(Layer.merge(NodeServices.layer, FetchHttpClient.layer))("CompadreAdapte
       }> = [];
       const adapter = yield* makeCompadreAdapter({
         endpoint: "http://compadre.test/hosted/chat",
-        instanceId: ProviderInstanceId.make("codex"),
+        instanceId: ProviderInstanceId.make("compadre"),
         transport: (request) => {
           requests.push({
             input: request.input,
@@ -69,11 +69,11 @@ it.layer(Layer.merge(NodeServices.layer, FetchHttpClient.layer))("CompadreAdapte
 
       const session = yield* adapter.startSession({
         threadId,
-        provider: ProviderDriverKind.make("codex"),
+        provider: ProviderDriverKind.make("compadre"),
         cwd: process.cwd(),
         runtimeMode: "full-access",
         modelSelection: {
-          instanceId: ProviderInstanceId.make("codex"),
+          instanceId: ProviderInstanceId.make("compadre"),
           model: "claude-code",
         },
       });
@@ -81,7 +81,7 @@ it.layer(Layer.merge(NodeServices.layer, FetchHttpClient.layer))("CompadreAdapte
         threadId,
         input: "inspect the repo",
         modelSelection: {
-          instanceId: ProviderInstanceId.make("codex"),
+          instanceId: ProviderInstanceId.make("compadre"),
           model: "codex",
         },
       });
@@ -89,7 +89,7 @@ it.layer(Layer.merge(NodeServices.layer, FetchHttpClient.layer))("CompadreAdapte
       yield* Deferred.await(completed);
       yield* Fiber.interrupt(eventsFiber);
 
-      assert.equal(session.provider, "codex");
+      assert.equal(session.provider, "compadre");
       assert.equal(turn.threadId, threadId);
       assert.deepStrictEqual(requests, [
         { input: "inspect the repo", threadId, provider: "codex" },

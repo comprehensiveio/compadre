@@ -36,7 +36,7 @@ import {
 import type { ProviderAdapterShape, ProviderThreadSnapshot } from "../Services/ProviderAdapter.ts";
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
 
-const PROVIDER = ProviderDriverKind.make("codex");
+const PROVIDER = ProviderDriverKind.make("compadre");
 
 export interface CompadreTurnRequest {
   readonly endpoint: string;
@@ -215,7 +215,7 @@ function makeLiveCancelTransport(httpClient: HttpClient.HttpClient): CompadreCan
 
 export function makeCompadreAdapter(options: CompadreAdapterOptions) {
   return Effect.gen(function* () {
-    const boundInstanceId = options.instanceId ?? ProviderInstanceId.make("codex");
+    const boundInstanceId = options.instanceId ?? ProviderInstanceId.make("compadre");
     const crypto = yield* Crypto.Crypto;
     const adapterScope = yield* Scope.make("sequential");
     const httpClient = yield* HttpClient.HttpClient;

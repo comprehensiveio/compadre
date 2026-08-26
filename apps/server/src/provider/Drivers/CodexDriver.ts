@@ -36,7 +36,6 @@ import { ServerConfig } from "../../config.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import { ProviderDriverError } from "../Errors.ts";
 import { makeCodexAdapter } from "../Layers/CodexAdapter.ts";
-import { makeCompadreAdapter } from "../Layers/CompadreAdapter.ts";
 import { checkCodexProviderStatus, makePendingCodexProvider } from "../Layers/CodexProvider.ts";
 import { ProviderEventLoggers } from "../Layers/ProviderEventLoggers.ts";
 import { makeManagedServerProvider } from "../makeManagedServerProvider.ts";
@@ -119,7 +118,6 @@ export const CodexDriver: ProviderDriver<CodexSettings, CodexDriverEnv> = {
       const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
       const httpClient = yield* HttpClient.HttpClient;
       const serverSettings = yield* ServerSettingsService;
-      const serverConfig = yield* ServerConfig;
       const eventLoggers = yield* ProviderEventLoggers;
       const processEnv = mergeProviderInstanceEnvironment(environment);
       const homeLayout = yield* resolveCodexHomeLayout(config);
@@ -157,23 +155,11 @@ export const CodexDriver: ProviderDriver<CodexSettings, CodexDriverEnv> = {
       // here; the registry only has to worry about snapshot-build and
       // spawner-availability failures surfaced from `checkCodexProviderStatus`
       // below.
-      const compadreEndpoint = processEnv.COMPADRE_PROVIDER_URL?.trim();
-      const compadreProvider = processEnv.COMPADRE_PROVIDER_AGENT?.trim();
-      const adapter = compadreEndpoint
-        ? yield* makeCompadreAdapter({
-            endpoint: compadreEndpoint,
-            instanceId,
-            attachmentsDir: serverConfig.attachmentsDir,
-            ...(processEnv.COMPADRE_API_KEY ? { apiKey: processEnv.COMPADRE_API_KEY } : {}),
-            ...(compadreProvider === "claude-code" || compadreProvider === "codex"
-              ? { provider: compadreProvider }
-              : {}),
-          })
-        : yield* makeCodexAdapter(effectiveConfig, {
-            instanceId,
-            environment: processEnv,
-            ...(eventLoggers.native ? { nativeEventLogger: eventLoggers.native } : {}),
-          });
+      const adapter = yield* makeCodexAdapter(effectiveConfig, {
+        instanceId,
+        environment: processEnv,
+        ...(eventLoggers.native ? { nativeEventLogger: eventLoggers.native } : {}),
+      });
       const textGeneration = yield* makeCodexTextGeneration(effectiveConfig, processEnv);
 
       // Build a managed snapshot whose settings never change — mutations come
