@@ -148,6 +148,14 @@ test("bakes pinned harness CLIs into the default Modal image", () => {
   assert.match(commands.join("\n"), /--prefix '\/opt\/compadre-runtime'/);
 });
 
+test("bakes the app repository's required command-line tools", () => {
+  const commands = modalImageCommands({}).join("\n");
+  for (const command of ["gh", "jq", "postgresql-client", "ripgrep"]) {
+    assert.match(commands, new RegExp(`\\b${command}\\b`));
+  }
+  assert.match(commands, /corepack prepare pnpm@10\.34\.2 --activate/);
+});
+
 test("allows a custom Modal image to supply its own harness CLIs", () => {
   assert.doesNotMatch(
     modalImageCommands({ COMPADRE_MODAL_SKIP_CLI_SETUP: "true" }).join("\n"),

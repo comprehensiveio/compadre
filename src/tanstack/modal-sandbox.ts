@@ -83,6 +83,7 @@ const DEFAULT_TIMEOUT_MS = 2 * 60 * 60 * 1_000;
 const DEFAULT_SNAPSHOT_TTL_MS = 7 * 24 * 60 * 60 * 1_000;
 const CLAUDE_CODE_VERSION = "2.1.222";
 const CODEX_VERSION = "0.146.0";
+const PNPM_VERSION = "10.34.2";
 
 function positiveNumberSetting(
   name: string,
@@ -111,7 +112,8 @@ export function modalImageCommands(environment: NodeJS.ProcessEnv): string[] {
   const runtimeRoot =
     environment.COMPADRE_MODAL_CLI_ROOT?.trim() || "/opt/compadre-runtime";
   return [
-    "RUN apt-get update -qq && apt-get install -y -qq --no-install-recommends git ca-certificates curl && rm -rf /var/lib/apt/lists/*",
+    "RUN apt-get update -qq && apt-get install -y -qq --no-install-recommends git ca-certificates curl gh jq postgresql-client ripgrep && rm -rf /var/lib/apt/lists/*",
+    `RUN corepack enable && corepack prepare pnpm@${PNPM_VERSION} --activate`,
     `RUN mkdir -p ${quote(workdir)} ${quote(runtimeRoot)}`,
     ...(environment.COMPADRE_MODAL_SKIP_CLI_SETUP === "true"
       ? []
