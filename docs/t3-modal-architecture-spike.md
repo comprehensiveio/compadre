@@ -32,6 +32,10 @@ change the production Compadre service.
   the authenticated, environment-lived `/internal/t3-mcp` endpoint. A
   dedicated `COMPADRE_T3_MCP_BEARER_TOKEN` is preferred; the isolated
   experiment can fall back to its existing `COMPADRE_API_KEY`.
+- The deployed experiment advertised 329 gateway tools. Native Codex and
+  Claude Opus each called the same read-only `render_list_services` tool through
+  that bridge and returned the live Compadre-related services. Both also saw
+  the custom `slack_watch_comp_pr_deployment` schema without invoking it.
 - T3 must run as the image's unprivileged `node` user. Claude intentionally
   rejects full-access mode when its process runs as root.
 - Git credentials can remain process-environment configuration, allowing T3's
