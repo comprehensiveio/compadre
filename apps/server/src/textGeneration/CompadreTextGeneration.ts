@@ -34,7 +34,7 @@ export interface CompadreTextGenerationOptions {
 
 function promptEndpoint(endpoint: string): string {
   const url = new URL(endpoint);
-  url.pathname = url.pathname.replace(/\/hosted\/chat\/?$/u, "/prompt");
+  url.pathname = url.pathname.replace(/\/hosted\/(?:t3\/)?chat\/?$/u, "/prompt");
   return url.toString();
 }
 

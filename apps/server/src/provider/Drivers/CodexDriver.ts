@@ -39,7 +39,12 @@ import { makeCodexAdapter } from "../Layers/CodexAdapter.ts";
 import { checkCodexProviderStatus, makePendingCodexProvider } from "../Layers/CodexProvider.ts";
 import { ProviderEventLoggers } from "../Layers/ProviderEventLoggers.ts";
 import { makeManagedServerProvider } from "../makeManagedServerProvider.ts";
-import type { ProviderDriver, ProviderInstance } from "../ProviderDriver.ts";
+import {
+  defaultProviderContinuationIdentity,
+  type ProviderDriver,
+  type ProviderInstance,
+} from "../ProviderDriver.ts";
+import { makeRemoteNativeProvider, remoteNativeProviderEndpoint } from "../RemoteNativeProvider.ts";
 import type { ServerProviderDraft } from "../providerSnapshot.ts";
 import { mergeProviderInstanceEnvironment } from "../ProviderInstanceEnvironment.ts";
 import {
@@ -120,6 +125,41 @@ export const CodexDriver: ProviderDriver<CodexSettings, CodexDriverEnv> = {
       const serverSettings = yield* ServerSettingsService;
       const eventLoggers = yield* ProviderEventLoggers;
       const processEnv = mergeProviderInstanceEnvironment(environment);
+      const remoteEndpoint = remoteNativeProviderEndpoint(processEnv);
+      if (remoteEndpoint) {
+        const continuationIdentity = defaultProviderContinuationIdentity({
+          driverKind: DRIVER_KIND,
+          instanceId,
+        });
+        const stampIdentity = withInstanceIdentity({
+          instanceId,
+          displayName,
+          accentColor,
+          continuationGroupKey: continuationIdentity.continuationKey,
+        });
+        const pending = stampIdentity(yield* makePendingCodexProvider({ ...config, enabled }));
+        const serverConfig = yield* ServerConfig;
+        const apiKey = processEnv.COMPADRE_API_KEY?.trim();
+        const remote = yield* makeRemoteNativeProvider({
+          endpoint: remoteEndpoint,
+          ...(apiKey ? { apiKey } : {}),
+          agentProvider: "codex",
+          driverKind: DRIVER_KIND,
+          instanceId,
+          enabled,
+          attachmentsDir: serverConfig.attachmentsDir,
+          snapshot: pending,
+        });
+        return {
+          instanceId,
+          driverKind: DRIVER_KIND,
+          continuationIdentity,
+          displayName,
+          accentColor,
+          enabled,
+          ...remote,
+        } satisfies ProviderInstance;
+      }
       const homeLayout = yield* resolveCodexHomeLayout(config);
       const continuationIdentity = codexContinuationIdentity(homeLayout);
       const stampIdentity = withInstanceIdentity({

@@ -52,6 +52,7 @@ export interface CompadreTurnRequest {
     readonly dataBase64: string;
   }>;
   readonly provider: "claude-code" | "codex" | undefined;
+  readonly model: string | undefined;
 }
 
 export type CompadreStreamEvent = Readonly<Record<string, unknown>> & {
@@ -77,6 +78,8 @@ export interface CompadreAdapterOptions {
   readonly apiKey?: string;
   readonly instanceId?: ProviderInstanceId;
   readonly provider?: "claude-code" | "codex";
+  /** Provider identity presented to T3 orchestration. Defaults to `compadre`. */
+  readonly runtimeProvider?: ProviderDriverKind;
   readonly transport?: CompadreTransport;
   readonly cancelTransport?: CompadreCancelTransport;
   readonly attachmentsDir?: string;
@@ -103,7 +106,10 @@ function stringField(event: CompadreStreamEvent, field: string): string | undefi
   return typeof value === "string" && value.length > 0 ? value : undefined;
 }
 
-function makeLiveTransport(httpClient: HttpClient.HttpClient): CompadreTransport {
+function makeLiveTransport(
+  httpClient: HttpClient.HttpClient,
+  runtimeProvider: ProviderDriverKind,
+): CompadreTransport {
   return (input) => {
     const body = {
       threadId: input.threadId,
@@ -113,6 +119,7 @@ function makeLiveTransport(httpClient: HttpClient.HttpClient): CompadreTransport
       context: [],
       forwardedProps: {
         ...(input.provider ? { provider: input.provider } : {}),
+        ...(input.model ? { model: input.model } : {}),
         ...(input.inputFiles.length > 0 ? { inputFiles: input.inputFiles } : {}),
       },
       state: {},
@@ -138,7 +145,7 @@ function makeLiveTransport(httpClient: HttpClient.HttpClient): CompadreTransport
                 Effect.mapError(
                   (cause) =>
                     new ProviderAdapterRequestError({
-                      provider: PROVIDER,
+                      provider: runtimeProvider,
                       method: "compadre/sse",
                       detail: "Compadre emitted invalid JSON in its event stream.",
                       cause,
@@ -149,7 +156,7 @@ function makeLiveTransport(httpClient: HttpClient.HttpClient): CompadreTransport
                     ? Effect.succeed(value as CompadreStreamEvent)
                     : Effect.fail(
                         new ProviderAdapterRequestError({
-                          provider: PROVIDER,
+                          provider: runtimeProvider,
                           method: "compadre/sse",
                           detail: "Compadre emitted an event without a type.",
                         }),
@@ -162,7 +169,7 @@ function makeLiveTransport(httpClient: HttpClient.HttpClient): CompadreTransport
         Effect.mapError(
           (cause) =>
             new ProviderAdapterRequestError({
-              provider: PROVIDER,
+              provider: runtimeProvider,
               method: "compadre/chat",
               detail: "Could not open the Compadre event stream.",
               cause,
@@ -173,7 +180,7 @@ function makeLiveTransport(httpClient: HttpClient.HttpClient): CompadreTransport
       Stream.mapError(
         (cause) =>
           new ProviderAdapterRequestError({
-            provider: PROVIDER,
+            provider: runtimeProvider,
             method: "compadre/chat",
             detail: "The Compadre event stream failed.",
             cause,
@@ -189,7 +196,10 @@ function cancelEndpoint(endpoint: string, runId: string): string {
   return url.toString();
 }
 
-function makeLiveCancelTransport(httpClient: HttpClient.HttpClient): CompadreCancelTransport {
+function makeLiveCancelTransport(
+  httpClient: HttpClient.HttpClient,
+  runtimeProvider: ProviderDriverKind,
+): CompadreCancelTransport {
   return (input) => {
     let request = HttpClientRequest.post(cancelEndpoint(input.endpoint, input.runId));
     if (input.apiKey) {
@@ -203,7 +213,7 @@ function makeLiveCancelTransport(httpClient: HttpClient.HttpClient): CompadreCan
       Effect.mapError(
         (cause) =>
           new ProviderAdapterRequestError({
-            provider: PROVIDER,
+            provider: runtimeProvider,
             method: "compadre/cancel",
             detail: "Could not cancel the active Compadre run.",
             cause,
@@ -215,13 +225,15 @@ function makeLiveCancelTransport(httpClient: HttpClient.HttpClient): CompadreCan
 
 export function makeCompadreAdapter(options: CompadreAdapterOptions) {
   return Effect.gen(function* () {
+    const runtimeProvider = options.runtimeProvider ?? PROVIDER;
     const boundInstanceId = options.instanceId ?? ProviderInstanceId.make("compadre");
     const crypto = yield* Crypto.Crypto;
     const adapterScope = yield* Scope.make("sequential");
     const httpClient = yield* HttpClient.HttpClient;
     const fileSystem = yield* FileSystem.FileSystem;
-    const transport = options.transport ?? makeLiveTransport(httpClient);
-    const cancelTransport = options.cancelTransport ?? makeLiveCancelTransport(httpClient);
+    const transport = options.transport ?? makeLiveTransport(httpClient, runtimeProvider);
+    const cancelTransport =
+      options.cancelTransport ?? makeLiveCancelTransport(httpClient, runtimeProvider);
     const sessions = new Map<ThreadId, CompadreSessionContext>();
     const runtimeEvents = yield* PubSub.unbounded<ProviderRuntimeEvent>();
 
@@ -230,7 +242,7 @@ export function makeCompadreAdapter(options: CompadreAdapterOptions) {
       Effect.mapError(
         (cause) =>
           new ProviderAdapterRequestError({
-            provider: PROVIDER,
+            provider: runtimeProvider,
             method: "crypto/randomUUIDv4",
             detail: "Failed to create a Compadre runtime identifier.",
             cause,
@@ -251,7 +263,9 @@ export function makeCompadreAdapter(options: CompadreAdapterOptions) {
       const context = sessions.get(threadId);
       return context && !context.stopped
         ? Effect.succeed(context)
-        : Effect.fail(new ProviderAdapterSessionNotFoundError({ provider: PROVIDER, threadId }));
+        : Effect.fail(
+            new ProviderAdapterSessionNotFoundError({ provider: runtimeProvider, threadId }),
+          );
     };
 
     const setSessionReady = (context: CompadreSessionContext) =>
@@ -272,11 +286,11 @@ export function makeCompadreAdapter(options: CompadreAdapterOptions) {
 
     const startSession: ProviderAdapterShape<ProviderAdapterError>["startSession"] = (input) =>
       Effect.gen(function* () {
-        if (input.provider !== undefined && input.provider !== PROVIDER) {
+        if (input.provider !== undefined && input.provider !== runtimeProvider) {
           return yield* new ProviderAdapterValidationError({
-            provider: PROVIDER,
+            provider: runtimeProvider,
             operation: "startSession",
-            issue: `Expected provider '${PROVIDER}' but received '${input.provider}'.`,
+            issue: `Expected provider '${runtimeProvider}' but received '${input.provider}'.`,
           });
         }
         const existing = sessions.get(input.threadId);
@@ -284,7 +298,7 @@ export function makeCompadreAdapter(options: CompadreAdapterOptions) {
 
         const now = yield* nowIso;
         const session: ProviderSession = {
-          provider: PROVIDER,
+          provider: runtimeProvider,
           providerInstanceId: boundInstanceId,
           status: "ready",
           runtimeMode: input.runtimeMode,
@@ -309,7 +323,7 @@ export function makeCompadreAdapter(options: CompadreAdapterOptions) {
         yield* publish({
           type: "session.started",
           ...(yield* makeEventStamp()),
-          provider: PROVIDER,
+          provider: runtimeProvider,
           providerInstanceId: boundInstanceId,
           threadId: input.threadId,
           payload: { message: "Compadre Modal session ready" },
@@ -317,7 +331,7 @@ export function makeCompadreAdapter(options: CompadreAdapterOptions) {
         yield* publish({
           type: "session.state.changed",
           ...(yield* makeEventStamp()),
-          provider: PROVIDER,
+          provider: runtimeProvider,
           providerInstanceId: boundInstanceId,
           threadId: input.threadId,
           payload: { state: "ready", reason: "Connected to Compadre" },
@@ -325,7 +339,7 @@ export function makeCompadreAdapter(options: CompadreAdapterOptions) {
         yield* publish({
           type: "thread.started",
           ...(yield* makeEventStamp()),
-          provider: PROVIDER,
+          provider: runtimeProvider,
           providerInstanceId: boundInstanceId,
           threadId: input.threadId,
           payload: { providerThreadId: input.threadId },
@@ -342,7 +356,7 @@ export function makeCompadreAdapter(options: CompadreAdapterOptions) {
           (attachments.length > 0 ? "Please inspect the attached image(s)." : undefined);
         if (!text) {
           return yield* new ProviderAdapterValidationError({
-            provider: PROVIDER,
+            provider: runtimeProvider,
             operation: "sendTurn",
             issue: "A non-empty text input is required for the Compadre experiment.",
           });
@@ -351,7 +365,7 @@ export function makeCompadreAdapter(options: CompadreAdapterOptions) {
           Effect.gen(function* () {
             if (!options.attachmentsDir) {
               return yield* new ProviderAdapterValidationError({
-                provider: PROVIDER,
+                provider: runtimeProvider,
                 operation: "sendTurn",
                 issue: "The Compadre attachment directory is not configured.",
               });
@@ -360,7 +374,7 @@ export function makeCompadreAdapter(options: CompadreAdapterOptions) {
               !["image/gif", "image/jpeg", "image/png", "image/webp"].includes(attachment.mimeType)
             ) {
               return yield* new ProviderAdapterValidationError({
-                provider: PROVIDER,
+                provider: runtimeProvider,
                 operation: "sendTurn",
                 issue: `Unsupported Compadre image attachment type '${attachment.mimeType}'.`,
               });
@@ -371,7 +385,7 @@ export function makeCompadreAdapter(options: CompadreAdapterOptions) {
             });
             if (!attachmentPath) {
               return yield* new ProviderAdapterValidationError({
-                provider: PROVIDER,
+                provider: runtimeProvider,
                 operation: "sendTurn",
                 issue: `Invalid attachment id '${attachment.id}'.`,
               });
@@ -380,7 +394,7 @@ export function makeCompadreAdapter(options: CompadreAdapterOptions) {
               Effect.mapError(
                 (cause) =>
                   new ProviderAdapterRequestError({
-                    provider: PROVIDER,
+                    provider: runtimeProvider,
                     method: "compadre/attachment",
                     detail: "Failed to read a Compadre attachment file.",
                     cause,
@@ -397,7 +411,7 @@ export function makeCompadreAdapter(options: CompadreAdapterOptions) {
         );
         if (context.activeFiber) {
           return yield* new ProviderAdapterValidationError({
-            provider: PROVIDER,
+            provider: runtimeProvider,
             operation: "sendTurn",
             issue: "A Compadre turn is already running for this thread.",
           });
@@ -426,7 +440,7 @@ export function makeCompadreAdapter(options: CompadreAdapterOptions) {
         yield* publish({
           type: "turn.started",
           ...(yield* makeEventStamp()),
-          provider: PROVIDER,
+          provider: runtimeProvider,
           providerInstanceId: boundInstanceId,
           threadId: input.threadId,
           turnId,
@@ -455,7 +469,7 @@ export function makeCompadreAdapter(options: CompadreAdapterOptions) {
               yield* publish({
                 type: "turn.completed",
                 ...(yield* makeEventStamp()),
-                provider: PROVIDER,
+                provider: runtimeProvider,
                 providerInstanceId: boundInstanceId,
                 threadId: input.threadId,
                 turnId,
@@ -467,7 +481,7 @@ export function makeCompadreAdapter(options: CompadreAdapterOptions) {
               yield* publish({
                 type: "session.state.changed",
                 ...(yield* makeEventStamp()),
-                provider: PROVIDER,
+                provider: runtimeProvider,
                 providerInstanceId: boundInstanceId,
                 threadId: input.threadId,
                 payload: {
@@ -485,7 +499,7 @@ export function makeCompadreAdapter(options: CompadreAdapterOptions) {
                   yield* publish({
                     type: "item.completed",
                     ...(yield* makeEventStamp()),
-                    provider: PROVIDER,
+                    provider: runtimeProvider,
                     providerInstanceId: boundInstanceId,
                     threadId: input.threadId,
                     turnId,
@@ -507,7 +521,7 @@ export function makeCompadreAdapter(options: CompadreAdapterOptions) {
               yield* publish({
                 type: "runtime.error",
                 ...(yield* makeEventStamp()),
-                provider: PROVIDER,
+                provider: runtimeProvider,
                 providerInstanceId: boundInstanceId,
                 threadId: input.threadId,
                 turnId,
@@ -527,7 +541,7 @@ export function makeCompadreAdapter(options: CompadreAdapterOptions) {
                   yield* publish({
                     type: "item.started",
                     ...(yield* makeEventStamp()),
-                    provider: PROVIDER,
+                    provider: runtimeProvider,
                     providerInstanceId: boundInstanceId,
                     threadId: input.threadId,
                     turnId,
@@ -545,7 +559,7 @@ export function makeCompadreAdapter(options: CompadreAdapterOptions) {
                     yield* publish({
                       type: "item.started",
                       ...(yield* makeEventStamp()),
-                      provider: PROVIDER,
+                      provider: runtimeProvider,
                       providerInstanceId: boundInstanceId,
                       threadId: input.threadId,
                       turnId,
@@ -558,7 +572,7 @@ export function makeCompadreAdapter(options: CompadreAdapterOptions) {
                     yield* publish({
                       type: "content.delta",
                       ...(yield* makeEventStamp()),
-                      provider: PROVIDER,
+                      provider: runtimeProvider,
                       providerInstanceId: boundInstanceId,
                       threadId: input.threadId,
                       turnId,
@@ -576,7 +590,7 @@ export function makeCompadreAdapter(options: CompadreAdapterOptions) {
                   yield* publish({
                     type: "item.completed",
                     ...(yield* makeEventStamp()),
-                    provider: PROVIDER,
+                    provider: runtimeProvider,
                     providerInstanceId: boundInstanceId,
                     threadId: input.threadId,
                     turnId,
@@ -595,7 +609,7 @@ export function makeCompadreAdapter(options: CompadreAdapterOptions) {
                   yield* publish({
                     type: "item.started",
                     ...(yield* makeEventStamp()),
-                    provider: PROVIDER,
+                    provider: runtimeProvider,
                     providerInstanceId: boundInstanceId,
                     threadId: input.threadId,
                     turnId,
@@ -613,7 +627,7 @@ export function makeCompadreAdapter(options: CompadreAdapterOptions) {
                   yield* publish({
                     type: "item.completed",
                     ...(yield* makeEventStamp()),
-                    provider: PROVIDER,
+                    provider: runtimeProvider,
                     providerInstanceId: boundInstanceId,
                     threadId: input.threadId,
                     turnId,
@@ -648,6 +662,7 @@ export function makeCompadreAdapter(options: CompadreAdapterOptions) {
               input: text,
               inputFiles,
               provider: selectedProvider,
+              model: selectedModel,
             }),
             handleEvent,
           ).pipe(
@@ -693,7 +708,7 @@ export function makeCompadreAdapter(options: CompadreAdapterOptions) {
         yield* publish({
           type: "session.exited",
           ...(yield* makeEventStamp()),
-          provider: PROVIDER,
+          provider: runtimeProvider,
           providerInstanceId: boundInstanceId,
           threadId,
           payload: { exitKind: "graceful" },
@@ -703,7 +718,7 @@ export function makeCompadreAdapter(options: CompadreAdapterOptions) {
     const unsupported = (operation: string) =>
       Effect.fail(
         new ProviderAdapterValidationError({
-          provider: PROVIDER,
+          provider: runtimeProvider,
           operation,
           issue: "This operation is not supported by the Compadre provider experiment.",
         }),
@@ -748,7 +763,7 @@ export function makeCompadreAdapter(options: CompadreAdapterOptions) {
     );
 
     return {
-      provider: PROVIDER,
+      provider: runtimeProvider,
       capabilities: { sessionModelSwitch: "in-session" },
       startSession,
       sendTurn,

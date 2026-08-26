@@ -41,6 +41,7 @@ import {
   type ProviderDriver,
   type ProviderInstance,
 } from "../ProviderDriver.ts";
+import { makeRemoteNativeProvider, remoteNativeProviderEndpoint } from "../RemoteNativeProvider.ts";
 import type { ServerProviderDraft } from "../providerSnapshot.ts";
 import { mergeProviderInstanceEnvironment } from "../ProviderInstanceEnvironment.ts";
 import {
@@ -131,6 +132,37 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv> = {
         instanceId,
       });
       const effectiveConfig = { ...config, enabled } satisfies ClaudeSettings;
+      const remoteEndpoint = remoteNativeProviderEndpoint(processEnv);
+      if (remoteEndpoint) {
+        const stampIdentity = withInstanceIdentity({
+          instanceId,
+          displayName,
+          accentColor,
+          continuationGroupKey: fallbackContinuationIdentity.continuationKey,
+        });
+        const pending = stampIdentity(yield* makePendingClaudeProvider(effectiveConfig));
+        const serverConfig = yield* ServerConfig;
+        const apiKey = processEnv.COMPADRE_API_KEY?.trim();
+        const remote = yield* makeRemoteNativeProvider({
+          endpoint: remoteEndpoint,
+          ...(apiKey ? { apiKey } : {}),
+          agentProvider: "claude-code",
+          driverKind: DRIVER_KIND,
+          instanceId,
+          enabled,
+          attachmentsDir: serverConfig.attachmentsDir,
+          snapshot: pending,
+        });
+        return {
+          instanceId,
+          driverKind: DRIVER_KIND,
+          continuationIdentity: fallbackContinuationIdentity,
+          displayName,
+          accentColor,
+          enabled,
+          ...remote,
+        } satisfies ProviderInstance;
+      }
       const maintenanceCapabilities = yield* resolveProviderMaintenanceCapabilitiesEffect(UPDATE, {
         binaryPath: effectiveConfig.binaryPath,
         env: processEnv,

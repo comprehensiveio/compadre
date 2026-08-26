@@ -119,6 +119,56 @@ it.layer(Layer.merge(NodeServices.layer, FetchHttpClient.layer))("CompadreAdapte
     }),
   );
 
+  it.effect("presents a remote worker as the native provider and forwards its model", () =>
+    Effect.gen(function* () {
+      const threadId = ThreadId.make("remote-codex-thread");
+      const codex = ProviderDriverKind.make("codex");
+      const instanceId = ProviderInstanceId.make("codex");
+      const requests: Array<{ provider: unknown; model: unknown }> = [];
+      const completed = yield* Deferred.make<void>();
+      const adapter = yield* makeCompadreAdapter({
+        endpoint: "http://compadre.test/hosted/t3/chat",
+        runtimeProvider: codex,
+        instanceId,
+        provider: "codex",
+        transport: (request) => {
+          requests.push({ provider: request.provider, model: request.model });
+          return Stream.make({
+            type: "RUN_FINISHED",
+            runId: request.runId,
+            threadId: request.threadId,
+          });
+        },
+      });
+      const events: ProviderRuntimeEvent[] = [];
+      const eventsFiber = yield* Stream.runForEach(adapter.streamEvents, (event) =>
+        Effect.sync(() => events.push(event)).pipe(
+          Effect.andThen(
+            event.type === "turn.completed" ? Deferred.succeed(completed, undefined) : Effect.void,
+          ),
+        ),
+      ).pipe(Effect.forkChild);
+      yield* Effect.yieldNow;
+      yield* adapter.startSession({
+        threadId,
+        provider: codex,
+        runtimeMode: "full-access",
+        modelSelection: { instanceId, model: "gpt-5.6-sol" },
+      });
+      yield* adapter.sendTurn({
+        threadId,
+        input: "inspect the repo",
+        modelSelection: { instanceId, model: "gpt-5.6-sol" },
+      });
+      yield* Deferred.await(completed);
+      yield* Fiber.interrupt(eventsFiber);
+
+      assert.deepStrictEqual(requests, [{ provider: "codex", model: "gpt-5.6-sol" }]);
+      assert.isTrue(events.every((event) => event.provider === codex));
+      assert.equal(adapter.provider, codex);
+    }),
+  );
+
   it.effect("turns a Compadre run error into a failed T3 turn", () =>
     Effect.gen(function* () {
       const threadId = ThreadId.make("compadre-error-thread");
