@@ -69,6 +69,14 @@ test("a web turn starts one durable run and fans a Slack-bound thread back to Sl
           assert.equal(input.transcriptUserMessage, "hello from the browser");
           assert.equal(input.persistThread, true);
           assert.equal(input.responseMode, "slack-streaming");
+          assert.deepEqual(input.inputFiles, [
+            {
+              name: "probe.png",
+              mimetype: "image/png",
+              sizeBytes: 4,
+              dataBase64: "iVBORw==",
+            },
+          ]);
           await persistence.stores.messages.saveThread("slack-thread", [
             { role: "user", content: "hello from the browser" },
             { role: "assistant", content: "hello from Compadre" },
@@ -136,7 +144,17 @@ test("a web turn starts one durable run and fans a Slack-bound thread back to Sl
       ],
       tools: [],
       context: [],
-      forwardedProps: { provider: "codex" },
+      forwardedProps: {
+        provider: "codex",
+        inputFiles: [
+          {
+            name: "probe.png",
+            mimetype: "image/png",
+            sizeBytes: 4,
+            dataBase64: "iVBORw==",
+          },
+        ],
+      },
       state: {},
     }),
   );

@@ -13,8 +13,12 @@ MCP access to our infrastructure.
 | **Linear**           | HTTP                                            | Issue tracking, project management                                                             |
 | **GitHub**           | HTTP (Copilot MCP)                              | Repos, PRs, issues                                                                             |
 | **Render**           | HTTP (`mcp.render.com`)                         | Service management, deploys, logs                                                              |
+| **Jam**              | HTTP                                            | Jam recordings, diagnostics, and debugging context                                             |
 | **Postgres**         | stdio (`@modelcontextprotocol/server-postgres`) | Read-only database access                                                                      |
+| **S3**               | stdio (built in)                                | Read and inspect configured object storage                                                     |
 | **Google Workspace** | stdio (`workspace-mcp`)                         | Google Docs, Drive, Sheets, Slides, Forms, Tasks, and Calendar access as the Compadre bot user |
+| **Vitally**          | stdio (built in)                                | Read customer-success accounts, organizations, and related context                             |
+| **Comp app**         | stdio (built in)                                | Read Comprehensive application data through its authenticated API                              |
 
 Each harness gets its native coding tools plus the shared MCP tools above, with
 the comp repo cloned into a thread-scoped worktree.
@@ -29,8 +33,10 @@ POST /ag-ui                  # Optional authenticated AG-UI stream
 GET  /ag-ui?threadId=...     # Optional authenticated thread hydration
 GET  /hosted                  # Optional hosted browser client (feature flagged)
 GET|POST /hosted/chat        # Hosted hydration/resumable stream and new turns
+POST /hosted/runs/:id/cancel # Cancel a browser-started hosted run
 POST /hosted/threads/:id/slack # Link browser thread output to a Slack thread
 POST /workflow-runs          # Optional durable Workflow launcher (Bearer COMPADRE_API_KEY)
+GET  /workflow-runs/:id      # Durable run lifecycle status (Bearer COMPADRE_API_KEY)
 GET  /workflow-runs/:id/events # Resumable AG-UI event stream (Bearer COMPADRE_API_KEY; any authenticated caller may replay a known run ID)
 POST /workflow-runs/:id/cancel # Cancel an active durable run (Bearer COMPADRE_API_KEY)
 POST /webhook/:source        # Generic webhook (Bearer COMPADRE_API_KEY)

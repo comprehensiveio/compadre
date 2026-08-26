@@ -47,6 +47,12 @@ test("cancels an active API workflow run", async (t) => {
   });
   assert.equal(response.status, 202);
   assert.deepEqual(cancelled, ["active-api-run"]);
+
+  const status = await app.request("/workflow-runs/active-api-run", {
+    headers: { Authorization: "Bearer test-key" },
+  });
+  assert.equal(status.status, 200);
+  assert.equal((await status.json()).status, "running");
 });
 
 test("starts a local durable run and serves resumable AG-UI events", async (t) => {

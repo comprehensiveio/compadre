@@ -16,6 +16,7 @@ import {
   type RunCapacityPriority,
 } from "./tanstack/thread-lock.js";
 import type { SlackFileReference } from "./services/slack-files.js";
+import type { InputFile } from "./services/input-files.js";
 
 export interface StreamCallbacks {
   onTextDelta?: (text: string) => void;
@@ -37,6 +38,7 @@ export interface ConversationOptions {
   retryOnBackgroundPreemption?: boolean;
   persistThread?: boolean;
   slackFiles?: SlackFileReference[];
+  inputFiles?: InputFile[];
 }
 
 export type ConversationResult = HarnessConversationResult;
@@ -91,6 +93,7 @@ export function runConversation(
         capacityPriority: options.capacityPriority,
         persistThread: options.persistThread ?? !ephemeral,
         slackFiles: options.slackFiles,
+        inputFiles: options.inputFiles,
       });
       if (!options.retryOnBackgroundPreemption) return await execute();
       return await retryBackgroundPreemptions(

@@ -114,6 +114,12 @@ thread or run ID can read it. Before broader use, replace that boundary with
 user identity, thread ownership, audit logging, and a server-side session so an
 API key is not retained in browser storage.
 
+The T3 Stop action calls `POST /hosted/runs/:runId/cancel`, which aborts the
+active controller run and tears down the Modal harness instead of only closing
+the browser stream. Cancellation ownership is currently in process, so keep the
+experiment at one Render instance until run ownership or cancellation requests
+are coordinated through shared storage.
+
 ## T3 provider-adapter result
 
 The comparison is complete: T3's server exposes a provider-adapter boundary
@@ -130,6 +136,22 @@ project, thread, and transcript survived on disk. A follow-up used the same
 Compadre thread, logged `resumed=true`, restored its Modal snapshot, and recalled
 the prior repository remote. Slack delivery remained disabled throughout.
 
-The next decision gate is Slack-thread discovery/pairing UX and user-scoped
-authentication, not whether shared Slack/T3/Modal identity is technically
-possible.
+## Capability audit
+
+The experiment preserves the existing `/prompt`, generic webhook, signed Slack
+Events, AG-UI, durable Workflow, MCP, PR-watch, and Slack recovery code paths.
+The isolated service deliberately does not own real Slack ingress, recovery, or
+PR watches, so it cannot duplicate production work.
+
+The browser path now has per-turn Claude Code/Codex selection, persistent
+threads and Modal snapshots, real backend cancellation, resumable streams, API
+run status, and image attachment forwarding. Modal sandboxes receive Compadre's
+skills and prompts, all configured MCP tools, plus the same practical command
+line set used by the app (`git`, `curl`, `jq`, `psql`, `gh`, `rg`, `pnpm`, and
+the pinned Claude/Codex CLIs).
+
+Remaining product gaps are user-scoped authentication, a Slack discovery and
+pairing UI, multi-instance cancellation ownership, and T3-native presentation
+for remote workspace diffs, checkpoints, shells, and interactive approval or
+elicitation requests. These are integration/productization work rather than
+evidence that the shared T3/Slack/Modal thread model is infeasible.

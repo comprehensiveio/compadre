@@ -156,6 +156,18 @@ export function createWorkflowRunRoutes(
     });
   });
 
+  routes.get("/workflow-runs/:runId", async (c) => {
+    if (!dependencies.enabled()) return c.notFound();
+    const authError = requireCompadreApiKey(c);
+    if (authError) return authError;
+    const durability = await dependencies.getDurability();
+    if (!durability) {
+      return c.json({ error: "agent run durability is not configured" }, 503);
+    }
+    const run = await durability.runs.get(c.req.param("runId"));
+    return run ? c.json(run) : c.json({ error: "run not found" }, 404);
+  });
+
   routes.post("/workflow-runs/:runId/cancel", async (c) => {
     if (!dependencies.enabled()) return c.notFound();
     const authError = requireCompadreApiKey(c);

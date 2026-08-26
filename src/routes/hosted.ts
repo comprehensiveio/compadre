@@ -36,6 +36,7 @@ import {
   type AgentProvider,
 } from "../tanstack/protocol.js";
 import { requireCompadreApiKey } from "./auth.js";
+import { inputFilesSchema } from "../services/input-files.js";
 
 export interface HostedSlackDeliveryStart {
   binding: HostedSlackBinding;
@@ -338,6 +339,18 @@ export function createHostedRoutes(
         400,
       );
     }
+    const parsedInputFiles = inputFilesSchema.safeParse(
+      params.forwardedProps.inputFiles ?? [],
+    );
+    if (!parsedInputFiles.success) {
+      return c.json(
+        {
+          error: "forwardedProps.inputFiles contains invalid attachments",
+          detail: parsedInputFiles.error.message,
+        },
+        400,
+      );
+    }
 
     const durability = await dependencies.getDurability();
     if (!durability) {
@@ -372,6 +385,7 @@ export function createHostedRoutes(
         profile: isAgentProfile(requestedProfile) ? requestedProfile : undefined,
         responseMode: binding ? "slack-streaming" : "default",
         persistThread: true,
+        inputFiles: parsedInputFiles.data,
       });
     } catch (error) {
       await failOpenDurableRun(durability, runId, error).catch(

@@ -16,6 +16,10 @@ import {
   type SlackFileReference,
 } from "../services/slack-files.js";
 import {
+  materializeInputFiles,
+  type InputFile,
+} from "../services/input-files.js";
+import {
   createHarnessStream,
   resolveHarnessSelection,
   type HarnessSelection,
@@ -55,6 +59,7 @@ export interface AguiRuntimeOptions {
   /** False only for generated one-off threads; true requires durability. */
   persistThread?: boolean;
   slackFiles?: SlackFileReference[];
+  inputFiles?: InputFile[];
 }
 
 export function shouldReuseThreadSandbox(
@@ -264,9 +269,20 @@ async function prepareAguiChat(
   });
   const { thread, worktreeId, worktreePath } = allocation;
   const remoteAttachmentDirectory = `${harnessWorkspacePath(worktreePath)}/.compadre-attachments-${worktreeId}`;
-  const attachments = await materializeSlackFiles(options.slackFiles ?? [], {
+  const slackAttachments = await materializeSlackFiles(options.slackFiles ?? [], {
     promptDirectory: remoteAttachmentDirectory,
   });
+  const inputAttachments = materializeInputFiles(
+    options.inputFiles ?? [],
+    remoteAttachmentDirectory,
+  );
+  const attachments = {
+    prompt: [slackAttachments.prompt, inputAttachments.prompt]
+      .filter(Boolean)
+      .join("\n\n"),
+    uploads: [...slackAttachments.uploads, ...inputAttachments.uploads],
+    cleanup: slackAttachments.cleanup,
+  };
   const inputParams = attachments.prompt
     ? {
         ...params,
