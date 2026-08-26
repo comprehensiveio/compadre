@@ -47,7 +47,8 @@ change the production Compadre service.
 - A live gateway probe created a Codex thread, received
   `comprehensiveio/comp`, restarted the local gateway process, reconnected to
   the same Modal sandbox and T3 thread, and received `RECONNECTED` on a second
-  turn.
+  turn. A separate provider-specific gateway probe created a native Claude
+  Opus 5 thread and returned the same repository identity.
 - Human browser pairing and the Compadre gateway use separate credentials. The
   reconnect credential is mode `0600` inside the isolated Modal sandbox rather
   than in generic thread metadata; the one-time browser token remains safe to
