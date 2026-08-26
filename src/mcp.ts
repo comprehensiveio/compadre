@@ -121,12 +121,12 @@ function buildDatadogMcpServer(): CompadreMcpServerConfig | null {
 
 function buildCompMcpServer(): CompadreMcpServerConfig | null {
   const compAppUrl = process.env.COMP_APP_URL;
-  const apiKey = process.env.COMPADRE_API_KEY;
+  const apiKey = process.env.COMP_APP_API_KEY ?? process.env.COMPADRE_API_KEY;
 
   if (!compAppUrl || !apiKey) {
     if (!hasLoggedCompDisabled) {
       console.warn(
-        "[mcp] Comp MCP disabled: COMP_APP_URL and COMPADRE_API_KEY are not both configured"
+        "[mcp] Comp MCP disabled: COMP_APP_URL and COMP_APP_API_KEY/COMPADRE_API_KEY are not both configured"
       );
       hasLoggedCompDisabled = true;
     }

@@ -46,3 +46,32 @@ test("partial MCP mode omits integrations without local credentials", async () =
     }
   }
 });
+
+test("Comp MCP can use an app credential distinct from the relay API key", async () => {
+  const keys = [
+    "COMP_APP_URL",
+    "COMP_APP_API_KEY",
+    "COMPADRE_API_KEY",
+    "COMPADRE_MCP_ALLOW_PARTIAL",
+  ] as const;
+  const previous = new Map(keys.map((key) => [key, process.env[key]]));
+  try {
+    process.env.COMPADRE_MCP_ALLOW_PARTIAL = "true";
+    process.env.COMP_APP_URL = "https://app.example.com";
+    process.env.COMP_APP_API_KEY = "app-key";
+    process.env.COMPADRE_API_KEY = "relay-key";
+
+    const servers = await buildMcpServers();
+    const server = servers.comp_app;
+    assert.ok(server && "type" in server);
+    if (!server || !("type" in server)) return;
+    assert.equal(server.url, "https://app.example.com/api/mcp/compadre");
+    assert.equal(server.headers?.Authorization, "Bearer app-key");
+  } finally {
+    for (const key of keys) {
+      const value = previous.get(key);
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  }
+});

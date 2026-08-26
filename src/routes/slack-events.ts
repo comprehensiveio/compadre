@@ -378,10 +378,11 @@ async function forwardProdSupportLinks(event: SlackEvent) {
     return;
   }
 
-  const compadreApiKey = process.env.COMPADRE_API_KEY;
+  const compadreApiKey =
+    process.env.COMP_APP_API_KEY ?? process.env.COMPADRE_API_KEY;
   if (!compadreApiKey) {
     console.error(
-      "[slack-events] COMPADRE_API_KEY not set, cannot forward prod-support links",
+      "[slack-events] COMP_APP_API_KEY/COMPADRE_API_KEY not set, cannot forward prod-support links",
     );
     return;
   }
