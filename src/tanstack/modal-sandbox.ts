@@ -85,6 +85,7 @@ const DEFAULT_SNAPSHOT_TTL_MS = 7 * 24 * 60 * 60 * 1_000;
 const CLAUDE_CODE_VERSION = "2.1.222";
 const CODEX_VERSION = "0.146.0";
 const PNPM_VERSION = "10.34.2";
+const T3_CODE_VERSION = "0.0.33";
 
 function positiveNumberSetting(
   name: string,
@@ -119,8 +120,8 @@ export function modalImageCommands(environment: NodeJS.ProcessEnv): string[] {
     ...(environment.COMPADRE_MODAL_SKIP_CLI_SETUP === "true"
       ? []
       : [
-          `RUN npm install --prefix ${quote(runtimeRoot)} --no-save @anthropic-ai/claude-code@${CLAUDE_CODE_VERSION} @openai/codex@${CODEX_VERSION}`,
-          `RUN ln -sf ${quote(path.posix.join(runtimeRoot, "node_modules", ".bin", "claude"))} /usr/local/bin/claude && ln -sf ${quote(path.posix.join(runtimeRoot, "node_modules", ".bin", "codex"))} /usr/local/bin/codex`,
+          `RUN npm install --prefix ${quote(runtimeRoot)} --no-save @anthropic-ai/claude-code@${CLAUDE_CODE_VERSION} @openai/codex@${CODEX_VERSION} t3@${T3_CODE_VERSION}`,
+          `RUN ln -sf ${quote(path.posix.join(runtimeRoot, "node_modules", ".bin", "claude"))} /usr/local/bin/claude && ln -sf ${quote(path.posix.join(runtimeRoot, "node_modules", ".bin", "codex"))} /usr/local/bin/codex && ln -sf ${quote(path.posix.join(runtimeRoot, "node_modules", ".bin", "t3"))} /usr/local/bin/t3`,
         ]),
   ];
 }
@@ -213,7 +214,7 @@ function streamChunks(stream: ReadableStream<string>): AsyncIterable<string> {
 
 export class ModalHandle implements SandboxHandle {
   readonly provider = "modal";
-  readonly capabilities = MODAL_CAPS;
+  readonly capabilities: SandboxCapabilities;
   readonly id: string;
   readonly workspaceRoot: string;
   readonly fs: SandboxHandle["fs"];
@@ -224,14 +225,21 @@ export class ModalHandle implements SandboxHandle {
 
   private readonly envVars: Record<string, string> = {};
   private readonly stopProcessMonitors = new Set<() => void>();
+  private readonly exposedPorts: ReadonlySet<number>;
 
   constructor(
     private readonly sandbox: Sandbox,
     workdir = DEFAULT_WORKDIR,
     private readonly snapshotTtlMs = DEFAULT_SNAPSHOT_TTL_MS,
+    exposedPorts: readonly number[] = [],
   ) {
     this.id = sandbox.sandboxId;
     this.workspaceRoot = workdir;
+    this.exposedPorts = new Set(exposedPorts);
+    this.capabilities = {
+      ...MODAL_CAPS,
+      ports: this.exposedPorts.size > 0,
+    };
 
     this.process = {
       exec: (command, options) => this.exec(command, options),
@@ -281,8 +289,17 @@ export class ModalHandle implements SandboxHandle {
     };
     this.git = createExecBackedGit(this.process, workdir);
     this.ports = {
-      connect: async () => {
-        throw new UnsupportedCapabilityError("modal", "ports");
+      connect: async (port) => {
+        if (!this.exposedPorts.has(port)) {
+          throw new UnsupportedCapabilityError("modal", `port ${port}`);
+        }
+        const tunnel = (await sandbox.tunnels())[port];
+        if (!tunnel) {
+          throw new Error(
+            `Modal did not return a tunnel for configured port ${port}`,
+          );
+        }
+        return { url: tunnel.url };
       },
     };
     this.env = {
@@ -511,6 +528,20 @@ export class ModalHandle implements SandboxHandle {
 export interface ModalSandboxProviderOptions {
   environment?: NodeJS.ProcessEnv;
   client?: ModalClient;
+  /** Container ports exposed through Modal's public encrypted tunnels. */
+  encryptedPorts?: number[];
+}
+
+function normalizePorts(ports: readonly number[] | undefined): number[] {
+  const normalized = [...new Set(ports ?? [])];
+  for (const port of normalized) {
+    if (!Number.isInteger(port) || port < 1 || port > 65_535) {
+      throw new Error(
+        `Modal encrypted port must be an integer from 1 to 65535: ${port}`,
+      );
+    }
+  }
+  return normalized;
 }
 
 interface ModalRuntime {
@@ -616,6 +647,11 @@ export function modalSandboxProvider(
   options: ModalSandboxProviderOptions = {},
 ): SandboxProvider {
   const environment = options.environment ?? process.env;
+  const encryptedPorts = normalizePorts(options.encryptedPorts);
+  const capabilities: SandboxCapabilities = {
+    ...MODAL_CAPS,
+    ports: encryptedPorts.length > 0,
+  };
   const runtime = modalRuntime(environment, options.client);
   const { client } = runtime;
   const workdir = environment.COMPADRE_MODAL_WORKDIR?.trim() || DEFAULT_WORKDIR;
@@ -636,16 +672,17 @@ export function modalSandboxProvider(
         cpuLimit,
         memoryMiB,
         memoryLimitMiB,
+        ...(encryptedPorts.length > 0 ? { encryptedPorts } : {}),
         ...(env ? { env } : {}),
         tags: { managedBy: "compadre" },
       }),
     );
-    return new ModalHandle(sandbox, workdir, snapshotTtlMs);
+    return new ModalHandle(sandbox, workdir, snapshotTtlMs, encryptedPorts);
   };
 
   return {
     name: "modal",
-    capabilities: () => MODAL_CAPS,
+    capabilities: () => capabilities,
     create: async (input) => {
       const image = await timedModalPhase("image.resolve", () =>
         runtime.baseImage(),
@@ -656,7 +693,12 @@ export function modalSandboxProvider(
       try {
         const sandbox = await client.sandboxes.fromId(input.id);
         if ((await sandbox.poll()) !== null) return null;
-        return new ModalHandle(sandbox, workdir, snapshotTtlMs);
+        return new ModalHandle(
+          sandbox,
+          workdir,
+          snapshotTtlMs,
+          encryptedPorts,
+        );
       } catch (error) {
         if (error instanceof NotFoundError) return null;
         throw error;

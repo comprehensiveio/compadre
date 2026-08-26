@@ -34,6 +34,7 @@ export interface CreateHarnessSandboxOptions {
   reuseThread?: boolean;
   environment?: NodeJS.ProcessEnv;
   uploads?: Array<{ path: string; data: Uint8Array }>;
+  encryptedPorts?: number[];
   onReady?: (handle: SandboxHandle) => void | Promise<void>;
 }
 
@@ -44,6 +45,7 @@ export function createHarnessSandbox({
   reuseThread = true,
   environment = process.env,
   uploads = [],
+  encryptedPorts = [],
   onReady,
 }: CreateHarnessSandboxOptions): SandboxDefinition {
   const workdir = harnessWorkspacePath(localWorktreePath, environment);
@@ -59,7 +61,7 @@ export function createHarnessSandbox({
     });
   return defineSandbox({
       id: `compadre-agui-${worktreeId}`,
-      provider: modalSandboxProvider({ environment }),
+      provider: modalSandboxProvider({ environment, encryptedPorts }),
       workspace: defineWorkspace({
         root: workdir,
         // Clone in setup so a non-zero Git exit is surfaced directly.

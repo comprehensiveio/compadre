@@ -14,6 +14,7 @@
     "slack:simulate": "tsx scripts/simulate-slack.ts",
     "benchmark:cold-start": "tsx scripts/benchmark-cold-start.ts",
     "modal:prepare-image": "tsx scripts/prepare-modal-image.ts",
+    "experiment:t3-modal": "tsx scripts/launch-t3-modal.ts",
     "db:check": "drizzle-kit check",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",

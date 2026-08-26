@@ -88,3 +88,14 @@ test("writes Compadre skills after the setup-time clone", async () => {
     assert.match(Buffer.from(data).toString("utf8"), /^---\nname:/);
   }
 });
+
+test("opts a T3 sandbox into Modal port tunnels", () => {
+  const sandbox = createHarnessSandbox({
+    worktreeId: "t3-server",
+    localWorktreePath: "/unused",
+    encryptedPorts: [3773],
+    environment: { MODAL_TOKEN_ID: "test-id", MODAL_TOKEN_SECRET: "test-secret" },
+  });
+
+  assert.equal(sandbox.provider.capabilities().ports, true);
+});
