@@ -46,6 +46,18 @@ Open `http://localhost:3100/hosted` and enter `COMPADRE_API_KEY`. For frontend
 iteration, run `npm run dev:web` alongside `npm run dev` and open Vite on port
 5173.
 
+To exercise the Slack ingress shape without sending anything to Slack, run:
+
+```bash
+npm run slack:simulate -- --claude-code Reply with exactly: SLACK-SIM-OK
+```
+
+The simulator uses the real workflow conversation runner, AG-UI durability,
+thread persistence, Modal sandbox, routing directives, Slack prompt, streaming,
+and auto-continuation. It defaults to in-memory durability when the local
+configuration is off; a configured PostgreSQL backend is retained. Only the
+Slack delivery sink is synthetic.
+
 To open a Slack-originated conversation, use its canonical Compadre thread ID
 (currently the Slack thread timestamp). The existing transcript will hydrate
 when the browser and production relay share the same Postgres durability

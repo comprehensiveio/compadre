@@ -94,6 +94,72 @@ test("relays a Workflow AG-UI log through channel callbacks", async () => {
   assert.equal(completed, 1);
 });
 
+test("waits through asynchronous workflow startup on memory durability", async () => {
+  const durability = await createAgentRunDurability({
+    COMPADRE_DURABILITY_BACKEND: "memory",
+  });
+  assert.ok(durability);
+  let completion: Promise<void> | undefined;
+
+  const result = await runWorkflowConversation(
+    { prompt: "hello", threadId: "slow-thread", provider: "claude-code" },
+    {
+      getDurability: async () => durability,
+      createId: () => "slow-run",
+      now: () => 1,
+      getLauncher: () => ({
+        async start() {
+          completion = new Promise<void>((resolve, reject) => {
+            setTimeout(() => {
+              void (async () => {
+                await durability.stream("slow-run").append([
+                  {
+                    type: EventType.RUN_STARTED,
+                    runId: "slow-run",
+                    threadId: "slow-thread",
+                    timestamp: 1,
+                  },
+                  {
+                    type: EventType.TEXT_MESSAGE_START,
+                    messageId: "message",
+                    role: "assistant",
+                    timestamp: 2,
+                  },
+                  {
+                    type: EventType.TEXT_MESSAGE_CONTENT,
+                    messageId: "message",
+                    delta: "ready",
+                    timestamp: 3,
+                  },
+                  {
+                    type: EventType.RUN_FINISHED,
+                    runId: "slow-run",
+                    threadId: "slow-thread",
+                    finishReason: "stop",
+                    timestamp: 4,
+                  },
+                ]);
+                await durability.runs.update("slow-run", {
+                  status: "completed",
+                  finishedAt: 4,
+                });
+                await durability.stream("slow-run").close();
+                resolve();
+              })().catch(reject);
+            }, 150);
+          });
+          return { taskRunId: "slow-task" };
+        },
+        async wait() {
+          await completion;
+        },
+      }),
+    },
+  );
+
+  assert.equal(result.result, "ready");
+});
+
 test("fails promptly when the Workflow task dies before opening a log", async () => {
   const durability = await createAgentRunDurability({
     COMPADRE_DURABILITY_BACKEND: "memory",
