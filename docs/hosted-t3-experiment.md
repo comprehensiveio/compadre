@@ -7,8 +7,9 @@ hosted controller and Modal remains the execution boundary.
 The first experiment reused the useful seams—the chat interaction model,
 streamed tool activity, durable thread identity, and resumable client
 behavior—on top of Compadre's existing TanStack AI event log. A reproducible
-T3 provider-adapter patch now proves that contract without requiring a remote
-fork yet.
+T3 provider-adapter patch now proves that contract. The experiment is also
+published on the Comprehensive fork at
+`comprehensiveio/t3code:experiment/compadre-modal-provider`.
 
 ## Architecture
 
@@ -56,11 +57,17 @@ lineage are shared in both directions.
 
 ## Parallel deployment
 
-Run this branch as a separate Render Web Service, for example
-`compadre-hosted-experiment`, with its own hostname and API key. It may share
-the production durability database to expose real canonical threads, but that
-grants the experiment read/write access to those conversations, so initially
-limit access to trusted testers.
+The isolated canary is deployed in Render's `Compadre T3 Experiment` project,
+inside its `Experiment` environment:
+
+- T3 UI: `https://t3code-compadre-experiment.onrender.com`
+- Compadre controller: `https://compadre-t3-experiment.onrender.com`
+- Compadre database: `compadre-t3-experiment-postgres`
+- T3 state: a 1 GB persistent disk mounted at `/var/data`
+
+The environment has private-network isolation enabled. The canary has its own
+database and API key, so it cannot hydrate production Slack threads unless a
+later, explicit trial changes that boundary.
 
 Configure the experiment with the normal relay/Modal credentials plus:
 
@@ -105,6 +112,12 @@ workspace from a T3-native id and hydrated the combined transcript. The
 reproducible upstream patch and current limitations are documented in
 [`experiments/t3code/README.md`](../experiments/t3code/README.md).
 
-Do not publish a fork until its owner and update policy are explicit. The next
-decision gate is Slack-thread discovery/pairing UX plus an HTTPS tunnel for host
-tools, not whether shared Slack/T3/Modal identity is technically possible.
+The Render canary also completed a browser -> T3 -> Compadre -> Modal -> T3
+turn against `comprehensiveio/comp`. After a T3 redeploy, the browser pairing,
+project, thread, and transcript survived on disk. A follow-up used the same
+Compadre thread, logged `resumed=true`, restored its Modal snapshot, and recalled
+the prior repository remote. Slack delivery remained disabled throughout.
+
+The next decision gate is Slack-thread discovery/pairing UX and user-scoped
+authentication, not whether shared Slack/T3/Modal identity is technically
+possible.

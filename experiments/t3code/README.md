@@ -11,6 +11,11 @@ The companion patch is based on upstream T3 Code commit
 `COMPADRE_PROVIDER_URL`; without that variable, T3's Codex driver is
 unchanged.
 
+The maintained experiment branch is
+`https://github.com/comprehensiveio/t3code/tree/experiment/compadre-modal-provider`.
+It also marks the provider ready when `COMPADRE_PROVIDER_URL` is configured, so
+a hosted T3 server does not need a local Codex executable or OpenAI login.
+
 ## Proven flow
 
 ```text
@@ -35,6 +40,13 @@ and terminated. A turn sent under the T3 id then resolved to the Slack-backed
 canonical conversation, logged `resumed=true`, restored the snapshot into a
 new physical sandbox, and returned `PAIRING-SNAPSHOT-OK SECOND SIDE COMPLETE`.
 Hydration through the T3 id returned the combined six-message transcript.
+
+The deployed Render canary completed the same flow over public HTTPS. T3
+streamed `RENDER-MODAL-OK` from a real Modal sandbox working in `/workspace`
+with `https://github.com/comprehensiveio/comp.git` as its origin. After a T3
+redeploy, the persistent disk retained the browser pairing, project, thread,
+and transcript. A post-redeploy follow-up returned `DURABILITY-OK`; Compadre
+logged `resumed=true` and restored the prior Modal snapshot.
 
 ## Apply the T3 patch
 
@@ -123,8 +135,9 @@ cd apps/server
 ```
 
 The focused adapter tests cover successful text streaming and failed runs.
-The server typecheck passes; existing Effect diagnostic suggestions elsewhere
-in T3 remain unchanged.
+The hosted-provider status behavior is covered in `ProviderRegistry.test.ts`.
+Both focused suites and the server typecheck pass; existing Effect diagnostic
+suggestions elsewhere in T3 remain unchanged.
 
 ## Known gaps
 
@@ -142,10 +155,17 @@ in T3 remain unchanged.
   and automatic import of Slack history into its own local event database.
 - The adapter currently occupies T3's Codex driver slot. A durable fork should
   add Compadre as its own provider driver and snapshot instead.
+- T3's auxiliary title-generation reactor still attempts to launch a local
+  Codex CLI. Turn execution succeeds, but automatic thread titles fall back to
+  the user prompt until text generation is routed through Compadre.
+- A direct Render service restart left the disk-backed T3 service returning
+  502s during this trial. A normal Render redeploy recovered the service and
+  retained all disk state; use redeploy for canary maintenance until this is
+  understood.
 
-## Fork decision
+## Fork status
 
-The local result is strong enough to justify a small maintained fork if the
-next slice—Slack/thread binding plus real HTTPS host tools—also succeeds. Until
-then, this patch is the reproducible artifact and avoids creating a remote fork
-whose ownership and update policy have not been chosen.
+The experiment now uses a Comprehensive-owned fork and an isolated Render
+project. The fork is intentionally limited to the provider adapter and hosted
+readiness behavior. The next slice should add Slack-thread discovery and
+pairing UX before treating it as a product surface.
