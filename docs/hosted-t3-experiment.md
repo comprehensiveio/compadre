@@ -36,18 +36,26 @@ therefore render without waking Modal. Sending a new turn resumes or replaces
 the worker behind the same thread. Live terminal and filesystem operations may
 require a worker; completed transcript and tool detail may not.
 
-The first migration slice persists complete native T3 thread snapshots in
-Compadre's central metadata store, including passthrough activity and
-provider-specific fields, and serves completed coordinator reads from that
-archive without reconnecting Modal. This is a transition read model, not a
-second transcript format. The next fork slice makes the hosted T3 environment
-own the event log directly and supplies remote provider/workspace adapters for
-Modal execution.
+The current migration slice does both sides of that handoff. Complete native T3
+worker snapshots are archived in Compadre's Postgres metadata store before
+they are projected into the live stream, while the hosted T3 environment
+persists the projected native provider events in its own orchestration log.
+The browser reads that hosted T3 log; it does not contact Modal to render a
+completed thread. Codex and Claude still appear as T3's built-in providers, but
+their provider adapters route execution to the per-thread Modal environment.
+
+There are therefore two intentional durable records during the experiment:
+Compadre's worker snapshot archive is the recovery/source record for remote
+execution, and hosted T3's event log is the canonical UI read model. The next
+durability step is resumable stream delivery: snapshots are saved during a run,
+but a Render process replacement cannot yet resume the exact SSE cursor without
+repairing the central T3 projection from the archived snapshot.
 
 | Data | Durable owner | Worker responsibility |
 | --- | --- | --- |
-| T3 orchestration events and projections | Render database | Publish runtime results |
-| Messages, reasoning, and tool activities | Render database | Produce provider events |
+| T3 orchestration events and projections | Hosted T3 SQLite on its Render disk | Publish runtime results |
+| Worker snapshots and routing metadata | Compadre experiment Postgres | Publish each snapshot before stream projection |
+| Messages, reasoning, and tool activities | Hosted T3 SQLite on its Render disk | Produce provider events |
 | Attachments and large artifacts | Central object storage | Materialize into the checkout |
 | Thread-to-worker lease | Render database | Heartbeat and resume token |
 | Checkout, uncommitted files, live terminal | Modal worker / workspace snapshot | Execute and checkpoint |
@@ -85,7 +93,7 @@ T3 provider-adapter patch now proves that contract. The experiment is also
 published on the Comprehensive fork at
 `comprehensiveio/t3code:experiment/compadre-modal-provider`.
 
-## Architecture
+## Legacy AG-UI checkpoint architecture
 
 ```text
 Slack Events ──┐
@@ -95,11 +103,11 @@ Browser UI ────┘             │
                              └─> Slack delivery for explicitly linked threads
 ```
 
-The browser is not a second agent backend. `POST /hosted/chat` starts the same
-durable workflow launcher used by the relay, and the response replays the same
-AG-UI event log Slack consumes. `GET /hosted/chat?threadId=...` reconstructs the
-canonical transcript. A dropped browser connection can rejoin by durable run
-ID without starting another Modal task.
+The diagnostic browser is not a second agent backend. `POST /hosted/chat`
+starts the same durable workflow launcher used by the relay, and the response
+replays the same AG-UI event log Slack consumes. The corresponding read
+endpoint reconstructs the canonical transcript. A dropped browser connection
+can rejoin by durable run ID without starting another Modal task.
 
 ## Local use
 
@@ -120,10 +128,13 @@ Open `http://localhost:3100/hosted` and enter `COMPADRE_API_KEY`. For frontend
 iteration, run `npm run dev:web` alongside `npm run dev` and open Vite on port
 5173.
 
-### Native T3 directory mode
+### Central native T3 mode
 
-The newer architecture is available independently of the original AG-UI
-surface:
+The worker directory routes remain available independently of the original
+AG-UI surface. The primary browser path now runs the normal T3 UI and server on
+Render. Set the central T3 server's `COMPADRE_NATIVE_T3_URL` to the controller's
+`/hosted/t3/chat` endpoint; do not set `COMPADRE_PROVIDER_URL` or T3's hosted
+static-app build flags.
 
 ```bash
 COMPADRE_T3_DIRECTORY_ENABLED=true \
@@ -133,13 +144,13 @@ COMPADRE_DURABILITY_BACKEND=memory \
 npm run dev
 ```
 
-Render stores only the credential-free directory and routing metadata. The first message creates one
-Modal sandbox containing one native T3 server and one native T3 thread.
+The first message creates one Modal sandbox containing one native T3 server and
+one native T3 thread.
 Follow-up messages, refresh, cancellation, and “Open native T3” all resolve the
 same binding. The central UI is T3's existing hosted web app—not Compadre's
-diagnostic directory UI. Merely listing metadata does not wake a sandbox. Codex
-and Claude Code remain T3-native harnesses and do not route execution back
-through TanStack AI.
+diagnostic directory UI. Merely listing a completed central thread does not
+wake its sandbox. Codex and Claude Code remain T3-native harnesses and do not
+route execution back through TanStack AI.
 
 The current local/deployed limitation is hard sandbox expiry: reconnect is
 proven while Modal still exposes the sandbox, but T3's data directory is not
@@ -176,6 +187,17 @@ inside its `Experiment` environment:
 - Compadre controller: `https://compadre-t3-experiment.onrender.com`
 - Compadre database: `compadre-t3-experiment-postgres`
 - T3 state: a 1 GB persistent disk mounted at `/var/data`
+
+The T3 service is built in same-origin server mode. In particular,
+`VITE_HOSTED_APP_CHANNEL` and `VITE_HOSTED_APP_URL` are blank; setting them
+turns the bundle into T3's static multi-environment client and prevents it from
+using the Render server as the primary environment. Its native remote provider
+bridge is configured with:
+
+```text
+COMPADRE_NATIVE_T3_URL=https://compadre-t3-experiment.onrender.com/hosted/t3/chat
+COMPADRE_PROVIDER_URL=
+```
 
 The environment has private-network isolation enabled. The canary has its own
 database and API key, so it cannot hydrate production Slack threads unless a
@@ -250,9 +272,10 @@ skills and prompts, all configured MCP tools, plus the same practical command
 line set used by the app (`git`, `curl`, `jq`, `psql`, `gh`, `rg`, `pnpm`, and
 the pinned Claude/Codex CLIs).
 
-The T3 fork now exposes Compadre as its own provider instead of disguising it
-as Codex. Its auxiliary commit, PR, branch, and thread-title generation also
-uses Compadre's authenticated `/prompt` API. For Slack-bound browser turns, the
+The T3 fork now keeps Codex and Claude as native providers and substitutes a
+remote execution adapter only when `COMPADRE_NATIVE_T3_URL` is present. Its
+auxiliary commit, PR, branch, and thread-title generation also uses Compadre's
+authenticated `/prompt` API. For Slack-bound browser turns, the
 agent prompt includes the canonical channel and thread coordinates required by
 custom Slack tools such as `slack_watch_comp_pr_deployment`. TanStack's Slack
 tool names are normalized to the historical Compadre names, and generated
@@ -265,11 +288,12 @@ dedicated read-only role over its external TLS endpoint; no write-capable
 database credentials were added to the experiment.
 
 Remaining product gaps are user-scoped authentication, a Slack discovery and
-pairing UI, multi-instance cancellation and tool-bridge ownership, and
-T3-native presentation for remote workspace diffs, checkpoints, shells, and
-interactive approval or elicitation requests. Until the in-memory tool bridge
-is distributed, keep the canary at one instance and avoid starting a run during
-a rolling deploy: a Modal callback can otherwise land on the replacement
+pairing UI, resumable central stream cursors, attachment materialization in the
+native worker route, multi-instance cancellation and tool-bridge ownership,
+and T3-native presentation for remote workspace diffs, checkpoints, shells,
+and interactive approval or elicitation requests. Until the in-memory tool
+bridge is distributed, keep the canary at one instance and avoid starting a run
+during a rolling deploy: a Modal callback can otherwise land on the replacement
 instance before the bridge registration moves. These are
 integration/productization work rather than evidence that the shared
 T3/Slack/Modal thread model is infeasible.

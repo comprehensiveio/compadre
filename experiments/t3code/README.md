@@ -1,16 +1,17 @@
-# T3 Code + Compadre provider experiment
+# T3 Code + Compadre native-worker experiment
 
-> Historical checkpoint: the provider-adapter architecture below remains for
-> rollback and comparison. The active branch direction now uses T3's built-in
-> Codex and Claude providers inside one Modal-hosted T3 environment per external
-> conversation. Slack receives assistant text plus a hosted-T3 deep link; the
-> T3 UI connects to the same environment/thread and shows native tool detail.
-> Compadre is coordinator and MCP/tool host, not a provider.
+> The original `compadre` provider remains a rollback checkpoint. The active
+> branch keeps T3's built-in Codex and Claude provider identities and replaces
+> only their execution adapter when `COMPADRE_NATIVE_T3_URL` is configured.
+> Compadre is the worker coordinator and MCP/tool host, not a user-selectable
+> provider.
 
-This experiment keeps T3 Code's web client, project/thread orchestration, and
-canonical runtime events while sending native Compadre-provider turns to Compadre's hosted
-AG-UI route. Compadre remains responsible for durable conversation state,
-Modal sandbox execution, Slack delivery, and provider selection.
+This experiment keeps T3 Code's web client, central project/thread
+orchestration, model picker, and canonical runtime events on Render. A native
+Codex or Claude turn is sent to Compadre's `/hosted/t3/chat` stream, which
+routes it to one Modal-hosted T3 worker per central thread. Compadre remains
+responsible for worker routing, worker snapshot recovery, MCP/tool hosting, and
+Slack delivery; central T3 owns the browser read model.
 
 The companion patch records the initial adapter checkpoint based on upstream T3 Code commit
 `994372ba43810e64027c537231da200988faa7ca` and was proven locally on
@@ -23,22 +24,22 @@ spike; use the maintained fork branch for the current experiment.
 
 The maintained experiment branch is
 `https://github.com/comprehensiveio/t3code/tree/experiment/compadre-modal-provider`.
-It registers `compadre` as a distinct provider when `COMPADRE_PROVIDER_URL` is
-configured, so a hosted T3 server does not need a local Codex executable or
-OpenAI login. Claude Code and Codex remain model choices inside that provider;
-T3's actual Codex driver is no longer repurposed.
+With `COMPADRE_NATIVE_T3_URL` configured, its Codex and Claude drivers use the
+remote adapter without requiring local provider CLIs or logins on Render. The
+normal provider and model choices remain visible in T3. Leaving that variable
+unset preserves upstream local-driver behavior.
 
 ## Proven flow
 
 ```text
-T3 web client
-  -> local T3 server
-  -> POST http://127.0.0.1:3100/hosted/chat
-  -> local Compadre workflow relay
-  -> Modal sandbox + Claude Code
-  -> AG-UI SSE
-  -> T3 canonical runtime events
-  -> T3 web client
+Slack / API ----┐
+                +-> central T3 server and event log on Render
+T3 web client --┘          |
+                           +-> POST /hosted/t3/chat
+                           +-> Compadre worker router + snapshot archive
+                           +-> one Modal T3 worker for this thread
+                           +-> native Codex or Claude harness
+                           +-> incremental native T3 runtime events
 ```
 
 The local smoke test completed two turns through this path. The first rendered
@@ -117,21 +118,21 @@ different workspace. Pair a newly created T3 thread before its first Compadre
 turn; pairing returns `409` rather than orphaning an independently accumulated
 T3 transcript. Automatic history merging is not part of this slice.
 
-## Run T3 locally
+## Run central T3 locally
 
 Export the same `COMPADRE_API_KEY` already stored in Compadre's `.env.local`,
 then start the patched T3 checkout:
 
 ```bash
-COMPADRE_PROVIDER_URL=http://127.0.0.1:3100/hosted/chat \
-COMPADRE_PROVIDER_AGENT=claude-code \
+COMPADRE_NATIVE_T3_URL=http://127.0.0.1:3100/hosted/t3/chat \
 COMPADRE_API_KEY="$COMPADRE_API_KEY" \
 npm run dev -- --home-dir "$PWD/.t3"
 ```
 
-Open the pairing URL printed by T3 and add a local project. The model picker
-offers Claude Code and Codex for each turn; `COMPADRE_PROVIDER_AGENT` supplies
-the default when a turn does not make an explicit selection.
+Open the pairing URL printed by T3 and add a local project. The normal provider
+picker offers Claude and Codex, and each provider's model picker is populated
+by its native T3 driver snapshot. Do not set `COMPADRE_PROVIDER_URL`; that
+enables the historical standalone Compadre provider instead.
 
 ## Verification
 
@@ -161,21 +162,23 @@ suggestions elsewhere in T3 remain unchanged.
   so keep the canary at one Compadre instance until ownership is distributed.
   Do not begin canary runs during a rolling Compadre deploy; callbacks from a
   run on the draining instance can otherwise reach the replacement instance.
-- T3 image attachments are validated and copied into the Modal workspace.
-  Non-image attachment types remain unsupported by T3's own attachment schema.
+- The central adapter forwards attachment bytes, but `/hosted/t3/chat` does not
+  yet materialize them into the native worker thread. Attachment parity remains
+  a follow-up for this architecture.
 - T3's local project/worktree is display and orchestration metadata only;
   Compadre still selects and clones the repository used in Modal.
 - Explicit T3-to-Slack thread pairing now shares the canonical transcript and
   Modal snapshot lineage. T3 still lacks Slack-thread discovery, a pairing UI,
   and automatic import of Slack history into its own local event database.
-- A direct Render service restart left the disk-backed T3 service returning
-  502s during this trial. A normal Render redeploy recovered the service and
-  retained all disk state; use redeploy for canary maintenance until this is
-  understood.
+- Worker snapshots are archived before stream projection, but the central SSE
+  cursor itself is process-local. A dropped client can reload persisted T3
+  events; exact transport resumption after a mid-turn Render replacement still
+  needs snapshot-to-projection repair.
 
 ## Fork status
 
 The experiment now uses a Comprehensive-owned fork and an isolated Render
-project. The fork is intentionally limited to the provider adapter and its
-hosted integration behavior. Slack-thread discovery/pairing UX and user-scoped
-authentication remain the main productization gates.
+project. The fork is intentionally limited to native remote-provider adapters
+and their hosted integration behavior. Slack-thread discovery/pairing UX,
+user-scoped authentication, and distributed run ownership remain the main
+productization gates.
