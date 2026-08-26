@@ -421,9 +421,10 @@ export function makeCompadreAdapter(options: CompadreAdapterOptions) {
           input.modelSelection?.instanceId === boundInstanceId
             ? input.modelSelection.model
             : context.session.model;
-        const selectedProvider = isCompadreProvider(selectedModel)
-          ? selectedModel
-          : options.provider;
+        const selectedProvider =
+          runtimeProvider === PROVIDER && isCompadreProvider(selectedModel)
+            ? selectedModel
+            : options.provider;
 
         const turnId = TurnId.make(yield* randomId);
         const runId = yield* randomId;
@@ -434,7 +435,7 @@ export function makeCompadreAdapter(options: CompadreAdapterOptions) {
           ...context.session,
           status: "running",
           activeTurnId: turnId,
-          ...(selectedProvider ? { model: selectedProvider } : {}),
+          ...(selectedModel ? { model: selectedModel } : {}),
           updatedAt: yield* nowIso,
         };
         yield* publish({

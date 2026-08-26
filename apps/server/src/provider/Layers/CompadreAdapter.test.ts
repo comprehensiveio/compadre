@@ -5,6 +5,7 @@ import {
   ProviderInstanceId,
   ThreadId,
   type ProviderRuntimeEvent,
+  type ServerProvider,
 } from "@t3tools/contracts";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -16,6 +17,38 @@ import * as Path from "effect/Path";
 import { FetchHttpClient } from "effect/unstable/http";
 
 import { makeCompadreAdapter } from "./CompadreAdapter.ts";
+import { remoteNativeProviderSnapshot } from "../RemoteNativeProvider.ts";
+
+it("uses the native Codex catalog instead of stale experiment model aliases", () => {
+  const snapshot = remoteNativeProviderSnapshot({
+    agentProvider: "codex",
+    enabled: true,
+    snapshot: {
+      instanceId: ProviderInstanceId.make("codex"),
+      driver: ProviderDriverKind.make("codex"),
+      enabled: true,
+      installed: false,
+      version: null,
+      status: "warning",
+      auth: { status: "unknown" },
+      checkedAt: "2026-08-26T00:00:00.000Z",
+      models: ["claude-code", "codex", "compadre"].map((model) => ({
+        slug: model,
+        name: model,
+        isCustom: true,
+        capabilities: null,
+      })),
+      slashCommands: [],
+      skills: [],
+    } as ServerProvider,
+  });
+
+  assert.deepStrictEqual(
+    snapshot.models.map((model) => model.slug),
+    ["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"],
+  );
+  assert.equal(snapshot.models[0]?.isDefault, true);
+});
 
 it.layer(Layer.merge(NodeServices.layer, FetchHttpClient.layer))("CompadreAdapter", (it) => {
   it.effect("maps a Compadre AG-UI text turn to T3 runtime events", () =>
@@ -164,6 +197,7 @@ it.layer(Layer.merge(NodeServices.layer, FetchHttpClient.layer))("CompadreAdapte
       yield* Fiber.interrupt(eventsFiber);
 
       assert.deepStrictEqual(requests, [{ provider: "codex", model: "gpt-5.6-sol" }]);
+      assert.equal((yield* adapter.listSessions())[0]?.model, "gpt-5.6-sol");
       assert.isTrue(events.every((event) => event.provider === codex));
       assert.equal(adapter.provider, codex);
     }),

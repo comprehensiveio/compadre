@@ -2,6 +2,7 @@ import {
   type ProviderDriverKind,
   type ProviderInstanceId,
   type ServerProvider,
+  type ServerProviderModel,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Stream from "effect/Stream";
@@ -21,16 +22,57 @@ export interface RemoteNativeProviderOptions {
   readonly snapshot: ServerProvider;
 }
 
+function remoteCodexCapabilities(
+  efforts: ReadonlyArray<string>,
+): ServerProviderModel["capabilities"] {
+  return {
+    optionDescriptors: [
+      {
+        id: "reasoningEffort",
+        label: "Reasoning",
+        type: "select",
+        options: efforts.map((id) => ({
+          id,
+          label: id === "xhigh" ? "Extra High" : `${id.slice(0, 1).toUpperCase()}${id.slice(1)}`,
+          ...(id === "high" ? { isDefault: true as const } : {}),
+        })),
+        currentValue: "high",
+      },
+    ],
+  };
+}
+
+const REMOTE_CODEX_MODELS: ReadonlyArray<ServerProviderModel> = [
+  {
+    slug: "gpt-5.6-sol",
+    name: "GPT-5.6-Sol",
+    isDefault: true,
+    isCustom: false,
+    capabilities: remoteCodexCapabilities(["low", "medium", "high", "xhigh", "max", "ultra"]),
+  },
+  {
+    slug: "gpt-5.6-terra",
+    name: "GPT-5.6-Terra",
+    isCustom: false,
+    capabilities: remoteCodexCapabilities(["low", "medium", "high", "xhigh", "max", "ultra"]),
+  },
+  {
+    slug: "gpt-5.6-luna",
+    name: "GPT-5.6-Luna",
+    isCustom: false,
+    capabilities: remoteCodexCapabilities(["low", "medium", "high", "xhigh", "max"]),
+  },
+];
+
 /**
- * Hosted adapter for a native T3 provider. Central T3 keeps orchestration and
- * persistence local while Compadre routes provider work to an isolated Modal
- * T3 environment. The adapter still emits the provider's native driver kind,
- * so every client continues to see Codex or Claude rather than a proxy.
+ * A hosted native driver cannot probe a local CLI for its catalog because the
+ * CLI lives in the Modal worker. Use the catalog supported by this T3 build and
+ * deliberately ignore stale `customModels` persisted by earlier experiments.
  */
-export const makeRemoteNativeProvider = Effect.fn("makeRemoteNativeProvider")(function* (
-  options: RemoteNativeProviderOptions,
-) {
-  const snapshotValue: ServerProvider = {
+export function remoteNativeProviderSnapshot(
+  options: Pick<RemoteNativeProviderOptions, "agentProvider" | "enabled" | "snapshot">,
+): ServerProvider {
+  return {
     ...options.snapshot,
     enabled: options.enabled,
     installed: true,
@@ -42,7 +84,20 @@ export const makeRemoteNativeProvider = Effect.fn("makeRemoteNativeProvider")(fu
     },
     availability: "available",
     message: "Provider execution runs in an isolated Modal T3 worker.",
+    ...(options.agentProvider === "codex" ? { models: [...REMOTE_CODEX_MODELS] } : {}),
   };
+}
+
+/**
+ * Hosted adapter for a native T3 provider. Central T3 keeps orchestration and
+ * persistence local while Compadre routes provider work to an isolated Modal
+ * T3 environment. The adapter still emits the provider's native driver kind,
+ * so every client continues to see Codex or Claude rather than a proxy.
+ */
+export const makeRemoteNativeProvider = Effect.fn("makeRemoteNativeProvider")(function* (
+  options: RemoteNativeProviderOptions,
+) {
+  const snapshotValue = remoteNativeProviderSnapshot(options);
   const maintenanceCapabilities = makeManualOnlyProviderMaintenanceCapabilities({
     provider: options.driverKind,
     packageName: null,
