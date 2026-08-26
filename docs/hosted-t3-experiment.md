@@ -4,15 +4,64 @@ This branch tests the product shape suggested by T3 Code: a coding-agent
 conversation that can be opened from a browser, while Compadre remains the
 hosted controller and Modal remains the execution boundary.
 
-## Current native-T3 direction
+## Centralized native-T3 direction
 
-The current experiment no longer treats Compadre as a T3 provider. Slack, the
-HTTP coordinator, and the simulator dispatch into T3's built-in Codex or Claude
-provider. Each external conversation owns one native T3 thread in one Modal
-sandbox. The hosted T3 web app pairs directly with that environment and renders
-the canonical transcript, reasoning, tool calls, diffs, terminal, and native
-controls. Slack is a concise projection of the same turn: assistant text plus a
-one-time “View details in T3” link.
+The direct-pairing prototype proved that T3's native Codex and Claude harnesses,
+thread UI, and tool-call presentation work through Modal. It is not the target
+data architecture. A browser must not depend on a per-thread Modal sandbox to
+render durable conversation history.
+
+The target has one hosted T3 environment on Render as the durable thread owner.
+Its orchestration event log and projections are authoritative for messages,
+reasoning, activities, tool calls, diffs, approvals, and checkpoint metadata.
+Each T3 thread is routed to one replaceable Modal execution worker that owns
+only the checkout, live provider process, terminal processes, and other
+ephemeral filesystem state.
+
+```text
+Slack / API ──┐
+              ├──> hosted T3 environment on Render
+Browser UI ───┘      event log + projections + websocket fan-out
+                            |
+                            | provider/workspace commands and runtime events
+                            v
+                    one Modal worker per thread
+                       Codex or Claude Code
+```
+
+This preserves the native T3 command/event loop: a turn command is persisted
+centrally before a worker handles it, and provider output is normalized and
+persisted centrally before Slack or the browser renders it. An idle thread can
+therefore render without waking Modal. Sending a new turn resumes or replaces
+the worker behind the same thread. Live terminal and filesystem operations may
+require a worker; completed transcript and tool detail may not.
+
+The first migration slice persists complete native T3 thread snapshots in
+Compadre's central metadata store, including passthrough activity and
+provider-specific fields, and serves completed coordinator reads from that
+archive without reconnecting Modal. This is a transition read model, not a
+second transcript format. The next fork slice makes the hosted T3 environment
+own the event log directly and supplies remote provider/workspace adapters for
+Modal execution.
+
+| Data | Durable owner | Worker responsibility |
+| --- | --- | --- |
+| T3 orchestration events and projections | Render database | Publish runtime results |
+| Messages, reasoning, and tool activities | Render database | Produce provider events |
+| Attachments and large artifacts | Central object storage | Materialize into the checkout |
+| Thread-to-worker lease | Render database | Heartbeat and resume token |
+| Checkout, uncommitted files, live terminal | Modal worker / workspace snapshot | Execute and checkpoint |
+| Provider-native process session | Modal worker, resumable when possible | Codex or Claude lifecycle |
+
+## Proven direct-pairing prototype
+
+The first native experiment no longer treated Compadre as a T3 provider. Slack,
+the HTTP coordinator, and the simulator dispatch into T3's built-in Codex or
+Claude provider. Each external conversation owns one native T3 thread in one
+Modal sandbox. The hosted T3 web app pairs directly with that environment and
+renders the canonical transcript, reasoning, tool calls, diffs, terminal, and
+native controls. Slack is a concise projection of the same turn: assistant text
+plus a one-time “View details in T3” link.
 
 ```text
 Slack ──> Compadre coordinator ──> native T3 server in Modal ──> Codex/Claude
@@ -21,10 +70,13 @@ Slack ──> Compadre coordinator ──> native T3 server in Modal ──> Cod
   └── hosted T3 deep link ────────────────────────────────┘
 ```
 
-T3 chooses the provider when the thread starts and does not switch providers
-inside an established thread. A new Slack thread is therefore required to move
-between Codex and Claude; T3's normal model picker remains available for the
-chosen provider. This is a native T3 invariant, not a Compadre restriction.
+This flow remains useful as a provider-worker compatibility test while the
+central environment is implemented, but it must not become the durable user
+path. T3 chooses the provider when the thread starts and does not switch
+providers inside an established thread. A new Slack thread is therefore
+required to move between Codex and Claude; T3's normal model picker remains
+available for the chosen provider. This is a native T3 invariant, not a
+Compadre restriction.
 
 The first experiment reused the useful seams—the chat interaction model,
 streamed tool activity, durable thread identity, and resumable client

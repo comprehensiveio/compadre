@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { memoryPersistence } from "@tanstack/ai-persistence";
 import { T3ThreadBindingStore } from "../services/t3-thread-bindings.js";
+import { T3ThreadSnapshotStore } from "../services/t3-thread-snapshots.js";
 import {
   buildT3HostedThreadUrl,
   T3Gateway,
@@ -223,4 +224,89 @@ test("discards a newly provisioned Modal environment when its first turn fails",
     /dispatch failed/,
   );
   assert.deepEqual(discarded, ["sandbox-failed"]);
+});
+
+test("serves a completed thread from central storage without reconnecting Modal", async () => {
+  const persistence = memoryPersistence();
+  const bindings = new T3ThreadBindingStore(persistence.stores.metadata);
+  const snapshots = new T3ThreadSnapshotStore(persistence.stores.metadata);
+  let reconnects = 0;
+  const terminalSnapshot = {
+    snapshotSequence: 15,
+    thread: {
+      id: "t3-thread-1",
+      projectId: "project-1",
+      title: "Central thread",
+      modelSelection: { instanceId: "claudeAgent", model: "claude-opus-5" },
+      latestTurn: {
+        turnId: "turn-1",
+        state: "completed" as const,
+        requestedAt: "2026-08-26T15:00:00.000Z",
+        startedAt: "2026-08-26T15:00:00.000Z",
+        completedAt: "2026-08-26T15:00:05.000Z",
+        assistantMessageId: "assistant-1",
+      },
+      messages: [],
+      session: { status: "ready" as const, activeTurnId: null, lastError: null },
+      activities: [{ id: "activity-1", type: "command.completed", title: "pwd" }],
+    },
+  };
+  const client = {
+    baseUrl: "https://t3.example",
+    async startNewThread(input: { threadId?: string }) {
+      return {
+        sequence: 10,
+        commandId: "command-1",
+        messageId: "message-1",
+        threadId: input.threadId!,
+        createdAt: "2026-08-26T15:00:00.000Z",
+      };
+    },
+    async startTurn() { throw new Error("unused"); },
+    async interruptTurn() { throw new Error("unused"); },
+    async waitForTurnTerminal(input: {
+      onSnapshot?(snapshot: typeof terminalSnapshot): void | Promise<void>;
+    }) {
+      await input.onSnapshot?.(terminalSnapshot);
+      return terminalSnapshot;
+    },
+    async threadSnapshot() { throw new Error("Modal should not be read after completion"); },
+    async mintPairingCredential() { throw new Error("unused"); },
+  } satisfies T3CommandClient;
+  const gateway = new T3Gateway(
+    bindings,
+    {
+      async provision() {
+        return { sandboxId: "sandbox-1", projectId: "project-1", client };
+      },
+      async reconnect() {
+        reconnects += 1;
+        if (reconnects > 1) throw new Error("Modal is unavailable");
+        return { sandboxId: "sandbox-1", projectId: "project-1", client };
+      },
+    },
+    () => "t3-thread-1",
+    () => new Date("2026-08-26T15:00:06.000Z"),
+    undefined,
+    "https://t3-ui.example",
+    snapshots,
+  );
+
+  const turn = await gateway.send({
+    canonicalThreadId: "slack-thread",
+    title: "Central thread",
+    text: "run pwd",
+    modelSelection: { instanceId: "claudeAgent", model: "claude-opus-5" },
+  });
+  await gateway.waitForTerminal({ turn });
+  const result = await gateway.snapshot({
+    canonicalThreadId: "slack-thread",
+    providerInstanceId: "claudeAgent",
+  });
+
+  assert.equal(reconnects, 1);
+  assert.equal(result?.snapshot.snapshotSequence, 15);
+  assert.deepEqual(result?.snapshot.thread.activities, [
+    { id: "activity-1", type: "command.completed", title: "pwd" },
+  ]);
 });

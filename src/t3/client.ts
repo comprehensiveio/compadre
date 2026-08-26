@@ -32,6 +32,7 @@ export interface T3Project {
 }
 
 export interface T3Message {
+  readonly [key: string]: unknown;
   id: string;
   role: "user" | "assistant" | "system";
   text: string;
@@ -42,6 +43,7 @@ export interface T3Message {
 }
 
 export interface T3LatestTurn {
+  readonly [key: string]: unknown;
   turnId: string;
   state: "running" | "interrupted" | "completed" | "error";
   requestedAt: string;
@@ -51,6 +53,7 @@ export interface T3LatestTurn {
 }
 
 export interface T3Thread {
+  readonly [key: string]: unknown;
   id: string;
   projectId: string;
   title: string;
@@ -72,6 +75,7 @@ export interface T3Thread {
 }
 
 export interface T3ThreadSnapshot {
+  readonly [key: string]: unknown;
   snapshotSequence: number;
   thread: T3Thread;
 }
@@ -124,7 +128,7 @@ const messageSchema = z.object({
   streaming: z.boolean(),
   createdAt: z.string(),
   updatedAt: z.string(),
-});
+}).passthrough();
 
 const latestTurnSchema = z.object({
   turnId: z.string().min(1),
@@ -133,7 +137,7 @@ const latestTurnSchema = z.object({
   startedAt: z.string().nullable(),
   completedAt: z.string().nullable(),
   assistantMessageId: z.string().nullable(),
-});
+}).passthrough();
 
 const threadSchema = z.object({
   id: z.string().min(1),
@@ -156,8 +160,9 @@ const threadSchema = z.object({
       activeTurnId: z.string().nullable(),
       lastError: z.string().nullable(),
     })
+    .passthrough()
     .nullable(),
-});
+}).passthrough();
 
 const orchestrationSnapshotSchema = z.object({
   snapshotSequence: z.number().int().nonnegative(),
@@ -169,7 +174,16 @@ const orchestrationSnapshotSchema = z.object({
 const threadSnapshotSchema = z.object({
   snapshotSequence: z.number().int().nonnegative(),
   thread: threadSchema,
-});
+}).passthrough();
+
+/**
+ * Decode a persisted or remote native-T3 thread snapshot without discarding
+ * activity, checkpoint, attachment, and provider-specific fields that this
+ * coordinator does not otherwise need to understand.
+ */
+export function decodeT3ThreadSnapshot(value: unknown): T3ThreadSnapshot {
+  return threadSnapshotSchema.parse(value) as T3ThreadSnapshot;
+}
 
 const dispatchResultSchema = z.object({
   sequence: z.number().int().nonnegative(),

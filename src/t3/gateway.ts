@@ -10,6 +10,7 @@ import {
   T3ThreadBindingStore,
   type T3ThreadBinding,
 } from "../services/t3-thread-bindings.js";
+import { T3ThreadSnapshotStore } from "../services/t3-thread-snapshots.js";
 
 export interface T3CommandClient {
   readonly baseUrl: string;
@@ -106,6 +107,7 @@ export class T3Gateway {
     private readonly hostedAppUrl: string =
       process.env.COMPADRE_T3_HOSTED_APP_URL?.trim() ||
       DEFAULT_T3_HOSTED_APP_URL,
+    private readonly snapshots?: T3ThreadSnapshotStore,
   ) {}
 
   private lockKey(canonicalThreadId: string) {
@@ -212,12 +214,17 @@ export class T3Gateway {
   }): Promise<{ binding: T3ThreadBinding; snapshot: T3ThreadSnapshot } | null> {
     const binding = await this.bindings.get(input.canonicalThreadId);
     if (!binding) return null;
+    const archived = await this.snapshots?.get(input.canonicalThreadId);
+    if (archived && binding.status !== "working") {
+      return { binding, snapshot: archived.snapshot };
+    }
     try {
       const environment = await this.environments.reconnect(binding);
       const snapshot = await environment.client.threadSnapshot(
         binding.t3ThreadId,
         input.signal,
       );
+      await this.snapshots?.save(binding, snapshot);
       const latestState = snapshot.thread.latestTurn?.state;
       const status =
         latestState === "running"
@@ -241,13 +248,15 @@ export class T3Gateway {
       await this.bindings.bind(updated);
       return { binding: updated, snapshot };
     } catch (error) {
-      await this.bindings
-        .bind({
-          ...binding,
-          status: "unavailable",
-          updatedAt: this.now().toISOString(),
-        })
-        .catch(() => undefined);
+      const unavailable: T3ThreadBinding = {
+        ...binding,
+        status: "unavailable",
+        updatedAt: this.now().toISOString(),
+      };
+      await this.bindings.bind(unavailable).catch(() => undefined);
+      if (archived) {
+        return { binding: unavailable, snapshot: archived.snapshot };
+      }
       throw error;
     }
   }
@@ -306,8 +315,12 @@ export class T3Gateway {
       requestedAt: input.turn.dispatch.createdAt,
       timeoutMs: input.timeoutMs,
       signal: input.signal,
-      onSnapshot: input.onSnapshot,
+      onSnapshot: async (nextSnapshot) => {
+        await this.snapshots?.save(input.turn.binding, nextSnapshot);
+        await input.onSnapshot?.(nextSnapshot);
+      },
     });
+    await this.snapshots?.save(input.turn.binding, snapshot);
     const latestState = snapshot.thread.latestTurn?.state;
     await this.bindings.bind({
       ...input.turn.binding,

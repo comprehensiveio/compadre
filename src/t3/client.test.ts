@@ -139,6 +139,42 @@ test("classifies authenticated T3 failures without copying response content", as
   });
 });
 
+test("preserves native T3 activity and tool detail fields in thread snapshots", async () => {
+  const client = new T3Client("https://t3.example", "secret", {
+    fetch: async () =>
+      json({
+        snapshotSequence: 12,
+        thread: {
+          id: "thread-1",
+          projectId: "project-1",
+          title: "Thread",
+          modelSelection: { instanceId: "claudeAgent", model: "claude-opus-5" },
+          latestTurn: null,
+          messages: [],
+          session: null,
+          activities: [
+            {
+              id: "activity-1",
+              type: "command.completed",
+              command: "pwd",
+              output: "/workspace",
+            },
+          ],
+        },
+      }),
+  });
+
+  const snapshot = await client.threadSnapshot("thread-1");
+  assert.deepEqual(snapshot.thread.activities, [
+    {
+      id: "activity-1",
+      type: "command.completed",
+      command: "pwd",
+      output: "/workspace",
+    },
+  ]);
+});
+
 test("waits for the dispatched message instead of accepting a stale terminal turn", async () => {
   let calls = 0;
   const thread = (
