@@ -1,5 +1,6 @@
 import crypto from "node:crypto";
 import {
+  isTerminalRunStatus,
   resumeServerSentEventsResponse,
   type StreamDurability,
 } from "@tanstack/ai";
@@ -153,6 +154,34 @@ export function createWorkflowRunRoutes(
         "X-Content-Type-Options": "nosniff",
       },
     });
+  });
+
+  routes.post("/workflow-runs/:runId/cancel", async (c) => {
+    if (!dependencies.enabled()) return c.notFound();
+    const authError = requireCompadreApiKey(c);
+    if (authError) return authError;
+    const durability = await dependencies.getDurability();
+    if (!durability) {
+      return c.json({ error: "agent run durability is not configured" }, 503);
+    }
+    const runId = c.req.param("runId");
+    const run = await durability.runs.get(runId);
+    if (!run) return c.json({ error: "run not found" }, 404);
+    if (isTerminalRunStatus(run.status)) {
+      return c.json({ ok: true, cancelled: false, status: run.status });
+    }
+    const cancelRun = dependencies.getLauncher().cancelRun;
+    if (!cancelRun) {
+      return c.json({ error: "workflow cancellation is not supported" }, 501);
+    }
+    const cancelled = await cancelRun(runId);
+    if (!cancelled) {
+      return c.json(
+        { error: "run is not active on this controller", runId },
+        409,
+      );
+    }
+    return c.json({ ok: true, cancelled: true, status: "cancelling" }, 202);
   });
 
   return routes;

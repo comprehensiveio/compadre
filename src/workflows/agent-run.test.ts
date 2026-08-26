@@ -91,6 +91,24 @@ test("agent workflow runs without preparing an application checkout in the relay
   });
 });
 
+test("agent workflow forwards controller cancellation to the harness", async () => {
+  const abortController = new AbortController();
+  let observedSignal: AbortSignal | undefined;
+
+  await executeAgentWorkflow(
+    { prompt: "say hi", threadId: "slack-thread" },
+    dependencies({
+      runConversation: async (options) => {
+        observedSignal = options.signal;
+        return conversationResult;
+      },
+    }),
+    abortController.signal,
+  );
+
+  assert.equal(observedSignal, abortController.signal);
+});
+
 test("agent workflow releases ephemeral thread state after a failure", async () => {
   const released: string[] = [];
   await assert.rejects(

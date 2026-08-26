@@ -5,6 +5,50 @@ import { Hono } from "hono";
 import { createAgentRunDurability } from "../durability/runtime.js";
 import { createWorkflowRunRoutes } from "./workflow-runs.js";
 
+test("cancels an active API workflow run", async (t) => {
+  const previousApiKey = process.env.COMPADRE_API_KEY;
+  process.env.COMPADRE_API_KEY = "test-key";
+  t.after(() => {
+    if (previousApiKey === undefined) delete process.env.COMPADRE_API_KEY;
+    else process.env.COMPADRE_API_KEY = previousApiKey;
+  });
+  const durability = await createAgentRunDurability({
+    COMPADRE_DURABILITY_BACKEND: "memory",
+  });
+  assert.ok(durability);
+  await durability.runs.createOrResume({
+    runId: "active-api-run",
+    threadId: "api-thread",
+    startedAt: 1,
+  });
+  const cancelled: string[] = [];
+  const app = new Hono();
+  app.route(
+    "/",
+    createWorkflowRunRoutes({
+      enabled: () => true,
+      getDurability: async () => durability,
+      createId: () => "unused",
+      getLauncher: () => ({
+        async start() {
+          throw new Error("should not start");
+        },
+        async cancelRun(runId) {
+          cancelled.push(runId);
+          return true;
+        },
+      }),
+    }),
+  );
+
+  const response = await app.request("/workflow-runs/active-api-run/cancel", {
+    method: "POST",
+    headers: { Authorization: "Bearer test-key" },
+  });
+  assert.equal(response.status, 202);
+  assert.deepEqual(cancelled, ["active-api-run"]);
+});
+
 test("starts a local durable run and serves resumable AG-UI events", async (t) => {
   const previousApiKey = process.env.COMPADRE_API_KEY;
   process.env.COMPADRE_API_KEY = "test-key";

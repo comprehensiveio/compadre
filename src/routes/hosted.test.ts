@@ -235,6 +235,61 @@ test("a browser can explicitly link an existing Compadre thread to Slack", async
   ]);
 });
 
+test("a browser can cancel its active durable run", async (t) => {
+  const previousApiKey = process.env.COMPADRE_API_KEY;
+  process.env.COMPADRE_API_KEY = "test-key";
+  t.after(() => {
+    if (previousApiKey === undefined) delete process.env.COMPADRE_API_KEY;
+    else process.env.COMPADRE_API_KEY = previousApiKey;
+  });
+  const durability = await createAgentRunDurability({
+    COMPADRE_DURABILITY_BACKEND: "memory",
+  });
+  assert.ok(durability);
+  await durability.runs.createOrResume({
+    runId: "active-web-run",
+    threadId: "web-thread",
+    startedAt: 1,
+  });
+  const cancelled: string[] = [];
+  const app = new Hono();
+  app.route(
+    "/",
+    createHostedRoutes({
+      enabled: () => true,
+      getDurability: async () => durability,
+      getThreadPersistence: async () => null,
+      resolveThreadId: async (threadId) => threadId,
+      bindThreadAlias: async () => {},
+      getSlackBinding: async () => null,
+      bindSlack: async () => {},
+      createId: () => "unused",
+      getLauncher: () => ({
+        async start() {
+          throw new Error("should not start");
+        },
+        async cancelRun(runId) {
+          cancelled.push(runId);
+          return true;
+        },
+      }),
+      startSlackDelivery() {},
+    }),
+  );
+
+  const response = await app.request("/hosted/runs/active-web-run/cancel", {
+    method: "POST",
+    headers: { Authorization: "Bearer test-key" },
+  });
+  assert.equal(response.status, 202);
+  assert.deepEqual(cancelled, ["active-web-run"]);
+  assert.deepEqual(await response.json(), {
+    ok: true,
+    cancelled: true,
+    status: "cancelling",
+  });
+});
+
 test("pairing refuses to orphan an existing T3-side transcript", async (t) => {
   const previousApiKey = process.env.COMPADRE_API_KEY;
   process.env.COMPADRE_API_KEY = "test-key";

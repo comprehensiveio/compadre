@@ -102,6 +102,7 @@ export async function executeRepositoryProbe(
 export async function executeAgentWorkflow(
   rawInput: unknown,
   dependencies: AgentWorkflowDependencies = defaultDependencies,
+  signal?: AbortSignal,
 ): Promise<AgentWorkflowResult> {
   const input = agentWorkflowInputSchema.parse(rawInput);
   const startedAt = dependencies.now();
@@ -125,6 +126,7 @@ export async function executeAgentWorkflow(
       threadId,
       provider: input.provider,
       profile: input.profile,
+      signal,
       persistThread: input.persistThread ?? input.threadId !== undefined,
       slackFiles: input.slackFiles,
       systemPrompt:

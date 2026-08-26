@@ -32,6 +32,7 @@ GET|POST /hosted/chat        # Hosted hydration/resumable stream and new turns
 POST /hosted/threads/:id/slack # Link browser thread output to a Slack thread
 POST /workflow-runs          # Optional durable Workflow launcher (Bearer COMPADRE_API_KEY)
 GET  /workflow-runs/:id/events # Resumable AG-UI event stream (Bearer COMPADRE_API_KEY; any authenticated caller may replay a known run ID)
+POST /workflow-runs/:id/cancel # Cancel an active durable run (Bearer COMPADRE_API_KEY)
 POST /webhook/:source        # Generic webhook (Bearer COMPADRE_API_KEY)
 ```
 
