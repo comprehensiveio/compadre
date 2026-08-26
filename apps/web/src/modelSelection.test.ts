@@ -15,6 +15,7 @@ function provider(input: {
   provider?: ProviderDriverKind;
   instanceId: string;
   models?: ReadonlyArray<string>;
+  authType?: string;
 }): ServerProvider {
   const driver =
     input.provider ??
@@ -28,7 +29,10 @@ function provider(input: {
     installed: true,
     version: null,
     status: "ready",
-    auth: { status: "authenticated" },
+    auth: {
+      status: "authenticated",
+      ...(input.authType ? { type: input.authType } : {}),
+    },
     checkedAt: "2026-01-01T00:00:00.000Z",
     models: (input.models ?? []).map((slug) => ({
       slug,
@@ -101,6 +105,33 @@ describe("instance-scoped model selection", () => {
         (option) => option.slug,
       ),
     ).toContain("openai/gpt-5.5");
+  });
+
+  it("does not leak legacy custom aliases into a remote native provider", () => {
+    const providers = [
+      provider({
+        instanceId: "codex",
+        models: ["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"],
+        authType: "compadre-modal",
+      }),
+    ];
+    const settings: UnifiedSettings = {
+      ...DEFAULT_UNIFIED_SETTINGS,
+      providers: {
+        ...DEFAULT_UNIFIED_SETTINGS.providers,
+        codex: {
+          ...DEFAULT_UNIFIED_SETTINGS.providers.codex,
+          customModels: ["claude-code", "codex", "compadre"],
+        },
+      },
+    };
+    const codex = deriveProviderInstanceEntries(providers)[0]!;
+
+    expect(getAppModelOptionsForInstance(settings, codex).map((option) => option.slug)).toEqual([
+      "gpt-5.6-sol",
+      "gpt-5.6-terra",
+      "gpt-5.6-luna",
+    ]);
   });
 
   it("resolves a custom slug against the selected custom instance", () => {

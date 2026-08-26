@@ -70,6 +70,10 @@ function readInstanceCustomModels(
   return legacyProviders[driverKind]?.customModels ?? [];
 }
 
+function acceptsConfiguredCustomModels(provider: ServerProvider | undefined): boolean {
+  return provider?.auth.type !== "compadre-modal";
+}
+
 export interface AppModelOption {
   slug: string;
   name: string;
@@ -166,7 +170,12 @@ export function getAppModelOptions(
   // settings and the initial render before the first write both still
   // see the user's authored custom models.
   const defaultInstanceId = defaultInstanceIdForDriver(provider);
-  const customModels = readInstanceCustomModels(settings, defaultInstanceId, provider);
+  const providerSnapshot = providers.find(
+    (candidate) => candidate.instanceId === defaultInstanceId,
+  );
+  const customModels = acceptsConfiguredCustomModels(providerSnapshot)
+    ? readInstanceCustomModels(settings, defaultInstanceId, provider)
+    : [];
   for (const slug of normalizeCustomModelSlugs(customModels, builtInModelSlugs)) {
     if (seen.has(slug)) {
       continue;
@@ -209,7 +218,9 @@ export function getAppModelOptionsForInstance(
     ),
   );
 
-  const customModels = readInstanceCustomModels(settings, entry.instanceId, entry.driverKind);
+  const customModels = acceptsConfiguredCustomModels(entry.snapshot)
+    ? readInstanceCustomModels(settings, entry.instanceId, entry.driverKind)
+    : [];
   for (const slug of normalizeCustomModelSlugs(customModels, builtInModelSlugs)) {
     if (seen.has(slug)) {
       continue;
