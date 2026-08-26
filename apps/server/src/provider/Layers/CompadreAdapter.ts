@@ -3,6 +3,7 @@ import {
   EventId,
   ProviderDriverKind,
   ProviderInstanceId,
+  type ProviderOptionSelection,
   RuntimeItemId,
   type ProviderApprovalDecision,
   type ProviderRuntimeEvent,
@@ -53,6 +54,7 @@ export interface CompadreTurnRequest {
   }>;
   readonly provider: "claude-code" | "codex" | undefined;
   readonly model: string | undefined;
+  readonly modelOptions: ReadonlyArray<ProviderOptionSelection>;
 }
 
 export type CompadreStreamEvent = Readonly<Record<string, unknown>> & {
@@ -87,6 +89,7 @@ export interface CompadreAdapterOptions {
 
 interface CompadreSessionContext {
   session: ProviderSession;
+  modelOptions: ReadonlyArray<ProviderOptionSelection>;
   readonly turns: Array<{ id: TurnId; items: Array<unknown> }>;
   activeFiber: Fiber.Fiber<void, ProviderAdapterRequestError> | undefined;
   activeRunId: string | undefined;
@@ -120,6 +123,7 @@ function makeLiveTransport(
       forwardedProps: {
         ...(input.provider ? { provider: input.provider } : {}),
         ...(input.model ? { model: input.model } : {}),
+        ...(input.modelOptions.length > 0 ? { modelOptions: input.modelOptions } : {}),
         ...(input.inputFiles.length > 0 ? { inputFiles: input.inputFiles } : {}),
       },
       state: {},
@@ -315,6 +319,10 @@ export function makeCompadreAdapter(options: CompadreAdapterOptions) {
         };
         sessions.set(input.threadId, {
           session,
+          modelOptions:
+            input.modelSelection?.instanceId === boundInstanceId
+              ? (input.modelSelection.options ?? [])
+              : [],
           turns: [],
           activeFiber: undefined,
           activeRunId: undefined,
@@ -421,6 +429,10 @@ export function makeCompadreAdapter(options: CompadreAdapterOptions) {
           input.modelSelection?.instanceId === boundInstanceId
             ? input.modelSelection.model
             : context.session.model;
+        const selectedModelOptions =
+          input.modelSelection?.instanceId === boundInstanceId
+            ? (input.modelSelection.options ?? [])
+            : context.modelOptions;
         const selectedProvider =
           runtimeProvider === PROVIDER && isCompadreProvider(selectedModel)
             ? selectedModel
@@ -431,6 +443,7 @@ export function makeCompadreAdapter(options: CompadreAdapterOptions) {
         const messageId = yield* randomId;
         context.turns.push({ id: turnId, items: [] });
         context.activeRunId = runId;
+        context.modelOptions = selectedModelOptions;
         context.session = {
           ...context.session,
           status: "running",
@@ -664,6 +677,7 @@ export function makeCompadreAdapter(options: CompadreAdapterOptions) {
               inputFiles,
               provider: selectedProvider,
               model: selectedModel,
+              modelOptions: selectedModelOptions,
             }),
             handleEvent,
           ).pipe(

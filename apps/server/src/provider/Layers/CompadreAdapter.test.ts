@@ -157,7 +157,7 @@ it.layer(Layer.merge(NodeServices.layer, FetchHttpClient.layer))("CompadreAdapte
       const threadId = ThreadId.make("remote-codex-thread");
       const codex = ProviderDriverKind.make("codex");
       const instanceId = ProviderInstanceId.make("codex");
-      const requests: Array<{ provider: unknown; model: unknown }> = [];
+      const requests: Array<{ provider: unknown; model: unknown; modelOptions: unknown }> = [];
       const completed = yield* Deferred.make<void>();
       const adapter = yield* makeCompadreAdapter({
         endpoint: "http://compadre.test/hosted/t3/chat",
@@ -165,7 +165,11 @@ it.layer(Layer.merge(NodeServices.layer, FetchHttpClient.layer))("CompadreAdapte
         instanceId,
         provider: "codex",
         transport: (request) => {
-          requests.push({ provider: request.provider, model: request.model });
+          requests.push({
+            provider: request.provider,
+            model: request.model,
+            modelOptions: request.modelOptions,
+          });
           return Stream.make({
             type: "RUN_FINISHED",
             runId: request.runId,
@@ -191,12 +195,22 @@ it.layer(Layer.merge(NodeServices.layer, FetchHttpClient.layer))("CompadreAdapte
       yield* adapter.sendTurn({
         threadId,
         input: "inspect the repo",
-        modelSelection: { instanceId, model: "gpt-5.6-sol" },
+        modelSelection: {
+          instanceId,
+          model: "gpt-5.6-sol",
+          options: [{ id: "reasoningEffort", value: "ultra" }],
+        },
       });
       yield* Deferred.await(completed);
       yield* Fiber.interrupt(eventsFiber);
 
-      assert.deepStrictEqual(requests, [{ provider: "codex", model: "gpt-5.6-sol" }]);
+      assert.deepStrictEqual(requests, [
+        {
+          provider: "codex",
+          model: "gpt-5.6-sol",
+          modelOptions: [{ id: "reasoningEffort", value: "ultra" }],
+        },
+      ]);
       assert.equal((yield* adapter.listSessions())[0]?.model, "gpt-5.6-sol");
       assert.isTrue(events.every((event) => event.provider === codex));
       assert.equal(adapter.provider, codex);
