@@ -547,6 +547,37 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
     });
   }
 
+  const compadreEndpoint = resolvedEnvironment.COMPADRE_PROVIDER_URL?.trim();
+  if (compadreEndpoint) {
+    const configuredModel = resolvedEnvironment.COMPADRE_PROVIDER_MODEL?.trim();
+    const models =
+      emptyModels.length > 0
+        ? emptyModels
+        : [
+            {
+              slug: configuredModel || "compadre",
+              name: configuredModel || "Compadre",
+              isCustom: true,
+              isDefault: true,
+              capabilities: null,
+            },
+          ];
+    return buildServerProvider({
+      presentation: CODEX_PRESENTATION,
+      enabled: true,
+      checkedAt,
+      models,
+      skills: [],
+      probe: {
+        installed: true,
+        version: null,
+        status: "ready",
+        auth: { status: "authenticated", type: "compadre", label: "Compadre API" },
+        message: "Connected to the hosted Compadre provider.",
+      },
+    });
+  }
+
   const probeResult = yield* probe({
     binaryPath: codexSettings.binaryPath,
     homePath: codexSettings.homePath,

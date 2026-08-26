@@ -406,6 +406,41 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
         }),
       );
 
+      it.effect("reports the hosted Compadre adapter as ready without a local Codex CLI", () =>
+        Effect.gen(function* () {
+          let probedLocalCodex = false;
+          const status = yield* checkCodexProviderStatus(
+            defaultCodexSettings,
+            () => {
+              probedLocalCodex = true;
+              return Effect.die("the hosted adapter must not probe a local Codex CLI");
+            },
+            {
+              COMPADRE_PROVIDER_URL: "https://compadre.example/hosted/chat",
+              COMPADRE_PROVIDER_MODEL: "claude-code",
+            },
+          );
+
+          assert.strictEqual(probedLocalCodex, false);
+          assert.strictEqual(status.status, "ready");
+          assert.strictEqual(status.installed, true);
+          assert.deepStrictEqual(status.auth, {
+            status: "authenticated",
+            type: "compadre",
+            label: "Compadre API",
+          });
+          assert.deepStrictEqual(status.models, [
+            {
+              slug: "claude-code",
+              name: "claude-code",
+              isCustom: true,
+              isDefault: true,
+              capabilities: null,
+            },
+          ]);
+        }),
+      );
+
       it.effect("returns unauthenticated when app-server requires OpenAI auth", () =>
         Effect.gen(function* () {
           const status = yield* checkCodexProviderStatus(defaultCodexSettings, () =>
