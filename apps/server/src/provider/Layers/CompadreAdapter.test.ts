@@ -266,6 +266,105 @@ it.layer(Layer.merge(NodeServices.layer, FetchHttpClient.layer))("CompadreAdapte
     }),
   );
 
+  it.effect("preserves native tool types, arguments, and changed file paths", () =>
+    Effect.gen(function* () {
+      const threadId = ThreadId.make("compadre-tool-thread");
+      const completed = yield* Deferred.make<void>();
+      const adapter = yield* makeCompadreAdapter({
+        endpoint: "http://compadre.test/hosted/chat",
+        instanceId: ProviderInstanceId.make("codex"),
+        runtimeProvider: ProviderDriverKind.make("codex"),
+        provider: "codex",
+        transport: () =>
+          Stream.fromIterable([
+            {
+              type: "TOOL_CALL_START",
+              toolCallId: "command-1",
+              toolName: "Bash",
+              itemType: "command_execution",
+              title: "Command run",
+              detail: "Bash: git status --short",
+              data: { command: "git status --short" },
+            },
+            {
+              type: "TOOL_CALL_ARGS",
+              toolCallId: "command-1",
+              args: '{"command":"git status --short"}',
+            },
+            {
+              type: "TOOL_CALL_RESULT",
+              toolCallId: "command-1",
+              itemType: "command_execution",
+              data: { command: "git status --short", rawOutput: " M file.ts" },
+            },
+            {
+              type: "TOOL_CALL_START",
+              toolCallId: "write-1",
+              toolName: "Write",
+              itemType: "file_change",
+              title: "File change",
+              detail: "Write: src/one.ts, src/two.ts",
+              data: {
+                changes: [{ path: "src/one.ts" }, { path: "src/two.ts" }],
+              },
+            },
+            {
+              type: "TOOL_CALL_RESULT",
+              toolCallId: "write-1",
+              itemType: "file_change",
+              data: {
+                changes: [{ path: "src/one.ts" }, { path: "src/two.ts" }],
+              },
+            },
+            { type: "RUN_FINISHED" },
+          ]),
+      });
+      const events: ProviderRuntimeEvent[] = [];
+      const eventsFiber = yield* Stream.runForEach(adapter.streamEvents, (event) =>
+        Effect.sync(() => events.push(event)).pipe(
+          Effect.andThen(
+            event.type === "turn.completed" ? Deferred.succeed(completed, undefined) : Effect.void,
+          ),
+        ),
+      ).pipe(Effect.forkChild);
+      yield* Effect.yieldNow;
+      yield* adapter.startSession({
+        threadId,
+        cwd: process.cwd(),
+        runtimeMode: "full-access",
+      });
+      yield* adapter.sendTurn({ threadId, input: "inspect and edit" });
+      yield* Deferred.await(completed);
+      yield* Fiber.interrupt(eventsFiber);
+
+      const toolEvents = events.filter(
+        (event) => event.type === "item.started" || event.type === "item.completed",
+      );
+      assert.deepInclude(toolEvents[0]?.payload, {
+        itemType: "command_execution",
+        title: "Command run",
+        detail: "Bash: git status --short",
+        data: { command: "git status --short" },
+      });
+      assert.deepInclude(toolEvents[1]?.payload, {
+        itemType: "command_execution",
+        data: { command: "git status --short", rawOutput: " M file.ts" },
+      });
+      assert.deepInclude(toolEvents[2]?.payload, {
+        itemType: "file_change",
+        data: {
+          changes: [{ path: "src/one.ts" }, { path: "src/two.ts" }],
+        },
+      });
+      assert.deepInclude(toolEvents[3]?.payload, {
+        itemType: "file_change",
+        data: {
+          changes: [{ path: "src/one.ts" }, { path: "src/two.ts" }],
+        },
+      });
+    }),
+  );
+
   it.effect("forwards T3 image attachments to hosted Compadre", () =>
     Effect.scoped(
       Effect.gen(function* () {

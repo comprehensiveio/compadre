@@ -1,10 +1,12 @@
 import {
   ApprovalRequestId,
   EventId,
+  isToolLifecycleItemType,
   ProviderDriverKind,
   ProviderInstanceId,
   type ProviderOptionSelection,
   RuntimeItemId,
+  type ToolLifecycleItemType,
   type ProviderApprovalDecision,
   type ProviderRuntimeEvent,
   type ProviderSession,
@@ -65,6 +67,42 @@ interface CompadreSessionContext {
 function stringField(event: CompadreStreamEvent, field: string): string | undefined {
   const value = event[field];
   return typeof value === "string" && value.length > 0 ? value : undefined;
+}
+
+function record(value: unknown): Record<string, unknown> | undefined {
+  return value !== null && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : undefined;
+}
+
+function parsedJson(value: string | undefined): unknown {
+  if (!value) return undefined;
+  try {
+    return JSON.parse(value);
+  } catch {
+    return undefined;
+  }
+}
+
+function eventData(event: CompadreStreamEvent): unknown {
+  if (event.data !== undefined) return event.data;
+  const content = record(parsedJson(stringField(event, "content")));
+  if (content && "data" in content) return content.data;
+  return parsedJson(stringField(event, "args") ?? stringField(event, "delta"));
+}
+
+function eventDetail(event: CompadreStreamEvent): string | undefined {
+  const direct = stringField(event, "detail");
+  if (direct) return direct;
+  const content = record(parsedJson(stringField(event, "content")));
+  return content && typeof content.detail === "string" && content.detail.length > 0
+    ? content.detail
+    : undefined;
+}
+
+function toolItemType(event: CompadreStreamEvent): ToolLifecycleItemType {
+  const itemType = stringField(event, "itemType");
+  return itemType && isToolLifecycleItemType(itemType) ? itemType : "dynamic_tool_call";
 }
 
 export function makeCompadreAdapter(options: CompadreAdapterOptions) {
@@ -305,8 +343,11 @@ export function makeCompadreAdapter(options: CompadreAdapterOptions) {
             string,
             {
               readonly id: RuntimeItemId;
-              readonly type: "assistant_message" | "mcp_tool_call";
-              readonly title?: string;
+              type: "assistant_message" | ToolLifecycleItemType;
+              title?: string;
+              detail?: string;
+              data?: unknown;
+              argsText?: string;
             }
           >();
           let terminal = false;
@@ -361,6 +402,8 @@ export function makeCompadreAdapter(options: CompadreAdapterOptions) {
                       itemType: item.type,
                       status: "completed",
                       ...(item.title ? { title: item.title } : {}),
+                      ...(item.detail ? { detail: item.detail } : {}),
+                      ...(item.data !== undefined ? { data: item.data } : {}),
                     },
                   });
                   items.delete(key);
@@ -456,9 +499,21 @@ export function makeCompadreAdapter(options: CompadreAdapterOptions) {
                   const sourceId = stringField(event, "toolCallId");
                   if (!sourceId || items.has(sourceId)) return;
                   const title =
-                    stringField(event, "toolCallName") ?? stringField(event, "toolName") ?? "Tool";
+                    stringField(event, "title") ??
+                    stringField(event, "toolCallName") ??
+                    stringField(event, "toolName") ??
+                    "Tool";
+                  const type = toolItemType(event);
+                  const detail = eventDetail(event);
+                  const data = eventData(event);
                   const itemId = RuntimeItemId.make(sourceId);
-                  items.set(sourceId, { id: itemId, type: "mcp_tool_call", title });
+                  items.set(sourceId, {
+                    id: itemId,
+                    type,
+                    title,
+                    ...(detail ? { detail } : {}),
+                    ...(data !== undefined ? { data } : {}),
+                  });
                   yield* publish({
                     type: "item.started",
                     ...(yield* makeEventStamp()),
@@ -467,7 +522,40 @@ export function makeCompadreAdapter(options: CompadreAdapterOptions) {
                     threadId: input.threadId,
                     turnId,
                     itemId,
-                    payload: { itemType: "mcp_tool_call", status: "inProgress", title },
+                    payload: {
+                      itemType: type,
+                      status: "inProgress",
+                      title,
+                      ...(detail ? { detail } : {}),
+                      ...(data !== undefined ? { data } : {}),
+                    },
+                  });
+                  return;
+                }
+                case "TOOL_CALL_ARGS": {
+                  const sourceId = stringField(event, "toolCallId");
+                  const item = sourceId ? items.get(sourceId) : undefined;
+                  if (!item || item.type === "assistant_message" || item.data !== undefined) return;
+                  const argsDelta = stringField(event, "delta") ?? stringField(event, "args");
+                  if (argsDelta) item.argsText = `${item.argsText ?? ""}${argsDelta}`;
+                  const data = eventData(event) ?? parsedJson(item.argsText);
+                  if (data === undefined) return;
+                  item.data = data;
+                  yield* publish({
+                    type: "item.updated",
+                    ...(yield* makeEventStamp()),
+                    provider: runtimeProvider,
+                    providerInstanceId: boundInstanceId,
+                    threadId: input.threadId,
+                    turnId,
+                    itemId: item.id,
+                    payload: {
+                      itemType: item.type,
+                      status: "inProgress",
+                      ...(item.title ? { title: item.title } : {}),
+                      ...(item.detail ? { detail: item.detail } : {}),
+                      data,
+                    },
                   });
                   return;
                 }
@@ -477,6 +565,8 @@ export function makeCompadreAdapter(options: CompadreAdapterOptions) {
                   const item = sourceId ? items.get(sourceId) : undefined;
                   if (!sourceId || !item) return;
                   items.delete(sourceId);
+                  const detail = eventDetail(event) ?? item.detail;
+                  const data = eventData(event) ?? item.data;
                   yield* publish({
                     type: "item.completed",
                     ...(yield* makeEventStamp()),
@@ -486,10 +576,11 @@ export function makeCompadreAdapter(options: CompadreAdapterOptions) {
                     turnId,
                     itemId: item.id,
                     payload: {
-                      itemType: "mcp_tool_call",
+                      itemType: item.type,
                       status: "completed",
                       ...(item.title ? { title: item.title } : {}),
-                      data: event,
+                      ...(detail ? { detail } : {}),
+                      ...(data !== undefined ? { data } : {}),
                     },
                   });
                   return;
