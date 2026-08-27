@@ -267,6 +267,20 @@ export type OrchestrationMessageRole = typeof OrchestrationMessageRole.Type;
 export const MessageOrigin = Schema.Literals(["web", "slack", "api"]);
 export type MessageOrigin = typeof MessageOrigin.Type;
 
+export const ThreadParticipant = Schema.Struct({
+  userId: TrimmedNonEmptyString,
+  displayName: TrimmedNonEmptyString,
+  avatarUrl: Schema.optional(TrimmedNonEmptyString),
+  origins: Schema.Array(MessageOrigin),
+});
+export type ThreadParticipant = typeof ThreadParticipant.Type;
+
+export const ThreadExternalReference = Schema.Struct({
+  provider: Schema.Literal("slack"),
+  url: TrimmedNonEmptyString,
+});
+export type ThreadExternalReference = typeof ThreadExternalReference.Type;
+
 export const MessageAttribution = Schema.Struct({
   userId: TrimmedNonEmptyString,
   displayName: TrimmedNonEmptyString,
@@ -278,6 +292,9 @@ export const MessageAttribution = Schema.Struct({
       userId: TrimmedNonEmptyString,
       channelId: TrimmedNonEmptyString,
       messageTs: TrimmedNonEmptyString,
+      threadTs: Schema.optional(TrimmedNonEmptyString),
+      threadUrl: Schema.optional(TrimmedNonEmptyString),
+      participants: Schema.optional(Schema.Array(ThreadParticipant)),
     }),
   ),
 });
@@ -516,6 +533,9 @@ export const OrchestrationThreadShell = Schema.Struct({
   hasPendingApprovals: Schema.Boolean,
   hasPendingUserInput: Schema.Boolean,
   hasActionableProposedPlan: Schema.Boolean,
+  startedByUserId: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
+  participants: Schema.optional(Schema.Array(ThreadParticipant)),
+  externalThread: Schema.optional(Schema.NullOr(ThreadExternalReference)),
   /**
    * Native background work alive after the turn settles: "working" while
    * subagents/workflows run, "monitoring" when watch loops are the only

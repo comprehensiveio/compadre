@@ -36,6 +36,7 @@ import {
   sortProjectsForSidebar,
   sortScopedProjectsForSidebar,
   shouldCreateNewThreadInCurrentProject,
+  threadMatchesSidebarIdentityFilter,
   THREAD_JUMP_HINT_SHOW_DELAY_MS,
 } from "./Sidebar.logic";
 import {
@@ -51,6 +52,7 @@ import {
   DEFAULT_RUNTIME_MODE,
   type Project,
   type Thread,
+  type ThreadShell,
 } from "../types";
 
 const localEnvironmentId = EnvironmentId.make("environment-local");
@@ -78,6 +80,37 @@ describe("animatePinnedLayoutChanges", () => {
 
   it("keeps layout movement while the user is sorting", () => {
     expect(animatePinnedLayoutChanges({ ...baseArgs, isSorting: true })).toBe(true);
+  });
+});
+
+describe("threadMatchesSidebarIdentityFilter", () => {
+  const thread: ThreadShell = {
+    ...makeThread(),
+    latestUserMessageAt: null,
+    hasPendingApprovals: false,
+    hasPendingUserInput: false,
+    hasActionableProposedPlan: false,
+    startedByUserId: "user-starter",
+    participants: [
+      {
+        userId: "user-involved",
+        displayName: "Involved Person",
+        origins: ["slack"],
+      },
+      {
+        userId: "user-web-only",
+        displayName: "Web Person",
+        origins: ["web"],
+      },
+    ],
+    externalThread: null,
+  };
+
+  it("distinguishes the starter from broader Slack participation", () => {
+    expect(threadMatchesSidebarIdentityFilter(thread, "all", null)).toBe(true);
+    expect(threadMatchesSidebarIdentityFilter(thread, "started-by-me", "user-starter")).toBe(true);
+    expect(threadMatchesSidebarIdentityFilter(thread, "involved", "user-involved")).toBe(true);
+    expect(threadMatchesSidebarIdentityFilter(thread, "involved", "user-web-only")).toBe(false);
   });
 });
 

@@ -338,9 +338,17 @@ export const AuthCreatePairingCredentialInput = Schema.Struct({
 });
 export type AuthCreatePairingCredentialInput = typeof AuthCreatePairingCredentialInput.Type;
 
+export const AuthSessionUser = Schema.Struct({
+  id: TrimmedNonEmptyString,
+  displayName: TrimmedNonEmptyString,
+  avatarUrl: Schema.optional(TrimmedNonEmptyString),
+});
+export type AuthSessionUser = typeof AuthSessionUser.Type;
+
 export const AuthSessionState = Schema.Struct({
   authenticated: Schema.Boolean,
   auth: ServerAuthDescriptor,
+  user: Schema.optional(AuthSessionUser),
   scopes: Schema.optionalKey(AuthEnvironmentScopes),
   sessionMethod: Schema.optionalKey(ServerAuthSessionMethod),
   expiresAt: Schema.optionalKey(Schema.DateTimeUtc),

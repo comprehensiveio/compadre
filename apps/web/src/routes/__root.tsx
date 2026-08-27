@@ -59,6 +59,7 @@ import {
 } from "../components/KeybindingsUpdateToast.logic";
 import { rememberCompadreAuthReturnTo } from "../components/auth/CompadreLoginSurface";
 import { COMPADRE_AUTH_ENABLED } from "../branding";
+import { CompadreSessionProvider } from "../compadreSession";
 
 export const Route = createRootRoute({
   beforeLoad: async ({ location }) => {
@@ -154,7 +155,11 @@ function RootRouteView() {
         {primaryEnvironmentAuthenticated ? <EventRouter /> : null}
         {primaryEnvironmentAuthenticated ? <PlanAgentSelectionHeal /> : null}
         {primaryEnvironmentAuthenticated ? <ProviderUpdateLaunchNotification /> : null}
-        {appShell}
+        <CompadreSessionProvider
+          user={authGateState.status === "authenticated" ? (authGateState.user ?? null) : null}
+        >
+          {appShell}
+        </CompadreSessionProvider>
         {/* Above the router: a theme draft is judged by walking the app, so the
             editor has to survive navigation away from settings. */}
         <ThemeEditorHost />

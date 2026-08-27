@@ -142,6 +142,8 @@ import {
   sortPinnedThreadsForSidebar,
   sortSettledThreadsForSidebar,
   sortThreadsForSidebar,
+  threadMatchesSidebarIdentityFilter,
+  type SidebarIdentityFilter,
   useThreadJumpHintVisibility,
 } from "./Sidebar.logic";
 import { resolveLocalCheckoutBranchMismatch } from "./BranchToolbar.logic";
@@ -189,6 +191,8 @@ import {
   type ComposerThreadDraftState,
   type DraftSessionState,
 } from "../composerDraftStore";
+import { COMPADRE_AUTH_ENABLED } from "../branding";
+import { useCompadreSessionUser } from "../compadreSession";
 
 // Settled-tail paging: recent history is the common lookup; the deep tail
 // stays behind an explicit Show more.
@@ -197,6 +201,77 @@ const SETTLED_TAIL_PAGE_COUNT = 25;
 // Keep the v2 key so existing preferences survive the v2-to-default rename.
 const SETTLED_SHELF_EXPANDED_KEY = "t3code:sidebar-v2:settled-expanded";
 const SNOOZED_SHELF_EXPANDED_KEY = "t3code:sidebar-v2:snoozed-expanded";
+
+function participantInitials(displayName: string): string {
+  return (
+    displayName
+      .split(/\s+/u)
+      .filter(Boolean)
+      .slice(0, 2)
+      .map((part) => part[0]?.toUpperCase() ?? "")
+      .join("") || "?"
+  );
+}
+
+function ThreadParticipantAvatars({
+  thread,
+  compact = false,
+}: {
+  thread: SidebarThreadSummary;
+  compact?: boolean;
+}) {
+  const participants = thread.participants ?? [];
+  const visible = participants.slice(0, 3);
+  if (visible.length === 0) {
+    return (
+      <span
+        className={cn(
+          "flex shrink-0 items-center justify-center rounded-full bg-sidebar-control-surface text-sidebar-muted-foreground",
+          compact ? "size-4" : "size-5",
+        )}
+      >
+        <MessageSquareIcon className={compact ? "size-2.5" : "size-3"} />
+      </span>
+    );
+  }
+  const names = participants.map((participant) => participant.displayName).join(", ");
+  return (
+    <span className="flex shrink-0 items-center" aria-label={`Participants: ${names}`}>
+      {visible.map((participant, index) =>
+        participant.avatarUrl ? (
+          <img
+            key={participant.userId}
+            src={participant.avatarUrl}
+            alt=""
+            title={participant.displayName}
+            className={cn(
+              "rounded-full border border-sidebar-background object-cover",
+              compact ? "size-4" : "size-5",
+              index > 0 && "-ml-1.5",
+            )}
+          />
+        ) : (
+          <span
+            key={participant.userId}
+            title={participant.displayName}
+            className={cn(
+              "flex items-center justify-center rounded-full border border-sidebar-background bg-sidebar-control-surface font-medium text-sidebar-muted-foreground",
+              compact ? "size-4 text-[7px]" : "size-5 text-[8px]",
+              index > 0 && "-ml-1.5",
+            )}
+          >
+            {participantInitials(participant.displayName)}
+          </span>
+        ),
+      )}
+      {participants.length > visible.length ? (
+        <span className="-ml-1.5 flex size-5 items-center justify-center rounded-full border border-sidebar-background bg-sidebar-control-surface text-[8px] font-medium text-sidebar-muted-foreground">
+          +{participants.length - visible.length}
+        </span>
+      ) : null}
+    </span>
+  );
+}
 
 function compactSidebarTimeLabel(label: string): string {
   if (label === "just now") return "now";
@@ -300,7 +375,7 @@ function SidebarThreadTooltip({
           {thread.title}
         </div>
         <div className="grid gap-1.5 pl-0.5 text-xs text-muted-foreground">
-          {projectTitle ? (
+          {!COMPADRE_AUTH_ENABLED && projectTitle ? (
             <div className="flex min-w-0 items-center gap-2">
               <ProjectFavicon
                 environmentId={thread.environmentId}
@@ -311,19 +386,19 @@ function SidebarThreadTooltip({
               <div className="min-w-0 truncate text-foreground/75">{projectTitle}</div>
             </div>
           ) : null}
-          {environmentLabel ? (
+          {!COMPADRE_AUTH_ENABLED && environmentLabel ? (
             <div className="flex min-w-0 items-center gap-2">
               <ServerIcon className="size-3 shrink-0 stroke-muted-foreground" />
               <div className="min-w-0 truncate text-foreground/75">{environmentLabel}</div>
             </div>
           ) : null}
-          {thread.branch ? (
+          {!COMPADRE_AUTH_ENABLED && thread.branch ? (
             <div className="flex min-w-0 items-center gap-2">
               <GitBranchIcon className="size-3 shrink-0 stroke-muted-foreground" />
               <div className="min-w-0 truncate text-foreground/75">{thread.branch}</div>
             </div>
           ) : null}
-          {branchMismatch ? (
+          {!COMPADRE_AUTH_ENABLED && branchMismatch ? (
             <div className="flex min-w-0 items-start gap-2 text-warning">
               <CircleAlertIcon aria-hidden className="mt-0.5 size-3 shrink-0 stroke-current" />
               <div className="min-w-0 flex-1 wrap-break-word leading-5">
@@ -331,7 +406,7 @@ function SidebarThreadTooltip({
               </div>
             </div>
           ) : null}
-          {driverKind ? (
+          {!COMPADRE_AUTH_ENABLED && driverKind ? (
             <div className="flex min-w-0 items-center gap-2">
               <ProviderInstanceIcon
                 driverKind={driverKind}
@@ -351,6 +426,17 @@ function SidebarThreadTooltip({
                   : modelLabel}
               </div>
             </div>
+          ) : null}
+          {COMPADRE_AUTH_ENABLED && thread.externalThread ? (
+            <a
+              href={thread.externalThread.url}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex min-w-0 items-center gap-1.5 text-foreground/75 hover:text-foreground hover:underline"
+            >
+              <MessageSquareIcon className="size-3 shrink-0" />
+              <span className="truncate">Open Slack thread</span>
+            </a>
           ) : null}
           {terminalStatus ? (
             <div className="flex min-w-0 items-center gap-2">
@@ -1260,13 +1346,17 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
                   "opacity-40 grayscale group-hover/sidebar-row:opacity-100 group-hover/sidebar-row:grayscale-0",
               )}
             >
-              <ProjectFavicon
-                environmentId={thread.environmentId}
-                cwd={props.projectCwd ?? ""}
-                faviconPath={props.projectFaviconPath}
-                className="size-4"
-                fallbackIcon={MessageSquareIcon}
-              />
+              {COMPADRE_AUTH_ENABLED ? (
+                <ThreadParticipantAvatars thread={thread} compact />
+              ) : (
+                <ProjectFavicon
+                  environmentId={thread.environmentId}
+                  cwd={props.projectCwd ?? ""}
+                  faviconPath={props.projectFaviconPath}
+                  className="size-4"
+                  fallbackIcon={MessageSquareIcon}
+                />
+              )}
             </span>
             {title}
             {pinIndicator}
@@ -1414,13 +1504,17 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
         >
           <div className="relative z-10 h-[4.875rem] px-[var(--sidebar-row-content-inset)] py-[var(--sidebar-content-inset)]">
             <div className="flex h-5 min-w-0 items-center gap-1.5">
-              <ProjectFavicon
-                environmentId={thread.environmentId}
-                cwd={props.projectCwd ?? ""}
-                faviconPath={props.projectFaviconPath}
-                className="size-4 shrink-0"
-              />
-              {props.projectTitle ? (
+              {COMPADRE_AUTH_ENABLED ? (
+                <ThreadParticipantAvatars thread={thread} />
+              ) : (
+                <ProjectFavicon
+                  environmentId={thread.environmentId}
+                  cwd={props.projectCwd ?? ""}
+                  faviconPath={props.projectFaviconPath}
+                  className="size-4 shrink-0"
+                />
+              )}
+              {!COMPADRE_AUTH_ENABLED && props.projectTitle ? (
                 <span
                   className={cn(
                     "min-w-0 flex-1 truncate text-secondary-label text-xs",
@@ -1552,7 +1646,19 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
               {/* Always the branch. The plan step used to take this slot while
                   working, but it truncated to a half-sentence and dropped the
                   branch, so the row lost its most stable identifier. */}
-              {thread.branch ? (
+              {COMPADRE_AUTH_ENABLED && thread.externalThread ? (
+                <a
+                  href={thread.externalThread.url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  onPointerDown={(event) => event.stopPropagation()}
+                  onClick={(event) => event.stopPropagation()}
+                  className="inline-flex min-w-0 flex-1 items-center gap-1 truncate hover:text-foreground hover:underline"
+                >
+                  <MessageSquareIcon className="size-3 shrink-0" />
+                  <span className="truncate">Slack thread</span>
+                </a>
+              ) : !COMPADRE_AUTH_ENABLED && thread.branch ? (
                 <>
                   <ThreadWorktreeIndicator thread={thread} />
                   <span className="min-w-0 flex-1 truncate whitespace-nowrap">{thread.branch}</span>
@@ -1577,7 +1683,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
                     <ServerIcon aria-hidden className="size-3.5" />
                   </span>
                 ) : null}
-                {driverKind ? (
+                {!COMPADRE_AUTH_ENABLED && driverKind ? (
                   <span className="inline-flex shrink-0 items-center">
                     <ProviderInstanceIcon
                       driverKind={driverKind}
@@ -1676,7 +1782,9 @@ const SidebarSearchResultRow = memo(function SidebarSearchResultRow(props: {
               aria-selected={props.isHighlighted}
               aria-current={props.isRouteActive ? "page" : undefined}
               aria-label={
-                props.projectTitle ? `${thread.title}, ${props.projectTitle}` : thread.title
+                !COMPADRE_AUTH_ENABLED && props.projectTitle
+                  ? `${thread.title}, ${props.projectTitle}`
+                  : thread.title
               }
               onMouseMove={props.onHighlight}
               onClick={props.onSelect}
@@ -1689,13 +1797,17 @@ const SidebarSearchResultRow = memo(function SidebarSearchResultRow(props: {
             />
           }
         >
-          <ProjectFavicon
-            environmentId={thread.environmentId}
-            cwd={props.projectCwd ?? ""}
-            faviconPath={props.projectFaviconPath}
-            className="size-4 shrink-0"
-            fallbackIcon={MessageSquareIcon}
-          />
+          {COMPADRE_AUTH_ENABLED ? (
+            <ThreadParticipantAvatars thread={thread} compact />
+          ) : (
+            <ProjectFavicon
+              environmentId={thread.environmentId}
+              cwd={props.projectCwd ?? ""}
+              faviconPath={props.projectFaviconPath}
+              className="size-4 shrink-0"
+              fallbackIcon={MessageSquareIcon}
+            />
+          )}
           <span className="min-w-0 flex-1 truncate">{thread.title}</span>
           <span className="shrink-0 text-xs text-muted-foreground/55 tabular-nums">
             {threadTimeLabel(thread)}
@@ -1721,6 +1833,8 @@ const SidebarSearchResultRow = memo(function SidebarSearchResultRow(props: {
 });
 
 export default function Sidebar() {
+  const currentCompadreUser = useCompadreSessionUser();
+  const [identityFilter, setIdentityFilter] = useState<SidebarIdentityFilter>("all");
   const projects = useProjects();
   const projectOrder = useUiStateStore((store) => store.projectOrder);
   const threads = useThreadShells();
@@ -1972,6 +2086,7 @@ export default function Sidebar() {
   // an open never-left draft, which only softens the empty state.
   const routeDraftIdForRows = routeTarget?.kind === "draft" ? routeTarget.draftId : null;
   const visibleDraftSessionCount = useComposerDraftStore((store) => {
+    if (identityFilter !== "all") return 0;
     let count = 0;
     for (const [draftKey, session] of Object.entries(store.draftThreadsByThreadKey)) {
       if (session.promotedTo != null) {
@@ -1994,7 +2109,7 @@ export default function Sidebar() {
   // hidden now, and bulk actions must never count or touch invisible rows.
   useEffect(() => {
     clearSelection();
-  }, [clearSelection, projectScopeKey]);
+  }, [clearSelection, identityFilter, projectScopeKey]);
 
   const handleProjectSettings = useCallback(
     (event: ReactMouseEvent<HTMLButtonElement>, projectGroup: SidebarProjectSnapshot) => {
@@ -2034,6 +2149,11 @@ export default function Sidebar() {
     const visible = threads.filter(
       (thread) =>
         thread.archivedAt === null &&
+        threadMatchesSidebarIdentityFilter(
+          thread,
+          identityFilter,
+          currentCompadreUser?.id ?? null,
+        ) &&
         (scopedProjectKeys === null ||
           scopedProjectKeys.has(`${thread.environmentId}:${thread.projectId}`)),
     );
@@ -2110,6 +2230,8 @@ export default function Sidebar() {
     autoSettleAfterDays,
     autoSettleOnMerge,
     changeRequestSnapshotByKey,
+    currentCompadreUser?.id,
+    identityFilter,
     nowMinute,
     scopedProjectKeys,
     serverConfigs,
@@ -3488,6 +3610,36 @@ export default function Sidebar() {
                 </Tooltip>
               </div>
             </div>
+            {COMPADRE_AUTH_ENABLED && currentCompadreUser ? (
+              <div
+                role="group"
+                aria-label="Filter conversations"
+                className="grid grid-cols-3 gap-0.5 rounded-md bg-sidebar-control-surface p-0.5 text-[11px]"
+              >
+                {(
+                  [
+                    ["all", "All"],
+                    ["started-by-me", "Started by me"],
+                    ["involved", "I'm involved"],
+                  ] as const
+                ).map(([value, label]) => (
+                  <button
+                    key={value}
+                    type="button"
+                    aria-pressed={identityFilter === value}
+                    onClick={() => setIdentityFilter(value)}
+                    className={cn(
+                      "min-w-0 cursor-pointer truncate rounded-sm px-1.5 py-1 text-center transition-colors",
+                      identityFilter === value
+                        ? "bg-sidebar-row-active font-medium text-sidebar-foreground shadow-xs"
+                        : "text-sidebar-muted-foreground hover:text-sidebar-foreground",
+                    )}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+            ) : null}
             {projectGroups.length > 0 ? (
               <div className="flex items-center gap-1" data-compadre-hidden-control>
                 <Menu open={projectScopeMenuOpen} onOpenChange={setProjectScopeMenuOpen}>
@@ -3773,15 +3925,17 @@ export default function Sidebar() {
                   // reorder-capable rows register as sortable (legacy-server
                   // pins render in place as plain rows).
                   const items: ReactNode[] = [
-                    <SidebarDraftBlock
-                      key="draft-sessions"
-                      projectDisplayNameByKey={projectDisplayNameByKey}
-                      projectCwdByKey={projectCwdByKey}
-                      projectFaviconPathByKey={projectFaviconPathByKey}
-                      scopedProjectKeys={scopedProjectKeys}
-                      routeDraftId={routeDraftIdForRows}
-                      onNavigateToDraft={navigateToDraft}
-                    />,
+                    identityFilter === "all" ? (
+                      <SidebarDraftBlock
+                        key="draft-sessions"
+                        projectDisplayNameByKey={projectDisplayNameByKey}
+                        projectCwdByKey={projectCwdByKey}
+                        projectFaviconPathByKey={projectFaviconPathByKey}
+                        scopedProjectKeys={scopedProjectKeys}
+                        routeDraftId={routeDraftIdForRows}
+                        onNavigateToDraft={navigateToDraft}
+                      />
+                    ) : null,
                     pinnedThreads.length > 0 ? (
                       <li key="pinned-dnd" className="list-none">
                         <DndContext
@@ -3933,7 +4087,9 @@ export default function Sidebar() {
             settledThreads.length ===
             0 ? (
             <div className="flex flex-col items-center gap-2 px-2 py-6 text-center text-xs text-muted-foreground/60">
-              {projects.length === 0 ? (
+              {COMPADRE_AUTH_ENABLED && identityFilter !== "all" ? (
+                <span>No conversations match this filter</span>
+              ) : projects.length === 0 && !COMPADRE_AUTH_ENABLED ? (
                 <>
                   <span>No projects yet</span>
                   <button
@@ -3945,6 +4101,8 @@ export default function Sidebar() {
                     Add project
                   </button>
                 </>
+              ) : COMPADRE_AUTH_ENABLED ? (
+                "No conversations yet"
               ) : scopedProjectGroup ? (
                 `No threads in ${scopedProjectGroup.displayName} yet`
               ) : (

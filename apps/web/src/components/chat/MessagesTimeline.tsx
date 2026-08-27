@@ -59,7 +59,6 @@ import {
   SearchIcon,
   SquarePenIcon,
   TerminalIcon,
-  Undo2Icon,
   WrenchIcon,
   XIcon,
   ZapIcon,
@@ -1005,8 +1004,6 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
   ];
   const previewImages = userImages.filter((image) => image.name.startsWith("preview-annotation-"));
   const regularImages = userImages.filter((image) => !image.name.startsWith("preview-annotation-"));
-  const canRevertAgentWork = typeof row.revertTurnCount === "number";
-
   return (
     <div className="group flex flex-col items-end gap-1">
       <div className="relative max-w-[80%] rounded-2xl bg-message p-3 text-message-foreground">
@@ -1067,9 +1064,9 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
           markdownCwd={ctx.markdownCwd}
         />
       </div>
-      <div className="flex w-full max-w-[80%] items-center justify-between gap-3 pe-1 text-xs tabular-nums">
+      <div className="flex max-w-[80%] items-center justify-end gap-2 pe-1 text-xs tabular-nums">
         {row.message.attribution ? (
-          <div className="flex min-w-0 items-center gap-1.5 text-muted-foreground">
+          <div className="flex min-w-0 items-center justify-end gap-1.5 text-muted-foreground">
             {row.message.attribution.avatarUrl ? (
               <img
                 src={row.message.attribution.avatarUrl}
@@ -1085,52 +1082,26 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
               </span>
             ) : null}
           </div>
-        ) : (
-          <span />
-        )}
-        <div className="flex shrink-0 items-center gap-2 opacity-0 transition-opacity duration-200 focus-within:opacity-100 group-hover:opacity-100">
-          <Tooltip>
-            <TooltipTrigger render={<p className="text-muted-foreground text-xs tabular-nums" />}>
-              {formatDayAwareTimestamp(row.message.createdAt, ctx.timestampFormat)}
-            </TooltipTrigger>
-            <TooltipPopup>
-              {formatChatTimestampTooltip(row.message.createdAt, ctx.timestampFormat)}
-            </TooltipPopup>
-          </Tooltip>
-          <div className="flex items-center gap-0.5">
-            {canRevertAgentWork && <RevertUserMessageButton messageId={row.message.id} />}
-            {displayedUserMessage.copyText && (
+        ) : null}
+        <Tooltip>
+          <TooltipTrigger
+            render={<p className="shrink-0 text-muted-foreground text-xs tabular-nums" />}
+          >
+            {formatDayAwareTimestamp(row.message.createdAt, ctx.timestampFormat)}
+          </TooltipTrigger>
+          <TooltipPopup>
+            {formatChatTimestampTooltip(row.message.createdAt, ctx.timestampFormat)}
+          </TooltipPopup>
+        </Tooltip>
+        {displayedUserMessage.copyText ? (
+          <div className="flex size-6 shrink-0 items-center justify-center">
+            <span className="opacity-0 transition-opacity duration-200 focus-within:opacity-100 group-hover:opacity-100">
               <MessageCopyButton text={displayedUserMessage.copyText} variant="ghost" />
-            )}
+            </span>
           </div>
-        </div>
+        ) : null}
       </div>
     </div>
-  );
-}
-
-function RevertUserMessageButton({ messageId }: { messageId: MessageId }) {
-  const ctx = use(TimelineRowCtx);
-  const activity = use(TimelineRowActivityCtx);
-
-  return (
-    <Tooltip>
-      <TooltipTrigger
-        render={
-          <Button
-            type="button"
-            size="xs"
-            variant="ghost"
-            disabled={activity.isRevertingCheckpoint || activity.isWorking}
-            onClick={() => ctx.onRevertUserMessage(messageId)}
-            aria-label="Revert to this message"
-          />
-        }
-      >
-        <Undo2Icon className="size-3" />
-      </TooltipTrigger>
-      <TooltipPopup side="top">Revert to this message</TooltipPopup>
-    </Tooltip>
   );
 }
 

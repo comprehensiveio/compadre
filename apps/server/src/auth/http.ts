@@ -37,7 +37,7 @@ import * as HttpApiBuilder from "effect/unstable/httpapi/HttpApiBuilder";
 
 import * as EnvironmentAuth from "./EnvironmentAuth.ts";
 import * as SessionStore from "./SessionStore.ts";
-import { isAllowedCompadreSession } from "./CompadreAuth.ts";
+import { decodeCompadreUserSubject, isAllowedCompadreSession } from "./CompadreAuth.ts";
 import { traceAuthenticatedRelayRequest, traceRelayRequest } from "../cloud/traceRelayRequest.ts";
 import { deriveAuthClientMetadata } from "./utils.ts";
 import { verifyRequestDpopProof } from "./dpop.ts";
@@ -219,7 +219,10 @@ export const authHttpApiLayer = HttpApiBuilder.group(
             const state = yield* serverAuth.getSessionState(request);
             if (!state.authenticated) return state;
             const session = yield* serverAuth.authenticateHttpRequest(request).pipe(Effect.option);
-            if (Option.isSome(session) && isAllowedCompadreSession(session.value)) return state;
+            if (Option.isSome(session) && isAllowedCompadreSession(session.value)) {
+              const user = decodeCompadreUserSubject(session.value.subject);
+              return user ? { ...state, user } : state;
+            }
             return { authenticated: false, auth: state.auth } as const;
           },
           Effect.catchIf(EnvironmentAuth.isServerAuthInternalError, (error) =>

@@ -24,6 +24,24 @@ export const THREAD_JUMP_HINT_SHOW_DELAY_MS = 200;
 // it small; cold opens still render instantly from the cached snapshot.
 export const SIDEBAR_THREAD_PREWARM_LIMIT = 3;
 
+export type SidebarIdentityFilter = "all" | "started-by-me" | "involved";
+
+export function threadMatchesSidebarIdentityFilter(
+  thread: SidebarThreadSummary,
+  filter: SidebarIdentityFilter,
+  currentUserId: string | null,
+): boolean {
+  if (filter === "all") return true;
+  if (!currentUserId) return false;
+  if (filter === "started-by-me") return thread.startedByUserId === currentUserId;
+  return (
+    thread.participants?.some(
+      (participant) =>
+        participant.userId === currentUserId && participant.origins.includes("slack"),
+    ) === true
+  );
+}
+
 // The list already reaches its destination through sortable transforms while
 // the pointer is down. dnd-kit's default also animates the committed DOM order
 // after release, replaying the same movement across every affected row.

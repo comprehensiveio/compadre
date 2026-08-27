@@ -101,6 +101,9 @@ projectionRepositoriesLayer("Projection repositories", (it) => {
         pendingApprovalCount: 0,
         pendingUserInputCount: 0,
         hasActionableProposedPlan: 0,
+        startedByUserId: null,
+        participants: [],
+        externalThread: null,
         deletedAt: null,
       });
 
@@ -164,6 +167,9 @@ projectionRepositoriesLayer("Projection repositories", (it) => {
         pendingApprovalCount: 0,
         pendingUserInputCount: 0,
         hasActionableProposedPlan: 0,
+        startedByUserId: null,
+        participants: [],
+        externalThread: null,
         deletedAt: null,
       });
 
@@ -238,6 +244,9 @@ projectionRepositoriesLayer("Projection repositories", (it) => {
         pendingApprovalCount: 0,
         pendingUserInputCount: 0,
         hasActionableProposedPlan: 0,
+        startedByUserId: null,
+        participants: [],
+        externalThread: null,
         deletedAt: null,
       });
 

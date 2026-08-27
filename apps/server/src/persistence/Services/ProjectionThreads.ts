@@ -15,7 +15,9 @@ import {
   ProviderInteractionMode,
   RuntimeMode,
   ThreadLinkedPullRequest,
+  ThreadExternalReference,
   ThreadId,
+  ThreadParticipant,
   TurnId,
 } from "@t3tools/contracts";
 import * as Option from "effect/Option";
@@ -51,6 +53,9 @@ export const ProjectionThread = Schema.Struct({
   pendingApprovalCount: NonNegativeInt,
   pendingUserInputCount: NonNegativeInt,
   hasActionableProposedPlan: NonNegativeInt,
+  startedByUserId: Schema.NullOr(Schema.String),
+  participants: Schema.Array(ThreadParticipant),
+  externalThread: Schema.NullOr(ThreadExternalReference),
   deletedAt: Schema.NullOr(IsoDateTime),
 });
 export type ProjectionThread = typeof ProjectionThread.Type;

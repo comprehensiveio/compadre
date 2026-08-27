@@ -14,12 +14,19 @@ import {
   ProjectionThreadRepository,
   type ProjectionThreadRepositoryShape,
 } from "../Services/ProjectionThreads.ts";
-import { ModelSelection, ThreadLinkedPullRequest } from "@t3tools/contracts";
+import {
+  ModelSelection,
+  ThreadExternalReference,
+  ThreadLinkedPullRequest,
+  ThreadParticipant,
+} from "@t3tools/contracts";
 
 const ProjectionThreadDbRow = ProjectionThread.mapFields(
   Struct.assign({
     modelSelection: Schema.fromJsonString(ModelSelection),
     linkedPullRequest: Schema.NullOr(Schema.fromJsonString(ThreadLinkedPullRequest)),
+    participants: Schema.fromJsonString(Schema.Array(ThreadParticipant)),
+    externalThread: Schema.NullOr(Schema.fromJsonString(ThreadExternalReference)),
   }),
 );
 type ProjectionThreadDbRow = typeof ProjectionThreadDbRow.Type;
@@ -57,6 +64,9 @@ const makeProjectionThreadRepository = Effect.gen(function* () {
           pending_approval_count,
           pending_user_input_count,
           has_actionable_proposed_plan,
+          started_by_user_id,
+          participants_json,
+          external_thread_json,
           deleted_at
         )
         VALUES (
@@ -85,6 +95,9 @@ const makeProjectionThreadRepository = Effect.gen(function* () {
           ${row.pendingApprovalCount},
           ${row.pendingUserInputCount},
           ${row.hasActionableProposedPlan},
+          ${row.startedByUserId},
+          ${JSON.stringify(row.participants)},
+          ${row.externalThread === null ? null : JSON.stringify(row.externalThread)},
           ${row.deletedAt}
         )
         ON CONFLICT (thread_id)
@@ -113,6 +126,9 @@ const makeProjectionThreadRepository = Effect.gen(function* () {
           pending_approval_count = excluded.pending_approval_count,
           pending_user_input_count = excluded.pending_user_input_count,
           has_actionable_proposed_plan = excluded.has_actionable_proposed_plan,
+          started_by_user_id = excluded.started_by_user_id,
+          participants_json = excluded.participants_json,
+          external_thread_json = excluded.external_thread_json,
           deleted_at = excluded.deleted_at
       `,
   });
@@ -148,6 +164,9 @@ const makeProjectionThreadRepository = Effect.gen(function* () {
           pending_approval_count AS "pendingApprovalCount",
           pending_user_input_count AS "pendingUserInputCount",
           has_actionable_proposed_plan AS "hasActionableProposedPlan",
+          started_by_user_id AS "startedByUserId",
+          participants_json AS "participants",
+          external_thread_json AS "externalThread",
           deleted_at AS "deletedAt"
         FROM projection_threads
         WHERE thread_id = ${threadId}
@@ -185,6 +204,9 @@ const makeProjectionThreadRepository = Effect.gen(function* () {
           pending_approval_count AS "pendingApprovalCount",
           pending_user_input_count AS "pendingUserInputCount",
           has_actionable_proposed_plan AS "hasActionableProposedPlan",
+          started_by_user_id AS "startedByUserId",
+          participants_json AS "participants",
+          external_thread_json AS "externalThread",
           deleted_at AS "deletedAt"
         FROM projection_threads
         WHERE project_id = ${projectId}

@@ -3,6 +3,9 @@ import {
   type ChatAttachment,
   type OrchestrationEvent,
   type OrchestrationSessionStatus,
+  type MessageOrigin,
+  type ThreadExternalReference,
+  type ThreadParticipant,
   ThreadId,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
@@ -593,14 +596,61 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
       ]);
 
       let latestUserMessageAt: string | null = null;
+      let startedByUserId: string | null = null;
+      let externalThread: ThreadExternalReference | null = null;
+      const participantByUserId = new Map<
+        string,
+        {
+          userId: string;
+          displayName: string;
+          avatarUrl?: string;
+          origins: Set<MessageOrigin>;
+        }
+      >();
+      const mergeParticipant = (participant: ThreadParticipant) => {
+        const existing = participantByUserId.get(participant.userId);
+        if (existing) {
+          existing.displayName = participant.displayName || existing.displayName;
+          if (participant.avatarUrl) existing.avatarUrl = participant.avatarUrl;
+          for (const origin of participant.origins) existing.origins.add(origin);
+          return;
+        }
+        participantByUserId.set(participant.userId, {
+          userId: participant.userId,
+          displayName: participant.displayName,
+          ...(participant.avatarUrl ? { avatarUrl: participant.avatarUrl } : {}),
+          origins: new Set(participant.origins),
+        });
+      };
       for (const message of messages) {
-        if (
-          message.role === "user" &&
-          (latestUserMessageAt === null || message.createdAt > latestUserMessageAt)
-        ) {
+        if (message.role !== "user") continue;
+        if (latestUserMessageAt === null || message.createdAt > latestUserMessageAt) {
           latestUserMessageAt = message.createdAt;
         }
+        const attribution = message.attribution;
+        if (!attribution) continue;
+        if (startedByUserId === null) startedByUserId = attribution.userId;
+        mergeParticipant({
+          userId: attribution.userId,
+          displayName: attribution.displayName,
+          ...(attribution.avatarUrl ? { avatarUrl: attribution.avatarUrl } : {}),
+          origins: [attribution.origin],
+        });
+        for (const participant of attribution.slack?.participants ?? []) {
+          mergeParticipant(participant);
+        }
+        if (externalThread === null && attribution.slack?.threadUrl) {
+          externalThread = { provider: "slack", url: attribution.slack.threadUrl };
+        }
       }
+      const participants: ThreadParticipant[] = [...participantByUserId.values()].map(
+        (participant) => ({
+          userId: participant.userId,
+          displayName: participant.displayName,
+          ...(participant.avatarUrl ? { avatarUrl: participant.avatarUrl } : {}),
+          origins: [...participant.origins],
+        }),
+      );
 
       const pendingApprovalCount = pendingApprovals.filter(
         (approval) => approval.status === "pending",
@@ -617,6 +667,9 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
         pendingApprovalCount,
         pendingUserInputCount,
         hasActionableProposedPlan: hasActionableProposedPlan ? 1 : 0,
+        startedByUserId,
+        participants,
+        externalThread,
       });
     });
 
@@ -651,6 +704,9 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
             pendingApprovalCount: 0,
             pendingUserInputCount: 0,
             hasActionableProposedPlan: 0,
+            startedByUserId: null,
+            participants: [],
+            externalThread: null,
             deletedAt: null,
           });
           return;

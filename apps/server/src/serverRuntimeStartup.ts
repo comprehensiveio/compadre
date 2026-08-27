@@ -34,6 +34,7 @@ import * as ServerSettings from "./serverSettings.ts";
 import * as AnalyticsService from "./telemetry/AnalyticsService.ts";
 import * as ServerEnvironment from "./environment/ServerEnvironment.ts";
 import * as EnvironmentAuth from "./auth/EnvironmentAuth.ts";
+import { isCompadreAuthEnabled } from "./auth/CompadreAuth.ts";
 import * as ProviderService from "./provider/Services/ProviderService.ts";
 import * as ProviderSessionDirectory from "./provider/Services/ProviderSessionDirectory.ts";
 import * as ProviderSessionReaper from "./provider/Services/ProviderSessionReaper.ts";
@@ -217,8 +218,23 @@ export const resolveAutoBootstrapWelcomeTargets = Effect.gen(function* () {
         });
       } else {
         nextProjectId = existingProject.value.id;
-        nextProjectDefaultModelSelection =
-          existingProject.value.defaultModelSelection ?? getAutoBootstrapDefaultModelSelection();
+        const hostedDefault = getAutoBootstrapDefaultModelSelection();
+        nextProjectDefaultModelSelection = isCompadreAuthEnabled()
+          ? hostedDefault
+          : (existingProject.value.defaultModelSelection ?? hostedDefault);
+        const existingDefault = existingProject.value.defaultModelSelection;
+        if (
+          isCompadreAuthEnabled() &&
+          (existingDefault?.instanceId !== hostedDefault.instanceId ||
+            existingDefault.model !== hostedDefault.model)
+        ) {
+          yield* orchestrationEngine.dispatch({
+            type: "project.meta.update",
+            commandId: CommandId.make(yield* randomUUID),
+            projectId: nextProjectId,
+            defaultModelSelection: hostedDefault,
+          });
+        }
       }
 
       const existingThreadId =

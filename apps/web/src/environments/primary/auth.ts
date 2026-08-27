@@ -140,8 +140,8 @@ export interface ServerClientSessionRecord {
   readonly current: boolean;
 }
 
-type ServerAuthGateState =
-  | { status: "authenticated" }
+export type ServerAuthGateState =
+  | { status: "authenticated"; user?: AuthSessionState["user"] }
   | {
       status: "requires-auth";
       auth: AuthSessionState["auth"];
@@ -321,7 +321,10 @@ async function bootstrapServerAuth(): Promise<ServerAuthGateState> {
   const bootstrapCredential = getDesktopBootstrapCredential();
   const currentSession = await fetchSessionState();
   if (currentSession.authenticated) {
-    return { status: "authenticated" };
+    return {
+      status: "authenticated",
+      ...(currentSession.user ? { user: currentSession.user } : {}),
+    };
   }
 
   if (!bootstrapCredential) {
@@ -333,8 +336,11 @@ async function bootstrapServerAuth(): Promise<ServerAuthGateState> {
 
   try {
     await exchangeBootstrapCredential(bootstrapCredential);
-    await waitForAuthenticatedSessionAfterBootstrap();
-    return { status: "authenticated" };
+    const session = await waitForAuthenticatedSessionAfterBootstrap();
+    return {
+      status: "authenticated",
+      ...(session.user ? { user: session.user } : {}),
+    };
   } catch (error) {
     return {
       status: "requires-auth",
