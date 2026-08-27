@@ -39,6 +39,16 @@ export interface ModelTotals {
   readonly costShare: number;
 }
 
+export interface UserTotals {
+  readonly userId: string | null;
+  readonly displayName: string;
+  readonly costUsd: number;
+  readonly totalTokens: number;
+  readonly records: number;
+  readonly costShare: number;
+  readonly tokenShare: number;
+}
+
 export interface DailyTotals {
   readonly day: string;
   readonly costUsd: number;
@@ -73,6 +83,7 @@ export interface MergedUsage {
   readonly sessions: number;
   readonly providers: readonly ProviderTotals[];
   readonly models: readonly ModelTotals[];
+  readonly users: readonly UserTotals[];
   readonly daily: readonly DailyTotals[];
   readonly hourly: readonly HourlyTotals[];
   readonly costQuality: CostQuality;
@@ -184,6 +195,7 @@ const EMPTY_MERGED: MergedUsage = {
   sessions: 0,
   providers: [],
   models: [],
+  users: [],
   daily: [],
   hourly: [],
   costQuality: {
@@ -241,6 +253,16 @@ export function mergeUsage(
   const modelAccumulator = new Map<
     string,
     { provider: UsageProviderKind; costUsd: number; totalTokens: number; records: number }
+  >();
+  const userAccumulator = new Map<
+    string,
+    {
+      userId: string | null;
+      displayName: string;
+      costUsd: number;
+      totalTokens: number;
+      records: number;
+    }
   >();
   const dailyAccumulator = new Map<
     string,
@@ -316,6 +338,19 @@ export function mergeUsage(
       model.records += bucket.records;
       modelAccumulator.set(modelKey, model);
 
+      const userKey = bucket.userId ?? "";
+      const user = userAccumulator.get(userKey) ?? {
+        userId: bucket.userId ?? null,
+        displayName: bucket.userDisplayName ?? "Unattributed",
+        costUsd: 0,
+        totalTokens: 0,
+        records: 0,
+      };
+      user.costUsd += bucket.costUsd;
+      user.totalTokens += tokens;
+      user.records += bucket.records;
+      userAccumulator.set(userKey, user);
+
       const day = dailyAccumulator.get(bucket.day) ?? {
         costUsd: 0,
         totalTokens: 0,
@@ -376,6 +411,14 @@ export function mergeUsage(
     }))
     .sort((a, b) => b.costUsd - a.costUsd || b.totalTokens - a.totalTokens);
 
+  const users: UserTotals[] = [...userAccumulator.values()]
+    .map((user) => ({
+      ...user,
+      costShare: costUsd === 0 ? 0 : user.costUsd / costUsd,
+      tokenShare: totalTokens === 0 ? 0 : user.totalTokens / totalTokens,
+    }))
+    .sort((a, b) => b.costUsd - a.costUsd || b.totalTokens - a.totalTokens);
+
   const daily: DailyTotals[] = [...dailyAccumulator.entries()]
     .map(([day, totals]) => ({
       day,
@@ -401,6 +444,7 @@ export function mergeUsage(
     sessions,
     providers,
     models,
+    users,
     daily,
     hourly,
     costQuality: {

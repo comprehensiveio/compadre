@@ -55,12 +55,35 @@ it.effect("records one provider turn with model, usage, cost, and named tool spa
       provider: ProviderDriverKind.make("codex"),
       model: "gpt-5.6-sol",
       input: "Deploy this with token=super-secret-value",
+      attribution: {
+        userId: "user-1",
+        displayName: "Isaac Sherrill",
+        origin: "slack",
+      },
     });
     yield* telemetry.bindTurn(turn, turnId);
     yield* telemetry.observe({
       ...base,
       type: "turn.started",
       payload: { model: "gpt-5.6-sol" },
+    } satisfies ProviderRuntimeEvent);
+    yield* telemetry.observe({
+      ...base,
+      type: "thread.token-usage.updated",
+      payload: {
+        usage: {
+          usedTokens: 8,
+          lastUsedTokens: 8,
+          inputTokens: 5,
+          cachedInputTokens: 2,
+          outputTokens: 3,
+          reasoningOutputTokens: 1,
+          lastInputTokens: 5,
+          lastCachedInputTokens: 2,
+          lastOutputTokens: 3,
+          lastReasoningOutputTokens: 1,
+        },
+      },
     } satisfies ProviderRuntimeEvent);
     yield* telemetry.observe({
       ...base,
@@ -118,11 +141,13 @@ it.effect("records one provider turn with model, usage, cost, and named tool spa
     assert.ok(providerSpan);
     assert.equal(providerSpan.attributes.get("gen_ai.provider.name"), "openai");
     assert.equal(providerSpan.attributes.get("gen_ai.request.model"), "gpt-5.6-sol");
-    assert.equal(providerSpan.attributes.get("gen_ai.usage.input_tokens"), 30);
-    assert.equal(providerSpan.attributes.get("gen_ai.usage.cache_read.input_tokens"), 12);
-    assert.equal(providerSpan.attributes.get("gen_ai.usage.output_tokens"), 9);
-    assert.equal(providerSpan.attributes.get("gen_ai.usage.total_tokens"), 39);
-    assert.equal(providerSpan.attributes.get("gen_ai.usage.reasoning_tokens"), 4);
+    assert.equal(providerSpan.attributes.get("gen_ai.usage.input_tokens"), 35);
+    assert.equal(providerSpan.attributes.get("gen_ai.usage.cache_read.input_tokens"), 14);
+    assert.equal(providerSpan.attributes.get("gen_ai.usage.output_tokens"), 12);
+    assert.equal(providerSpan.attributes.get("gen_ai.usage.total_tokens"), 47);
+    assert.equal(providerSpan.attributes.get("gen_ai.usage.reasoning_tokens"), 5);
+    assert.equal(providerSpan.attributes.get("enduser.id"), "user-1");
+    assert.equal(providerSpan.attributes.get("compadre.message.origin"), "slack");
     assert.equal(providerSpan.attributes.get("gen_ai.cost.estimated_total"), 0.042);
     assert.match(
       String(providerSpan.attributes.get("gen_ai.input.messages")),
@@ -159,6 +184,7 @@ it.effect("records one provider turn with model, usage, cost, and named tool spa
     assert.equal(payload.data.attributes.spans[0]?.trace_id, providerSpan.traceId);
     assert.equal(payload.data.attributes.spans[0]?._dd?.apm_trace_id, providerSpan.traceId);
     assert.match(JSON.stringify(payload), /Deployment completed\./);
+    assert.match(JSON.stringify(payload), /user_id:user-1/);
     assert.equal(/super-secret-value|tool-secret/.test(JSON.stringify(payload)), false);
   }).pipe(
     Effect.ensuring(

@@ -47,7 +47,7 @@ export function UsagePage() {
     window: makeWindow(30),
   }));
   const [metric, setMetric] = useState<UsageChartMetric>("cost");
-  const [breakdown, setBreakdown] = useState<"model" | "time">("model");
+  const [breakdown, setBreakdown] = useState<"model" | "user" | "time">("model");
   const { days: windowDays, window } = windowSelection;
   const isPast24Hours = windowDays === 1;
   const { merged, environments, isPending, isPartial, refresh } = useUsage(window);
@@ -82,6 +82,15 @@ export function UsagePage() {
           )
         : merged.models,
     [breakdown, merged.models, metric],
+  );
+  const breakdownUsers = useMemo(
+    () =>
+      metric === "tokens"
+        ? merged.users.toSorted(
+            (left, right) => right.totalTokens - left.totalTokens || right.costUsd - left.costUsd,
+          )
+        : merged.users,
+    [merged.users, metric],
   );
   const activeProviders = useMemo(() => providersWithUsage(merged.providers), [merged.providers]);
   const timeValueColumnWidth = `${60 / (activeProviders.length + 2)}%`;
@@ -326,12 +335,15 @@ export function UsagePage() {
                       value={[breakdown]}
                       onValueChange={(next) => {
                         const value = next[0];
-                        if (value === "model" || value === "time") setBreakdown(value);
+                        if (value === "model" || value === "user" || value === "time") {
+                          setBreakdown(value);
+                        }
                       }}
                     >
                       {(
                         [
                           { value: "model", label: "Model" },
+                          { value: "user", label: "User" },
                           { value: "time", label: isPast24Hours ? "Hour" : "Day" },
                         ] as const
                       ).map((option) => (
@@ -385,6 +397,52 @@ export function UsagePage() {
                               </td>
                               <td className="py-2 text-right text-muted-foreground tabular-nums">
                                 {formatTokens(model.totalTokens)}
+                              </td>
+                            </tr>
+                          ))
+                        )}
+                      </tbody>
+                    </table>
+                  ) : breakdown === "user" ? (
+                    <table className="w-full table-fixed text-sm">
+                      <colgroup>
+                        <col className="w-2/5" />
+                        <col className="w-1/5" />
+                        <col className="w-1/5" />
+                        <col className="w-1/5" />
+                      </colgroup>
+                      <thead>
+                        <tr className="border-b border-border text-left text-xs text-muted-foreground">
+                          <th className="py-2 font-normal">User</th>
+                          <th className="py-2 text-right font-normal">Cost</th>
+                          <th className="py-2 text-right font-normal">Share</th>
+                          <th className="py-2 text-right font-normal">Tokens</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {breakdownUsers.length === 0 ? (
+                          <tr>
+                            <td colSpan={4} className="py-6 text-center text-muted-foreground">
+                              No activity in this window.
+                            </td>
+                          </tr>
+                        ) : (
+                          breakdownUsers.map((user) => (
+                            <tr
+                              key={user.userId ?? "unattributed"}
+                              className="border-b border-border/50 transition-colors hover:bg-muted/50"
+                            >
+                              <td className="py-2 text-foreground">{user.displayName}</td>
+                              <td className="py-2 text-right text-foreground tabular-nums">
+                                {formatUsd(user.costUsd)}
+                              </td>
+                              <td className="py-2 text-right text-muted-foreground tabular-nums">
+                                {formatPercent(
+                                  metric === "cost" ? user.costShare : user.tokenShare,
+                                )}
+                              </td>
+                              <td className="py-2 text-right text-muted-foreground tabular-nums">
+                                {formatTokens(user.totalTokens)}
                               </td>
                             </tr>
                           ))

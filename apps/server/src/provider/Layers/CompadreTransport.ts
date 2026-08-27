@@ -1,4 +1,8 @@
-import { type ProviderDriverKind, type ProviderOptionSelection } from "@t3tools/contracts";
+import {
+  type MessageAttribution,
+  type ProviderDriverKind,
+  type ProviderOptionSelection,
+} from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as Predicate from "effect/Predicate";
@@ -13,7 +17,7 @@ import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
 import { ProviderAdapterRequestError } from "../Errors.ts";
 
 const COMPADRE_T3_PROTOCOL_HEADER = "X-Compadre-T3-Protocol-Version";
-const COMPADRE_T3_PROTOCOL_VERSION = "1";
+const COMPADRE_T3_PROTOCOL_VERSION = "2";
 const MAX_RECONNECT_DELAY_MS = 5_000;
 
 export interface CompadreTurnRequest {
@@ -32,6 +36,7 @@ export interface CompadreTurnRequest {
   readonly provider: "claude-code" | "codex" | undefined;
   readonly model: string | undefined;
   readonly modelOptions: ReadonlyArray<ProviderOptionSelection>;
+  readonly attribution: MessageAttribution | undefined;
 }
 
 export type CompadreStreamEvent = Readonly<Record<string, unknown>> & {
@@ -76,6 +81,7 @@ export function makeCompadreTransport(
         ...(input.provider ? { provider: input.provider } : {}),
         ...(input.model ? { model: input.model } : {}),
         ...(input.modelOptions.length > 0 ? { modelOptions: input.modelOptions } : {}),
+        ...(input.attribution ? { attribution: input.attribution } : {}),
         ...(input.inputFiles.length > 0 ? { inputFiles: input.inputFiles } : {}),
       },
       state: {},

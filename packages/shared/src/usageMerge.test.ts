@@ -312,4 +312,42 @@ describe("mergeUsage", () => {
     expect(merged.daily).toHaveLength(1);
     expect(merged.daily[0]?.costUsd).toBe(10);
   });
+
+  it("rolls attributed and unattributed buckets up by user", () => {
+    const merged = mergeUsage(
+      [
+        environment(
+          "env-a",
+          summary(
+            [
+              bucket({
+                userId: "U_ISAAC",
+                userDisplayName: "Isaac Sherrill",
+                costUsd: 7,
+                records: 2,
+              }),
+              bucket({
+                userId: "U_SAM",
+                userDisplayName: "Sam Miles",
+                costUsd: 2,
+                records: 1,
+              }),
+              bucket({ costUsd: 1, records: 1 }),
+            ],
+            [{ provider: "claude", hostId: "mac", homePath: "/a/.claude" }],
+          ),
+        ),
+      ],
+      USAGE_CONTRACT_VERSION,
+    );
+
+    expect(
+      merged.users.map((user) => [user.userId, user.displayName, user.costUsd, user.records]),
+    ).toEqual([
+      ["U_ISAAC", "Isaac Sherrill", 7, 2],
+      ["U_SAM", "Sam Miles", 2, 1],
+      [null, "Unattributed", 1, 1],
+    ]);
+    expect(merged.users[0]?.costShare).toBeCloseTo(0.7, 5);
+  });
 });

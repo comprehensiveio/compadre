@@ -2,6 +2,7 @@ import {
   type ChatAttachment,
   CommandId,
   EventId,
+  type MessageAttribution,
   type ModelSelection,
   type OrchestrationEvent,
   ProviderDriverKind,
@@ -775,6 +776,7 @@ const make = Effect.gen(function* () {
     readonly attachments?: ReadonlyArray<ChatAttachment>;
     readonly modelSelection?: ModelSelection;
     readonly interactionMode?: "default" | "plan";
+    readonly attribution?: MessageAttribution;
     readonly createdAt: string;
   }) {
     const thread = yield* resolveThread(input.threadId);
@@ -826,6 +828,7 @@ const make = Effect.gen(function* () {
       ...(normalizedAttachments.length > 0 ? { attachments: normalizedAttachments } : {}),
       ...(modelForTurn !== undefined ? { modelSelection: modelForTurn } : {}),
       ...(input.interactionMode !== undefined ? { interactionMode: input.interactionMode } : {}),
+      ...(input.attribution !== undefined ? { attribution: input.attribution } : {}),
     };
   });
 
@@ -1203,6 +1206,7 @@ const make = Effect.gen(function* () {
     const sendTurnRequest = yield* buildSendTurnRequestForThread({
       threadId: event.payload.threadId,
       messageText: event.payload.providerPrompt ?? message.text,
+      ...(message.attribution !== undefined ? { attribution: message.attribution } : {}),
       ...(message.attachments !== undefined ? { attachments: message.attachments } : {}),
       ...(event.payload.modelSelection !== undefined
         ? { modelSelection: event.payload.modelSelection }

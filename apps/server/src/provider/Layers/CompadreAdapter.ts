@@ -6,6 +6,7 @@ import {
   ProviderInstanceId,
   type ProviderOptionSelection,
   RuntimeItemId,
+  type ThreadTokenUsageSnapshot,
   type ToolLifecycleItemType,
   type ProviderApprovalDecision,
   type ProviderRuntimeEvent,
@@ -64,7 +65,7 @@ interface CompadreSessionContext {
   stopped: boolean;
 }
 
-function stringField(event: CompadreStreamEvent, field: string): string | undefined {
+function stringField(event: Readonly<Record<string, unknown>>, field: string): string | undefined {
   const value = event[field];
   return typeof value === "string" && value.length > 0 ? value : undefined;
 }
@@ -103,6 +104,44 @@ function eventDetail(event: CompadreStreamEvent): string | undefined {
 function toolItemType(event: CompadreStreamEvent): ToolLifecycleItemType {
   const itemType = stringField(event, "itemType");
   return itemType && isToolLifecycleItemType(itemType) ? itemType : "dynamic_tool_call";
+}
+
+function nonNegativeInteger(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0
+    ? Math.trunc(value)
+    : undefined;
+}
+
+function usageSnapshot(event: CompadreStreamEvent): ThreadTokenUsageSnapshot | undefined {
+  const source = record(event.usage);
+  const usedTokens = nonNegativeInteger(source?.usedTokens);
+  if (usedTokens === undefined) return undefined;
+  const optionalNumber = (key: string) => {
+    const value = nonNegativeInteger(source?.[key]);
+    return value === undefined ? {} : { [key]: value };
+  };
+  const usageProvider = source?.usageProvider;
+  const model = stringField(source ?? {}, "model");
+  return {
+    usedTokens,
+    ...optionalNumber("totalProcessedTokens"),
+    ...optionalNumber("maxTokens"),
+    ...optionalNumber("inputTokens"),
+    ...optionalNumber("cachedInputTokens"),
+    ...optionalNumber("outputTokens"),
+    ...optionalNumber("reasoningOutputTokens"),
+    ...optionalNumber("lastUsedTokens"),
+    ...optionalNumber("lastInputTokens"),
+    ...optionalNumber("lastCachedInputTokens"),
+    ...optionalNumber("lastOutputTokens"),
+    ...optionalNumber("lastReasoningOutputTokens"),
+    ...optionalNumber("toolUses"),
+    ...optionalNumber("durationMs"),
+    ...(usageProvider === "claude" || usageProvider === "codex"
+      ? { usageProvider: usageProvider as "claude" | "codex" }
+      : {}),
+    ...(model ? { model } : {}),
+  };
 }
 
 export function makeCompadreAdapter(options: CompadreAdapterOptions) {
@@ -585,6 +624,20 @@ export function makeCompadreAdapter(options: CompadreAdapterOptions) {
                   });
                   return;
                 }
+                case "THREAD_TOKEN_USAGE_UPDATED": {
+                  const usage = usageSnapshot(event);
+                  if (!usage) return;
+                  yield* publish({
+                    type: "thread.token-usage.updated",
+                    ...(yield* makeEventStamp()),
+                    provider: runtimeProvider,
+                    providerInstanceId: boundInstanceId,
+                    threadId: input.threadId,
+                    turnId,
+                    payload: { usage },
+                  });
+                  return;
+                }
                 case "RUN_FINISHED":
                   yield* completeOpenItems();
                   yield* completeTurn("completed");
@@ -608,6 +661,7 @@ export function makeCompadreAdapter(options: CompadreAdapterOptions) {
               provider: selectedProvider,
               model: selectedModel,
               modelOptions: selectedModelOptions,
+              attribution: input.attribution,
             }),
             handleEvent,
           ).pipe(

@@ -201,4 +201,20 @@ describe("UsageAggregator", () => {
 
     expect(result.buckets).toHaveLength(3);
   });
+
+  it("separates usage by initiating user", () => {
+    const result = aggregate([
+      record({ userId: "U_ISAAC", userDisplayName: "Isaac Sherrill" }),
+      record({ userId: "U_SAM", userDisplayName: "Sam Miles" }),
+      record({ userId: "U_ISAAC", userDisplayName: "Isaac Sherrill" }),
+    ]);
+
+    expect(result.buckets).toHaveLength(2);
+    expect(
+      result.buckets.map((bucket) => [bucket.userId, bucket.userDisplayName, bucket.records]),
+    ).toEqual([
+      ["U_ISAAC", "Isaac Sherrill", 2],
+      ["U_SAM", "Sam Miles", 1],
+    ]);
+  });
 });

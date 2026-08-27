@@ -1,5 +1,6 @@
 import {
   isToolLifecycleItemType,
+  type MessageAttribution,
   type ProviderDriverKind,
   type ProviderRuntimeEvent,
   type ThreadId,
@@ -22,6 +23,8 @@ export interface TrackedProviderTurn {
   readonly llmTraceId: string;
   readonly llmSpanId: string;
   readonly input: string;
+  readonly attribution?: MessageAttribution;
+  readonly seenUsageSignatures: Set<string>;
   model: string | undefined;
   assistantOutput: string;
   usage: Record<string, number>;
@@ -50,6 +53,7 @@ export interface ProviderRuntimeTelemetry {
     readonly provider: ProviderDriverKind;
     readonly model?: string;
     readonly input?: string;
+    readonly attribution?: MessageAttribution;
   }) => Effect.Effect<TrackedProviderTurn>;
   readonly bindTurn: (turn: TrackedProviderTurn, turnId: TurnId) => Effect.Effect<void>;
   readonly failTurn: (turn: TrackedProviderTurn, error: unknown) => Effect.Effect<void>;
@@ -167,6 +171,7 @@ async function submitDatadogAgentTrace(
   endedAtNs: bigint,
   failed: boolean,
 ): Promise<void> {
+  if (process.env.T3CODE_DD_LLMOBS_EXPORT_ENABLED?.trim().toLowerCase() === "false") return;
   const apiKey = process.env.DD_API_KEY?.trim();
   if (!apiKey) return;
   const site = process.env.DD_SITE?.trim() || "datadoghq.com";
@@ -184,6 +189,13 @@ async function submitDatadogAgentTrace(
       turn_id: turn.turnId,
       apm_trace_id: turn.span.traceId,
       apm_span_id: turn.span.spanId,
+      ...(turn.attribution
+        ? {
+            user_id: turn.attribution.userId,
+            user_name: turn.attribution.displayName,
+            message_origin: turn.attribution.origin,
+          }
+        : {}),
     },
   };
   const spans = [
@@ -249,6 +261,9 @@ async function submitDatadogAgentTrace(
             `service:${service}`,
             `env:${process.env.DD_ENV?.trim() || "development"}`,
             `provider:${turn.provider}`,
+            ...(turn.attribution
+              ? [`user_id:${turn.attribution.userId}`, `message_origin:${turn.attribution.origin}`]
+              : []),
           ],
           spans,
         },
@@ -365,6 +380,14 @@ export const makeProviderRuntimeTelemetry = Effect.fn("makeProviderRuntimeTeleme
             { role: "user", parts: [{ type: "text", content: prompt }] },
           ]),
           ...(input.model ? { "gen_ai.request.model": input.model } : {}),
+          ...(input.attribution
+            ? {
+                "enduser.id": input.attribution.userId,
+                "user.id": input.attribution.userId,
+                "compadre.user.name": input.attribution.displayName,
+                "compadre.message.origin": input.attribution.origin,
+              }
+            : {}),
           ...(process.env.COMPADRE_CANONICAL_THREAD_ID
             ? { "compadre.canonical_thread_id": process.env.COMPADRE_CANONICAL_THREAD_ID }
             : {}),
@@ -382,6 +405,8 @@ export const makeProviderRuntimeTelemetry = Effect.fn("makeProviderRuntimeTeleme
         llmTraceId: span.traceId,
         llmSpanId: randomId(8),
         input: prompt,
+        ...(input.attribution ? { attribution: input.attribution } : {}),
+        seenUsageSignatures: new Set(),
         model: input.model,
         assistantOutput: "",
         usage: {},
@@ -440,9 +465,20 @@ export const makeProviderRuntimeTelemetry = Effect.fn("makeProviderRuntimeTeleme
         }
         case "thread.token-usage.updated": {
           const usage = usageAttributes(event.payload.usage);
-          Object.assign(turn.usage, usage);
-          for (const [key, value] of Object.entries(usage)) {
-            turn.span.attribute(key, value);
+          // @effect-diagnostics-next-line preferSchemaOverJson:off - Stable in-memory numeric tuple, not a wire boundary.
+          const signature = JSON.stringify(usage);
+          if (turn.provider === "codex") {
+            if (turn.seenUsageSignatures.has(signature)) break;
+            turn.seenUsageSignatures.add(signature);
+            for (const [key, value] of Object.entries(usage)) {
+              turn.usage[key] = (turn.usage[key] ?? 0) + value;
+              turn.span.attribute(key, turn.usage[key]);
+            }
+          } else {
+            Object.assign(turn.usage, usage);
+            for (const [key, value] of Object.entries(usage)) {
+              turn.span.attribute(key, value);
+            }
           }
           break;
         }

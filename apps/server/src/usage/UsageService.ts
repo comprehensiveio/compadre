@@ -14,8 +14,10 @@
 import * as NodeOS from "node:os";
 
 import {
+  MessageAttribution,
+  NonNegativeInt,
   USAGE_CONTRACT_VERSION,
-  type UsageProviderKind,
+  UsageProviderKind,
   type UsageSource,
   type UsageSummary,
   type UsageSummaryInput,
@@ -32,6 +34,8 @@ import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import { HttpClient, HttpClientResponse } from "effect/unstable/http";
+import * as SqlClient from "effect/unstable/sql/SqlClient";
+import * as SqlSchema from "effect/unstable/sql/SqlSchema";
 
 import { ServerConfig } from "../config.ts";
 import * as ServerSettings from "../serverSettings.ts";
@@ -86,6 +90,30 @@ const ScanCacheJson = Schema.fromJsonString(Schema.Unknown as unknown as Schema.
 const decodeScanCacheFile = Schema.decodeUnknownEffect(ScanCacheJson);
 const encodeScanCacheFile = Schema.encodeEffect(ScanCacheJson);
 
+const HostedUsagePayload = Schema.Struct({
+  usedTokens: NonNegativeInt,
+  usageProvider: UsageProviderKind,
+  model: Schema.String,
+  inputTokens: Schema.optional(NonNegativeInt),
+  cachedInputTokens: Schema.optional(NonNegativeInt),
+  outputTokens: Schema.optional(NonNegativeInt),
+  reasoningOutputTokens: Schema.optional(NonNegativeInt),
+  lastInputTokens: Schema.optional(NonNegativeInt),
+  lastCachedInputTokens: Schema.optional(NonNegativeInt),
+  lastOutputTokens: Schema.optional(NonNegativeInt),
+  lastReasoningOutputTokens: Schema.optional(NonNegativeInt),
+});
+const decodeHostedUsagePayload = Schema.decodeUnknownOption(HostedUsagePayload);
+
+const ProjectedUsageRow = Schema.Struct({
+  activityId: Schema.String,
+  threadId: Schema.String,
+  turnId: Schema.NullOr(Schema.String),
+  payload: Schema.fromJsonString(Schema.Unknown),
+  attribution: Schema.NullOr(Schema.fromJsonString(MessageAttribution)),
+  createdAt: Schema.String,
+});
+
 export class UsageService extends Context.Service<
   UsageService,
   {
@@ -123,6 +151,7 @@ export const make = Effect.gen(function* () {
   const config = yield* ServerConfig;
   const settingsService = yield* ServerSettings.ServerSettingsService;
   const httpClient = yield* HttpClient.HttpClient;
+  const sql = yield* SqlClient.SqlClient;
 
   const fileCache: ScanCache = new Map();
   let cacheDirty = false;
@@ -132,6 +161,110 @@ export const make = Effect.gen(function* () {
   let rates: RateTable = new Map();
   let ratesFetchedAtMs: number | null = null;
   let ratesStatus: UsageSummary["pricing"]["status"] = "unavailable";
+
+  const listProjectedUsageRows = SqlSchema.findAll({
+    Request: Schema.Struct({ since: Schema.String }),
+    Result: ProjectedUsageRow,
+    execute: ({ since }) =>
+      sql`
+        SELECT
+          activity.activity_id AS "activityId",
+          activity.thread_id AS "threadId",
+          activity.turn_id AS "turnId",
+          activity.payload_json AS "payload",
+          message.attribution_json AS "attribution",
+          activity.created_at AS "createdAt"
+        FROM projection_thread_activities AS activity
+        LEFT JOIN projection_turns AS turn
+          ON turn.thread_id = activity.thread_id
+          AND turn.turn_id = activity.turn_id
+        LEFT JOIN projection_thread_messages AS message
+          ON message.message_id = turn.pending_message_id
+        WHERE activity.kind = 'context-window.updated'
+          AND json_extract(activity.payload_json, '$.usageProvider') IN ('claude', 'codex')
+          AND activity.created_at >= ${since}
+        ORDER BY activity.created_at ASC, activity.activity_id ASC
+      `,
+  });
+
+  const readProjectedUsageRecords = Effect.fn("UsageService.readProjectedUsageRecords")(function* (
+    sinceMs: number,
+  ) {
+    const rows = yield* listProjectedUsageRows({
+      since: DateTime.formatIso(DateTime.makeUnsafe(sinceMs)),
+    }).pipe(
+      Effect.mapError(
+        (cause) =>
+          new UsageReadError({
+            reason: "scanFailed",
+            detail: "Centrally persisted hosted usage could not be read.",
+            cause,
+          }),
+      ),
+    );
+    const codexSignatures = new Map<string, string>();
+    const claudeLatest = new Map<string, (typeof rows)[number]>();
+    const selected: Array<(typeof rows)[number]> = [];
+    for (const row of rows) {
+      const decoded = decodeHostedUsagePayload(row.payload);
+      if (Option.isNone(decoded)) continue;
+      const usage = decoded.value;
+      const turnKey = `${row.threadId}:${row.turnId ?? row.activityId}`;
+      if (usage.usageProvider === "claude") {
+        claudeLatest.set(turnKey, row);
+        continue;
+      }
+      // @effect-diagnostics-next-line preferSchemaOverJson:off - Stable in-memory numeric tuple, not a wire boundary.
+      const signature = JSON.stringify({
+        input: usage.lastInputTokens ?? usage.inputTokens,
+        cached: usage.lastCachedInputTokens ?? usage.cachedInputTokens,
+        output: usage.lastOutputTokens ?? usage.outputTokens,
+        reasoning: usage.lastReasoningOutputTokens ?? usage.reasoningOutputTokens,
+      });
+      if (codexSignatures.get(turnKey) === signature) continue;
+      codexSignatures.set(turnKey, signature);
+      selected.push(row);
+    }
+    selected.push(...claudeLatest.values());
+
+    return selected.flatMap((row): UsageRecord[] => {
+      const decoded = decodeHostedUsagePayload(row.payload);
+      if (Option.isNone(decoded)) return [];
+      const usage = decoded.value;
+      const inputTokens = usage.lastInputTokens ?? usage.inputTokens;
+      const outputTokens = usage.lastOutputTokens ?? usage.outputTokens;
+      if (inputTokens === undefined && outputTokens === undefined) return [];
+      const cachedInputTokens = usage.lastCachedInputTokens ?? usage.cachedInputTokens ?? 0;
+      const timestampMs = Date.parse(row.createdAt);
+      if (!Number.isFinite(timestampMs) || usage.model.trim().length === 0) return [];
+      return [
+        {
+          provider: usage.usageProvider,
+          timestampMs,
+          model: usage.model,
+          sessionId: row.threadId,
+          totals: {
+            uncachedInputTokens: Math.max(0, (inputTokens ?? 0) - cachedInputTokens),
+            cachedInputTokens,
+            cacheCreationTokens: 0,
+            outputTokens: outputTokens ?? 0,
+            reasoningTokens: Math.min(
+              outputTokens ?? 0,
+              usage.lastReasoningOutputTokens ?? usage.reasoningOutputTokens ?? 0,
+            ),
+          },
+          reportedCostUsd: null,
+          ...(row.attribution
+            ? {
+                userId: row.attribution.userId,
+                userDisplayName: row.attribution.displayName,
+              }
+            : {}),
+          dedupeKey: `hosted:${row.activityId}`,
+        },
+      ];
+    });
+  });
 
   /**
    * Loads the LiteLLM rate table, preferring a fresh copy and falling back to
@@ -352,6 +485,34 @@ export const make = Effect.gen(function* () {
     const sources: UsageSource[] = [];
     const livePaths = new Set<string>();
     const walkedRoots: string[] = [];
+
+    const projectedRecords = yield* readProjectedUsageRecords(windowStartMs);
+    for (const provider of ["claude", "codex"] as const) {
+      const records = projectedRecords.filter((record) => record.provider === provider);
+      if (records.length === 0) continue;
+      const sessions = new Set<string>();
+      let contributed = 0;
+      for (const record of records) {
+        if (aggregator.add(record)) {
+          contributed += 1;
+          if (record.sessionId.length > 0) sessions.add(record.sessionId);
+        }
+      }
+      sources.push({
+        fingerprint: {
+          hostId,
+          provider,
+          resolvedHomePath: path.join(config.stateDir, "state.sqlite#hosted-usage"),
+          volumeId: yield* Effect.promise(() => readDirectoryVolumeId(config.stateDir)),
+        },
+        status: "ok",
+        scannedFiles: contributed > 0 ? 1 : 0,
+        skippedFiles: 0,
+        malformedRecords: 0,
+        distinctSessions: sessions.size,
+        message: null,
+      });
+    }
 
     for (const { provider, dir } of dirs) {
       const volumeId = yield* Effect.promise(() => readDirectoryVolumeId(dir));

@@ -10,6 +10,7 @@ import {
 } from "./baseSchemas.ts";
 import {
   ChatAttachment,
+  MessageAttribution,
   ModelSelection,
   PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
   PROVIDER_SEND_TURN_MAX_INPUT_CHARS,
@@ -75,6 +76,8 @@ export const ProviderSendTurnInput = Schema.Struct({
   ),
   modelSelection: Schema.optional(ModelSelection),
   interactionMode: Schema.optional(ProviderInteractionMode),
+  /** Trusted identity attached to the user message that initiated this turn. */
+  attribution: Schema.optional(MessageAttribution),
 });
 export type ProviderSendTurnInput = typeof ProviderSendTurnInput.Type;
 

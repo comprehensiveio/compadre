@@ -270,13 +270,15 @@ it.layer(Layer.merge(NodeServices.layer, FetchHttpClient.layer))("CompadreAdapte
     Effect.gen(function* () {
       const threadId = ThreadId.make("compadre-tool-thread");
       const completed = yield* Deferred.make<void>();
+      let forwardedUserId: string | undefined;
       const adapter = yield* makeCompadreAdapter({
         endpoint: "http://compadre.test/hosted/chat",
         instanceId: ProviderInstanceId.make("codex"),
         runtimeProvider: ProviderDriverKind.make("codex"),
         provider: "codex",
-        transport: () =>
-          Stream.fromIterable([
+        transport: (request) => {
+          forwardedUserId = request.attribution?.userId;
+          return Stream.fromIterable([
             {
               type: "TOOL_CALL_START",
               toolCallId: "command-1",
@@ -316,8 +318,21 @@ it.layer(Layer.merge(NodeServices.layer, FetchHttpClient.layer))("CompadreAdapte
                 changes: [{ path: "src/one.ts" }, { path: "src/two.ts" }],
               },
             },
+            {
+              type: "THREAD_TOKEN_USAGE_UPDATED",
+              usage: {
+                usedTokens: 39,
+                lastInputTokens: 30,
+                lastCachedInputTokens: 12,
+                lastOutputTokens: 9,
+                lastReasoningOutputTokens: 4,
+                usageProvider: "codex",
+                model: "gpt-5.6-sol",
+              },
+            },
             { type: "RUN_FINISHED" },
-          ]),
+          ]);
+        },
       });
       const events: ProviderRuntimeEvent[] = [];
       const eventsFiber = yield* Stream.runForEach(adapter.streamEvents, (event) =>
@@ -333,7 +348,15 @@ it.layer(Layer.merge(NodeServices.layer, FetchHttpClient.layer))("CompadreAdapte
         cwd: process.cwd(),
         runtimeMode: "full-access",
       });
-      yield* adapter.sendTurn({ threadId, input: "inspect and edit" });
+      yield* adapter.sendTurn({
+        threadId,
+        input: "inspect and edit",
+        attribution: {
+          userId: "user-1",
+          displayName: "Isaac Sherrill",
+          origin: "web",
+        },
+      });
       yield* Deferred.await(completed);
       yield* Fiber.interrupt(eventsFiber);
 
@@ -362,6 +385,19 @@ it.layer(Layer.merge(NodeServices.layer, FetchHttpClient.layer))("CompadreAdapte
           changes: [{ path: "src/one.ts" }, { path: "src/two.ts" }],
         },
       });
+      const usageEvent = events.find((event) => event.type === "thread.token-usage.updated");
+      assert.deepInclude(usageEvent?.payload, {
+        usage: {
+          usedTokens: 39,
+          lastInputTokens: 30,
+          lastCachedInputTokens: 12,
+          lastOutputTokens: 9,
+          lastReasoningOutputTokens: 4,
+          usageProvider: "codex",
+          model: "gpt-5.6-sol",
+        },
+      });
+      assert.equal(forwardedUserId, "user-1");
     }),
   );
 
