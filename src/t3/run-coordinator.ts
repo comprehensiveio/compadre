@@ -86,6 +86,10 @@ export class NativeT3RunCoordinator {
     return this.durability.runs.get(runId);
   }
 
+  activeRun(threadId: string): Promise<RunRecord | null> {
+    return this.durability.runs.findActiveRun(threadId);
+  }
+
   async start(input: NativeT3RunStart): Promise<NativeT3RunStartResult> {
     const existing = await this.durability.runs.get(input.runId);
     if (existing) {

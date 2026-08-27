@@ -7,8 +7,19 @@ import {
   type Context,
   type Tracer,
 } from "@opentelemetry/api";
-import type { T3ModelSelection, T3ThreadSnapshot } from "./client.js";
+import type {
+  T3MessageAttribution,
+  T3ModelSelection,
+  T3ThreadSnapshot,
+  T3TurnDispatch,
+} from "./client.js";
 import type { T3GatewayTurn } from "./gateway.js";
+import type { AgentProfile } from "../tanstack/protocol.js";
+import {
+  runCentralT3Conversation,
+  type CentralT3ConversationClient,
+  type CentralT3ConversationPrepared,
+} from "./central-conversation.js";
 
 export interface NativeT3AguiGateway {
   send(input: {
@@ -36,6 +47,24 @@ export interface NativeT3AguiStreamInput {
   signal?: AbortSignal;
   onTurn?(turn: T3GatewayTurn): void | Promise<void>;
   onTerminal?(): void | Promise<void>;
+}
+
+export interface CentralT3AguiStreamInput {
+  client: CentralT3ConversationClient;
+  canonicalThreadId: string;
+  runId: string;
+  title: string;
+  text: string;
+  displayText?: string;
+  attribution?: T3MessageAttribution;
+  profile?: AgentProfile;
+  modelSelection?: T3ModelSelection;
+  signal?: AbortSignal;
+  onPrepared?(prepared: CentralT3ConversationPrepared): void | Promise<void>;
+  onDispatched?(
+    prepared: CentralT3ConversationPrepared,
+    dispatch: T3TurnDispatch,
+  ): void | Promise<void>;
 }
 
 export interface NativeT3AguiTraceOptions {
@@ -426,6 +455,7 @@ export async function* createNativeT3AguiStream(
 
     while (!completed || pending.length > 0) {
       if (pending.length === 0) {
+        if (completed) break;
         await new Promise<void>((resolve) => {
           wake = resolve;
         });
@@ -444,5 +474,106 @@ export async function* createNativeT3AguiStream(
     };
   } finally {
     await input.onTerminal?.();
+  }
+}
+
+/**
+ * Project one central hosted-T3 turn onto the legacy AG-UI wire contract.
+ * The central orchestration log remains authoritative; this stream is only a
+ * resumable compatibility view for existing HTTP clients.
+ */
+export async function* createCentralT3AguiStream(
+  input: CentralT3AguiStreamInput,
+): AsyncIterable<StreamChunk> {
+  yield {
+    type: EventType.RUN_STARTED,
+    runId: input.runId,
+    threadId: input.canonicalThreadId,
+    timestamp: Date.now(),
+  };
+
+  const pending: StreamChunk[] = [];
+  let wake: (() => void) | undefined;
+  let completed = false;
+  let failure: unknown;
+  let projector: NativeT3SnapshotProjector | undefined;
+  let projectedTerminal = false;
+  const notify = () => {
+    wake?.();
+    wake = undefined;
+  };
+  const project = (snapshot: T3ThreadSnapshot) => {
+    if (!projector) return;
+    const events = projector.project(snapshot);
+    if (
+      events.some(
+        (event) =>
+          event.type === EventType.RUN_FINISHED ||
+          event.type === EventType.RUN_ERROR,
+      )
+    ) {
+      projectedTerminal = true;
+    }
+    pending.push(...events);
+    notify();
+  };
+
+  const conversation = runCentralT3Conversation({
+    client: input.client,
+    canonicalThreadId: input.canonicalThreadId,
+    title: input.title,
+    prompt: input.text,
+    displayText: input.displayText,
+    attribution: input.attribution,
+    profile: input.profile,
+    modelSelection: input.modelSelection,
+    entrypoint: "api",
+    signal: input.signal,
+    onPrepared: input.onPrepared,
+    async onDispatched(prepared, dispatch) {
+      projector = new NativeT3SnapshotProjector(
+        input.runId,
+        input.canonicalThreadId,
+        dispatch.messageId,
+      );
+      await input.onDispatched?.(prepared, dispatch);
+    },
+    onSnapshot(snapshot) {
+      project(snapshot);
+    },
+  }).then(
+    (result) => {
+      project(result.snapshot);
+      completed = true;
+      notify();
+    },
+    (error) => {
+      failure = error;
+      completed = true;
+      notify();
+    },
+  );
+
+  while (!completed || pending.length > 0) {
+    if (pending.length === 0) {
+      if (completed) break;
+      await new Promise<void>((resolve) => {
+        wake = resolve;
+      });
+      continue;
+    }
+    yield pending.shift()!;
+  }
+  await conversation;
+  if (failure && !projectedTerminal) {
+    yield {
+      type: EventType.RUN_ERROR,
+      runId: input.runId,
+      message:
+        failure instanceof Error
+          ? failure.message
+          : "The central T3 run failed.",
+      timestamp: Date.now(),
+    };
   }
 }

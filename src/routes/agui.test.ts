@@ -50,7 +50,7 @@ test("AG-UI hydration reports when durability is not configured", async () => {
   });
   assert.equal(response.status, 503);
   assert.deepEqual(await response.json(), {
-    error: "thread persistence requires durability",
+    error: "central T3 durability is not configured",
   });
 });
 

@@ -14,6 +14,7 @@ import {
 
 const CENTRAL_T3_TIMEOUT_MS = 20 * 60 * 1_000;
 const SLACK_MESSAGE_PREFIX = "slack-entrypoint:";
+const API_MESSAGE_PREFIX = "api-entrypoint:";
 
 export interface CentralT3ConversationClient {
   readonly baseUrl: string;
@@ -156,10 +157,17 @@ export async function runCentralT3Conversation(input: {
   displayText?: string;
   attribution?: T3MessageAttribution;
   profile?: AgentProfile;
+  modelSelection?: T3ModelSelection;
+  entrypoint?: "slack" | "api";
   signal?: AbortSignal;
   environment?: NodeJS.ProcessEnv;
   idFactory?: () => string;
   onPrepared?(prepared: CentralT3ConversationPrepared): void | Promise<void>;
+  onDispatched?(
+    prepared: CentralT3ConversationPrepared,
+    dispatch: T3TurnDispatch,
+  ): void | Promise<void>;
+  onSnapshot?(snapshot: T3ThreadSnapshot): void | Promise<void>;
   onTextDelta?(text: string): void | Promise<void>;
   onToolStart?(name: string): void | Promise<void>;
 }): Promise<CentralT3ConversationResult> {
@@ -176,7 +184,8 @@ export async function runCentralT3Conversation(input: {
   const projectId =
     existing?.projectId ??
     selectedProjectId(orchestration.projects, environment);
-  const requestedSelection = t3ModelSelectionForProfile(input.profile);
+  const requestedSelection =
+    input.modelSelection ?? t3ModelSelectionForProfile(input.profile);
   // A T3 thread owns one provider session and one Modal environment. A Slack
   // continuation therefore follows the selection already visible in the web
   // UI instead of silently trying to move the conversation to another harness.
@@ -196,7 +205,7 @@ export async function runCentralT3Conversation(input: {
   };
   await input.onPrepared?.(prepared);
 
-  const messageId = `${SLACK_MESSAGE_PREFIX}${idFactory()}`;
+  const messageId = `${input.entrypoint === "api" ? API_MESSAGE_PREFIX : SLACK_MESSAGE_PREFIX}${idFactory()}`;
   const dispatch = existing
     ? await input.client.startTurn({
         threadId: t3ThreadId,
@@ -218,10 +227,12 @@ export async function runCentralT3Conversation(input: {
         modelSelection,
         signal: input.signal,
       });
+  await input.onDispatched?.(prepared, dispatch);
 
   let delivered = "";
   const deliveredToolStarts = new Set<string>();
   const deliverSnapshot = async (snapshot: T3ThreadSnapshot) => {
+    await input.onSnapshot?.(snapshot);
     const requestedTurnId = snapshot.thread.messages.find(
       (message) => message.id === dispatch.messageId,
     )?.turnId;

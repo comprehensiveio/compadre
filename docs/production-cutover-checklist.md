@@ -181,10 +181,11 @@ central transcript, Modal logs, Datadog content, or source control.
   installed/custom CLIs in both harnesses from one canonical configuration.
 - [ ] Verify relay API compatibility, authentication, idempotency, error shape,
   streaming, cancellation, and existing callers.
-- [ ] Migrate `/webhook/:source` to the central native-T3 thread path, or prove
-  that no production caller remains before retiring it.
-- [ ] Inventory `/ag-ui` and `/workflow-runs` callers and either migrate their
-  behavior to native T3 or explicitly retire them with a compatibility plan.
+- [x] Migrate `/webhook/:source` to the central native-T3 thread path with
+  durable status/events and caller-supplied idempotency keys.
+- [x] Inventory checked-in `/ag-ui` and `/workflow-runs` callers and migrate
+  both wire contracts to central T3. No checked-in callers were found; retain
+  the routes during a soak period for externally configured consumers.
 - [ ] Preserve the old Slack automatic-continuation behavior when a harness run
   exits without a terminal answer, with a bounded retry and visible failure.
 - [ ] Define durable completion semantics for asynchronous `/prompt` callers and

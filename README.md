@@ -87,10 +87,10 @@ See `.env.example` for the full list. Key notes:
 - Runs for the same thread serialize behind its distributed lock. Different threads use independent Modal sandboxes and may execute concurrently.
 - Modal isolates harness resource usage from the persistent Render relay and
   applies its own sandbox lifecycle limits.
-- **COMPADRE_TANSTACK_AI_ENABLED**: Expose the authenticated AG-UI endpoint without changing Slack routing.
+- **COMPADRE_TANSTACK_AI_ENABLED**: Retained as a compatibility flag for the authenticated AG-UI endpoint. AG-UI request parsing and SSE framing remain compatible, but execution is delegated to the central hosted T3 thread and its native Codex or Claude harness rather than TanStack's model adapters.
 - **COMPADRE_T3_DIRECTORY_ENABLED**: Enable the native-T3 controller routes. Render stores credential-free routing metadata; every external conversation owns one Modal sandbox and one native T3 thread.
 - **COMPADRE_T3_SLACK_ENABLED**: Route Slack and `npm run slack:simulate` through the central hosted T3 environment and then T3's native Codex/Claude harnesses in Modal. Slack receives assistant text plus a central “View details in T3” link; the same conversation can be continued from Slack or the T3 UI without copying history between stores.
-- **COMPADRE_T3_API_ENABLED**: Preserve the authenticated `/prompt` contract while executing new API runs through the same native-T3 coordinator. Synchronous responses also include `threadId` and `detailsUrl`; async responses return the accepted canonical `threadId`.
+- **COMPADRE_T3_API_ENABLED**: Expose the central-T3 compatibility API. `/prompt`, `/ag-ui`, and `/workflow-runs` all resolve to the same authoritative hosted T3 thread; PostgreSQL run/event records provide idempotency, replay, status, and cancellation without becoming a second transcript store. Synchronous `/prompt` responses also include `threadId` and `detailsUrl`.
 - **COMPADRE_T3_HOSTED_APP_URL**: Hosted T3 web origin used for deep links, for example `https://t3code-compadre-experiment.onrender.com`.
 - **COMPADRE_T3_CENTRAL_URL / COMPADRE_T3_CENTRAL_TOKEN**: Central T3 environment and its scoped service-account bearer. Slack dispatches through T3's authenticated orchestration API so its turns are committed to the same event log the browser reads. Issue the bearer with T3's native `auth session issue` command.
 - **COMPADRE_T3_CENTRAL_PROJECT_ID**: Optional project for new Slack-originated threads when the central T3 environment contains multiple projects. The first active project is used when omitted.
@@ -174,13 +174,13 @@ before the existing Compadre consumer observes it, and can be replayed later by
 the Slack delivery gateway.
 
 For database-free local controller testing, set
-`COMPADRE_DURABILITY_BACKEND=memory` and
-`COMPADRE_WORKFLOW_RELAY_ENABLED=true`. `POST /workflow-runs` starts an
-in-process run and `GET /workflow-runs/:runId/events?offset=-1` serves its
-resumable AG-UI stream. A deployed relay uses the PostgreSQL durability
-backend; the HTTP and event contracts stay the same. Slack consumes that
-durable log through the existing `SlackStream`; it does not depend on the
-Modal process staying connected to Slack.
+`COMPADRE_DURABILITY_BACKEND=memory` and either
+`COMPADRE_T3_API_ENABLED=true` or `COMPADRE_WORKFLOW_RELAY_ENABLED=true`.
+`POST /workflow-runs` dispatches to the central hosted T3 thread and
+`GET /workflow-runs/:runId/events?offset=-1` serves a resumable compatibility
+projection of that run. A deployed relay uses the PostgreSQL durability
+backend; the HTTP and event contracts stay the same. The central T3 event log
+remains the authoritative conversation transcript.
 See [the Modal harness cutover runbook](docs/modal-harness-cutover.md) for
 the remote execution boundary and deployment checks.
 

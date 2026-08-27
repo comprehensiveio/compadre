@@ -18,6 +18,7 @@ ship them.
 | Temporary Slack app identity and delivery | Proven | A deployed instance authenticated as `Secret dre experiment` and posted progress, one final answer, and one Open in web link under that identity. |
 | MCP/custom-tool bridge | Implemented, incompletely proven | Shared controller configuration is exposed to both harnesses. |
 | Datadog LLM Observability and OTEL | Implemented, needs production proof | One logical LLM application; separate distributed APM services. |
+| Legacy HTTP execution surfaces | Implemented, needs caller soak | `/prompt`, `/webhook/:source`, `/ag-ui`, and `/workflow-runs` now dispatch to central T3. PostgreSQL stores only the compatibility run/event projection. |
 
 ## Missing or incomplete parity
 
@@ -27,9 +28,8 @@ ship them.
 | Incomplete-answer continuation | Legacy Slack retries once when a run exits without a terminal answer. Native T3 does not. | Add one bounded, idempotent continuation with a visible terminal failure. |
 | Slack answer ownership | Ordinary output is streamed automatically, but the harness can also call a Slack tool and duplicate the answer. | Suppress or deduplicate same-thread final delivery structurally; do not rely only on prompting. |
 | Active runs during deploy | Central T3 shutdown currently cancels active remote-provider turns. | Drain or detach active runs and reconnect from the durable event cursor after restart. |
-| Webhooks | `/webhook/:source` still uses the legacy conversation runner. | Route it through central T3 or retire it after a caller inventory. |
-| Relay result semantics | Native `/prompt` has placeholder turn/cost values and weak asynchronous completion semantics. | Preserve legacy response contracts and expose durable status/results. |
-| AG-UI and workflow runs | These routes remain on legacy TanStack paths. | Inventory callers, migrate required behavior, and explicitly sunset the rest. |
+| Relay result semantics | `/prompt` now has durable asynchronous status/events, but synchronous token/cost fields are intentionally `null` until central usage accounting exists. | Add central usage records, then populate these fields from authoritative data. |
+| Legacy workflow attachments | Text-only workflow runs migrate to central T3; old `inputFiles` requests return `409` instead of silently dropping bytes. | Port authorized attachment storage and worker materialization before accepting these requests. |
 | Usage and cost | Provider transcripts and Datadog hold data, but central T3 has no normalized ledger. | Add idempotent usage events and make UI/context/cost projections consume them. |
 | Rich provider protocol | Version 1 carries text and named tools only. | Add approvals, user input, diffs, checkpoints, attachments, shell lifecycle, and structured usage. |
 | Restart takeover | A controller restart can replay events but cannot reattach and continue projection. | Persist dispatch/heartbeat state and later add leases and epoch fencing if reliability requires it. |
@@ -38,9 +38,15 @@ ship them.
 
 ## Legacy surface requiring a caller decision
 
-Before deleting legacy code, inventory real callers and owners for:
+The August 2026 repository inventory found one checked-in `/prompt` caller in
+`comprehensiveio/comp`; it sends asynchronous requests and only depends on a
+successful HTTP status. No checked-in `/ag-ui` or `/workflow-runs` callers were
+found. Webhook callers may be configured outside source control, so the route
+is retained and idempotent when callers supply `Idempotency-Key`.
 
-- `/prompt`, including synchronous and asynchronous clients.
+Before deleting the compatibility facades, inventory real callers and owners for:
+
+- `/prompt`, including synchronous clients outside the checked-in Comp app.
 - `/webhook/:source` integrations.
 - `/ag-ui` GET/POST consumers.
 - `/workflow-runs`, status, event-stream, and cancellation consumers.
@@ -49,4 +55,6 @@ Before deleting legacy code, inventory real callers and owners for:
 
 A capability may be deliberately retired, but retirement needs an owner, a
 replacement or migration note, and an observation period proving that no live
-caller depends on it.
+caller depends on it. These compatibility routes must never grow a second
+conversation store: central T3 owns messages and tool history; PostgreSQL owns
+only run lifecycle, idempotency, replay cursors, and cancellation intent.
