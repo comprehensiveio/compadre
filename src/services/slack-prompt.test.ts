@@ -18,7 +18,10 @@ test("keeps Slack delivery context out of the provider-neutral transcript", () =
   assert.match(input.prompt, /slack_thread_url/);
   assert.match(
     input.prompt,
-    /automatically streamed back to this Slack thread/,
+    /automatically posts only your final assistant message/,
   );
-  assert.match(input.prompt, /Do not use a Slack tool to duplicate/);
+  assert.match(input.prompt, /Working narration and tool-call text remain in the web UI/);
+  assert.match(input.prompt, /one concise, self-contained final answer/);
+  assert.match(input.prompt, /Do not use slack_post_message or slack_reply_to_thread/);
+  assert.match(input.prompt, /deployment watches remain available/);
 });

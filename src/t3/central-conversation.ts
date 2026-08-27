@@ -1,7 +1,7 @@
 import crypto from "node:crypto";
 import type { AgentProfile } from "../tanstack/protocol.js";
 import {
-  assistantTextForDispatch,
+  finalAssistantTextForDispatch,
   t3ModelSelectionForProfile,
 } from "../services/t3-slack-conversation.js";
 import {
@@ -229,7 +229,6 @@ export async function runCentralT3Conversation(input: {
       });
   await input.onDispatched?.(prepared, dispatch);
 
-  let delivered = "";
   const deliveredToolStarts = new Set<string>();
   const deliverSnapshot = async (snapshot: T3ThreadSnapshot) => {
     await input.onSnapshot?.(snapshot);
@@ -263,13 +262,6 @@ export async function runCentralT3Conversation(input: {
         await input.onToolStart?.(toolStatusName(activity));
       }
     }
-    const next = assistantTextForDispatch(snapshot, dispatch);
-    if (!next || next === delivered) return;
-    const delta = next.startsWith(delivered)
-      ? next.slice(delivered.length)
-      : "";
-    if (delta) await input.onTextDelta?.(delta);
-    if (next.startsWith(delivered)) delivered = next;
   };
   const snapshot = await input.client.waitForTurnTerminal({
     threadId: t3ThreadId,
@@ -290,11 +282,12 @@ export async function runCentralT3Conversation(input: {
   }
   if (state === "interrupted")
     throw new Error("The central T3 run was interrupted.");
-  const output = assistantTextForDispatch(snapshot, dispatch);
+  const output = finalAssistantTextForDispatch(snapshot, dispatch);
   if (!output.trim()) {
     throw new Error(
       "The central T3 run completed without an assistant response.",
     );
   }
+  await input.onTextDelta?.(output);
   return { ...prepared, output, dispatch, snapshot };
 }

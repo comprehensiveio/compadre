@@ -21,24 +21,52 @@ async function* chunks(): AsyncIterable<StreamChunk> {
     timestamp: 2,
   };
   yield {
+    type: EventType.TEXT_MESSAGE_START,
+    messageId: "assistant-working",
+    role: "assistant",
+    timestamp: 3,
+  };
+  yield {
     type: EventType.TEXT_MESSAGE_CONTENT,
-    messageId: "assistant-1",
+    messageId: "assistant-working",
+    delta: "I am checking.",
+    content: "I am checking.",
+    timestamp: 3,
+  };
+  yield {
+    type: EventType.TEXT_MESSAGE_END,
+    messageId: "assistant-working",
+    timestamp: 4,
+  };
+  yield {
+    type: EventType.TEXT_MESSAGE_START,
+    messageId: "assistant-final",
+    role: "assistant",
+    timestamp: 5,
+  };
+  yield {
+    type: EventType.TEXT_MESSAGE_CONTENT,
+    messageId: "assistant-final",
     delta: "Hello from the web",
     content: "Hello from the web",
-    timestamp: 3,
+    timestamp: 6,
+  };
+  yield {
+    type: EventType.TEXT_MESSAGE_END,
+    messageId: "assistant-final",
+    timestamp: 7,
   };
   yield {
     type: EventType.RUN_FINISHED,
     runId: "run-1",
     threadId: "thread-1",
     finishReason: "stop",
-    timestamp: 4,
+    timestamp: 8,
   };
 }
 
 test("a native web turn is mirrored into the bound Slack thread without changing its T3 stream", async () => {
   const calls: string[] = [];
-  let text = "";
   const slack: NativeT3SlackDeliveryStream = {
     async postThreadMessage(message) {
       calls.push(`post:${message}`);
@@ -48,13 +76,6 @@ test("a native web turn is mirrored into the bound Slack thread without changing
     },
     async setStatus(status) {
       calls.push(`status:${status}`);
-    },
-    appendText(delta) {
-      text += delta;
-      return true;
-    },
-    async stopStream() {
-      calls.push("stop");
     },
     async clearStatus() {
       calls.push("clear");
@@ -79,16 +100,20 @@ test("a native web turn is mirrored into the bound Slack thread without changing
     [
       EventType.RUN_STARTED,
       EventType.TOOL_CALL_START,
+      EventType.TEXT_MESSAGE_START,
       EventType.TEXT_MESSAGE_CONTENT,
+      EventType.TEXT_MESSAGE_END,
+      EventType.TEXT_MESSAGE_START,
+      EventType.TEXT_MESSAGE_CONTENT,
+      EventType.TEXT_MESSAGE_END,
       EventType.RUN_FINISHED,
     ],
   );
-  assert.equal(text, "Hello from the web");
   assert.deepEqual(calls, [
     "post:*From Compadre web:*\nQuestion from the browser",
     "status:is thinking...",
     "status:is github.get_repo...",
-    "stop",
+    "post:Hello from the web",
     "context:<https://central.example/project/thread|Open in web>",
     "clear",
   ]);
@@ -101,10 +126,6 @@ test("a Slack delivery outage does not interrupt the central T3 stream", async (
     },
     async postThreadContext() {},
     async setStatus() {},
-    appendText() {
-      throw new Error("should not append");
-    },
-    async stopStream() {},
     async clearStatus() {},
   };
   const mirrored: StreamChunk[] = [];

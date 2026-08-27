@@ -73,35 +73,50 @@ export function t3ModelSelectionForProfile(
   };
 }
 
+function assistantMessagesForDispatch(
+  snapshot: T3ThreadSnapshot,
+  dispatch: T3TurnDispatch,
+): T3ThreadSnapshot["thread"]["messages"] {
+  const requestedMessage = snapshot.thread.messages.find(
+    (message) => message.id === dispatch.messageId && message.role === "user",
+  );
+  if (!requestedMessage) return [];
+
+  const latestTurn = snapshot.thread.latestTurn;
+  if (!latestTurn) return [];
+  const requestedAt = Date.parse(
+    requestedMessage.createdAt || dispatch.createdAt,
+  );
+  if (Date.parse(latestTurn.requestedAt) < requestedAt) return [];
+
+  const turnId = requestedMessage.turnId ?? latestTurn.turnId;
+  return snapshot.thread.messages.filter(
+    (message) => message.role === "assistant" && message.turnId === turnId,
+  );
+}
+
+/** Complete provider narration for durable streams and compatibility clients. */
 export function assistantTextForDispatch(
   snapshot: T3ThreadSnapshot,
   dispatch: T3TurnDispatch,
 ): string {
-  const requestedMessage = snapshot.thread.messages.find(
-    (message) => message.id === dispatch.messageId && message.role === "user",
-  );
-  if (!requestedMessage) return "";
-
-  const latestTurn = snapshot.thread.latestTurn;
-  if (!latestTurn) return "";
-  const requestedAt = Date.parse(
-    requestedMessage.createdAt || dispatch.createdAt,
-  );
-  if (Date.parse(latestTurn.requestedAt) < requestedAt) return "";
-
-  const turnId = requestedMessage.turnId ?? latestTurn.turnId;
-  return snapshot.thread.messages
-    .filter(
-      (message) => message.role === "assistant" && message.turnId === turnId,
-    )
+  return assistantMessagesForDispatch(snapshot, dispatch)
     .map((message) => message.text.trim())
     .filter(Boolean)
     .join("\n\n");
 }
 
-function responseDelta(previous: string, next: string): string {
-  if (!next || next === previous) return "";
-  return next.startsWith(previous) ? next.slice(previous.length) : "";
+/** T3's compact turn result: the designated final assistant message only. */
+export function finalAssistantTextForDispatch(
+  snapshot: T3ThreadSnapshot,
+  dispatch: T3TurnDispatch,
+): string {
+  const messages = assistantMessagesForDispatch(snapshot, dispatch);
+  const finalMessageId = snapshot.thread.latestTurn?.assistantMessageId;
+  const finalMessage = finalMessageId
+    ? messages.find((message) => message.id === finalMessageId)
+    : undefined;
+  return (finalMessage ?? messages.at(-1))?.text.trim() ?? "";
 }
 
 export async function runT3SlackConversation(input: {
@@ -124,20 +139,11 @@ export async function runT3SlackConversation(input: {
     modelSelection,
     signal: input.signal,
   });
-  let delivered = "";
-  const deliverSnapshot = async (snapshot: T3ThreadSnapshot) => {
-    const next = assistantTextForDispatch(snapshot, turn.dispatch);
-    const delta = responseDelta(delivered, next);
-    if (delta) await input.onTextDelta?.(delta);
-    if (next.startsWith(delivered)) delivered = next;
-  };
   const snapshot = await input.gateway.waitForTerminal({
     turn,
     timeoutMs: T3_SLACK_TIMEOUT_MS,
     signal: input.signal,
-    onSnapshot: deliverSnapshot,
   });
-  await deliverSnapshot(snapshot);
 
   const state = snapshot.thread.latestTurn?.state;
   if (state === "error") {
@@ -148,12 +154,13 @@ export async function runT3SlackConversation(input: {
   if (state === "interrupted") {
     throw new Error("The T3 agent run was interrupted.");
   }
-  const output = assistantTextForDispatch(snapshot, turn.dispatch);
+  const output = finalAssistantTextForDispatch(snapshot, turn.dispatch);
   if (!output.trim()) {
     throw new Error(
       "The T3 agent run completed without an assistant response.",
     );
   }
+  await input.onTextDelta?.(output);
 
   let detailsUrl: string | null = null;
   if (input.includeDetailsLink !== false) {

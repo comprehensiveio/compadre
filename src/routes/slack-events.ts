@@ -365,11 +365,6 @@ async function handleAIMessage(
             t3ThreadId: prepared.t3ThreadId,
           });
         },
-        onTextDelta: slackStream
-          ? (text) => {
-              slackStream.appendText(text);
-            }
-          : undefined,
         onToolStart: slackStream
           ? async (name) => {
               const status = `is ${humanizeToolName(name).toLowerCase()}...`;
@@ -388,7 +383,7 @@ async function handleAIMessage(
     nativeConversation
       .then(async (result) => {
         if (slackStream) {
-          await slackStream.stopStream();
+          await slackStream.postThreadMessage(result.output);
           await slackStream.postThreadContext(
             t3SlackDetailsMarkdown(result.detailsUrl),
           );
@@ -405,7 +400,6 @@ async function handleAIMessage(
       .catch(async (err) => {
         console.error(`[slack-events] native T3 error for ${event.user}:`, err);
         if (slackStream) {
-          await slackStream.stopStream();
           await slackStream.clearStatus();
           await slackStream.postThreadMessage(slackFailureNotice(err));
         }

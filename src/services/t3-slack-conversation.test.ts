@@ -5,6 +5,7 @@ import type { T3GatewayTurn } from "../t3/gateway.js";
 import {
   assistantTextForDispatch,
   canonicalSlackThreadId,
+  finalAssistantTextForDispatch,
   runT3SlackConversation,
   t3ModelSelectionForProfile,
   t3SlackDetailsMarkdown,
@@ -79,7 +80,7 @@ function snapshot(
   };
 }
 
-test("streams only assistant text and returns a native T3 deep link", async () => {
+test("delivers only terminal assistant text and returns a native T3 deep link", async () => {
   const deltas: string[] = [];
   const result = await runT3SlackConversation({
     gateway: {
@@ -106,7 +107,7 @@ test("streams only assistant text and returns a native T3 deep link", async () =
   });
 
   assert.equal(result.output, "Hello from T3");
-  assert.deepEqual(deltas, ["Hel", "lo from T3"]);
+  assert.deepEqual(deltas, ["Hello from T3"]);
   assert.equal(result.detailsUrl, "https://ui.example/pair#token=once");
   assert.equal(
     result.detailsUrl && t3SlackDetailsMarkdown(result.detailsUrl),
@@ -129,7 +130,7 @@ test("does not project an older assistant turn into Slack", () => {
   assert.equal(assistantTextForDispatch(old, turn.dispatch), "");
 });
 
-test("keeps native T3 narration, updates, and final answer in Slack", () => {
+test("retains narration for compatibility while selecting only T3's final answer", () => {
   const segmented = snapshot("final answer", "completed");
   segmented.thread.messages = [
     segmented.thread.messages[0]!,
@@ -156,6 +157,10 @@ test("keeps native T3 narration, updates, and final answer in Slack", () => {
   assert.equal(
     assistantTextForDispatch(segmented, turn.dispatch),
     "I will check that.\n\nI found the relevant code.\n\nfinal answer",
+  );
+  assert.equal(
+    finalAssistantTextForDispatch(segmented, turn.dispatch),
+    "final answer",
   );
 });
 

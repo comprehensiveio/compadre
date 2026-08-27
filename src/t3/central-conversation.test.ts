@@ -107,7 +107,7 @@ function terminalSnapshot(dispatch: T3TurnDispatch): T3ThreadSnapshot {
   };
 }
 
-test("a Slack turn is created in the central T3 project and streams every assistant segment", async () => {
+test("a Slack turn is created centrally and delivers only its final assistant message", async () => {
   const events: string[] = [];
   let dispatched: T3TurnDispatch | undefined;
   const attribution = {
@@ -194,8 +194,8 @@ test("a Slack turn is created in the central T3 project and streams every assist
   });
 
   assert.deepEqual(events, ["prepared", "dispatch"]);
-  assert.equal(result.output, "I am checking.\n\nThe answer is 42.");
-  assert.deepEqual(deltas, ["I am checking.\n\nThe answer is 42."]);
+  assert.equal(result.output, "The answer is 42.");
+  assert.deepEqual(deltas, ["The answer is 42."]);
   assert.deepEqual(toolStarts, ["Bash"]);
   assert.equal(result.t3ThreadId, centralT3ThreadId("slack:T1:C1:123.4"));
   assert.equal(

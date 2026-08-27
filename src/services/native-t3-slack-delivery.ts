@@ -8,8 +8,6 @@ export interface NativeT3SlackDeliveryStream {
   postThreadMessage(markdownText: string): Promise<void>;
   postThreadContext(markdownText: string): Promise<void>;
   setStatus(text: string): Promise<void>;
-  appendText(text: string): boolean;
-  stopStream(): Promise<void>;
   clearStatus(): Promise<void>;
 }
 
@@ -41,6 +39,9 @@ export async function* mirrorNativeT3RunToSlack(
   }),
 ): AsyncIterable<StreamChunk> {
   let deliveryEnabled = true;
+  const assistantMessages = new Map<string, string>();
+  let activeAssistantMessageId: string | undefined;
+  let terminalError: string | undefined;
   try {
     await slack.postThreadMessage(`*From Compadre web:*
 ${input.userMessage}`);
@@ -57,8 +58,29 @@ ${input.userMessage}`);
   try {
     for await (const chunk of source) {
       if (deliveryEnabled) {
-        if (chunk.type === EventType.TEXT_MESSAGE_CONTENT && chunk.delta) {
-          slack.appendText(chunk.delta);
+        if (chunk.type === EventType.TEXT_MESSAGE_START && chunk.messageId) {
+          activeAssistantMessageId = chunk.messageId;
+          if (!assistantMessages.has(chunk.messageId)) {
+            assistantMessages.set(chunk.messageId, "");
+          }
+        }
+        if (chunk.type === EventType.TEXT_MESSAGE_CONTENT) {
+          const messageId = chunk.messageId ?? activeAssistantMessageId;
+          if (messageId) {
+            const previous = assistantMessages.get(messageId) ?? "";
+            assistantMessages.set(
+              messageId,
+              typeof chunk.content === "string"
+                ? chunk.content
+                : `${previous}${chunk.delta ?? ""}`,
+            );
+          }
+        }
+        if (chunk.type === EventType.TEXT_MESSAGE_END) {
+          activeAssistantMessageId = undefined;
+        }
+        if (chunk.type === EventType.RUN_ERROR) {
+          terminalError = chunk.message || "Native T3 worker failed.";
         }
         const name = toolName(chunk);
         if (name) {
@@ -76,14 +98,30 @@ ${input.userMessage}`);
       }
       yield chunk;
     }
-    if (deliveryEnabled) await slack.stopStream();
-    if (deliveryEnabled && input.detailsUrl) {
-      await slack.postThreadContext(`<${input.detailsUrl}|Open in web>`);
+    if (deliveryEnabled) {
+      const finalText = [...assistantMessages.values()]
+        .reverse()
+        .find((text) => text.trim().length > 0);
+      if (terminalError) {
+        await slack.postThreadMessage(
+          slackFailureNotice(new Error(terminalError)),
+        );
+      } else if (finalText) {
+        await slack.postThreadMessage(finalText.trim());
+      } else {
+        await slack.postThreadMessage(
+          slackFailureNotice(
+            new Error("Native T3 completed without a final response."),
+          ),
+        );
+      }
+      if (input.detailsUrl) {
+        await slack.postThreadContext(`<${input.detailsUrl}|Open in web>`);
+      }
     }
     await slack.clearStatus().catch(() => undefined);
   } catch (error) {
     if (deliveryEnabled) {
-      await slack.stopStream().catch(() => undefined);
       await slack.clearStatus().catch(() => undefined);
       await slack
         .postThreadMessage(slackFailureNotice(error))
