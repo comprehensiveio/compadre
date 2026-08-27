@@ -22,6 +22,9 @@ isolated deployment, not that the equivalent production change has been made.
 - [x] Completed provider events can be replayed from the central event log.
 - [x] Datadog receives one Agent/LLM Observability application while controller
   and worker remain distinct APM services.
+- [x] The isolated Slack app authenticates as `Secret dre experiment`, owns
+  progress updates and final delivery, and posts the canonical Open in web
+  link from the same app identity.
 
 ## Release and infrastructure
 
@@ -41,11 +44,21 @@ isolated deployment, not that the equivalent production change has been made.
   must cover Postgres and required central-T3 connectivity without requiring a
   repository clone or Modal worker.
 - [ ] Add graceful deploy draining: stop accepting new turns, allow or detach
-  active turns, and verify that no Modal run is orphaned.
+  active turns, and verify that no Modal run is orphaned. The isolated T3
+  deployment currently cancels active provider turns during shutdown; this has
+  been reproduced and must be fixed before cutover.
+- [ ] Eliminate or explicitly accommodate central-T3 deployment downtime. The
+  persistent-disk Render rollout returned 502s for roughly three and a half
+  minutes between deploy start and health-check success, taking the browser UI
+  and central API offline together.
 - [ ] Keep one central T3 writer and one controller instance until distributed
   ownership, leases, fencing, and command delivery are implemented.
 - [ ] Define capacity limits and alerts for the Render services, Postgres,
   persistent disk, and concurrent Modal sandboxes.
+- [ ] Set and enforce a Slack-to-first-progress and Slack-to-first-token latency
+  budget. A cold isolated run currently spends meaningful time cloning the
+  repository and connecting to and discovering every configured MCP before a
+  trivial no-tool answer can complete.
 
 ## Production secrets and configuration
 
@@ -95,6 +108,8 @@ central transcript, Modal logs, Datadog content, or source control.
 - [ ] Configure Sign in with Slack scopes: `openid`, `profile`, and `email`.
 - [ ] Reconcile bot scopes and events with the checked-in manifest, including
   mentions, DMs, channel history, message writing, reactions, and user lookup.
+  The isolated app currently logs `conversations.info` `missing_scope` and
+  falls back without channel metadata, even though message execution succeeds.
 - [ ] Reinstall/reauthorize the app after scope changes and confirm the bot is in
   every required channel.
 - [ ] Verify signing-secret validation, replay-window enforcement, event
@@ -103,6 +118,14 @@ central transcript, Modal logs, Datadog content, or source control.
   and thread IDs and opens the correct transcript after login.
 - [ ] Verify Slack progress/status updates for native tools and MCP tools, final
   success, failure, cancellation, and resumed runs.
+- [ ] Forward Slack file attachments into native T3 turns and verify that both
+  Codex and Claude can read them from their isolated workers.
+- [ ] Give Slack answer delivery a single architectural owner. Verify that an
+  agent cannot produce a second final answer by calling a Slack tool after its
+  ordinary streamed output has already been delivered.
+- [x] Correct the isolated app credential mismatch and verify a fresh deployed
+  instance posts progress, final output, and the Open in web link as
+  `Secret dre experiment` rather than the legacy Compadre bot.
 - [ ] Decide the production app name, icon, description, privacy/terms links,
   support owner, and incident contact.
 
@@ -115,6 +138,9 @@ central transcript, Modal logs, Datadog content, or source control.
   preserving stable workspace/user identity pairs.
 - [ ] Attribute every Slack, browser, and API message to a trustworthy canonical
   actor and origin.
+- [x] Preserve attribution on both initial thread hydration and live
+  `thread.message-sent` events; verify a second user's web message is labeled
+  correctly for another logged-in user.
 - [ ] Authorize every thread read, send, cancel, approval, attachment, terminal,
   API, and administrative action on the server.
 - [ ] Define behavior for deactivated Slack users, workspace guests, renamed
@@ -155,6 +181,14 @@ central transcript, Modal logs, Datadog content, or source control.
   installed/custom CLIs in both harnesses from one canonical configuration.
 - [ ] Verify relay API compatibility, authentication, idempotency, error shape,
   streaming, cancellation, and existing callers.
+- [ ] Migrate `/webhook/:source` to the central native-T3 thread path, or prove
+  that no production caller remains before retiring it.
+- [ ] Inventory `/ag-ui` and `/workflow-runs` callers and either migrate their
+  behavior to native T3 or explicitly retire them with a compatibility plan.
+- [ ] Preserve the old Slack automatic-continuation behavior when a harness run
+  exits without a terminal answer, with a bounded retry and visible failure.
+- [ ] Define durable completion semantics for asynchronous `/prompt` callers and
+  report real turn, token, and cost data instead of placeholder values.
 - [ ] Verify tool details in the T3 UI: actual arguments, results, MCP server and
   tool names, changed-file summaries, diffs, approvals, and failures.
 - [ ] Verify terminal/shell lifecycle, attachments, checkpoints/reverts, pull
@@ -200,4 +234,3 @@ central transcript, Modal logs, Datadog content, or source control.
 - [ ] After the rollback window, revoke superseded credentials, remove obsolete
   services and duplicated persistence, archive migration artifacts, and update
   the architecture document to describe only the production system.
-
