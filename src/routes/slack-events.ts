@@ -27,6 +27,7 @@ import { verifySlackSignature } from "../services/slack-verify.js";
 import {
   canonicalSlackThreadId,
   nativeT3SlackEnabled,
+  t3ModelSelectionForProfile,
   t3SlackDetailsMarkdown,
 } from "../services/t3-slack-conversation.js";
 import {
@@ -323,8 +324,13 @@ async function handleAIMessage(
     await slackStream.setStatus("is thinking...");
   }
 
+  const routedProvider = nativeT3SlackEnabled()
+    ? t3ModelSelectionForProfile(profile).instanceId
+    : profile
+      ? providerForAgentProfile(profile)
+      : configuredAgentProvider();
   console.log(
-    `[slack-events] routing user=${event.user ?? "unknown"} provider=${profile ? providerForAgentProfile(profile) : configuredAgentProvider()} profile=${profile ?? "default"}`,
+    `[slack-events] routing user=${event.user ?? "unknown"} provider=${routedProvider} profile=${profile ?? "default"}`,
   );
 
   if (nativeT3SlackEnabled()) {

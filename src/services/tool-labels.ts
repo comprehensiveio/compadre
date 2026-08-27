@@ -7,16 +7,24 @@ const TOOL_LABELS: Record<string, string> = {
   Write: "Writing code",
   WebSearch: "Searching web",
   WebFetch: "Fetching page",
+  "Ran command": "Running command",
+  "Read file": "Reading file",
+  "Changed files": "Changing files",
+  "Searched files": "Searching files",
+  "File change": "Changing files",
+  "Web search": "Searching web",
+  "MCP tool call": "Using MCP tool",
+  "Tool call": "Using tool",
 };
 
 const MCP_PREFIXES: Record<string, string> = {
-  "mcp__slack__": "Using Slack",
-  "mcp__linear__": "Searching Linear",
+  mcp__slack__: "Using Slack",
+  mcp__linear__: "Searching Linear",
   "mcp__datadog-mcp__": "Checking Datadog",
-  "mcp__github__": "Checking GitHub",
-  "mcp__render__": "Checking Render",
-  "mcp__comp_app__": "Using Comp app server",
-  "mcp__postgres__": "Querying database",
+  mcp__github__: "Checking GitHub",
+  mcp__render__: "Checking Render",
+  mcp__comp_app__: "Using Comp app server",
+  mcp__postgres__: "Querying database",
 };
 
 export function humanizeToolName(toolName: string): string {
