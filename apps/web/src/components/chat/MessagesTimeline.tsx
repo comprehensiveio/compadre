@@ -1064,7 +1064,12 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
           markdownCwd={ctx.markdownCwd}
         />
       </div>
-      <div className="flex max-w-[80%] items-center justify-end gap-2 pe-1 text-xs tabular-nums">
+      <div className="relative flex max-w-[80%] items-center justify-end gap-2 pe-1 text-xs tabular-nums">
+        {displayedUserMessage.copyText ? (
+          <span className="absolute end-full me-1 opacity-0 transition-opacity duration-200 focus-within:opacity-100 group-hover:opacity-100">
+            <MessageCopyButton text={displayedUserMessage.copyText} variant="ghost" />
+          </span>
+        ) : null}
         {row.message.attribution ? (
           <div className="flex min-w-0 items-center justify-end gap-1.5 text-muted-foreground">
             {row.message.attribution.avatarUrl ? (
@@ -1093,13 +1098,6 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
             {formatChatTimestampTooltip(row.message.createdAt, ctx.timestampFormat)}
           </TooltipPopup>
         </Tooltip>
-        {displayedUserMessage.copyText ? (
-          <div className="flex size-6 shrink-0 items-center justify-center">
-            <span className="opacity-0 transition-opacity duration-200 focus-within:opacity-100 group-hover:opacity-100">
-              <MessageCopyButton text={displayedUserMessage.copyText} variant="ghost" />
-            </span>
-          </div>
-        ) : null}
       </div>
     </div>
   );
