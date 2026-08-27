@@ -15,14 +15,21 @@ import {
   T3Gateway,
   type T3GatewayTurn,
 } from "../t3/gateway.js";
-import { getConfiguredT3Gateway } from "../t3/runtime.js";
+import {
+  getConfiguredNativeT3RunCoordinator,
+  getConfiguredT3Gateway,
+} from "../t3/runtime.js";
 import { requireCompadreApiKey } from "./auth.js";
 import {
   createNativeT3AguiStream,
   traceNativeT3AguiStream,
 } from "../t3/agui-stream.js";
-import { toServerSentEventsResponse } from "../t3/agui-protocol.js";
+import {
+  NATIVE_T3_PROTOCOL_HEADER,
+  NATIVE_T3_PROTOCOL_VERSION,
+} from "../t3/agui-protocol.js";
 import { isAgentProvider } from "../tanstack/protocol.js";
+import { durableRunEventsResponse } from "../durability/http.js";
 import { getConfiguredThreadPersistence } from "../persistence/runtime.js";
 import {
   HostedThreadBindingStore,
@@ -33,6 +40,7 @@ import {
   centralT3DetailsUrl,
   isSlackEntrypointMessageId,
 } from "../t3/central-conversation.js";
+import type { NativeT3RunCoordinator } from "../t3/run-coordinator.js";
 
 const MAX_TITLE_LENGTH = 200;
 const MAX_MESSAGE_LENGTH = 100_000;
@@ -82,6 +90,7 @@ interface T3DirectoryGateway {
 export interface T3DirectoryRoutesDependencies {
   enabled(): boolean;
   getGateway(): Promise<T3DirectoryGateway | null>;
+  getRunCoordinator?(): Promise<NativeT3RunCoordinator | null>;
   createId(): string;
   watchTurn(gateway: T3DirectoryGateway, turn: T3GatewayTurn): void;
   getSlackBinding?(threadId: string): Promise<HostedSlackBinding | null>;
@@ -90,6 +99,7 @@ export interface T3DirectoryRoutesDependencies {
 const defaultDependencies: T3DirectoryRoutesDependencies = {
   enabled: () => process.env.COMPADRE_T3_DIRECTORY_ENABLED === "true",
   getGateway: getConfiguredT3Gateway,
+  getRunCoordinator: getConfiguredNativeT3RunCoordinator,
   createId: crypto.randomUUID,
   watchTurn(gateway, turn) {
     void gateway
@@ -257,6 +267,11 @@ function guarded(handler: (c: Context) => Promise<Response>): Handler {
   };
 }
 
+function acceptsNativeT3Protocol(request: Request): boolean {
+  const requested = request.headers.get(NATIVE_T3_PROTOCOL_HEADER)?.trim();
+  return !requested || requested === String(NATIVE_T3_PROTOCOL_VERSION);
+}
+
 export function createT3DirectoryRoutes(
   dependencies: T3DirectoryRoutesDependencies = defaultDependencies,
   activeRuns: Map<string, ActiveNativeT3Run> = new Map(),
@@ -312,6 +327,15 @@ export function createT3DirectoryRoutes(
     if (!dependencies.enabled()) return c.notFound();
     const authError = requireCompadreApiKey(c);
     if (authError) return authError;
+    if (!acceptsNativeT3Protocol(c.req.raw)) {
+      return c.json(
+        {
+          error: "unsupported native T3 protocol version",
+          supported: [NATIVE_T3_PROTOCOL_VERSION],
+        },
+        409,
+      );
+    }
     let params;
     try {
       params = await chatParamsFromRequestBody(await c.req.json());
@@ -333,6 +357,13 @@ export function createT3DirectoryRoutes(
     if (!gateway) {
       return c.json({ error: "thread persistence requires durability" }, 503);
     }
+    const runCoordinator = await (
+      dependencies.getRunCoordinator?.() ??
+      getConfiguredNativeT3RunCoordinator()
+    );
+    if (!runCoordinator) {
+      return c.json({ error: "native T3 run durability is not configured" }, 503);
+    }
     const runId = params.runId || dependencies.createId();
     const canonicalThreadId = params.threadId || dependencies.createId();
     const selectedModel = nativeModelSelection(
@@ -340,23 +371,6 @@ export function createT3DirectoryRoutes(
       params.forwardedProps.model,
       params.forwardedProps.modelOptions,
     );
-    const nativeStream = createNativeT3AguiStream({
-      gateway,
-      canonicalThreadId,
-      runId,
-      title:
-        nonEmptyString(params.forwardedProps.title, MAX_TITLE_LENGTH) ??
-        "T3 thread",
-      text,
-      modelSelection: selectedModel,
-      signal: c.req.raw.signal,
-      onTurn(turn) {
-        activeRuns.set(runId, { gateway, turn });
-      },
-      onTerminal() {
-        activeRuns.delete(runId);
-      },
-    });
     const messageId = latestUserMessageId(params.messages);
     const slackBinding =
       process.env.COMPADRE_HOSTED_SLACK_DELIVERY_ENABLED !== "false" &&
@@ -374,40 +388,91 @@ export function createT3DirectoryRoutes(
             threadId: slackBinding.t3ThreadId,
           })
         : undefined;
-    const mirroredStream = slackBinding && botToken
-      ? mirrorNativeT3RunToSlack(nativeStream, {
-          binding: slackBinding,
-          userMessage: text,
-          detailsUrl,
-          botToken,
-        })
-      : nativeStream;
-    const stream = traceNativeT3AguiStream(mirroredStream, {
-      canonicalThreadId,
+    await runCoordinator.start({
       runId,
-      provider,
-      model: selectedModel.model,
-    });
-    return toServerSentEventsResponse(stream, {
-      headers: {
-        "X-Accel-Buffering": "no",
-        "X-Content-Type-Options": "nosniff",
+      threadId: canonicalThreadId,
+      source(signal) {
+        const nativeStream = createNativeT3AguiStream({
+          gateway,
+          canonicalThreadId,
+          runId,
+          title:
+            nonEmptyString(params.forwardedProps.title, MAX_TITLE_LENGTH) ??
+            "T3 thread",
+          text,
+          modelSelection: selectedModel,
+          signal,
+          onTurn(turn) {
+            activeRuns.set(runId, { gateway, turn });
+          },
+          onTerminal() {
+            activeRuns.delete(runId);
+          },
+        });
+        const mirroredStream = slackBinding && botToken
+          ? mirrorNativeT3RunToSlack(nativeStream, {
+              binding: slackBinding,
+              userMessage: text,
+              detailsUrl,
+              botToken,
+            })
+          : nativeStream;
+        return traceNativeT3AguiStream(mirroredStream, {
+          canonicalThreadId,
+          runId,
+          provider,
+          model: selectedModel.model,
+        });
+      },
+      async cancel() {
+        const active = activeRuns.get(runId);
+        if (!active) return;
+        await active.gateway.cancel({
+          canonicalThreadId: active.turn.binding.canonicalThreadId,
+          providerInstanceId: active.turn.binding.providerInstanceId,
+        });
       },
     });
+    return durableRunEventsResponse(
+      runCoordinator.stream(runId),
+      c.req.raw,
+      {
+        [NATIVE_T3_PROTOCOL_HEADER]: String(NATIVE_T3_PROTOCOL_VERSION),
+      },
+      "-1",
+    );
   });
+
+  routes.get("/hosted/t3/runs/:runId/events", guarded(async (c) => {
+    const runCoordinator = await (
+      dependencies.getRunCoordinator?.() ??
+      getConfiguredNativeT3RunCoordinator()
+    );
+    if (!runCoordinator) {
+      return c.json({ error: "native T3 run durability is not configured" }, 503);
+    }
+    const runId = routeParam(c, "runId");
+    const run = await runCoordinator.run(runId);
+    if (!run) return c.json({ error: "native T3 run not found", runId }, 404);
+    return durableRunEventsResponse(runCoordinator.stream(runId), c.req.raw, {
+      [NATIVE_T3_PROTOCOL_HEADER]: String(NATIVE_T3_PROTOCOL_VERSION),
+    });
+  }));
 
   routes.post("/hosted/t3/runs/:runId/cancel", guarded(async (c) => {
     const runId = routeParam(c, "runId");
-    const active = activeRuns.get(runId);
-    if (!active) {
-      return c.json({ error: "native T3 run is not active", runId }, 409);
+    const runCoordinator = await (
+      dependencies.getRunCoordinator?.() ??
+      getConfiguredNativeT3RunCoordinator()
+    );
+    if (!runCoordinator) {
+      return c.json({ error: "native T3 run durability is not configured" }, 503);
     }
-    const sequence = await active.gateway.cancel({
-      canonicalThreadId: active.turn.binding.canonicalThreadId,
-      providerInstanceId: active.turn.binding.providerInstanceId,
-      signal: c.req.raw.signal,
-    });
-    return c.json({ ok: true, sequence }, 202);
+    const result = await runCoordinator.cancel(runId);
+    if (!result.found) {
+      return c.json({ error: "native T3 run not found", runId }, 404);
+    }
+    return c.json({ ok: true, ...result }, result.requested ? 202 : 200);
   }));
 
   routes.post(

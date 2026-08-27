@@ -4,6 +4,8 @@ import { Hono } from "hono";
 import type { T3ThreadBinding } from "../services/t3-thread-bindings.js";
 import type { T3ThreadSnapshot } from "../t3/client.js";
 import type { T3GatewayTurn } from "../t3/gateway.js";
+import { createAgentRunDurability } from "../durability/runtime.js";
+import { NativeT3RunCoordinator } from "../t3/run-coordinator.js";
 import {
   createT3DirectoryRoutes,
   type T3DirectoryRoutesDependencies,
@@ -239,6 +241,7 @@ test("streams a native Modal T3 turn through the central provider endpoint", asy
   });
 
   let selection: unknown;
+  let sends = 0;
   const turnSnapshot: T3ThreadSnapshot = {
     ...snapshot,
     snapshotSequence: 9,
@@ -274,6 +277,7 @@ test("streams a native Modal T3 turn through the central provider endpoint", asy
   const gateway = {
     async list() { return []; },
     async send(input: { modelSelection: unknown }): Promise<T3GatewayTurn> {
+      sends += 1;
       selection = input.modelSelection;
       return {
         binding: { ...binding, status: "working" as const },
@@ -297,11 +301,18 @@ test("streams a native Modal T3 turn through the central provider endpoint", asy
     },
   };
   const slackBindingLookups: string[] = [];
+  const durability = await createAgentRunDurability({
+    COMPADRE_DURABILITY_BACKEND: "memory",
+  });
+  assert.ok(durability);
+  const runCoordinator = new NativeT3RunCoordinator(durability);
+  t.after(() => durability.close());
   const app = new Hono();
   app.route("/", createT3DirectoryRoutes({
     enabled: () => true,
     createId: () => "generated",
     getGateway: async () => gateway,
+    getRunCoordinator: async () => runCoordinator,
     watchTurn() {},
     async getSlackBinding(threadId) {
       slackBindingLookups.push(threadId);
@@ -324,17 +335,40 @@ test("streams a native Modal T3 turn through the central provider endpoint", asy
 
   assert.equal(response.status, 200, await response.clone().text());
   assert.match(response.headers.get("content-type") ?? "", /text\/event-stream/);
+  assert.equal(response.headers.get("x-compadre-t3-protocol-version"), "1");
   const body = await response.text();
   assert.match(body, /"type":"RUN_STARTED"/);
   assert.match(body, /"type":"TOOL_CALL_START"/);
   assert.match(body, /"type":"TEXT_MESSAGE_CONTENT"/);
   assert.match(body, /"type":"RUN_FINISHED"/);
+  assert.match(body, /"protocolVersion":1/);
   assert.deepEqual(selection, {
     instanceId: "claudeAgent",
     model: "claude-sonnet-5",
     options: [{ id: "effort", value: "high" }],
   });
   assert.deepEqual(slackBindingLookups, ["central-thread"]);
+  assert.equal(sends, 1);
+
+  const replay = await app.request(
+    "/hosted/t3/runs/run-1/events?offset=-1",
+    authorized(),
+  );
+  assert.equal(replay.status, 200, await replay.clone().text());
+  assert.equal(await replay.text(), body);
+
+  const repeated = await app.request("/hosted/t3/chat", authorized({
+    threadId: "central-thread",
+    runId: "run-1",
+    messages: [{ id: "input-1", role: "user", content: "run pwd" }],
+    tools: [],
+    context: [],
+    state: {},
+    forwardedProps: { provider: "claude-code", model: "claude-sonnet-5" },
+  }));
+  assert.equal(repeated.status, 200, await repeated.clone().text());
+  assert.equal(await repeated.text(), body);
+  assert.equal(sends, 1);
 
   const slackResponse = await app.request("/hosted/t3/chat", authorized({
     threadId: "central-thread",
@@ -351,7 +385,41 @@ test("streams a native Modal T3 turn through the central provider endpoint", asy
   }));
   assert.equal(slackResponse.status, 200, await slackResponse.clone().text());
   await slackResponse.text();
-  assert.deepEqual(slackBindingLookups, ["central-thread"]);
+  assert.deepEqual(slackBindingLookups, ["central-thread", "central-thread"]);
+  assert.equal(sends, 2);
+});
+
+test("rejects an unsupported native T3 protocol version before starting work", async (t) => {
+  const previousApiKey = process.env.COMPADRE_API_KEY;
+  process.env.COMPADRE_API_KEY = "test-key";
+  t.after(() => {
+    if (previousApiKey === undefined) delete process.env.COMPADRE_API_KEY;
+    else process.env.COMPADRE_API_KEY = previousApiKey;
+  });
+  let gatewayLookups = 0;
+  const app = new Hono();
+  app.route("/", createT3DirectoryRoutes({
+    enabled: () => true,
+    createId: () => "generated",
+    watchTurn() {},
+    async getGateway() {
+      gatewayLookups += 1;
+      return null;
+    },
+  }));
+  const init = authorized({
+    messages: [{ id: "input", role: "user", content: "hello" }],
+    forwardedProps: { provider: "codex" },
+  });
+  const response = await app.request("/hosted/t3/chat", {
+    ...init,
+    headers: {
+      ...Object.fromEntries(new Headers(init.headers).entries()),
+      "X-Compadre-T3-Protocol-Version": "99",
+    },
+  });
+  assert.equal(response.status, 409);
+  assert.equal(gatewayLookups, 0);
 });
 
 test("does not expose Modal bootstrap details when provisioning fails", async (t) => {

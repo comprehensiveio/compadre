@@ -16,8 +16,20 @@ export const EventType = {
   TOOL_CALL_RESULT: "TOOL_CALL_RESULT",
 } as const;
 
+export const NATIVE_T3_PROTOCOL_VERSION = 1 as const;
+export const NATIVE_T3_PROTOCOL_HEADER = "X-Compadre-T3-Protocol-Version";
+
+/** Reserved now so future authentication can attribute every persisted event. */
+export interface NativeT3Actor {
+  type: "user" | "slack" | "system" | "unknown";
+  id?: string;
+  displayName?: string;
+}
+
 export interface StreamChunk {
   type: string;
+  protocolVersion?: typeof NATIVE_T3_PROTOCOL_VERSION;
+  actor?: NativeT3Actor;
   timestamp?: number;
   runId?: string;
   threadId?: string;

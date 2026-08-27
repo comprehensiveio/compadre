@@ -32,6 +32,7 @@ POST /slack/events           # Primary signed Slack Events ingress
 POST /ag-ui                  # Optional authenticated AG-UI stream
 GET  /ag-ui?threadId=...     # Optional authenticated thread hydration
 POST /hosted/t3/chat          # Native T3 remote-provider stream
+GET  /hosted/t3/runs/:id/events # Resume a native provider stream by SSE cursor
 POST /hosted/t3/runs/:id/cancel # Cancel an active native T3 provider run
 POST /workflow-runs          # Optional durable Workflow launcher (Bearer COMPADRE_API_KEY)
 GET  /workflow-runs/:id      # Durable run lifecycle status (Bearer COMPADRE_API_KEY)

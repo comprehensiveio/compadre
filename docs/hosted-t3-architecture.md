@@ -53,17 +53,29 @@ delivery can reconstruct central T3 without the full snapshot.
 
 ## Worker event delivery
 
-Today the controller projects worker T3 snapshots into an AG-UI-compatible SSE
-stream and the central T3 remote-provider adapter converts that stream back into
-T3 provider events. Text and named tool calls are supported. The production
-hardening target is a versioned provider-event protocol with:
+The controller projects worker T3 snapshots into version 1 of the native T3
+provider protocol. Every projected event is written to the existing Postgres
+run log before delivery. The POST subscriber and later GET subscribers read the
+same log using opaque SSE cursors. Closing a subscriber therefore does not
+cancel the Modal run, a repeated run ID cannot start a second agent, and the T3
+fork reconnects a dropped stream from its last delivered cursor.
 
-- Ordered sequence numbers and idempotency keys.
-- A durable outbox and resumable delivery cursor.
+Version 1 currently carries text and named tool calls. Its event envelope
+reserves an actor field so future user or Slack identity can be attached without
+changing event ownership. The remaining production-hardening work is:
+
 - Usage and cost events.
 - Approvals and user-input requests.
 - Workspace diffs, checkpoints, attachments, and shell lifecycle.
-- Explicit compatibility negotiation between controller and T3 fork versions.
+- Persisted worker dispatch metadata and controller-restart takeover.
+- Epoch fencing of both the event log and terminal run record.
+
+The HTTP seam negotiates `X-Compadre-T3-Protocol-Version: 1`. Postgres assigns
+ordered event offsets and enforces one append sequence per run. A distributed
+per-run advisory lock prevents concurrent producers while the controller is
+alive. It is not yet a complete takeover implementation: after a controller
+process dies, a new process can replay the stored prefix but cannot reconstruct
+and continue the worker snapshot projection yet.
 
 ## Usage
 
@@ -97,10 +109,11 @@ verification, integrity checks, disk-capacity alerts, and a documented recovery
 time objective. Do not add another Render instance until write ownership is
 explicit.
 
-The controller is also kept at one instance today because active tool bridges and
-cancellation ownership are process-local. Multi-instance operation requires
-Postgres leases, fencing tokens, heartbeats, and a durable command inbox so a
-deploy cannot orphan an active Modal callback.
+The controller is also kept at one instance today. Native T3 run events and
+cancel intent are durable, but active tool bridges and the immediate cancel path
+are still process-local. Multi-instance operation additionally requires
+persisted dispatch metadata, epoch fencing, heartbeat/lease expiry, and a
+durable command inbox so a deploy cannot orphan an active Modal callback.
 
 ## Configuration
 
@@ -133,6 +146,10 @@ and must stay unset. The supported architecture exposes native `codex` and
 The controller currently authenticates internal routes with a shared bearer.
 Before expanding access, bind user and Slack workspace identities to thread
 ownership, authorize every read and command, and record an audit event.
+
+The versioned event envelope already permits an optional actor reference. It is
+intentionally unused until authentication establishes trustworthy identities;
+the system must not turn unverified Slack display names into authorization data.
 
 Conversation deletion must eventually propagate to central T3, Postgres recovery
 records, Modal snapshots, provider-native transcripts, attachments, Slack where

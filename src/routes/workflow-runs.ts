@@ -1,8 +1,6 @@
 import crypto from "node:crypto";
 import {
   isTerminalRunStatus,
-  resumeServerSentEventsResponse,
-  type StreamDurability,
 } from "@tanstack/ai";
 import { Hono } from "hono";
 import { z } from "zod";
@@ -17,6 +15,7 @@ import {
   type WorkflowRunLauncher,
 } from "../services/workflow-run-launcher.js";
 import { requireCompadreApiKey } from "./auth.js";
+import { durableRunEventsResponse } from "../durability/http.js";
 
 const workflowRunInputSchema = agentWorkflowInputSchema.omit({
   responseMode: true,
@@ -38,22 +37,6 @@ const defaultDependencies: WorkflowRunRouteDependencies = {
     (configuredLauncher ??= createConfiguredWorkflowRunLauncher()),
   createId: () => crypto.randomUUID(),
 };
-
-function resumableAdapter(
-  stream: StreamDurability<string>,
-  request: Request,
-): StreamDurability<string> {
-  const offset =
-    request.headers.get("Last-Event-ID") ||
-    new URL(request.url).searchParams.get("offset");
-  return {
-    resumeFrom: () => offset,
-    append: (chunks) => stream.append(chunks),
-    read: (streamOffset, signal) => stream.read(streamOffset, signal),
-    close: () => stream.close(),
-    snapshot: () => stream.snapshot(),
-  };
-}
 
 export function createWorkflowRunRoutes(
   dependencies: WorkflowRunRouteDependencies = defaultDependencies,
@@ -142,18 +125,10 @@ export function createWorkflowRunRoutes(
     if (!durability) {
       return c.json({ error: "agent run durability is not configured" }, 503);
     }
-    const adapter = resumableAdapter(
+    return durableRunEventsResponse(
       durability.stream(c.req.param("runId")),
       c.req.raw,
     );
-    return resumeServerSentEventsResponse({
-      adapter,
-      headers: {
-        "Cache-Control": "no-cache, no-transform",
-        "X-Accel-Buffering": "no",
-        "X-Content-Type-Options": "nosniff",
-      },
-    });
   });
 
   routes.get("/workflow-runs/:runId", async (c) => {
