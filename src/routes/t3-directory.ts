@@ -36,6 +36,7 @@ import {
   type HostedSlackBinding,
 } from "../services/hosted-thread-bindings.js";
 import { mirrorNativeT3RunToSlack } from "../services/native-t3-slack-delivery.js";
+import { finalAssistantTextForDispatch } from "../services/t3-slack-conversation.js";
 import {
   centralT3DetailsUrl,
   isSlackEntrypointMessageId,
@@ -45,6 +46,7 @@ import type { NativeT3RunCoordinator } from "../t3/run-coordinator.js";
 const MAX_TITLE_LENGTH = 200;
 const MAX_MESSAGE_LENGTH = 100_000;
 const TERMINAL_WAIT_TIMEOUT_MS = 20 * 60 * 1000;
+const TEXT_GENERATION_TIMEOUT_MS = 165_000;
 
 export interface ActiveNativeT3Run {
   gateway: T3DirectoryGateway;
@@ -53,6 +55,12 @@ export interface ActiveNativeT3Run {
 
 interface T3DirectoryGateway {
   list(): Promise<T3ThreadBinding[]>;
+  generateText?(input: {
+    prompt: string;
+    modelSelection: T3ModelSelection;
+    timeoutMs: number;
+    signal?: AbortSignal;
+  }): Promise<{ dispatch: T3TurnDispatch; snapshot: T3ThreadSnapshot }>;
   send(input: {
     canonicalThreadId: string;
     title: string;
@@ -321,6 +329,43 @@ export function createT3DirectoryRoutes(
       { thread: publicBinding(turn.binding), dispatch: turn.dispatch },
       202,
     );
+  }));
+
+  routes.post("/hosted/t3/text-generation", guarded(async (c) => {
+    const body = await requestBody(c.req.raw);
+    const prompt = nonEmptyString(body?.prompt, MAX_MESSAGE_LENGTH);
+    const provider = body?.provider;
+    if (!prompt || !isAgentProvider(provider)) {
+      return c.json(
+        { error: "prompt and a supported provider are required" },
+        400,
+      );
+    }
+    const gateway = await dependencies.getGateway();
+    if (!gateway?.generateText) {
+      return c.json({ error: "native T3 text generation is unavailable" }, 503);
+    }
+    const generated = await gateway.generateText({
+      prompt,
+      modelSelection: nativeModelSelection(
+        provider,
+        body?.model,
+        body?.modelOptions,
+      ),
+      timeoutMs: TEXT_GENERATION_TIMEOUT_MS,
+      signal: c.req.raw.signal,
+    });
+    const result = finalAssistantTextForDispatch(
+      generated.snapshot,
+      generated.dispatch,
+    );
+    if (!result) {
+      return c.json(
+        { error: "native T3 text generation returned no assistant response" },
+        502,
+      );
+    }
+    return c.json({ result });
   }));
 
   routes.post("/hosted/t3/chat", async (c) => {

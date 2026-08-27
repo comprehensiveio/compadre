@@ -75,6 +75,11 @@ export interface T3GatewayTurn {
   dispatch: T3TurnDispatch;
 }
 
+export interface T3GatewayTextGeneration {
+  dispatch: T3TurnDispatch;
+  snapshot: T3ThreadSnapshot;
+}
+
 const DEFAULT_T3_HOSTED_APP_URL = "https://app.t3.codes";
 
 export function buildT3HostedThreadUrl(input: {
@@ -112,6 +117,58 @@ export class T3Gateway {
 
   private lockKey(canonicalThreadId: string) {
     return `compadre:t3-environment:${canonicalThreadId}`;
+  }
+
+  /**
+   * Runs provider-backed metadata generation outside the durable user thread
+   * directory. The temporary T3 environment is always discarded, so title,
+   * branch, commit, and PR generation cannot appear as user conversations.
+   */
+  async generateText(input: {
+    prompt: string;
+    modelSelection: T3ModelSelection;
+    timeoutMs: number;
+    signal?: AbortSignal;
+  }): Promise<T3GatewayTextGeneration> {
+    if (!this.environments.discard) {
+      throw new Error("T3 text generation requires disposable environments");
+    }
+    const generationId = this.idFactory();
+    const environment = await this.environments.provision({
+      canonicalThreadId: `internal-text-generation:${generationId}`,
+      providerInstanceId: input.modelSelection.instanceId,
+    });
+    try {
+      const threadId = this.idFactory();
+      const dispatch = await environment.client.startNewThread({
+        threadId,
+        projectId: environment.projectId,
+        title: "Internal text generation",
+        text: input.prompt,
+        modelSelection: input.modelSelection,
+        signal: input.signal,
+      });
+      const snapshot = await environment.client.waitForTurnTerminal({
+        threadId,
+        minimumSequence: dispatch.sequence,
+        messageId: dispatch.messageId,
+        requestedAt: dispatch.createdAt,
+        timeoutMs: input.timeoutMs,
+        signal: input.signal,
+      });
+      const state = snapshot.thread.latestTurn?.state;
+      if (state === "error") {
+        throw new Error(
+          snapshot.thread.session?.lastError || "T3 text generation failed",
+        );
+      }
+      if (state === "interrupted") {
+        throw new Error("T3 text generation was interrupted");
+      }
+      return { dispatch, snapshot };
+    } finally {
+      await this.environments.discard(environment);
+    }
   }
 
   async send(input: {

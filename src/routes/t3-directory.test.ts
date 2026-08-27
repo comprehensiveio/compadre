@@ -232,6 +232,109 @@ test("creates, reads, sends, opens, and cancels one native T3 thread", async (t)
   assert.deepEqual(await cancelled.json(), { ok: true, sequence: 7 });
 });
 
+test("generates hidden provider text without creating a directory thread", async (t) => {
+  const previousApiKey = process.env.COMPADRE_API_KEY;
+  process.env.COMPADRE_API_KEY = "test-key";
+  t.after(() => {
+    if (previousApiKey === undefined) delete process.env.COMPADRE_API_KEY;
+    else process.env.COMPADRE_API_KEY = previousApiKey;
+  });
+
+  let received: unknown;
+  let sends = 0;
+  const app = new Hono();
+  app.route("/", createT3DirectoryRoutes({
+    enabled: () => true,
+    createId: () => "generated",
+    watchTurn() {},
+    async getGateway() {
+      return {
+        async list() { return []; },
+        async generateText(input) {
+          received = input;
+          return {
+            dispatch: {
+              sequence: 3,
+              commandId: "command-generate",
+              messageId: "message-generate",
+              threadId: "native-generation-thread",
+              createdAt: "2026-08-27T15:00:00.000Z",
+            },
+            snapshot: {
+              snapshotSequence: 5,
+              thread: {
+                id: "native-generation-thread",
+                projectId: "project-1",
+                title: "Internal text generation",
+                modelSelection: { instanceId: "codex", model: "gpt-5.6-luna" },
+                latestTurn: {
+                  turnId: "turn-generate",
+                  state: "completed" as const,
+                  requestedAt: "2026-08-27T15:00:00.000Z",
+                  startedAt: "2026-08-27T15:00:00.000Z",
+                  completedAt: "2026-08-27T15:00:01.000Z",
+                  assistantMessageId: "assistant-generate",
+                },
+                messages: [
+                  {
+                    id: "message-generate",
+                    role: "user" as const,
+                    text: "Generate a title",
+                    turnId: "turn-generate",
+                    streaming: false,
+                    createdAt: "2026-08-27T15:00:00.000Z",
+                    updatedAt: "2026-08-27T15:00:00.000Z",
+                  },
+                  {
+                    id: "assistant-generate",
+                    role: "assistant" as const,
+                    text: '{"title":"Generated title"}',
+                    turnId: "turn-generate",
+                    streaming: false,
+                    createdAt: "2026-08-27T15:00:01.000Z",
+                    updatedAt: "2026-08-27T15:00:01.000Z",
+                  },
+                ],
+                session: { status: "ready" as const, activeTurnId: null, lastError: null },
+              },
+            },
+          };
+        },
+        async send() {
+          sends += 1;
+          throw new Error("user-visible send must not run");
+        },
+        async snapshot() { return null; },
+        async open() { return null; },
+        async cancel() { return null; },
+        async waitForTerminal() { throw new Error("unused"); },
+      };
+    },
+  }));
+
+  const response = await app.request(
+    "/hosted/t3/text-generation",
+    authorized({
+      prompt: "Generate a title",
+      provider: "codex",
+      model: "gpt-5.6-luna",
+      modelOptions: [{ id: "reasoningEffort", value: "low" }],
+    }),
+  );
+
+  assert.equal(response.status, 200, await response.clone().text());
+  assert.deepEqual(await response.json(), { result: '{"title":"Generated title"}' });
+  assert.equal(sends, 0);
+  assert.deepEqual(
+    (received as { modelSelection: unknown }).modelSelection,
+    {
+      instanceId: "codex",
+      model: "gpt-5.6-luna",
+      options: [{ id: "reasoningEffort", value: "low" }],
+    },
+  );
+});
+
 test("streams a native Modal T3 turn through the central provider endpoint", async (t) => {
   const previousApiKey = process.env.COMPADRE_API_KEY;
   process.env.COMPADRE_API_KEY = "test-key";

@@ -226,6 +226,85 @@ test("discards a newly provisioned Modal environment when its first turn fails",
   assert.deepEqual(discarded, ["sandbox-failed"]);
 });
 
+test("runs internal text generation in a disposable unbound T3 environment", async () => {
+  const persistence = memoryPersistence();
+  const bindings = new T3ThreadBindingStore(persistence.stores.metadata);
+  const provisioned: string[] = [];
+  const discarded: string[] = [];
+  const client = {
+    baseUrl: "https://t3.example",
+    async startNewThread(input: { threadId?: string; title: string; text: string }) {
+      assert.equal(input.title, "Internal text generation");
+      assert.equal(input.text, "Return JSON with a concise title");
+      return {
+        sequence: 10,
+        commandId: "command-generate",
+        messageId: "message-generate",
+        threadId: input.threadId!,
+        createdAt: "2026-08-27T15:00:00.000Z",
+      };
+    },
+    async startTurn() { throw new Error("unused"); },
+    async interruptTurn() { throw new Error("unused"); },
+    async waitForTurnTerminal() {
+      return {
+        snapshotSequence: 12,
+        thread: {
+          id: "native-generation-thread",
+          projectId: "project-1",
+          title: "Internal text generation",
+          modelSelection: { instanceId: "codex", model: "gpt-5.6-sol" },
+          latestTurn: {
+            turnId: "turn-generate",
+            state: "completed" as const,
+            requestedAt: "2026-08-27T15:00:00.000Z",
+            startedAt: "2026-08-27T15:00:00.000Z",
+            completedAt: "2026-08-27T15:00:01.000Z",
+            assistantMessageId: "assistant-generate",
+          },
+          messages: [
+            {
+              id: "assistant-generate",
+              role: "assistant" as const,
+              text: '{"title":"Concise title"}',
+              turnId: "turn-generate",
+              streaming: false,
+              createdAt: "2026-08-27T15:00:01.000Z",
+              updatedAt: "2026-08-27T15:00:01.000Z",
+            },
+          ],
+          session: { status: "ready" as const, activeTurnId: null, lastError: null },
+        },
+      };
+    },
+    async threadSnapshot() { throw new Error("unused"); },
+    async mintPairingCredential() { throw new Error("unused"); },
+  } satisfies T3CommandClient;
+  const environments: T3EnvironmentConnectionManager = {
+    async provision(input) {
+      provisioned.push(input.canonicalThreadId);
+      return { sandboxId: "sandbox-generation", projectId: "project-1", client };
+    },
+    async reconnect() { throw new Error("unused"); },
+    async discard(connection) {
+      discarded.push(connection.sandboxId);
+    },
+  };
+  const ids = ["generation-1", "native-generation-thread"];
+  const gateway = new T3Gateway(bindings, environments, () => ids.shift()!);
+
+  const generated = await gateway.generateText({
+    prompt: "Return JSON with a concise title",
+    modelSelection: { instanceId: "codex", model: "gpt-5.6-sol" },
+    timeoutMs: 30_000,
+  });
+
+  assert.equal(generated.snapshot.thread.messages[0]?.text, '{"title":"Concise title"}');
+  assert.deepEqual(provisioned, ["internal-text-generation:generation-1"]);
+  assert.deepEqual(discarded, ["sandbox-generation"]);
+  assert.deepEqual(await bindings.list(), []);
+});
+
 test("serves a completed thread from central storage without reconnecting Modal", async () => {
   const persistence = memoryPersistence();
   const bindings = new T3ThreadBindingStore(persistence.stores.metadata);
