@@ -27,6 +27,18 @@ afterEach(() => {
 });
 
 describe("theme failure handling", () => {
+  it("defaults a new browser to Grove", async () => {
+    vi.stubGlobal("window", {
+      localStorage: createStorage(),
+      matchMedia: () => ({ matches: true }),
+    });
+
+    const { readAppearanceModePreference, readThemePreference } = await import("./useTheme");
+
+    expect(readThemePreference()).toBe("grove");
+    expect(readAppearanceModePreference("grove")).toBe("system");
+  });
+
   it("preserves exact storage causes and operation context", async () => {
     const readCause = new Error("storage read blocked");
     const writeCause = new Error("storage quota exceeded");
