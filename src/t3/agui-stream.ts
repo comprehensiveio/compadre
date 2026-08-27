@@ -289,7 +289,12 @@ export class NativeT3SnapshotProjector {
 
     const chunks: StreamChunk[] = [];
     for (const activity of activities(snapshot)) {
-      if (activity.turnId !== this.turnId || this.seenActivities.has(activity.id)) continue;
+      if (this.seenActivities.has(activity.id)) continue;
+      const unboundCurrentTurnUsage =
+        activity.kind === "context-window.updated" &&
+        activity.turnId === undefined &&
+        timestamp(activity.createdAt) >= timestamp(requestedMessage.createdAt);
+      if (activity.turnId !== this.turnId && !unboundCurrentTurnUsage) continue;
       this.seenActivities.add(activity.id);
       const usage = projectedUsage(activity, snapshot);
       if (usage) {

@@ -25,6 +25,7 @@ console.log(
       snapshotSequence: snapshot.snapshotSequence,
       latestTurn: snapshot.thread.latestTurn,
       session: snapshot.thread.session,
+      activities: snapshot.thread.activities.slice(-20),
       messages: snapshot.thread.messages.slice(-8).map((message) => ({
         id: message.id,
         role: message.role,

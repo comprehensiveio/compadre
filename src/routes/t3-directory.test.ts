@@ -263,7 +263,6 @@ test("streams a native Modal T3 turn through the central provider endpoint", asy
         {
           id: "usage-1",
           kind: "context-window.updated",
-          turnId: "turn-1",
           summary: "Context window updated",
           createdAt: "2026-08-26T15:00:01.250Z",
           payload: {
