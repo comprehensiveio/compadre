@@ -72,6 +72,17 @@ test("creates a native T3 thread before dispatching its first HTTP turn", async 
     text: "Please fix the failing test\n\nSlack routing metadata",
     displayText: "Please fix the failing test",
     modelSelection: { instanceId: "codex", model: "gpt-5.6-sol" },
+    attribution: {
+      userId: "user-1",
+      displayName: "Isaac",
+      origin: "slack",
+      slack: {
+        workspaceId: "T1",
+        userId: "U1",
+        channelId: "C1",
+        messageTs: "123.4",
+      },
+    },
   });
 
   assert.deepEqual(dispatch, {
@@ -109,6 +120,17 @@ test("creates a native T3 thread before dispatching its first HTTP turn", async 
       text: "Please fix the failing test",
       providerPrompt: "Please fix the failing test\n\nSlack routing metadata",
       attachments: [],
+      attribution: {
+        userId: "user-1",
+        displayName: "Isaac",
+        origin: "slack",
+        slack: {
+          workspaceId: "T1",
+          userId: "U1",
+          channelId: "C1",
+          messageTs: "123.4",
+        },
+      },
     },
     modelSelection: { instanceId: "codex", model: "gpt-5.6-sol" },
     runtimeMode: "full-access",

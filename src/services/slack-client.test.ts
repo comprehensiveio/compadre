@@ -95,6 +95,23 @@ test("preserves the existing Slack read API contract", async () => {
   assert.equal(url.searchParams.get("limit"), "25");
 });
 
+test("reads a Slack user through the bot-compatible users.info API", async () => {
+  const { calls, fetchImpl } = createSlackFetch([
+    { body: { ok: true, user: { id: "U123" } } },
+  ]);
+  const client = new SlackClient({
+    botToken: "xoxb-test",
+    teamId: "T123",
+    fetchImpl,
+  });
+
+  await client.getUserInfo("U123");
+
+  const url = new URL(calls[0]!.url);
+  assert.equal(url.pathname, "/api/users.info");
+  assert.equal(url.searchParams.get("user"), "U123");
+});
+
 test("downloads a private Slack image with bot authentication", async () => {
   const calls: SlackCall[] = [];
   const image = new Uint8Array([137, 80, 78, 71]);

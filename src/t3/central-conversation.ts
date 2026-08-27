@@ -6,6 +6,7 @@ import {
 } from "../services/t3-slack-conversation.js";
 import {
   T3Client,
+  type T3MessageAttribution,
   type T3ModelSelection,
   type T3ThreadSnapshot,
   type T3TurnDispatch,
@@ -135,6 +136,7 @@ export async function runCentralT3Conversation(input: {
   title: string;
   prompt: string;
   displayText?: string;
+  attribution?: T3MessageAttribution;
   profile?: AgentProfile;
   signal?: AbortSignal;
   environment?: NodeJS.ProcessEnv;
@@ -179,6 +181,7 @@ export async function runCentralT3Conversation(input: {
         messageId,
         text: input.prompt,
         displayText: input.displayText,
+        attribution: input.attribution,
         modelSelection,
         signal: input.signal,
       })
@@ -189,6 +192,7 @@ export async function runCentralT3Conversation(input: {
         title: input.title,
         text: input.prompt,
         displayText: input.displayText,
+        attribution: input.attribution,
         modelSelection,
         signal: input.signal,
       });

@@ -107,6 +107,17 @@ function terminalSnapshot(dispatch: T3TurnDispatch): T3ThreadSnapshot {
 test("a Slack turn is created in the central T3 project and streams every assistant segment", async () => {
   const events: string[] = [];
   let dispatched: T3TurnDispatch | undefined;
+  const attribution = {
+    userId: "user-1",
+    displayName: "Isaac",
+    origin: "slack" as const,
+    slack: {
+      workspaceId: "T1",
+      userId: "U1",
+      channelId: "C1",
+      messageTs: "123.4",
+    },
+  };
   const snapshot: T3OrchestrationSnapshot = {
     snapshotSequence: 3,
     projects: [{
@@ -134,6 +145,7 @@ test("a Slack turn is created in the central T3 project and streams every assist
       events.push("dispatch");
       assert.equal(input.projectId, "project-central");
       assert.match(input.messageId ?? "", /^slack-entrypoint:/);
+      assert.deepEqual(input.attribution, attribution);
       dispatched = {
         sequence: 10,
         commandId: "command-central",
@@ -163,6 +175,7 @@ test("a Slack turn is created in the central T3 project and streams every assist
     displayText: "Question from Slack",
     profile: "codex",
     idFactory: () => "message-1",
+    attribution,
     onPrepared(prepared) {
       events.push("prepared");
       assert.equal(prepared.resumed, false);

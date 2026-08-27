@@ -61,6 +61,8 @@ test(
           "compadre_ai_streams",
           "compadre_ai_threads",
           "compadre_pr_watches",
+          "compadre_user_identities",
+          "compadre_users",
         ],
       );
     } finally {

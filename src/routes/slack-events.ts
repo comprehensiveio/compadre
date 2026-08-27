@@ -36,6 +36,8 @@ import {
   type SlackEventFile,
   type SlackFileReference,
 } from "../services/slack-files.js";
+import { getConfiguredUserDirectory } from "../services/user-directory-runtime.js";
+import { resolveSlackMessageAttribution } from "../services/slack-user-attribution.js";
 
 export const slackEventsRoutes = new Hono();
 
@@ -216,8 +218,9 @@ async function handleAIMessage(
   const { messageText, profile } = route;
 
   const threadKey = threadTs;
+  const workspaceId = event.user_team || event.team || teamId;
 
-  const [thread, channelName] = await Promise.all([
+  const [thread, channelName, attribution] = await Promise.all([
     event.thread_ts && botToken
       ? fetchThreadContext(event.channel, event.thread_ts, event.ts, botToken)
       : null,
@@ -228,6 +231,25 @@ async function handleAIMessage(
           botToken,
         })
       : null,
+    getConfiguredUserDirectory()
+      .then((directory) =>
+        resolveSlackMessageAttribution({
+          directory,
+          botToken,
+          workspaceId,
+          slackUserId: event.user,
+          channelId: event.channel,
+          messageTs: event.ts,
+        }),
+      )
+      .catch((error) => {
+        console.warn("[slack-events] could not persist Slack user attribution", {
+          workspaceId,
+          slackUserId: event.user,
+          error,
+        });
+        return undefined;
+      }),
   ]);
   const threadContext = thread?.text ?? null;
   const slackFiles = mergeSlackFileReferences(
@@ -295,6 +317,7 @@ async function handleAIMessage(
         title: transcriptUserMessage.slice(0, 200) || "Slack request",
         prompt,
         displayText: transcriptUserMessage,
+        attribution,
         profile,
         async onPrepared(prepared) {
           await hostedBindings.bindAlias(canonicalThreadId, prepared.t3ThreadId);

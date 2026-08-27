@@ -130,6 +130,10 @@ export class SlackClient {
     });
   }
 
+  async getUserInfo(userId: string): Promise<SlackResponse> {
+    return this.get("users.info", { user: userId });
+  }
+
   async getUserProfile(userId: string): Promise<SlackResponse> {
     return this.get("users.profile.get", {
       user: userId,

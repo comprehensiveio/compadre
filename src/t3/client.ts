@@ -29,6 +29,19 @@ export interface T3ModelSelection {
   options?: ReadonlyArray<T3ProviderOptionSelection>;
 }
 
+export interface T3MessageAttribution {
+  userId: string;
+  displayName: string;
+  avatarUrl?: string;
+  origin: "web" | "slack" | "api";
+  slack?: {
+    workspaceId: string;
+    userId: string;
+    channelId: string;
+    messageTs: string;
+  };
+}
+
 export interface T3Project {
   id: string;
   title: string;
@@ -422,6 +435,7 @@ export class T3Client {
     title: string;
     text: string;
     displayText?: string;
+    attribution?: T3MessageAttribution;
     modelSelection: T3ModelSelection;
     runtimeMode?: T3RuntimeMode;
     interactionMode?: T3InteractionMode;
@@ -458,6 +472,7 @@ export class T3Client {
       messageId: input.messageId,
       text: input.text,
       displayText: input.displayText,
+      attribution: input.attribution,
       modelSelection: input.modelSelection,
       runtimeMode,
       interactionMode,
@@ -470,6 +485,7 @@ export class T3Client {
     messageId?: string;
     text: string;
     displayText?: string;
+    attribution?: T3MessageAttribution;
     modelSelection: T3ModelSelection;
     runtimeMode?: T3RuntimeMode;
     interactionMode?: T3InteractionMode;
@@ -490,6 +506,7 @@ export class T3Client {
           ...(input.displayText && input.displayText !== input.text
             ? { providerPrompt: input.text }
             : {}),
+          ...(input.attribution ? { attribution: input.attribution } : {}),
           attachments: [],
         },
         modelSelection: input.modelSelection,

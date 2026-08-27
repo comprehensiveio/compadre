@@ -131,6 +131,75 @@ export const aiMetadata = pgTable(
   ],
 );
 
+export type CompadreUserStatus = "active" | "disabled";
+
+/** Canonical people known to Compadre, independent of any login provider. */
+export const users = pgTable(
+  "compadre_users",
+  {
+    id: uuid("id").primaryKey(),
+    displayName: text("display_name").notNull(),
+    realName: text("real_name"),
+    avatarUrl: text("avatar_url"),
+    email: text("email"),
+    status: text("status")
+      .$type<CompadreUserStatus>()
+      .notNull()
+      .default("active"),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    lastSeenAt: timestamp("last_seen_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    check(
+      "compadre_users_status_check",
+      sql`${table.status} in ('active', 'disabled')`,
+    ),
+  ],
+);
+
+export interface SlackIdentityProfile {
+  displayName?: string;
+  realName?: string;
+  avatarUrl?: string;
+  email?: string;
+}
+
+/** External identities that resolve to one canonical Compadre user. */
+export const userIdentities = pgTable(
+  "compadre_user_identities",
+  {
+    id: uuid("id").primaryKey(),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    provider: text("provider").$type<"slack">().notNull(),
+    providerWorkspaceId: text("provider_workspace_id").notNull(),
+    providerUserId: text("provider_user_id").notNull(),
+    profile: jsonb("profile").$type<SlackIdentityProfile>().notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    unique("compadre_user_identities_provider_subject_key").on(
+      table.provider,
+      table.providerWorkspaceId,
+      table.providerUserId,
+    ),
+    index("compadre_user_identities_user_idx").on(table.userId),
+  ],
+);
+
 export type PullRequestWatchStatus =
   | "waiting"
   | "delivering"
