@@ -16,6 +16,9 @@ const SLACK_MESSAGE_PREFIX = "slack-entrypoint:";
 
 export interface CentralT3ConversationClient {
   readonly baseUrl: string;
+  environmentDescriptor(
+    signal?: AbortSignal,
+  ): ReturnType<T3Client["environmentDescriptor"]>;
   snapshot(signal?: AbortSignal): ReturnType<T3Client["snapshot"]>;
   startNewThread(input: Parameters<T3Client["startNewThread"]>[0]): Promise<T3TurnDispatch>;
   startTurn(input: Parameters<T3Client["startTurn"]>[0]): Promise<T3TurnDispatch>;
@@ -27,6 +30,7 @@ export interface CentralT3ConversationClient {
 export interface CentralT3ConversationPrepared {
   canonicalThreadId: string;
   t3ThreadId: string;
+  environmentId: string;
   projectId: string;
   detailsUrl: string;
   modelSelection: T3ModelSelection;
@@ -54,11 +58,11 @@ export function centralT3ThreadId(canonicalThreadId: string): string {
 
 export function centralT3DetailsUrl(input: {
   baseUrl: string;
-  projectId: string;
+  environmentId: string;
   threadId: string;
 }): string {
   return new URL(
-    `/${encodeURIComponent(input.projectId)}/${encodeURIComponent(input.threadId)}`,
+    `/${encodeURIComponent(input.environmentId)}/${encodeURIComponent(input.threadId)}`,
     input.baseUrl,
   ).toString();
 }
@@ -111,7 +115,10 @@ export async function runCentralT3Conversation(input: {
 }): Promise<CentralT3ConversationResult> {
   const environment = input.environment ?? process.env;
   const idFactory = input.idFactory ?? crypto.randomUUID;
-  const orchestration = await input.client.snapshot(input.signal);
+  const [descriptor, orchestration] = await Promise.all([
+    input.client.environmentDescriptor(input.signal),
+    input.client.snapshot(input.signal),
+  ]);
   const t3ThreadId = centralT3ThreadId(input.canonicalThreadId);
   const existing = orchestration.threads.find((thread) => thread.id === t3ThreadId);
   const projectId = existing?.projectId ?? selectedProjectId(orchestration.projects, environment);
@@ -123,10 +130,11 @@ export async function runCentralT3Conversation(input: {
   const prepared: CentralT3ConversationPrepared = {
     canonicalThreadId: input.canonicalThreadId,
     t3ThreadId,
+    environmentId: descriptor.environmentId,
     projectId,
     detailsUrl: centralT3DetailsUrl({
       baseUrl: input.client.baseUrl,
-      projectId,
+      environmentId: descriptor.environmentId,
       threadId: t3ThreadId,
     }),
     modelSelection,

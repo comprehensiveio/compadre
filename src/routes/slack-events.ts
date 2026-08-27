@@ -300,7 +300,7 @@ async function handleAIMessage(
           await hostedBindings.bindAlias(canonicalThreadId, prepared.t3ThreadId);
           await hostedBindings.bindSlack(prepared.t3ThreadId, {
             ...slackBinding,
-            t3ProjectId: prepared.projectId,
+            t3EnvironmentId: prepared.environmentId,
             t3ThreadId: prepared.t3ThreadId,
           });
         },

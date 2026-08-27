@@ -100,6 +100,13 @@ test("a Slack turn is created in the central T3 project and streams every assist
   };
   const client: CentralT3ConversationClient = {
     baseUrl: "https://central.example/",
+    async environmentDescriptor() {
+      return {
+        environmentId: "environment-central",
+        label: "Central",
+        serverVersion: "0.0.33",
+      };
+    },
     async snapshot() {
       return snapshot;
     },
@@ -150,8 +157,10 @@ test("a Slack turn is created in the central T3 project and streams every assist
   assert.equal(result.t3ThreadId, centralT3ThreadId("slack:T1:C1:123.4"));
   assert.equal(
     result.detailsUrl,
-    `https://central.example/project-central/${result.t3ThreadId}`,
+    `https://central.example/environment-central/${result.t3ThreadId}`,
   );
+  assert.equal(result.environmentId, "environment-central");
+  assert.equal(result.projectId, "project-central");
 });
 
 test("a Slack continuation follows the model already selected in the web UI", async () => {
@@ -164,6 +173,13 @@ test("a Slack continuation follows the model already selected in the web UI", as
   let dispatch: T3TurnDispatch | undefined;
   const client: CentralT3ConversationClient = {
     baseUrl: "https://central.example",
+    async environmentDescriptor() {
+      return {
+        environmentId: "environment-central",
+        label: "Central",
+        serverVersion: "0.0.33",
+      };
+    },
     async snapshot() {
       return {
         snapshotSequence: 20,
@@ -216,10 +232,10 @@ test("central thread links and Slack source markers are explicit", () => {
   assert.equal(
     centralT3DetailsUrl({
       baseUrl: "https://central.example/base",
-      projectId: "project 1",
+      environmentId: "environment 1",
       threadId: "thread 1",
     }),
-    "https://central.example/project%201/thread%201",
+    "https://central.example/environment%201/thread%201",
   );
   assert.equal(isSlackEntrypointMessageId("slack-entrypoint:message"), true);
   assert.equal(isSlackEntrypointMessageId("web-message"), false);

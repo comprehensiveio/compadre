@@ -92,6 +92,12 @@ export interface T3OrchestrationSnapshot {
   updatedAt: string;
 }
 
+export interface T3EnvironmentDescriptor {
+  environmentId: string;
+  label: string;
+  serverVersion: string;
+}
+
 export type T3GatewayErrorKind =
   | "transport"
   | "http"
@@ -178,6 +184,12 @@ const orchestrationSnapshotSchema = z.object({
   threads: z.array(threadSchema),
   updatedAt: z.string(),
 });
+
+const environmentDescriptorSchema = z.object({
+  environmentId: z.string().min(1),
+  label: z.string().min(1),
+  serverVersion: z.string().min(1),
+}).passthrough();
 
 const threadSnapshotSchema = z.object({
   snapshotSequence: z.number().int().nonnegative(),
@@ -364,6 +376,18 @@ export class T3Client {
       schema: orchestrationSnapshotSchema,
       signal,
     });
+  }
+
+  environmentDescriptor(signal?: AbortSignal): Promise<T3EnvironmentDescriptor> {
+    return this.request(
+      "environment descriptor",
+      "/.well-known/t3/environment",
+      {
+        schema: environmentDescriptorSchema,
+        signal,
+        authenticated: false,
+      },
+    );
   }
 
   threadSnapshot(

@@ -187,7 +187,7 @@ export async function runT3SlackSimulation({
             threadTs,
             recipientUserId: userId,
             recipientTeamId: teamId,
-            t3ProjectId: prepared.projectId,
+            t3EnvironmentId: prepared.environmentId,
             t3ThreadId: prepared.t3ThreadId,
           });
         },

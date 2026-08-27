@@ -381,10 +381,10 @@ export function createT3DirectoryRoutes(
     const botToken = process.env.SLACK_BOT_TOKEN?.trim();
     const hostedAppUrl = process.env.COMPADRE_T3_HOSTED_APP_URL?.trim();
     const detailsUrl =
-      slackBinding?.t3ProjectId && slackBinding.t3ThreadId && hostedAppUrl
+      slackBinding?.t3EnvironmentId && slackBinding.t3ThreadId && hostedAppUrl
         ? centralT3DetailsUrl({
             baseUrl: hostedAppUrl,
-            projectId: slackBinding.t3ProjectId,
+            environmentId: slackBinding.t3EnvironmentId,
             threadId: slackBinding.t3ThreadId,
           })
         : undefined;

@@ -139,6 +139,31 @@ test("classifies authenticated T3 failures without copying response content", as
   });
 });
 
+test("reads the public T3 environment identity without sending the service token", async () => {
+  let request: Request | undefined;
+  const client = new T3Client("https://t3.example", "secret", {
+    fetch: async (input, init) => {
+      request = new Request(input, init);
+      return json({
+        environmentId: "environment-central",
+        label: "Central T3",
+        serverVersion: "0.0.33",
+      });
+    },
+  });
+
+  assert.deepEqual(await client.environmentDescriptor(), {
+    environmentId: "environment-central",
+    label: "Central T3",
+    serverVersion: "0.0.33",
+  });
+  assert.equal(
+    request?.url,
+    "https://t3.example/.well-known/t3/environment",
+  );
+  assert.equal(request?.headers.get("authorization"), null);
+});
+
 test("preserves native T3 activity and tool detail fields in thread snapshots", async () => {
   const client = new T3Client("https://t3.example", "secret", {
     fetch: async () =>
