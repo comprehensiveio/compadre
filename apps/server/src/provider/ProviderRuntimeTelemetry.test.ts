@@ -144,9 +144,18 @@ it.effect("records one provider turn with model, usage, cost, and named tool spa
     }
     assert.equal(intakePayloads.length, 1);
     const payload = intakePayloads[0] as {
-      data: { attributes: { ml_app: string; spans: Array<{ meta: unknown }> } };
+      data: {
+        attributes: {
+          ml_app: string;
+          spans: Array<{
+            meta: unknown;
+            _dd?: { apm_trace_id?: string };
+          }>;
+        };
+      };
     };
     assert.equal(payload.data.attributes.ml_app, "compadre-t3-experiment");
+    assert.equal(payload.data.attributes.spans[0]?._dd?.apm_trace_id, providerSpan.traceId);
     assert.match(JSON.stringify(payload), /Deployment completed\./);
     assert.equal(/super-secret-value|tool-secret/.test(JSON.stringify(payload)), false);
   }).pipe(

@@ -213,6 +213,12 @@ async function submitDatadogAgentTrace(
       status,
       start_ns: Number(turn.startedAtNs),
       duration: Number(endedAtNs - turn.startedAtNs),
+      _dd: {
+        span_id: turn.span.spanId,
+        trace_id: turn.span.traceId,
+        apm_trace_id: turn.span.traceId,
+        sample_rate: 1,
+      },
     },
     ...turn.completedTools.map((tool) => ({
       parent_id: turn.llmSpanId,
