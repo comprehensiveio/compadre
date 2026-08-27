@@ -1,5 +1,6 @@
 import { assert, it } from "@effect/vitest";
 import {
+  EventId,
   ProviderDriverKind,
   RuntimeItemId,
   ThreadId,
@@ -28,7 +29,7 @@ it.effect("records one provider turn with model, usage, cost, and named tool spa
   const turnId = TurnId.make("turn-telemetry");
   const itemId = RuntimeItemId.make("tool-telemetry");
   const base = {
-    eventId: "event-telemetry",
+    eventId: EventId.make("event-telemetry"),
     provider: ProviderDriverKind.make("codex"),
     threadId,
     turnId,

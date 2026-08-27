@@ -793,16 +793,27 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
       // rather than issuing a new one: sessions that go a long time between
       // browser tool calls used to lose the toolkit outright.
       yield* McpSessionRegistry.touchActiveMcpThread(input.threadId);
-      const turnTelemetry = yield* runtimeTelemetry.beginTurn({
-        threadId: input.threadId,
-        provider: routed.adapter.provider,
-        ...(input.modelSelection?.model ? { model: input.modelSelection.model } : {}),
-      });
-      const turn = yield* routed.adapter.sendTurn(input).pipe(
-        Effect.withParentSpan(turnTelemetry.span),
-        Effect.tapCause((cause) => runtimeTelemetry.failTurn(turnTelemetry, Cause.squash(cause))),
-      );
-      yield* runtimeTelemetry.bindTurn(turnTelemetry, turn.turnId);
+      const providerRuntimeTelemetryEnabled =
+        routed.adapter.provider === "codex" || routed.adapter.provider === "claudeAgent";
+      const turnTelemetry = providerRuntimeTelemetryEnabled
+        ? yield* runtimeTelemetry.beginTurn({
+            threadId: input.threadId,
+            provider: routed.adapter.provider,
+            ...(input.modelSelection?.model ? { model: input.modelSelection.model } : {}),
+          })
+        : undefined;
+      const sendTurnEffect = routed.adapter.sendTurn(input);
+      const turn = yield* turnTelemetry
+        ? sendTurnEffect.pipe(
+            Effect.withParentSpan(turnTelemetry.span),
+            Effect.tapCause((cause) =>
+              runtimeTelemetry.failTurn(turnTelemetry, Cause.squash(cause)),
+            ),
+          )
+        : sendTurnEffect;
+      if (turnTelemetry) {
+        yield* runtimeTelemetry.bindTurn(turnTelemetry, turn.turnId);
+      }
       yield* directory.upsert({
         threadId: input.threadId,
         provider: routed.adapter.provider,
