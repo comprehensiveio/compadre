@@ -66,6 +66,12 @@ export function usesAgentlessWorkflowTelemetry(
   { ephemeral = false }: CompadreProcessOptions = {},
   environment: NodeJS.ProcessEnv = process.env,
 ): boolean {
+  if (
+    environment.COMPADRE_OTEL_EXPORT_MODE?.trim().toLowerCase() ===
+    "agentless"
+  ) {
+    return Boolean(environment.DD_API_KEY?.trim());
+  }
   return ephemeral && Boolean(environment.DD_API_KEY?.trim());
 }
 
@@ -98,8 +104,8 @@ export async function initializeCompadreProcess(
   const telemetryMode = await registerDatadogOpenTelemetry({
     ephemeral: options.ephemeral,
   });
-  if (options.ephemeral) {
-    console.info("[telemetry] Workflow provider selected", {
+  if (options.ephemeral || process.env.COMPADRE_OTEL_EXPORT_MODE) {
+    console.info("[telemetry] OpenTelemetry provider selected", {
       mode: telemetryMode,
       apiKeyConfigured: Boolean(process.env.DD_API_KEY?.trim()),
     });

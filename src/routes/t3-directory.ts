@@ -20,6 +20,7 @@ import { getConfiguredT3Gateway } from "../t3/runtime.js";
 import { requireCompadreApiKey } from "./auth.js";
 import {
   createNativeT3AguiStream,
+  traceNativeT3AguiStream,
 } from "../t3/agui-stream.js";
 import { isAgentProvider } from "../tanstack/protocol.js";
 import { getConfiguredThreadPersistence } from "../persistence/runtime.js";
@@ -334,6 +335,11 @@ export function createT3DirectoryRoutes(
     }
     const runId = params.runId || dependencies.createId();
     const canonicalThreadId = params.threadId || dependencies.createId();
+    const selectedModel = nativeModelSelection(
+      provider,
+      params.forwardedProps.model,
+      params.forwardedProps.modelOptions,
+    );
     const nativeStream = createNativeT3AguiStream({
       gateway,
       canonicalThreadId,
@@ -342,11 +348,7 @@ export function createT3DirectoryRoutes(
         nonEmptyString(params.forwardedProps.title, MAX_TITLE_LENGTH) ??
         "T3 thread",
       text,
-      modelSelection: nativeModelSelection(
-        provider,
-        params.forwardedProps.model,
-        params.forwardedProps.modelOptions,
-      ),
+      modelSelection: selectedModel,
       signal: c.req.raw.signal,
       onTurn(turn) {
         activeRuns.set(runId, { gateway, turn });
@@ -372,7 +374,7 @@ export function createT3DirectoryRoutes(
             threadId: slackBinding.t3ThreadId,
           })
         : undefined;
-    const stream = slackBinding && botToken
+    const mirroredStream = slackBinding && botToken
       ? mirrorNativeT3RunToSlack(nativeStream, {
           binding: slackBinding,
           userMessage: text,
@@ -380,6 +382,12 @@ export function createT3DirectoryRoutes(
           botToken,
         })
       : nativeStream;
+    const stream = traceNativeT3AguiStream(mirroredStream, {
+      canonicalThreadId,
+      runId,
+      provider,
+      model: selectedModel.model,
+    });
     return toServerSentEventsResponse(stream, {
       headers: {
         "X-Accel-Buffering": "no",

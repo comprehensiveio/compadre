@@ -51,6 +51,28 @@ export function projectedProviderEnvironment(
     result.COMPADRE_MCP_URL = new URL("/internal/t3-mcp", publicUrl).toString();
     result.COMPADRE_MCP_BEARER_TOKEN = bridgeToken;
   }
+  for (const name of [
+    "DD_API_KEY",
+    "DD_SITE",
+    "DD_ENV",
+    "DD_LLMOBS_ML_APP",
+    "OTEL_EXPORTER_OTLP_TRACES_HEADERS",
+    "COMPADRE_CANONICAL_THREAD_ID",
+    "COMPADRE_PROVIDER_INSTANCE_ID",
+  ]) {
+    const value = environment[name]?.trim();
+    if (value) result[name] = value;
+  }
+  const tracesUrl =
+    environment.T3CODE_OTLP_TRACES_URL?.trim() ||
+    (environment.DD_API_KEY?.trim()
+      ? `https://otlp.${environment.DD_SITE?.trim() || "datadoghq.com"}/v1/traces`
+      : undefined);
+  if (tracesUrl) {
+    result.T3CODE_OTLP_TRACES_URL = tracesUrl;
+    result.T3CODE_OTLP_SERVICE_NAME =
+      environment.T3CODE_OTLP_SERVICE_NAME?.trim() || "compadre-t3-worker";
+  }
   return result;
 }
 

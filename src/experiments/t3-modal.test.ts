@@ -45,3 +45,41 @@ test("projects one Compadre MCP bridge into T3's native provider environment", (
     },
   );
 });
+
+test("projects direct Datadog OTLP telemetry into the isolated T3 worker", () => {
+  assert.deepEqual(
+    projectedProviderEnvironment({
+      DD_API_KEY: "dd-secret",
+      DD_SITE: "datadoghq.eu",
+      DD_ENV: "experiment",
+      DD_LLMOBS_ML_APP: "compadre-t3-experiment",
+      COMPADRE_CANONICAL_THREAD_ID: "slack:C01:123.456",
+      COMPADRE_PROVIDER_INSTANCE_ID: "codex",
+    }),
+    {
+      DD_API_KEY: "dd-secret",
+      DD_SITE: "datadoghq.eu",
+      DD_ENV: "experiment",
+      DD_LLMOBS_ML_APP: "compadre-t3-experiment",
+      COMPADRE_CANONICAL_THREAD_ID: "slack:C01:123.456",
+      COMPADRE_PROVIDER_INSTANCE_ID: "codex",
+      T3CODE_OTLP_TRACES_URL: "https://otlp.datadoghq.eu/v1/traces",
+      T3CODE_OTLP_SERVICE_NAME: "compadre-t3-worker",
+    },
+  );
+});
+
+test("preserves an explicitly configured OTLP collector", () => {
+  assert.deepEqual(
+    projectedProviderEnvironment({
+      T3CODE_OTLP_TRACES_URL: "https://collector.example/v1/traces",
+      T3CODE_OTLP_SERVICE_NAME: "custom-worker",
+      OTEL_EXPORTER_OTLP_TRACES_HEADERS: "authorization=secret",
+    }),
+    {
+      T3CODE_OTLP_TRACES_URL: "https://collector.example/v1/traces",
+      T3CODE_OTLP_SERVICE_NAME: "custom-worker",
+      OTEL_EXPORTER_OTLP_TRACES_HEADERS: "authorization=secret",
+    },
+  );
+});

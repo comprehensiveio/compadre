@@ -1,7 +1,12 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { EventType, type StreamChunk } from "@tanstack/ai";
-import { NativeT3SnapshotProjector } from "./agui-stream.js";
+import { InMemorySpanExporter, SimpleSpanProcessor } from "@opentelemetry/sdk-trace-base";
+import { NodeTracerProvider } from "@opentelemetry/sdk-trace-node";
+import {
+  NativeT3SnapshotProjector,
+  traceNativeT3AguiStream,
+} from "./agui-stream.js";
 import type { T3ThreadSnapshot } from "./client.js";
 
 function snapshot(input: {
@@ -232,4 +237,42 @@ test("projects every assistant segment from a native T3 turn", () => {
     3,
   );
   assert.equal(events.at(-1)?.type, EventType.RUN_FINISHED);
+});
+
+test("keeps a provider span open for the full native T3 stream", async () => {
+  const exporter = new InMemorySpanExporter();
+  const provider = new NodeTracerProvider({
+    spanProcessors: [new SimpleSpanProcessor(exporter)],
+  });
+  const tracer = provider.getTracer("test");
+  async function* source(): AsyncIterable<StreamChunk> {
+    yield {
+      type: EventType.RUN_STARTED,
+      runId: "run-telemetry",
+      threadId: "thread-telemetry",
+    };
+    yield {
+      type: EventType.RUN_FINISHED,
+      runId: "run-telemetry",
+      threadId: "thread-telemetry",
+      finishReason: "stop",
+    };
+  }
+
+  for await (const _event of traceNativeT3AguiStream(source(), {
+    canonicalThreadId: "thread-telemetry",
+    runId: "run-telemetry",
+    provider: "claude-code",
+    model: "claude-opus-5",
+    tracer,
+  })) {
+    // Consume the complete stream so the span finalizer runs.
+  }
+
+  const [span] = exporter.getFinishedSpans();
+  assert.equal(span?.name, "compadre.t3.provider.turn");
+  assert.equal(span?.attributes["gen_ai.operation.name"], "invoke_agent");
+  assert.equal(span?.attributes["gen_ai.request.model"], "claude-opus-5");
+  assert.equal(span?.attributes["agui.thread_id"], "thread-telemetry");
+  await provider.shutdown();
 });

@@ -70,7 +70,11 @@ export class T3ModalEnvironmentManager
     canonicalThreadId: string;
     providerInstanceId: string;
   }): Promise<T3EnvironmentConnection> {
-    const launched = await launchManagedT3ModalEnvironment(this.environment);
+    const launched = await launchManagedT3ModalEnvironment({
+      ...this.environment,
+      COMPADRE_CANONICAL_THREAD_ID: input.canonicalThreadId,
+      COMPADRE_PROVIDER_INSTANCE_ID: input.providerInstanceId,
+    });
     await this.onProvisioned?.({
       ...input,
       sandboxId: launched.sandboxId,

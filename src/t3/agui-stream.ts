@@ -2,6 +2,14 @@ import {
   EventType,
   type StreamChunk,
 } from "@tanstack/ai";
+import {
+  SpanKind,
+  SpanStatusCode,
+  context as otelContext,
+  trace as otelTrace,
+  type Context,
+  type Tracer,
+} from "@opentelemetry/api";
 import type { T3ModelSelection, T3ThreadSnapshot } from "./client.js";
 import type { T3GatewayTurn } from "./gateway.js";
 
@@ -31,6 +39,79 @@ export interface NativeT3AguiStreamInput {
   signal?: AbortSignal;
   onTurn?(turn: T3GatewayTurn): void | Promise<void>;
   onTerminal?(): void | Promise<void>;
+}
+
+export interface NativeT3AguiTraceOptions {
+  canonicalThreadId: string;
+  runId: string;
+  provider: "claude-code" | "codex";
+  model?: string;
+  tracer?: Tracer;
+  parentContext?: Context;
+}
+
+/** Keep the provider request span active until its streamed turn is terminal. */
+export function traceNativeT3AguiStream(
+  stream: AsyncIterable<StreamChunk>,
+  options: NativeT3AguiTraceOptions,
+): AsyncIterable<StreamChunk> {
+  const tracer = options.tracer ?? otelTrace.getTracer("compadre.t3.provider");
+  const parentContext = options.parentContext ?? otelContext.active();
+  const span = tracer.startSpan(
+    "compadre.t3.provider.turn",
+    {
+      kind: SpanKind.INTERNAL,
+      attributes: {
+        "agui.thread_id": options.canonicalThreadId,
+        "agui.run_id": options.runId,
+        "agent.provider": options.provider,
+        "gen_ai.operation.name": "invoke_agent",
+        "gen_ai.conversation.id": options.canonicalThreadId,
+        "gen_ai.provider.name":
+          options.provider === "codex" ? "openai" : "anthropic",
+        ...(options.model ? { "gen_ai.request.model": options.model } : {}),
+      },
+    },
+    parentContext,
+  );
+  const spanContext = otelTrace.setSpan(parentContext, span);
+
+  return {
+    async *[Symbol.asyncIterator]() {
+      const iterator = otelContext.with(spanContext, () =>
+        stream[Symbol.asyncIterator](),
+      );
+      let returned = false;
+      try {
+        while (true) {
+          const next = await otelContext.with(spanContext, () =>
+            iterator.next(),
+          );
+          if (next.done) break;
+          if (next.value.type === EventType.RUN_ERROR) {
+            span.setStatus({
+              code: SpanStatusCode.ERROR,
+              message: next.value.message || "Native T3 provider failed",
+            });
+          }
+          yield next.value;
+        }
+      } catch (error) {
+        span.recordException(error instanceof Error ? error : String(error));
+        span.setStatus({
+          code: SpanStatusCode.ERROR,
+          message: error instanceof Error ? error.message : String(error),
+        });
+        throw error;
+      } finally {
+        if (!returned && iterator.return) {
+          returned = true;
+          await otelContext.with(spanContext, () => iterator.return!());
+        }
+        span.end();
+      }
+    },
+  };
 }
 
 interface T3Activity {

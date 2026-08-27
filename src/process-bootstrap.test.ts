@@ -44,6 +44,16 @@ test("uses exactly one direct telemetry provider in ephemeral Workflows", () => 
     false,
   );
   assert.equal(usesAgentlessWorkflowTelemetry({ ephemeral: true }, {}), false);
+  assert.equal(
+    usesAgentlessWorkflowTelemetry(
+      {},
+      {
+        COMPADRE_OTEL_EXPORT_MODE: "agentless",
+        DD_API_KEY: "test-key",
+      },
+    ),
+    true,
+  );
 });
 
 test("uses a baked checkout only for an ephemeral process", async () => {
