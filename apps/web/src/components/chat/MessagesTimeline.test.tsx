@@ -270,6 +270,42 @@ describe("MessagesTimeline", () => {
     expect(markup).toContain("https://example.com/isaac.png");
   });
 
+  it("renders one canonical participant identity across message origins", () => {
+    const entry = buildUserTimelineEntry("Sent before the canonical profile refresh.");
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        participants={[
+          {
+            userId: "user-1",
+            displayName: "Isaac Sherrill",
+            avatarUrl: "https://example.com/canonical-isaac.png",
+            origins: ["web", "slack"],
+          },
+        ]}
+        timelineEntries={[
+          {
+            ...entry,
+            message: {
+              ...entry.message,
+              attribution: {
+                userId: "user-1",
+                displayName: "isaac",
+                avatarUrl: "https://example.com/old-isaac.png",
+                origin: "slack" as const,
+              },
+            },
+          },
+        ]}
+      />,
+    );
+
+    expect(markup).toContain("Isaac Sherrill");
+    expect(markup).not.toContain(">isaac<");
+    expect(markup).toContain("https://example.com/canonical-isaac.png");
+    expect(markup).toContain("via Slack");
+  });
+
   it("renders a feedback command and its pending response as normal thread messages", () => {
     const submission = {
       id: MessageId.make("feedback-command"),

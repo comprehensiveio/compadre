@@ -3,6 +3,7 @@ import {
   type MessageId,
   type ScopedThreadRef,
   type ServerProviderSkill,
+  type ThreadParticipant,
   type TurnId,
 } from "@t3tools/contracts";
 import { parseScopedThreadKey } from "@t3tools/client-runtime/environment";
@@ -138,6 +139,7 @@ interface TimelineRowSharedState {
   resolvedTheme: "light" | "dark";
   workspaceRoot: string | undefined;
   skills: ReadonlyArray<Pick<ServerProviderSkill, "name" | "displayName">>;
+  participantByUserId: ReadonlyMap<string, ThreadParticipant>;
   activeThreadEnvironmentId: EnvironmentId;
   onRevertUserMessage: (messageId: MessageId) => void;
   onImageExpand: (preview: ExpandedImagePreview) => void;
@@ -189,6 +191,7 @@ function TimelineLoadEarlierHeader({
 }
 const TIMELINE_LIST_FOOTER = <div className="h-3 sm:h-4" />;
 const EMPTY_TIMELINE_SKILLS: ReadonlyArray<Pick<ServerProviderSkill, "name" | "displayName">> = [];
+const EMPTY_THREAD_PARTICIPANTS: ReadonlyArray<ThreadParticipant> = [];
 const TIMELINE_MAINTAIN_SCROLL_AT_END = {
   animated: false,
   on: {
@@ -225,6 +228,7 @@ interface MessagesTimelineProps {
   timestampFormat: TimestampFormat;
   workspaceRoot: string | undefined;
   skills?: ReadonlyArray<Pick<ServerProviderSkill, "name" | "displayName">>;
+  participants?: ReadonlyArray<ThreadParticipant> | undefined;
   anchorMessageId: MessageId | null;
   onAnchorReady: (messageId: MessageId, anchorIndex: number) => void;
   contentInsetEndAdjustment: number;
@@ -270,6 +274,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   timestampFormat,
   workspaceRoot,
   skills = EMPTY_TIMELINE_SKILLS,
+  participants = EMPTY_THREAD_PARTICIPANTS,
   anchorMessageId,
   onAnchorReady,
   contentInsetEndAdjustment,
@@ -429,6 +434,10 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     ],
   );
   const rows = useStableRows(rawRows);
+  const participantByUserId = useMemo(
+    () => new Map(participants.map((participant) => [participant.userId, participant])),
+    [participants],
+  );
   const minimapItems = useMemo(() => deriveTimelineMinimapItems(rows), [rows]);
   const [timelineViewportElement, setTimelineViewportElement] = useState<HTMLDivElement | null>(
     null,
@@ -519,6 +528,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       resolvedTheme,
       workspaceRoot,
       skills,
+      participantByUserId,
       activeThreadEnvironmentId,
       onRevertUserMessage,
       onImageExpand,
@@ -535,6 +545,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       resolvedTheme,
       workspaceRoot,
       skills,
+      participantByUserId,
       activeThreadEnvironmentId,
       onRevertUserMessage,
       onImageExpand,
@@ -986,6 +997,12 @@ const TimelineRowContent = memo(function TimelineRowContent({ row }: { row: Time
 
 function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" }> }) {
   const ctx = use(TimelineRowCtx);
+  const attribution = row.message.attribution;
+  const canonicalParticipant = attribution
+    ? ctx.participantByUserId.get(attribution.userId)
+    : undefined;
+  const attributionDisplayName = canonicalParticipant?.displayName ?? attribution?.displayName;
+  const attributionAvatarUrl = canonicalParticipant?.avatarUrl ?? attribution?.avatarUrl;
   const userImages = row.message.attachments ?? [];
   const displayedUserMessage = deriveDisplayedUserMessageState(row.message.text);
   const terminalContexts = displayedUserMessage.contexts;
@@ -1070,17 +1087,13 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
             <MessageCopyButton text={displayedUserMessage.copyText} variant="ghost" />
           </span>
         ) : null}
-        {row.message.attribution ? (
+        {attribution ? (
           <div className="flex min-w-0 items-center justify-end gap-1.5 text-muted-foreground">
-            {row.message.attribution.avatarUrl ? (
-              <img
-                src={row.message.attribution.avatarUrl}
-                alt=""
-                className="size-4 shrink-0 rounded-full"
-              />
+            {attributionAvatarUrl ? (
+              <img src={attributionAvatarUrl} alt="" className="size-4 shrink-0 rounded-full" />
             ) : null}
-            <span className="truncate">{row.message.attribution.displayName}</span>
-            {row.message.attribution.origin === "slack" ? (
+            <span className="truncate">{attributionDisplayName}</span>
+            {attribution.origin === "slack" ? (
               <span className="flex shrink-0 items-center gap-1 text-secondary-label">
                 <MessageCircleIcon className="size-3" />
                 via Slack
