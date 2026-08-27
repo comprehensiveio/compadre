@@ -25,6 +25,12 @@ isolated deployment, not that the equivalent production change has been made.
 - [x] The isolated Slack app authenticates as `Secret dre experiment`, owns
   progress updates and final delivery, and posts the canonical Open in web
   link from the same app identity.
+- [x] The legacy `/prompt`, `/webhook/:source`, `/ag-ui`, and `/workflow-runs`
+  contracts dispatch through central T3 and complete with durable status and
+  replay on the isolated deployment.
+- [x] Repeated API run IDs and webhook idempotency keys do not launch duplicate
+  native T3 turns; live cancellation interrupts the active turn and records an
+  aborted durable run.
 
 ## Release and infrastructure
 
@@ -59,6 +65,9 @@ isolated deployment, not that the equivalent production change has been made.
   budget. A cold isolated run currently spends meaningful time cloning the
   repository and connecting to and discovering every configured MCP before a
   trivial no-tool answer can complete.
+- [ ] Instrument and reduce post-clone T3 bootstrap latency. Live sequential
+  compatibility probes ranged from roughly one minute to more than three
+  minutes, and concurrent fresh threads amplified the slow tail.
 
 ## Production secrets and configuration
 
@@ -179,8 +188,10 @@ central transcript, Modal logs, Datadog content, or source control.
   Code/Anthropic, including reasoning/context options and resume behavior.
 - [ ] Verify MCPs, skills, prompts, custom tools, deployment/thread alerts, and
   installed/custom CLIs in both harnesses from one canonical configuration.
-- [ ] Verify relay API compatibility, authentication, idempotency, error shape,
-  streaming, cancellation, and existing callers.
+- [x] Verify relay API authentication, idempotency, central execution, durable
+  status/replay, streaming, and cancellation on the isolated deployment.
+- [ ] Soak the checked-in asynchronous `/prompt` caller and inventory any
+  externally configured synchronous or webhook consumers before cutover.
 - [x] Migrate `/webhook/:source` to the central native-T3 thread path with
   durable status/events and caller-supplied idempotency keys.
 - [x] Inventory checked-in `/ag-ui` and `/workflow-runs` callers and migrate
@@ -198,6 +209,9 @@ central transcript, Modal logs, Datadog content, or source control.
   without duplicate runs or divergent history.
 - [ ] Implement or explicitly defer controller-restart takeover with persisted
   dispatch metadata, heartbeats, leases, and epoch fencing.
+- [ ] Decide whether cancelled compatibility streams require an explicit
+  terminal AG-UI chunk; durable status currently reaches `aborted`, while the
+  event log closes after the last already-persisted event.
 
 ## Observability and operations
 
