@@ -1,4 +1,6 @@
+// @effect-diagnostics nodeBuiltinImport:off - Exercises reconnects against a real SSE socket.
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import { createServer } from "node:http";
 import { assert, it } from "@effect/vitest";
 import {
   ProviderDriverKind,
@@ -19,7 +21,7 @@ import { FetchHttpClient } from "effect/unstable/http";
 import { makeCompadreAdapter } from "./CompadreAdapter.ts";
 import { remoteNativeProviderSnapshot } from "../RemoteNativeProvider.ts";
 
-it("uses the native Codex catalog instead of stale experiment model aliases", () => {
+it("uses the native Codex catalog instead of stale proxy model aliases", () => {
   const snapshot = remoteNativeProviderSnapshot({
     agentProvider: "codex",
     enabled: true,
@@ -51,6 +53,114 @@ it("uses the native Codex catalog instead of stale experiment model aliases", ()
 });
 
 it.layer(Layer.merge(NodeServices.layer, FetchHttpClient.layer))("CompadreAdapter", (it) => {
+  it.effect("reconnects a dropped provider stream from its durable SSE cursor", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const requests: Array<{ method: string; lastEventId: string | undefined }> = [];
+        const server = createServer((request, response) => {
+          requests.push({
+            method: request.method ?? "UNKNOWN",
+            lastEventId:
+              typeof request.headers["last-event-id"] === "string"
+                ? request.headers["last-event-id"]
+                : undefined,
+          });
+          response.writeHead(200, {
+            "Content-Type": "text/event-stream",
+            Connection: "close",
+          });
+          if (request.method === "POST") {
+            response.write(
+              'id: cursor-1\ndata: {"type":"TEXT_MESSAGE_START","messageId":"assistant-1"}\n\n',
+            );
+            response.write(
+              'id: cursor-2\ndata: {"type":"TEXT_MESSAGE_CONTENT","messageId":"assistant-1","delta":"Hello"}\n\n',
+            );
+            response.end();
+            return;
+          }
+          response.write(
+            'id: cursor-3\ndata: {"type":"TEXT_MESSAGE_END","messageId":"assistant-1"}\n\n',
+          );
+          response.write('id: cursor-4\ndata: {"type":"RUN_FINISHED","runId":"remote-run"}\n\n');
+          response.end("data: [DONE]\n\n");
+        });
+        const port = yield* Effect.acquireRelease(
+          Effect.tryPromise(
+            () =>
+              new Promise<number>((resolve, reject) => {
+                server.once("error", reject);
+                server.listen(0, "127.0.0.1", () => {
+                  const address = server.address();
+                  if (!address || typeof address === "string") {
+                    reject(new Error("test server did not bind a TCP port"));
+                    return;
+                  }
+                  resolve(address.port);
+                });
+              }),
+          ),
+          () =>
+            Effect.promise(
+              () =>
+                new Promise<void>((resolve) => {
+                  server.close();
+                  server.closeAllConnections();
+                  resolve();
+                }),
+            ),
+        );
+        const codex = ProviderDriverKind.make("codex");
+        const instanceId = ProviderInstanceId.make("codex");
+        const threadId = ThreadId.make("reconnect-thread");
+        const completed = yield* Deferred.make<void>();
+        const adapter = yield* makeCompadreAdapter({
+          endpoint: `http://127.0.0.1:${port}/hosted/t3/chat`,
+          runtimeProvider: codex,
+          instanceId,
+          provider: "codex",
+          reconnectBaseDelayMs: 0,
+        });
+        const events: ProviderRuntimeEvent[] = [];
+        const eventsFiber = yield* Stream.runForEach(adapter.streamEvents, (event) =>
+          Effect.sync(() => events.push(event)).pipe(
+            Effect.andThen(
+              event.type === "turn.completed"
+                ? Deferred.succeed(completed, undefined)
+                : Effect.void,
+            ),
+          ),
+        ).pipe(Effect.forkChild);
+        yield* Effect.yieldNow;
+        yield* adapter.startSession({
+          threadId,
+          provider: codex,
+          runtimeMode: "full-access",
+          modelSelection: { instanceId, model: "gpt-5.6-sol" },
+        });
+        yield* adapter.sendTurn({ threadId, input: "hello" });
+        yield* Deferred.await(completed);
+        yield* Fiber.interrupt(eventsFiber);
+        yield* adapter.stopSession(threadId);
+
+        assert.deepStrictEqual(requests, [
+          { method: "POST", lastEventId: undefined },
+          { method: "GET", lastEventId: "cursor-2" },
+        ]);
+        assert.equal(
+          events.filter(
+            (event) => event.type === "content.delta" && event.payload.delta === "Hello",
+          ).length,
+          1,
+        );
+        assert.equal(
+          events.find((event) => event.type === "turn.completed")?.payload.state,
+          "completed",
+        );
+      }),
+    ),
+  );
+
   it.effect("presents a remote worker as the native provider and forwards its model", () =>
     Effect.gen(function* () {
       const threadId = ThreadId.make("remote-codex-thread");

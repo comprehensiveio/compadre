@@ -20,13 +20,8 @@ import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as PubSub from "effect/PubSub";
 import * as Scope from "effect/Scope";
-import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
-import * as Sse from "effect/unstable/encoding/Sse";
-import * as HttpBody from "effect/unstable/http/HttpBody";
 import * as HttpClient from "effect/unstable/http/HttpClient";
-import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
-import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
 
 import {
   ProviderAdapterRequestError,
@@ -36,42 +31,13 @@ import {
 } from "../Errors.ts";
 import type { ProviderAdapterShape, ProviderThreadSnapshot } from "../Services/ProviderAdapter.ts";
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
-
-export interface CompadreTurnRequest {
-  readonly endpoint: string;
-  readonly apiKey: string | undefined;
-  readonly threadId: string;
-  readonly runId: string;
-  readonly messageId: string;
-  readonly input: string;
-  readonly inputFiles: ReadonlyArray<{
-    readonly name: string;
-    readonly mimetype: string;
-    readonly sizeBytes: number;
-    readonly dataBase64: string;
-  }>;
-  readonly provider: "claude-code" | "codex" | undefined;
-  readonly model: string | undefined;
-  readonly modelOptions: ReadonlyArray<ProviderOptionSelection>;
-}
-
-export type CompadreStreamEvent = Readonly<Record<string, unknown>> & {
-  readonly type: string;
-};
-
-export type CompadreTransport = (
-  request: CompadreTurnRequest,
-) => Stream.Stream<CompadreStreamEvent, ProviderAdapterRequestError>;
-
-export interface CompadreCancelRequest {
-  readonly endpoint: string;
-  readonly apiKey: string | undefined;
-  readonly runId: string;
-}
-
-export type CompadreCancelTransport = (
-  request: CompadreCancelRequest,
-) => Effect.Effect<void, ProviderAdapterRequestError>;
+import {
+  makeCompadreCancelTransport,
+  makeCompadreTransport,
+  type CompadreCancelTransport,
+  type CompadreStreamEvent,
+  type CompadreTransport,
+} from "./CompadreTransport.ts";
 
 export interface CompadreAdapterOptions {
   readonly endpoint: string;
@@ -83,6 +49,8 @@ export interface CompadreAdapterOptions {
   readonly transport?: CompadreTransport;
   readonly cancelTransport?: CompadreCancelTransport;
   readonly attachmentsDir?: string;
+  /** Base delay for durable stream reconnects; defaults to 250ms. */
+  readonly reconnectBaseDelayMs?: number;
 }
 
 interface CompadreSessionContext {
@@ -94,131 +62,9 @@ interface CompadreSessionContext {
   stopped: boolean;
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
 function stringField(event: CompadreStreamEvent, field: string): string | undefined {
   const value = event[field];
   return typeof value === "string" && value.length > 0 ? value : undefined;
-}
-
-function makeLiveTransport(
-  httpClient: HttpClient.HttpClient,
-  runtimeProvider: ProviderDriverKind,
-): CompadreTransport {
-  return (input) => {
-    const body = {
-      threadId: input.threadId,
-      runId: input.runId,
-      messages: [{ id: input.messageId, role: "user", content: input.input }],
-      tools: [],
-      context: [],
-      forwardedProps: {
-        ...(input.provider ? { provider: input.provider } : {}),
-        ...(input.model ? { model: input.model } : {}),
-        ...(input.modelOptions.length > 0 ? { modelOptions: input.modelOptions } : {}),
-        ...(input.inputFiles.length > 0 ? { inputFiles: input.inputFiles } : {}),
-      },
-      state: {},
-    };
-    let request = HttpClientRequest.post(input.endpoint, {
-      body: HttpBody.jsonUnsafe(body),
-    }).pipe(HttpClientRequest.setHeader("accept", "text/event-stream"));
-    if (input.apiKey) {
-      request = request.pipe(
-        HttpClientRequest.setHeader("authorization", `Bearer ${input.apiKey}`),
-      );
-    }
-
-    return Stream.unwrap(
-      httpClient.execute(request).pipe(
-        Effect.flatMap(HttpClientResponse.filterStatusOk),
-        Effect.map((response) =>
-          response.stream.pipe(
-            Stream.decodeText(),
-            Stream.pipeThroughChannel(Sse.decode()),
-            Stream.mapEffect((event) =>
-              Schema.decodeEffect(Schema.fromJsonString(Schema.Unknown))(event.data).pipe(
-                Effect.mapError(
-                  (cause) =>
-                    new ProviderAdapterRequestError({
-                      provider: runtimeProvider,
-                      method: "compadre/sse",
-                      detail: "Compadre emitted invalid JSON in its event stream.",
-                      cause,
-                    }),
-                ),
-                Effect.flatMap((value) =>
-                  isRecord(value) && typeof value.type === "string"
-                    ? Effect.succeed(value as CompadreStreamEvent)
-                    : Effect.fail(
-                        new ProviderAdapterRequestError({
-                          provider: runtimeProvider,
-                          method: "compadre/sse",
-                          detail: "Compadre emitted an event without a type.",
-                        }),
-                      ),
-                ),
-              ),
-            ),
-          ),
-        ),
-        Effect.mapError(
-          (cause) =>
-            new ProviderAdapterRequestError({
-              provider: runtimeProvider,
-              method: "compadre/chat",
-              detail: "Could not open the Compadre event stream.",
-              cause,
-            }),
-        ),
-      ),
-    ).pipe(
-      Stream.mapError(
-        (cause) =>
-          new ProviderAdapterRequestError({
-            provider: runtimeProvider,
-            method: "compadre/chat",
-            detail: "The Compadre event stream failed.",
-            cause,
-          }),
-      ),
-    );
-  };
-}
-
-function cancelEndpoint(endpoint: string, runId: string): string {
-  const url = new URL(endpoint);
-  url.pathname = url.pathname.replace(/\/chat\/?$/u, `/runs/${encodeURIComponent(runId)}/cancel`);
-  return url.toString();
-}
-
-function makeLiveCancelTransport(
-  httpClient: HttpClient.HttpClient,
-  runtimeProvider: ProviderDriverKind,
-): CompadreCancelTransport {
-  return (input) => {
-    let request = HttpClientRequest.post(cancelEndpoint(input.endpoint, input.runId));
-    if (input.apiKey) {
-      request = request.pipe(
-        HttpClientRequest.setHeader("authorization", `Bearer ${input.apiKey}`),
-      );
-    }
-    return httpClient.execute(request).pipe(
-      Effect.flatMap(HttpClientResponse.filterStatusOk),
-      Effect.asVoid,
-      Effect.mapError(
-        (cause) =>
-          new ProviderAdapterRequestError({
-            provider: runtimeProvider,
-            method: "compadre/cancel",
-            detail: "Could not cancel the active Compadre run.",
-            cause,
-          }),
-      ),
-    );
-  };
 }
 
 export function makeCompadreAdapter(options: CompadreAdapterOptions) {
@@ -229,9 +75,11 @@ export function makeCompadreAdapter(options: CompadreAdapterOptions) {
     const adapterScope = yield* Scope.make("sequential");
     const httpClient = yield* HttpClient.HttpClient;
     const fileSystem = yield* FileSystem.FileSystem;
-    const transport = options.transport ?? makeLiveTransport(httpClient, runtimeProvider);
+    const transport =
+      options.transport ??
+      makeCompadreTransport(httpClient, runtimeProvider, options.reconnectBaseDelayMs ?? 250);
     const cancelTransport =
-      options.cancelTransport ?? makeLiveCancelTransport(httpClient, runtimeProvider);
+      options.cancelTransport ?? makeCompadreCancelTransport(httpClient, runtimeProvider);
     const sessions = new Map<ThreadId, CompadreSessionContext>();
     const runtimeEvents = yield* PubSub.unbounded<ProviderRuntimeEvent>();
 
@@ -360,7 +208,7 @@ export function makeCompadreAdapter(options: CompadreAdapterOptions) {
           return yield* new ProviderAdapterValidationError({
             provider: runtimeProvider,
             operation: "sendTurn",
-            issue: "A non-empty text input is required for the Compadre experiment.",
+            issue: "A non-empty text input is required for the Compadre provider transport.",
           });
         }
         const inputFiles = yield* Effect.forEach(attachments, (attachment) =>
