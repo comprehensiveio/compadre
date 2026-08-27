@@ -6,6 +6,7 @@ import { humanizeToolName } from "./tool-labels.js";
 
 export interface NativeT3SlackDeliveryStream {
   postThreadMessage(markdownText: string): Promise<void>;
+  postThreadContext(markdownText: string): Promise<void>;
   setStatus(text: string): Promise<void>;
   appendText(text: string): boolean;
   stopStream(): Promise<void>;
@@ -75,16 +76,18 @@ ${input.userMessage}`);
       }
       yield chunk;
     }
-    if (deliveryEnabled && input.detailsUrl) {
-      slack.appendText(`\n\n<${input.detailsUrl}|View details in T3>`);
-    }
     if (deliveryEnabled) await slack.stopStream();
+    if (deliveryEnabled && input.detailsUrl) {
+      await slack.postThreadContext(`<${input.detailsUrl}|Open in web>`);
+    }
     await slack.clearStatus().catch(() => undefined);
   } catch (error) {
     if (deliveryEnabled) {
       await slack.stopStream().catch(() => undefined);
       await slack.clearStatus().catch(() => undefined);
-      await slack.postThreadMessage(slackFailureNotice(error)).catch(() => undefined);
+      await slack
+        .postThreadMessage(slackFailureNotice(error))
+        .catch(() => undefined);
     }
     throw error;
   }

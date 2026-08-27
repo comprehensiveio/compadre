@@ -10,7 +10,10 @@ import {
 } from "../prompts/index.js";
 import { resolveSlackChannelName } from "../services/slack-context.js";
 import { parseAgentRouteDirective } from "../services/agent-routing.js";
-import { buildSlackAgentInput } from "../services/slack-prompt.js";
+import {
+  buildSlackAgentInput,
+  buildSlackThreadUrl,
+} from "../services/slack-prompt.js";
 import { SlackStream } from "../services/slack-stream.js";
 import { configuredConversationRunner } from "../services/conversation-runner.js";
 import { providerForAgentProfile } from "../tanstack/protocol.js";
@@ -37,7 +40,10 @@ import {
   type SlackFileReference,
 } from "../services/slack-files.js";
 import { getConfiguredUserDirectory } from "../services/user-directory-runtime.js";
-import { resolveSlackMessageAttribution } from "../services/slack-user-attribution.js";
+import {
+  resolveSlackMessageAttribution,
+  resolveSlackThreadParticipants,
+} from "../services/slack-user-attribution.js";
 
 export const slackEventsRoutes = new Hono();
 
@@ -220,7 +226,7 @@ async function handleAIMessage(
   const threadKey = threadTs;
   const workspaceId = event.user_team || event.team || teamId;
 
-  const [thread, channelName, attribution] = await Promise.all([
+  const [thread, channelName, directory] = await Promise.all([
     event.thread_ts && botToken
       ? fetchThreadContext(event.channel, event.thread_ts, event.ts, botToken)
       : null,
@@ -231,26 +237,49 @@ async function handleAIMessage(
           botToken,
         })
       : null,
-    getConfiguredUserDirectory()
-      .then((directory) =>
-        resolveSlackMessageAttribution({
-          directory,
-          botToken,
-          workspaceId,
-          slackUserId: event.user,
-          channelId: event.channel,
-          messageTs: event.ts,
-        }),
-      )
-      .catch((error) => {
-        console.warn("[slack-events] could not persist Slack user attribution", {
-          workspaceId,
-          slackUserId: event.user,
-          error,
-        });
-        return undefined;
-      }),
+    getConfiguredUserDirectory().catch((error) => {
+      console.warn("[slack-events] user directory unavailable", { error });
+      return null;
+    }),
   ]);
+  const slackParticipantIds = [
+    event.user,
+    ...(thread?.participantUserIds ?? []),
+  ].filter(
+    (userId): userId is string => Boolean(userId) && userId !== botUserId,
+  );
+  const participants = await resolveSlackThreadParticipants({
+    directory,
+    botToken,
+    workspaceId,
+    slackUserIds: slackParticipantIds,
+  }).catch((error) => {
+    console.warn("[slack-events] could not persist Slack thread participants", {
+      workspaceId,
+      channelId: event.channel,
+      threadTs,
+      error,
+    });
+    return [];
+  });
+  const attribution = await resolveSlackMessageAttribution({
+    directory,
+    botToken,
+    workspaceId,
+    slackUserId: event.user,
+    channelId: event.channel,
+    messageTs: event.ts,
+    threadTs,
+    threadUrl: buildSlackThreadUrl(event.channel, threadTs),
+    ...(participants.length > 0 ? { participants } : {}),
+  }).catch((error) => {
+    console.warn("[slack-events] could not persist Slack user attribution", {
+      workspaceId,
+      slackUserId: event.user,
+      error,
+    });
+    return undefined;
+  });
   const threadContext = thread?.text ?? null;
   const slackFiles = mergeSlackFileReferences(
     slackFileReferences(event.files),
@@ -281,7 +310,7 @@ async function handleAIMessage(
     channelId: event.channel,
     threadTs,
     ...(event.user ? { recipientUserId: event.user } : {}),
-    ...((event.user_team || event.team || teamId)
+    ...(event.user_team || event.team || teamId
       ? { recipientTeamId: event.user_team || event.team || teamId }
       : {}),
   };
@@ -320,7 +349,10 @@ async function handleAIMessage(
         attribution,
         profile,
         async onPrepared(prepared) {
-          await hostedBindings.bindAlias(canonicalThreadId, prepared.t3ThreadId);
+          await hostedBindings.bindAlias(
+            canonicalThreadId,
+            prepared.t3ThreadId,
+          );
           await hostedBindings.bindSlack(prepared.t3ThreadId, {
             ...slackBinding,
             t3EnvironmentId: prepared.environmentId,
@@ -333,9 +365,16 @@ async function handleAIMessage(
             }
           : undefined,
         onToolStart: slackStream
-          ? (name) => slackStream.setStatus(
-              `is ${humanizeToolName(name).toLowerCase()}...`,
-            )
+          ? async (name) => {
+              const status = `is ${humanizeToolName(name).toLowerCase()}...`;
+              console.log("[slack-events] updating native T3 tool status", {
+                channelId: event.channel,
+                threadTs,
+                tool: name,
+                status,
+              });
+              await slackStream.setStatus(status);
+            }
           : undefined,
       });
     });
@@ -343,8 +382,10 @@ async function handleAIMessage(
     nativeConversation
       .then(async (result) => {
         if (slackStream) {
-          slackStream.appendText(`\n\n${t3SlackDetailsMarkdown(result.detailsUrl)}`);
           await slackStream.stopStream();
+          await slackStream.postThreadContext(
+            t3SlackDetailsMarkdown(result.detailsUrl),
+          );
           await slackStream.clearStatus();
         }
         if (!isDM && slackStream) {
@@ -472,7 +513,11 @@ async function fetchThreadContext(
   threadTs: string,
   triggeringTs: string,
   botToken: string,
-): Promise<{ text: string | null; files: SlackFileReference[] }> {
+): Promise<{
+  text: string | null;
+  files: SlackFileReference[];
+  participantUserIds: string[];
+}> {
   try {
     const res = await fetch(
       `https://slack.com/api/conversations.replies?${new URLSearchParams({
@@ -496,7 +541,7 @@ async function fetchThreadContext(
     };
     if (!data.ok || !data.messages) {
       console.error("[slack-events] conversations.replies failed:", data.error);
-      return { text: null, files: [] };
+      return { text: null, files: [], participantUserIds: [] };
     }
     const messages = data.messages
       .filter((message) => message.ts !== triggeringTs)
@@ -509,10 +554,13 @@ async function fetchThreadContext(
       files: mergeSlackFileReferences(
         ...messages.map((message) => slackFileReferences(message.files)),
       ),
+      participantUserIds: messages.flatMap((message) =>
+        message.user ? [message.user] : [],
+      ),
     };
   } catch (err) {
     console.error("[slack-events] fetchThreadContext error:", err);
-    return { text: null, files: [] };
+    return { text: null, files: [], participantUserIds: [] };
   }
 }
 

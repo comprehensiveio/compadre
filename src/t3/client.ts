@@ -1,10 +1,8 @@
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
 
-const TOKEN_EXCHANGE_GRANT =
-  "urn:ietf:params:oauth:grant-type:token-exchange";
-const ACCESS_TOKEN_TYPE =
-  "urn:ietf:params:oauth:token-type:access_token";
+const TOKEN_EXCHANGE_GRANT = "urn:ietf:params:oauth:grant-type:token-exchange";
+const ACCESS_TOKEN_TYPE = "urn:ietf:params:oauth:token-type:access_token";
 const ENVIRONMENT_BOOTSTRAP_TOKEN_TYPE =
   "urn:t3:params:oauth:token-type:environment-bootstrap";
 
@@ -12,10 +10,7 @@ const DEFAULT_TIMEOUT_MS = 15_000;
 const DEFAULT_POLL_INTERVAL_MS = 350;
 
 export type T3RuntimeMode =
-  | "approval-required"
-  | "auto-accept-edits"
-  | "auto"
-  | "full-access";
+  "approval-required" | "auto-accept-edits" | "auto" | "full-access";
 export type T3InteractionMode = "default" | "plan";
 
 export interface T3ProviderOptionSelection {
@@ -39,6 +34,14 @@ export interface T3MessageAttribution {
     userId: string;
     channelId: string;
     messageTs: string;
+    threadTs?: string;
+    threadUrl?: string;
+    participants?: ReadonlyArray<{
+      userId: string;
+      displayName: string;
+      avatarUrl?: string;
+      origins: ReadonlyArray<"web" | "slack" | "api">;
+    }>;
   };
 }
 
@@ -112,11 +115,7 @@ export interface T3EnvironmentDescriptor {
 }
 
 export type T3GatewayErrorKind =
-  | "transport"
-  | "http"
-  | "protocol"
-  | "timeout"
-  | "aborted";
+  "transport" | "http" | "protocol" | "timeout" | "aborted";
 
 export class T3GatewayError extends Error {
   constructor(
@@ -134,10 +133,14 @@ export class T3GatewayError extends Error {
 const modelSelectionSchema = z.object({
   instanceId: z.string().min(1),
   model: z.string().min(1),
-  options: z.array(z.object({
-    id: z.string().min(1),
-    value: z.union([z.string().min(1), z.boolean()]),
-  })).optional(),
+  options: z
+    .array(
+      z.object({
+        id: z.string().min(1),
+        value: z.union([z.string().min(1), z.boolean()]),
+      }),
+    )
+    .optional(),
 });
 
 const projectSchema = z.object({
@@ -147,49 +150,55 @@ const projectSchema = z.object({
   defaultModelSelection: modelSelectionSchema.nullable(),
 });
 
-const messageSchema = z.object({
-  id: z.string().min(1),
-  role: z.enum(["user", "assistant", "system"]),
-  text: z.string(),
-  turnId: z.string().nullable(),
-  streaming: z.boolean(),
-  createdAt: z.string(),
-  updatedAt: z.string(),
-}).passthrough();
+const messageSchema = z
+  .object({
+    id: z.string().min(1),
+    role: z.enum(["user", "assistant", "system"]),
+    text: z.string(),
+    turnId: z.string().nullable(),
+    streaming: z.boolean(),
+    createdAt: z.string(),
+    updatedAt: z.string(),
+  })
+  .passthrough();
 
-const latestTurnSchema = z.object({
-  turnId: z.string().min(1),
-  state: z.enum(["running", "interrupted", "completed", "error"]),
-  requestedAt: z.string(),
-  startedAt: z.string().nullable(),
-  completedAt: z.string().nullable(),
-  assistantMessageId: z.string().nullable(),
-}).passthrough();
+const latestTurnSchema = z
+  .object({
+    turnId: z.string().min(1),
+    state: z.enum(["running", "interrupted", "completed", "error"]),
+    requestedAt: z.string(),
+    startedAt: z.string().nullable(),
+    completedAt: z.string().nullable(),
+    assistantMessageId: z.string().nullable(),
+  })
+  .passthrough();
 
-const threadSchema = z.object({
-  id: z.string().min(1),
-  projectId: z.string().min(1),
-  title: z.string(),
-  modelSelection: modelSelectionSchema,
-  latestTurn: latestTurnSchema.nullable(),
-  messages: z.array(messageSchema),
-  session: z
-    .object({
-      status: z.enum([
-        "idle",
-        "starting",
-        "running",
-        "ready",
-        "interrupted",
-        "stopped",
-        "error",
-      ]),
-      activeTurnId: z.string().nullable(),
-      lastError: z.string().nullable(),
-    })
-    .passthrough()
-    .nullable(),
-}).passthrough();
+const threadSchema = z
+  .object({
+    id: z.string().min(1),
+    projectId: z.string().min(1),
+    title: z.string(),
+    modelSelection: modelSelectionSchema,
+    latestTurn: latestTurnSchema.nullable(),
+    messages: z.array(messageSchema),
+    session: z
+      .object({
+        status: z.enum([
+          "idle",
+          "starting",
+          "running",
+          "ready",
+          "interrupted",
+          "stopped",
+          "error",
+        ]),
+        activeTurnId: z.string().nullable(),
+        lastError: z.string().nullable(),
+      })
+      .passthrough()
+      .nullable(),
+  })
+  .passthrough();
 
 const orchestrationSnapshotSchema = z.object({
   snapshotSequence: z.number().int().nonnegative(),
@@ -198,16 +207,20 @@ const orchestrationSnapshotSchema = z.object({
   updatedAt: z.string(),
 });
 
-const environmentDescriptorSchema = z.object({
-  environmentId: z.string().min(1),
-  label: z.string().min(1),
-  serverVersion: z.string().min(1),
-}).passthrough();
+const environmentDescriptorSchema = z
+  .object({
+    environmentId: z.string().min(1),
+    label: z.string().min(1),
+    serverVersion: z.string().min(1),
+  })
+  .passthrough();
 
-const threadSnapshotSchema = z.object({
-  snapshotSequence: z.number().int().nonnegative(),
-  thread: threadSchema,
-}).passthrough();
+const threadSnapshotSchema = z
+  .object({
+    snapshotSequence: z.number().int().nonnegative(),
+    thread: threadSchema,
+  })
+  .passthrough();
 
 /**
  * Decode a persisted or remote native-T3 thread snapshot without discarding
@@ -391,7 +404,9 @@ export class T3Client {
     });
   }
 
-  environmentDescriptor(signal?: AbortSignal): Promise<T3EnvironmentDescriptor> {
+  environmentDescriptor(
+    signal?: AbortSignal,
+  ): Promise<T3EnvironmentDescriptor> {
     return this.request(
       "environment descriptor",
       "/.well-known/t3/environment",
@@ -567,7 +582,8 @@ export class T3Client {
       await input.onSnapshot?.(snapshot);
       const requestedMessage = input.messageId
         ? snapshot.thread.messages.find(
-            (message) => message.id === input.messageId && message.role === "user",
+            (message) =>
+              message.id === input.messageId && message.role === "user",
           )
         : undefined;
       const latestTurn = snapshot.thread.latestTurn;
@@ -620,16 +636,25 @@ export class T3Client {
     label: string;
     scopes?: ReadonlyArray<string>;
     signal?: AbortSignal;
-  }): Promise<{ id: string; credential: string; label?: string; expiresAt: string }> {
-    return this.request("pairing credential creation", "/api/auth/pairing-token", {
-      method: "POST",
-      body: {
-        label: input.label,
-        ...(input.scopes ? { scopes: input.scopes } : {}),
+  }): Promise<{
+    id: string;
+    credential: string;
+    label?: string;
+    expiresAt: string;
+  }> {
+    return this.request(
+      "pairing credential creation",
+      "/api/auth/pairing-token",
+      {
+        method: "POST",
+        body: {
+          label: input.label,
+          ...(input.scopes ? { scopes: input.scopes } : {}),
+        },
+        schema: pairingCredentialSchema,
+        signal: input.signal,
       },
-      schema: pairingCredentialSchema,
-      signal: input.signal,
-    });
+    );
   }
 }
 

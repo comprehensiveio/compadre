@@ -84,7 +84,10 @@ function terminalSnapshot(dispatch: T3TurnDispatch): T3ThreadSnapshot {
         {
           id: "tool-current",
           kind: "tool.started",
-          turnId: "turn-central",
+          // Some provider activity arrives before the turn projection has
+          // attached its turn id. Creation time still scopes it to this run.
+          turnId: null,
+          createdAt: dispatch.createdAt,
           summary: "Command run started",
           payload: {
             itemType: "command_execution",
@@ -120,12 +123,14 @@ test("a Slack turn is created in the central T3 project and streams every assist
   };
   const snapshot: T3OrchestrationSnapshot = {
     snapshotSequence: 3,
-    projects: [{
-      id: "project-central",
-      title: "Compadre",
-      workspaceRoot: "/var/data/workspace",
-      defaultModelSelection: codex,
-    }],
+    projects: [
+      {
+        id: "project-central",
+        title: "Compadre",
+        workspaceRoot: "/var/data/workspace",
+        defaultModelSelection: codex,
+      },
+    ],
     threads: [],
     updatedAt: "2026-08-26T16:00:00.000Z",
   };
@@ -221,12 +226,14 @@ test("a Slack continuation follows the model already selected in the web UI", as
     async snapshot() {
       return {
         snapshotSequence: 20,
-        projects: [{
-          id: "project-central",
-          title: "Compadre",
-          workspaceRoot: "/workspace",
-          defaultModelSelection: codex,
-        }],
+        projects: [
+          {
+            id: "project-central",
+            title: "Compadre",
+            workspaceRoot: "/workspace",
+            defaultModelSelection: codex,
+          },
+        ],
         threads: [thread({ id: threadId, modelSelection: claude })],
         updatedAt: "2026-08-26T16:00:00.000Z",
       };

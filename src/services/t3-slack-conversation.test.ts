@@ -6,6 +6,7 @@ import {
   assistantTextForDispatch,
   canonicalSlackThreadId,
   runT3SlackConversation,
+  t3ModelSelectionForProfile,
   t3SlackDetailsMarkdown,
 } from "./t3-slack-conversation.js";
 
@@ -30,7 +31,10 @@ const turn: T3GatewayTurn = {
   },
 };
 
-function snapshot(text: string, state: "running" | "completed"): T3ThreadSnapshot {
+function snapshot(
+  text: string,
+  state: "running" | "completed",
+): T3ThreadSnapshot {
   return {
     snapshotSequence: state === "running" ? 11 : 12,
     thread: {
@@ -104,12 +108,24 @@ test("streams only assistant text and returns a native T3 deep link", async () =
   assert.equal(result.output, "Hello from T3");
   assert.deepEqual(deltas, ["Hel", "lo from T3"]);
   assert.equal(result.detailsUrl, "https://ui.example/pair#token=once");
-  assert.equal(result.detailsUrl && t3SlackDetailsMarkdown(result.detailsUrl), "<https://ui.example/pair#token=once|View details in T3>");
+  assert.equal(
+    result.detailsUrl && t3SlackDetailsMarkdown(result.detailsUrl),
+    "<https://ui.example/pair#token=once|Open in web>",
+  );
+});
+
+test("defaults un-routed Slack conversations to Codex GPT-5.6 Sol", () => {
+  assert.deepEqual(t3ModelSelectionForProfile(undefined), {
+    instanceId: "codex",
+    model: "gpt-5.6-sol",
+  });
 });
 
 test("does not project an older assistant turn into Slack", () => {
   const old = snapshot("old answer", "completed");
-  old.thread.messages = old.thread.messages.filter((message) => message.id !== "user-1");
+  old.thread.messages = old.thread.messages.filter(
+    (message) => message.id !== "user-1",
+  );
   assert.equal(assistantTextForDispatch(old, turn.dispatch), "");
 });
 

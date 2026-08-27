@@ -43,6 +43,9 @@ test("a native web turn is mirrored into the bound Slack thread without changing
     async postThreadMessage(message) {
       calls.push(`post:${message}`);
     },
+    async postThreadContext(message) {
+      calls.push(`context:${message}`);
+    },
     async setStatus(status) {
       calls.push(`status:${status}`);
     },
@@ -71,21 +74,22 @@ test("a native web turn is mirrored into the bound Slack thread without changing
     mirrored.push(chunk);
   }
 
-  assert.deepEqual(mirrored.map((chunk) => chunk.type), [
-    EventType.RUN_STARTED,
-    EventType.TOOL_CALL_START,
-    EventType.TEXT_MESSAGE_CONTENT,
-    EventType.RUN_FINISHED,
-  ]);
-  assert.equal(
-    text,
-    "Hello from the web\n\n<https://central.example/project/thread|View details in T3>",
+  assert.deepEqual(
+    mirrored.map((chunk) => chunk.type),
+    [
+      EventType.RUN_STARTED,
+      EventType.TOOL_CALL_START,
+      EventType.TEXT_MESSAGE_CONTENT,
+      EventType.RUN_FINISHED,
+    ],
   );
+  assert.equal(text, "Hello from the web");
   assert.deepEqual(calls, [
     "post:*From Compadre web:*\nQuestion from the browser",
     "status:is thinking...",
     "status:is github.get_repo...",
     "stop",
+    "context:<https://central.example/project/thread|Open in web>",
     "clear",
   ]);
 });
@@ -95,6 +99,7 @@ test("a Slack delivery outage does not interrupt the central T3 stream", async (
     async postThreadMessage() {
       throw new Error("Slack unavailable");
     },
+    async postThreadContext() {},
     async setStatus() {},
     appendText() {
       throw new Error("should not append");

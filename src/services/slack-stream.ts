@@ -235,6 +235,22 @@ export class SlackStream {
     });
   }
 
+  /** Post secondary context copy using Slack's intentionally smaller context style. */
+  async postThreadContext(markdownText: string): Promise<void> {
+    const text = truncateSlackMarkdown(markdownText);
+    await this.call("chat.postMessage", {
+      channel: this.channel,
+      thread_ts: this.threadTs,
+      text,
+      blocks: [
+        {
+          type: "context",
+          elements: [{ type: "mrkdwn", text }],
+        },
+      ],
+    });
+  }
+
   async stopStream(): Promise<void> {
     this.streamEnded = true;
     if (this.statusRefreshTimer) {

@@ -152,6 +152,43 @@ test("publishes channel loading states without requiring assistant view", async 
   ]);
 });
 
+test("posts secondary links as compact Slack context", async () => {
+  const { calls, fetchImpl } = createSlackFetch({
+    "chat.postMessage": [{ ok: true, ts: "200.001" }],
+  });
+  const stream = new SlackStream({
+    channel: "C123",
+    threadTs: "100.001",
+    botToken: "xoxb-test",
+    fetchImpl,
+    logger: silentLogger,
+  });
+
+  await stream.postThreadContext("<https://example.test/thread|Open in web>");
+
+  assert.deepEqual(calls, [
+    {
+      method: "chat.postMessage",
+      body: {
+        channel: "C123",
+        thread_ts: "100.001",
+        text: "<https://example.test/thread|Open in web>",
+        blocks: [
+          {
+            type: "context",
+            elements: [
+              {
+                type: "mrkdwn",
+                text: "<https://example.test/thread|Open in web>",
+              },
+            ],
+          },
+        ],
+      },
+    },
+  ]);
+});
+
 test("refreshes a quiet thread status before Slack's two-minute expiry", async () => {
   const { calls, fetchImpl } = createSlackFetch({
     "assistant.threads.setStatus": [{ ok: true }, { ok: true }, { ok: true }],

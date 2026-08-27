@@ -12,7 +12,7 @@ export interface SlackAgentInput {
   transcriptUserMessage: string;
 }
 
-function buildSlackThreadUrl(channel: string, threadTs: string): string {
+export function buildSlackThreadUrl(channel: string, threadTs: string): string {
   return `https://comprehensiveio.slack.com/archives/${channel}/p${threadTs.replace(".", "")}`;
 }
 
@@ -30,7 +30,7 @@ export function buildSlackAgentInput({
     promptParts.push(
       "",
       "Thread context (prior messages in this thread):",
-      threadContext
+      threadContext,
     );
   }
   promptParts.push(
@@ -41,7 +41,7 @@ export function buildSlackAgentInput({
     `- channel: ${channel}`,
     ...(channelName ? [`- channel_name: ${channelName}`] : []),
     `- thread_ts: ${threadTs} (reply in this thread)`,
-    `- slack_thread_url: ${buildSlackThreadUrl(channel, threadTs)}`
+    `- slack_thread_url: ${buildSlackThreadUrl(channel, threadTs)}`,
   );
   return {
     prompt: promptParts.join("\n"),

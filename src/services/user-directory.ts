@@ -30,7 +30,17 @@ export interface SlackMessageAttribution {
     userId: string;
     channelId: string;
     messageTs: string;
+    threadTs?: string;
+    threadUrl?: string;
+    participants?: SlackThreadParticipant[];
   };
+}
+
+export interface SlackThreadParticipant {
+  userId: string;
+  displayName: string;
+  avatarUrl?: string;
+  origins: ["slack"];
 }
 
 function optionalString(value: unknown): string | undefined {
@@ -51,7 +61,8 @@ export function slackIdentityFromUserInfo(
 ): Omit<SlackUserIdentityInput, "workspaceId" | "slackUserId"> {
   const user = record(record(value)?.user);
   const profile = record(user?.profile);
-  const realName = optionalString(profile?.real_name) ?? optionalString(user?.real_name);
+  const realName =
+    optionalString(profile?.real_name) ?? optionalString(user?.real_name);
   const displayName =
     optionalString(profile?.display_name) ??
     realName ??
@@ -60,10 +71,12 @@ export function slackIdentityFromUserInfo(
   return {
     displayName,
     ...(realName ? { realName } : {}),
-    ...(optionalString(profile?.image_192) ?? optionalString(profile?.image_72)
+    ...((optionalString(profile?.image_192) ??
+    optionalString(profile?.image_72))
       ? {
           avatarUrl:
-            optionalString(profile?.image_192) ?? optionalString(profile?.image_72),
+            optionalString(profile?.image_192) ??
+            optionalString(profile?.image_72),
         }
       : {}),
     ...(optionalString(profile?.email)
@@ -82,13 +95,20 @@ export function slackIdentityFromOpenIdClaims(
   return {
     displayName,
     ...(realName ? { realName } : {}),
-    ...(optionalString(value.picture) ? { avatarUrl: optionalString(value.picture) } : {}),
-    ...(optionalString(value.email) ? { email: optionalString(value.email) } : {}),
+    ...(optionalString(value.picture)
+      ? { avatarUrl: optionalString(value.picture) }
+      : {}),
+    ...(optionalString(value.email)
+      ? { email: optionalString(value.email) }
+      : {}),
   };
 }
 
 /** Stable for one Slack identity, while remaining an ordinary UUID. */
-export function slackBackedUserId(workspaceId: string, slackUserId: string): string {
+export function slackBackedUserId(
+  workspaceId: string,
+  slackUserId: string,
+): string {
   const bytes = crypto
     .createHash("sha256")
     .update(`compadre:user:slack:${workspaceId}:${slackUserId}`)
@@ -120,7 +140,9 @@ export class UserDirectory {
     private readonly now: () => Date = () => new Date(),
   ) {}
 
-  async upsertSlackIdentity(input: SlackUserIdentityInput): Promise<CompadreUser> {
+  async upsertSlackIdentity(
+    input: SlackUserIdentityInput,
+  ): Promise<CompadreUser> {
     const workspaceId = input.workspaceId.trim();
     const slackUserId = input.slackUserId.trim();
     if (!workspaceId || !slackUserId) {
@@ -138,14 +160,16 @@ export class UserDirectory {
         ),
       )
       .limit(1);
-    const userId = existing[0]?.userId ?? slackBackedUserId(workspaceId, slackUserId);
+    const userId =
+      existing[0]?.userId ?? slackBackedUserId(workspaceId, slackUserId);
     const profile: SlackIdentityProfile = {
       ...(input.displayName ? { displayName: input.displayName } : {}),
       ...(input.realName ? { realName: input.realName } : {}),
       ...(input.avatarUrl ? { avatarUrl: input.avatarUrl } : {}),
       ...(input.email ? { email: input.email } : {}),
     };
-    const displayName = input.displayName?.trim() || input.realName?.trim() || "Slack user";
+    const displayName =
+      input.displayName?.trim() || input.realName?.trim() || "Slack user";
     const realName = input.realName?.trim();
     const avatarUrl = input.avatarUrl?.trim();
     const email = input.email?.trim();
@@ -214,7 +238,9 @@ export class UserDirectory {
       .limit(1);
     const resolvedUserId = identities[0]?.userId;
     if (!resolvedUserId) {
-      throw new Error(`Slack identity ${workspaceId}/${slackUserId} was not persisted`);
+      throw new Error(
+        `Slack identity ${workspaceId}/${slackUserId} was not persisted`,
+      );
     }
     const rows = await this.db
       .select()
@@ -222,12 +248,17 @@ export class UserDirectory {
       .where(eq(users.id, resolvedUserId))
       .limit(1);
     const user = rows[0];
-    if (!user) throw new Error(`Compadre user ${resolvedUserId} was not persisted`);
+    if (!user)
+      throw new Error(`Compadre user ${resolvedUserId} was not persisted`);
     return toCompadreUser(user);
   }
 
   async findById(userId: string): Promise<CompadreUser | null> {
-    const rows = await this.db.select().from(users).where(eq(users.id, userId)).limit(1);
+    const rows = await this.db
+      .select()
+      .from(users)
+      .where(eq(users.id, userId))
+      .limit(1);
     return rows[0] ? toCompadreUser(rows[0]) : null;
   }
 
@@ -247,6 +278,9 @@ export function slackMessageAttribution(input: {
   slackUserId: string;
   channelId: string;
   messageTs: string;
+  threadTs?: string;
+  threadUrl?: string;
+  participants?: SlackThreadParticipant[];
 }): SlackMessageAttribution {
   return {
     userId: input.user.id,
@@ -258,6 +292,9 @@ export function slackMessageAttribution(input: {
       userId: input.slackUserId,
       channelId: input.channelId,
       messageTs: input.messageTs,
+      ...(input.threadTs ? { threadTs: input.threadTs } : {}),
+      ...(input.threadUrl ? { threadUrl: input.threadUrl } : {}),
+      ...(input.participants ? { participants: input.participants } : {}),
     },
   };
 }

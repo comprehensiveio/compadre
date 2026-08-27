@@ -21,8 +21,12 @@ export interface CentralT3ConversationClient {
     signal?: AbortSignal,
   ): ReturnType<T3Client["environmentDescriptor"]>;
   snapshot(signal?: AbortSignal): ReturnType<T3Client["snapshot"]>;
-  startNewThread(input: Parameters<T3Client["startNewThread"]>[0]): Promise<T3TurnDispatch>;
-  startTurn(input: Parameters<T3Client["startTurn"]>[0]): Promise<T3TurnDispatch>;
+  startNewThread(
+    input: Parameters<T3Client["startNewThread"]>[0],
+  ): Promise<T3TurnDispatch>;
+  startTurn(
+    input: Parameters<T3Client["startTurn"]>[0],
+  ): Promise<T3TurnDispatch>;
   waitForTurnTerminal(
     input: Parameters<T3Client["waitForTurnTerminal"]>[0],
   ): Promise<T3ThreadSnapshot>;
@@ -46,7 +50,7 @@ export interface CentralT3ConversationResult extends CentralT3ConversationPrepar
 
 function record(value: unknown): Record<string, unknown> | undefined {
   return value !== null && typeof value === "object" && !Array.isArray(value)
-    ? value as Record<string, unknown>
+    ? (value as Record<string, unknown>)
     : undefined;
 }
 
@@ -69,12 +73,20 @@ function toolStatusName(activity: Record<string, unknown>): string {
   const detail = stringValue(payload?.detail);
   const detailToolName = detail?.match(/^([\p{L}\p{N}_-]+)\s*:/u)?.[1];
   if (detailToolName) return detailToolName;
-  const summary = stringValue(activity.summary)?.replace(/\s+started\s*$/iu, "").trim();
-  return summary || stringValue(payload?.itemType)?.replaceAll("_", " ") || "Tool";
+  const summary = stringValue(activity.summary)
+    ?.replace(/\s+started\s*$/iu, "")
+    .trim();
+  return (
+    summary || stringValue(payload?.itemType)?.replaceAll("_", " ") || "Tool"
+  );
 }
 
 function stableUuid(value: string): string {
-  const bytes = crypto.createHash("sha256").update(value).digest().subarray(0, 16);
+  const bytes = crypto
+    .createHash("sha256")
+    .update(value)
+    .digest()
+    .subarray(0, 16);
   bytes[6] = (bytes[6]! & 0x0f) | 0x50;
   bytes[8] = (bytes[8]! & 0x3f) | 0x80;
   const hex = bytes.toString("hex");
@@ -97,7 +109,9 @@ export function centralT3DetailsUrl(input: {
   ).toString();
 }
 
-export function isSlackEntrypointMessageId(messageId: string | undefined): boolean {
+export function isSlackEntrypointMessageId(
+  messageId: string | undefined,
+): boolean {
   return messageId?.startsWith(SLACK_MESSAGE_PREFIX) === true;
 }
 
@@ -119,13 +133,17 @@ function selectedProjectId(
   const configured = environment.COMPADRE_T3_CENTRAL_PROJECT_ID?.trim();
   if (configured) {
     if (!projects.some((project) => project.id === configured)) {
-      throw new Error(`Configured central T3 project ${configured} was not found.`);
+      throw new Error(
+        `Configured central T3 project ${configured} was not found.`,
+      );
     }
     return configured;
   }
   const project = projects[0];
   if (!project) {
-    throw new Error("The central T3 environment has no project for Slack threads.");
+    throw new Error(
+      "The central T3 environment has no project for Slack threads.",
+    );
   }
   return project.id;
 }
@@ -152,8 +170,12 @@ export async function runCentralT3Conversation(input: {
     input.client.snapshot(input.signal),
   ]);
   const t3ThreadId = centralT3ThreadId(input.canonicalThreadId);
-  const existing = orchestration.threads.find((thread) => thread.id === t3ThreadId);
-  const projectId = existing?.projectId ?? selectedProjectId(orchestration.projects, environment);
+  const existing = orchestration.threads.find(
+    (thread) => thread.id === t3ThreadId,
+  );
+  const projectId =
+    existing?.projectId ??
+    selectedProjectId(orchestration.projects, environment);
   const requestedSelection = t3ModelSelectionForProfile(input.profile);
   // A T3 thread owns one provider session and one Modal environment. A Slack
   // continuation therefore follows the selection already visible in the web
@@ -204,16 +226,25 @@ export async function runCentralT3Conversation(input: {
       (message) => message.id === dispatch.messageId,
     )?.turnId;
     const rawActivities = snapshot.thread.activities;
-    if (requestedTurnId && Array.isArray(rawActivities)) {
+    if (Array.isArray(rawActivities)) {
       for (const rawActivity of rawActivities) {
         const activity = record(rawActivity);
         const activityId = stringValue(activity?.id);
+        const activityTurnId = stringValue(activity?.turnId);
+        const activityCreatedAt = stringValue(activity?.createdAt);
+        const belongsToRequestedTurn = requestedTurnId
+          ? activityTurnId === requestedTurnId ||
+            (activityTurnId === undefined &&
+              activityCreatedAt !== undefined &&
+              Date.parse(activityCreatedAt) >= Date.parse(dispatch.createdAt))
+          : activityCreatedAt !== undefined &&
+            Date.parse(activityCreatedAt) >= Date.parse(dispatch.createdAt);
         if (
           !activity ||
           !activityId ||
           deliveredToolStarts.has(activityId) ||
           activity.kind !== "tool.started" ||
-          activity.turnId !== requestedTurnId
+          !belongsToRequestedTurn
         ) {
           continue;
         }
@@ -223,7 +254,9 @@ export async function runCentralT3Conversation(input: {
     }
     const next = assistantTextForDispatch(snapshot, dispatch);
     if (!next || next === delivered) return;
-    const delta = next.startsWith(delivered) ? next.slice(delivered.length) : "";
+    const delta = next.startsWith(delivered)
+      ? next.slice(delivered.length)
+      : "";
     if (delta) await input.onTextDelta?.(delta);
     if (next.startsWith(delivered)) delivered = next;
   };
@@ -240,12 +273,17 @@ export async function runCentralT3Conversation(input: {
 
   const state = snapshot.thread.latestTurn?.state;
   if (state === "error") {
-    throw new Error(snapshot.thread.session?.lastError || "The central T3 run failed.");
+    throw new Error(
+      snapshot.thread.session?.lastError || "The central T3 run failed.",
+    );
   }
-  if (state === "interrupted") throw new Error("The central T3 run was interrupted.");
+  if (state === "interrupted")
+    throw new Error("The central T3 run was interrupted.");
   const output = assistantTextForDispatch(snapshot, dispatch);
   if (!output.trim()) {
-    throw new Error("The central T3 run completed without an assistant response.");
+    throw new Error(
+      "The central T3 run completed without an assistant response.",
+    );
   }
   return { ...prepared, output, dispatch, snapshot };
 }

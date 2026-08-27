@@ -1,9 +1,6 @@
 import { CODEX_MODEL, DEFAULT_MODEL, FABLE_MODEL } from "../config.js";
 import type { AgentProfile } from "../tanstack/protocol.js";
-import {
-  configuredAgentProvider,
-  providerForAgentProfile,
-} from "../tanstack/protocol.js";
+import { providerForAgentProfile } from "../tanstack/protocol.js";
 import type {
   T3ModelSelection,
   T3ThreadSnapshot,
@@ -66,9 +63,7 @@ export function canonicalSlackThreadId(input: {
 export function t3ModelSelectionForProfile(
   profile: AgentProfile | undefined,
 ): T3ModelSelection {
-  const provider = profile
-    ? providerForAgentProfile(profile)
-    : configuredAgentProvider();
+  const provider = profile ? providerForAgentProfile(profile) : "codex";
   if (provider === "codex") {
     return { instanceId: "codex", model: CODEX_MODEL };
   }
@@ -89,7 +84,9 @@ export function assistantTextForDispatch(
 
   const latestTurn = snapshot.thread.latestTurn;
   if (!latestTurn) return "";
-  const requestedAt = Date.parse(requestedMessage.createdAt || dispatch.createdAt);
+  const requestedAt = Date.parse(
+    requestedMessage.createdAt || dispatch.createdAt,
+  );
   if (Date.parse(latestTurn.requestedAt) < requestedAt) return "";
 
   const turnId = requestedMessage.turnId ?? latestTurn.turnId;
@@ -144,14 +141,18 @@ export async function runT3SlackConversation(input: {
 
   const state = snapshot.thread.latestTurn?.state;
   if (state === "error") {
-    throw new Error(snapshot.thread.session?.lastError || "The T3 agent run failed.");
+    throw new Error(
+      snapshot.thread.session?.lastError || "The T3 agent run failed.",
+    );
   }
   if (state === "interrupted") {
     throw new Error("The T3 agent run was interrupted.");
   }
   const output = assistantTextForDispatch(snapshot, turn.dispatch);
   if (!output.trim()) {
-    throw new Error("The T3 agent run completed without an assistant response.");
+    throw new Error(
+      "The T3 agent run completed without an assistant response.",
+    );
   }
 
   let detailsUrl: string | null = null;
@@ -176,5 +177,5 @@ export async function runT3SlackConversation(input: {
 }
 
 export function t3SlackDetailsMarkdown(detailsUrl: string): string {
-  return `<${detailsUrl}|View details in T3>`;
+  return `<${detailsUrl}|Open in web>`;
 }
