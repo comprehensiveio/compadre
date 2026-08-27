@@ -22,6 +22,11 @@ isolated deployment, not that the equivalent production change has been made.
 - [x] Completed provider events can be replayed from the central event log.
 - [x] Datadog receives one Agent/LLM Observability application while controller
   and worker remain distinct APM services.
+- [x] Hosted provider usage is persisted centrally with model, provider, token
+  totals, initiating user, and message origin; the T3 Usage page can aggregate
+  it by user without reading Modal transcripts.
+- [x] Datadog LLM Observability receives prompt, response, model, token totals,
+  initiating user, origin, and model-priced cost for a live Slack turn.
 - [x] The isolated Slack app authenticates as `Secret dre experiment`, owns
   progress updates and final delivery, and posts the canonical Open in web
   link from the same app identity.
@@ -101,6 +106,8 @@ Central T3 secrets and configuration:
 - [ ] `COMPADRE_AUTH_EXCHANGE_SECRET` matching the controller
 - [ ] `VITE_COMPADRE_AUTH_ENABLED=true`
 - [ ] Persistent SQLite path and disk mount
+- [ ] `T3CODE_INSTALL_GH_CLI=true`
+- [ ] `GH_TOKEN` scoped for the repository operations exposed by the T3 UI
 - [ ] Ensure the retired `COMPADRE_PROVIDER_URL` is unset
 
 For every secret, record its owner, scope, storage location, rotation procedure,
@@ -177,7 +184,7 @@ central transcript, Modal logs, Datadog content, or source control.
   authorization and retention policies.
 - [ ] Define deletion propagation across T3, Postgres, Modal/provider
   transcripts, object storage, Slack, and Datadog.
-- [ ] Add normalized, idempotent central usage records so model context, token
+- [x] Add normalized, idempotent central usage records so model context, token
   totals, and costs do not depend on worker-local transcript files.
 
 ## Execution and feature parity
@@ -215,11 +222,13 @@ central transcript, Modal logs, Datadog content, or source control.
 
 ## Observability and operations
 
-- [ ] Keep one Datadog Agent/LLM Observability application for the logical
+- [x] Keep one Datadog Agent/LLM Observability application for the logical
   Compadre product while retaining separate controller, central-T3, and worker
   APM service names.
-- [ ] Verify input/output content, model, provider, tokens, cost, latency, tool
-  calls, user, thread, run, and entrypoint on sampled LLM spans.
+- [x] Verify input/output content, model, provider, tokens, cost, latency, tool
+  calls, user, thread, and entrypoint on sampled LLM spans.
+- [ ] Add the controller run ID to the correlated central/worker LLM and APM
+  spans so one run can be followed without joining logs manually.
 - [ ] Verify W3C trace-context propagation across Slack/API request, central T3,
   controller, Modal worker, harness turn, tools, and persistence calls.
 - [ ] Add dashboards and alerts for login failures, Slack retries, run failures,

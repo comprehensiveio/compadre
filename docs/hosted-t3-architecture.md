@@ -84,18 +84,16 @@ same log using opaque SSE cursors. Closing a subscriber therefore does not
 cancel the Modal run, a repeated run ID cannot start a second agent, and the T3
 fork reconnects a dropped stream from its last delivered cursor.
 
-Version 1 currently carries text and named tool calls. Its event envelope
-reserves an actor field so future user or Slack identity can be attached without
-changing event ownership. The remaining production-hardening work is:
+Version 2 carries text, named tool calls, normalized token usage, and initiating
+message attribution. The remaining production-hardening work is:
 
-- Usage and cost events.
 - Approvals and user-input requests.
 - Workspace diffs, checkpoints, attachments, and shell lifecycle.
 - Deferred: persisted worker dispatch metadata and controller-restart takeover.
 - Deferred with takeover: epoch fencing of both the event log and terminal run
   record.
 
-The HTTP seam negotiates `X-Compadre-T3-Protocol-Version: 1`. Postgres assigns
+The HTTP seam negotiates `X-Compadre-T3-Protocol-Version: 2`. Postgres assigns
 ordered event offsets and enforces one append sequence per run. A distributed
 per-run advisory lock prevents concurrent producers while the controller is
 alive. It is not yet a complete takeover implementation: after a controller
@@ -113,15 +111,18 @@ fencing protocol.
 
 ## Usage
 
-Native usage originates in the Modal worker. The worker exports model, provider,
-token, tool, latency, and reported cost data to the single Datadog Agent
-Observability application while keeping worker/controller APM services distinct.
+Native usage originates in the Modal worker. Version 2 projects normalized,
+idempotent usage events into the central T3 event log, where they are joined to
+the initiating message attribution. The central Usage page prices those records
+with the same LiteLLM rate table it uses for local provider transcripts and can
+group cost and tokens by user.
 
-Upstream T3's Usage page scans provider transcript files local to its server.
-That is not correct for the hosted topology because transcripts live in Modal.
-The worker-event protocol must publish normalized, idempotent usage records to a
-central ledger; the T3 context indicator, usage dashboard, and Datadog export
-should all project from those records.
+The central T3 process exports the logical Agent Observability span so one turn
+is not double-counted by both central and worker processes. Datadog receives
+input/output content, model/provider, tokens, model-priced or provider-reported
+cost, initiating user, and origin under one `compadre-t3-experiment` LLM
+application. Worker and controller OpenTelemetry spans retain distinct service
+names for distributed-system latency analysis.
 
 ## Deployment
 
@@ -180,6 +181,8 @@ COMPADRE_NATIVE_T3_URL=https://compadre-t3-experiment.onrender.com/hosted/t3/cha
 COMPADRE_CONTROLLER_URL=https://compadre-t3-experiment.onrender.com
 COMPADRE_AUTH_EXCHANGE_SECRET=<same random controller/T3 credential>
 VITE_COMPADRE_AUTH_ENABLED=true
+T3CODE_INSTALL_GH_CLI=true
+GH_TOKEN=<repository-scoped token for T3 source-control UI>
 COMPADRE_PROVIDER_URL=
 ```
 
