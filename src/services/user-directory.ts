@@ -72,6 +72,21 @@ export function slackIdentityFromUserInfo(
   };
 }
 
+/** Decode identity claims from a verified Sign in with Slack ID token. */
+export function slackIdentityFromOpenIdClaims(
+  value: Record<string, unknown>,
+): Omit<SlackUserIdentityInput, "workspaceId" | "slackUserId"> {
+  const realName = optionalString(value.name);
+  const displayName =
+    optionalString(value.preferred_username) ?? realName ?? "Slack user";
+  return {
+    displayName,
+    ...(realName ? { realName } : {}),
+    ...(optionalString(value.picture) ? { avatarUrl: optionalString(value.picture) } : {}),
+    ...(optionalString(value.email) ? { email: optionalString(value.email) } : {}),
+  };
+}
+
 /** Stable for one Slack identity, while remaining an ordinary UUID. */
 export function slackBackedUserId(workspaceId: string, slackUserId: string): string {
   const bytes = crypto
@@ -210,6 +225,15 @@ export class UserDirectory {
 
   async findById(userId: string): Promise<CompadreUser | null> {
     const rows = await this.db.select().from(users).where(eq(users.id, userId)).limit(1);
+    return rows[0] ? toCompadreUser(rows[0]) : null;
+  }
+
+  async findActiveById(userId: string): Promise<CompadreUser | null> {
+    const rows = await this.db
+      .select()
+      .from(users)
+      .where(and(eq(users.id, userId), eq(users.status, "active")))
+      .limit(1);
     return rows[0] ? toCompadreUser(rows[0]) : null;
   }
 }

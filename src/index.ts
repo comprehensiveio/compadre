@@ -16,6 +16,7 @@ import { aguiRoutes } from "./routes/agui.js";
 import { workflowRunRoutes } from "./routes/workflow-runs.js";
 import { toolBridgeRoutes } from "./routes/tool-bridge.js";
 import { t3DirectoryRoutes } from "./routes/t3-directory.js";
+import { slackAuthRoutes } from "./routes/slack-auth.js";
 import { validateConversationConfiguration } from "./conversation.js";
 import {
   createSingleFlightSlackRecovery,
@@ -55,6 +56,7 @@ app.route("/", aguiRoutes);
 app.route("/", workflowRunRoutes);
 app.route("/", toolBridgeRoutes);
 app.route("/", t3DirectoryRoutes);
+app.route("/", slackAuthRoutes);
 
 const SLACK_RECOVERY_DELAY_MS = 15_000;
 

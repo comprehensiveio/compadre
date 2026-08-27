@@ -200,6 +200,41 @@ export const userIdentities = pgTable(
   ],
 );
 
+/** Short-lived server-side Slack OIDC state; no browser token is persisted. */
+export const authLoginFlows = pgTable(
+  "compadre_auth_login_flows",
+  {
+    stateHash: text("state_hash").primaryKey(),
+    nonce: text("nonce").notNull(),
+    codeVerifier: text("code_verifier").notNull(),
+    returnTo: text("return_to").notNull(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    consumedAt: timestamp("consumed_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [index("compadre_auth_login_flows_expires_idx").on(table.expiresAt)],
+);
+
+/** One-time handoff from the controller to the hosted T3 session issuer. */
+export const authLoginGrants = pgTable(
+  "compadre_auth_login_grants",
+  {
+    codeHash: text("code_hash").primaryKey(),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    returnTo: text("return_to").notNull(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    consumedAt: timestamp("consumed_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [index("compadre_auth_login_grants_expires_idx").on(table.expiresAt)],
+);
+
 export type PullRequestWatchStatus =
   | "waiting"
   | "delivering"

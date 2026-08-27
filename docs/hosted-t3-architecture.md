@@ -41,10 +41,30 @@ provider-specific options therefore remain native T3 behavior.
 | Data | Owner |
 | --- | --- |
 | Conversation events, messages, tools, turns, approvals | Central T3 SQLite |
+| Canonical users and workspace-scoped Slack identities | Compadre Postgres |
 | External-thread binding, worker identity, lease and recovery metadata | Compadre Postgres |
 | Checkout, live terminal, provider process and native transcript | Modal worker |
 | Attachments and large artifacts | Central object storage |
 | Logs, traces, model usage and cost telemetry | Datadog |
+
+## Identity and browser access
+
+Slack is the identity provider for the internal hosted UI. Compadre Postgres
+owns canonical users and their Slack identities. Slack messages are resolved
+through the bot-authenticated `users.info` API, and canonical sender
+attribution is copied into the T3 message event. Web messages are attributed
+from the authenticated T3 session rather than from client-supplied fields.
+
+Browser login uses Sign in with Slack (OpenID Connect) with state, nonce, PKCE,
+and a workspace allowlist. The controller verifies Slack and issues a
+short-lived, single-use handoff grant. Central T3 exchanges that grant
+server-to-server and creates one of T3's existing persisted, signed browser
+sessions. Slack tokens and service credentials never reach the browser or
+Modal.
+
+The initial authorization policy is intentionally simple: every active member
+of the allowed Slack workspace can access every Compadre conversation. The
+canonical user boundary leaves room for thread membership and roles later.
 
 The current controller also stores the latest complete worker T3 snapshot in
 Postgres. This is a transitional recovery record and duplicates conversation
@@ -136,6 +156,11 @@ COMPADRE_T3_API_ENABLED=true
 COMPADRE_DURABILITY_BACKEND=postgres
 COMPADRE_T3_CENTRAL_URL=https://t3code-compadre-experiment.onrender.com
 COMPADRE_T3_CENTRAL_TOKEN=<scoped T3 bearer>
+COMPADRE_SLACK_WORKSPACE_ID=<allowed Slack workspace ID>
+SLACK_CLIENT_ID=<Sign in with Slack client ID>
+SLACK_CLIENT_SECRET=<Sign in with Slack client secret>
+SLACK_OIDC_REDIRECT_URI=https://compadre-t3-experiment.onrender.com/auth/slack/callback
+COMPADRE_AUTH_EXCHANGE_SECRET=<random shared controller/T3 credential>
 COMPADRE_T3_PACKAGE_URL=<pinned fork release>
 COMPADRE_T3_PACKAGE_SHA256=<required digest>
 ```
@@ -144,6 +169,9 @@ Central T3:
 
 ```text
 COMPADRE_NATIVE_T3_URL=https://compadre-t3-experiment.onrender.com/hosted/t3/chat
+COMPADRE_CONTROLLER_URL=https://compadre-t3-experiment.onrender.com
+COMPADRE_AUTH_EXCHANGE_SECRET=<same random controller/T3 credential>
+VITE_COMPADRE_AUTH_ENABLED=true
 COMPADRE_PROVIDER_URL=
 ```
 

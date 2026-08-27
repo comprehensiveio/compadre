@@ -12,6 +12,8 @@ features:
       - title: Inspect a codebase
         message: What should I know about this codebase?
 oauth_config:
+  redirect_urls:
+    - https://compadre-t3-experiment.onrender.com/auth/slack/callback
   scopes:
     bot:
       - app_mentions:read
@@ -24,6 +26,10 @@ oauth_config:
       - reactions:read
       - reactions:write
       - users:read
+    user:
+      - openid
+      - profile
+      - email
 settings:
   event_subscriptions:
     request_url: https://compadre-t3-experiment.onrender.com/slack/events
