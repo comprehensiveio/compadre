@@ -18,6 +18,7 @@ import {
 } from "../auth/http.ts";
 import { OrchestrationEngineService } from "./Services/OrchestrationEngine.ts";
 import { ProjectionSnapshotQuery } from "./Services/ProjectionSnapshotQuery.ts";
+import { attributeCompadreWebCommand } from "../auth/CompadreAuth.ts";
 
 export const orchestrationHttpApiLayer = HttpApiBuilder.group(
   EnvironmentHttpApi,
@@ -92,13 +93,14 @@ export const orchestrationHttpApiLayer = HttpApiBuilder.group(
         "dispatch",
         Effect.fn("environment.orchestration.dispatch")(function* (args) {
           yield* annotateEnvironmentRequest(args.endpoint.name);
-          yield* requireEnvironmentScope(AuthOrchestrationOperateScope);
-          const normalizedCommand = yield* normalizeDispatchCommand(args.payload).pipe(
+          const session = yield* requireEnvironmentScope(AuthOrchestrationOperateScope);
+          const attributedCommand = attributeCompadreWebCommand(args.payload, session.subject);
+          const normalizedCommand = yield* normalizeDispatchCommand(attributedCommand).pipe(
             Effect.catch(() => failEnvironmentInvalidRequest("invalid_command")),
           );
           return yield* orchestrationEngine.dispatch(normalizedCommand).pipe(
             Effect.tapError(() =>
-              cleanupFailedUploadedAttachments(args.payload, normalizedCommand),
+              cleanupFailedUploadedAttachments(attributedCommand, normalizedCommand),
             ),
             Effect.catch((cause) =>
               failEnvironmentInternal("orchestration_dispatch_failed", cause),

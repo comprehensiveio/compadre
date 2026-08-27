@@ -5,6 +5,8 @@ import {
   PairingPendingSurface,
   PairingRouteSurface,
 } from "../components/auth/PairingRouteSurface";
+import { CompadreLoginSurface } from "../components/auth/CompadreLoginSurface";
+import { COMPADRE_AUTH_ENABLED } from "../branding";
 
 export const Route = createFileRoute("/pair")({
   beforeLoad: async ({ context }) => {
@@ -36,6 +38,10 @@ function PairRouteView() {
 
   if (authGateState.status === "hosted-pairing") {
     return <HostedPairingRouteSurface />;
+  }
+
+  if (COMPADRE_AUTH_ENABLED) {
+    return <CompadreLoginSurface />;
   }
 
   return (

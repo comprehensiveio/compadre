@@ -27,3 +27,5 @@ export const APP_DISPLAY_NAME =
     ? formatAppDisplayName({ baseName: APP_BASE_NAME, stageLabel: APP_STAGE_LABEL })
     : APP_BASE_NAME);
 export const APP_VERSION = import.meta.env.APP_VERSION || "0.0.0";
+export const COMPADRE_AUTH_ENABLED =
+  import.meta.env.VITE_COMPADRE_AUTH_ENABLED?.trim().toLowerCase() === "true";

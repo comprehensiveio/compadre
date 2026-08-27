@@ -57,6 +57,8 @@ import {
   createKeybindingsUpdateToastController,
   type KeybindingsUpdateToastController,
 } from "../components/KeybindingsUpdateToast.logic";
+import { rememberCompadreAuthReturnTo } from "../components/auth/CompadreLoginSurface";
+import { COMPADRE_AUTH_ENABLED } from "../branding";
 
 export const Route = createRootRoute({
   beforeLoad: async ({ location }) => {
@@ -77,6 +79,13 @@ export const Route = createRootRoute({
     }
 
     const authGateState = await resolveInitialServerAuthGateState();
+    if (
+      COMPADRE_AUTH_ENABLED &&
+      authGateState.status !== "authenticated" &&
+      location.pathname !== "/pair"
+    ) {
+      rememberCompadreAuthReturnTo(location.href);
+    }
     return {
       authGateState,
     };

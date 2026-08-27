@@ -88,6 +88,7 @@ import * as RemoteOpenTargets from "./environment/RemoteOpenTargets.ts";
 import { authHttpApiLayer, environmentAuthenticatedAuthLayer } from "./auth/http.ts";
 import * as ServerSecretStore from "./auth/ServerSecretStore.ts";
 import * as EnvironmentAuth from "./auth/EnvironmentAuth.ts";
+import { compadreAuthRouteLayer } from "./auth/CompadreAuth.ts";
 import {
   connectHttpApiLayer,
   pendingServiceUpdateExists,
@@ -461,6 +462,7 @@ export const makeRoutesLayer = Layer.mergeAll(
     otlpTracesProxyRouteLayer,
     assetRouteLayer,
     attachmentUploadRouteLayer,
+    compadreAuthRouteLayer,
     staticAndDevRouteLayer,
     websocketRpcRouteLayer,
   ),
