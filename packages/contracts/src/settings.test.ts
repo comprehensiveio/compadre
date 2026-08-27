@@ -282,6 +282,10 @@ describe("provider enabled defaults", () => {
 });
 
 describe("ServerSettings worktree defaults", () => {
+  it("does not expose the in-app browser to agents by default", () => {
+    expect(decodeServerSettings({}).enableAgentBrowserAccess).toBe(false);
+  });
+
   it("defaults start-from-origin on for legacy configs", () => {
     expect(decodeServerSettings({}).newWorktreesStartFromOrigin).toBe(true);
   });

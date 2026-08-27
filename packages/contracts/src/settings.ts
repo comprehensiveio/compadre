@@ -635,7 +635,7 @@ export const ServerSettings = Schema.Struct({
    * construction both happen on the server, and the answer must not differ
    * between a desktop window and a phone attached to the same server.
    */
-  enableAgentBrowserAccess: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  enableAgentBrowserAccess: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   backgroundActivity: BackgroundActivitySettings,
   // Legacy flat fields retained for old settings files and old clients. New
   // consumers should resolve `backgroundActivity` instead.
