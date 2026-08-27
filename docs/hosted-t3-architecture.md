@@ -36,6 +36,13 @@ Codex and Claude remain T3's built-in provider identities. When
 Compadre instead of spawning a CLI on the Render host. The T3 model picker and
 provider-specific options therefore remain native T3 behavior.
 
+Upstream T3 also assumes source-control commands and the checked-out repository
+live beside its server. The hosted fork installs a pinned, checksum-verified
+GitHub CLI on the central Render service, but the real checkout remains in the
+thread's Modal worker. Repository and pull-request UI features therefore need a
+remote source-control adapter or durable central projections; running `gh`
+against Render's bootstrap workspace is not an authoritative substitute.
+
 ## Durable ownership
 
 | Data | Owner |

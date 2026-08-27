@@ -212,6 +212,10 @@ central transcript, Modal logs, Datadog content, or source control.
   tool names, changed-file summaries, diffs, approvals, and failures.
 - [ ] Verify terminal/shell lifecycle, attachments, checkpoints/reverts, pull
   requests, branch guards, and development-environment links.
+- [ ] Route source-control and pull-request reads/actions to the thread's Modal
+  checkout, or persist equivalent projections centrally. The hosted T3 server
+  now has a supported `gh` binary, but its local Render workspace is not the
+  isolated repository edited by the agent.
 - [ ] Verify a conversation can start and resume from Slack, browser, or API
   without duplicate runs or divergent history.
 - [ ] Implement or explicitly defer controller-restart takeover with persisted
