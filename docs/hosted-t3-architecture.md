@@ -125,6 +125,10 @@ should all project from those records.
 
 ## Deployment
 
+The running productionization and migration work is tracked in
+[Production cutover checklist](./production-cutover-checklist.md). Keep that
+checklist updated as the isolated deployment reveals additional requirements.
+
 The current internal deployment retains its existing isolated resource names:
 
 - T3 UI: `https://t3code-compadre-experiment.onrender.com`
