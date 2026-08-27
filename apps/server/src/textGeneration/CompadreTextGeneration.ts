@@ -32,9 +32,9 @@ export interface CompadreTextGenerationOptions {
   readonly provider?: CompadreAgentProvider;
 }
 
-function promptEndpoint(endpoint: string): string {
+function textGenerationEndpoint(endpoint: string): string {
   const url = new URL(endpoint);
-  url.pathname = url.pathname.replace(/\/hosted\/(?:t3\/)?chat\/?$/u, "/prompt");
+  url.pathname = url.pathname.replace(/\/hosted\/(?:t3\/)?chat\/?$/u, "/hosted/t3/text-generation");
   return url.toString();
 }
 
@@ -64,10 +64,12 @@ export const makeCompadreTextGeneration = Effect.fn("makeCompadreTextGeneration"
     readonly modelSelection: ModelSelection;
   }): Effect.Effect<S["Type"], TextGenerationError, S["DecodingServices"]> => {
     const provider = selectedProvider(input.modelSelection, options.provider);
-    let request = HttpClientRequest.post(promptEndpoint(options.endpoint), {
+    let request = HttpClientRequest.post(textGenerationEndpoint(options.endpoint), {
       body: HttpBody.jsonUnsafe({
         prompt: input.prompt,
         ...(provider ? { provider } : {}),
+        model: input.modelSelection.model,
+        ...(input.modelSelection.options ? { modelOptions: input.modelSelection.options } : {}),
       }),
     });
     if (options.apiKey) {

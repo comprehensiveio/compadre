@@ -8,7 +8,7 @@ import { HttpClient, HttpClientResponse } from "effect/unstable/http";
 import { makeCompadreTextGeneration } from "./CompadreTextGeneration.ts";
 
 describe("CompadreTextGeneration", () => {
-  it.effect("uses the Compadre prompt API for native-provider title generation", () => {
+  it.effect("uses hidden native-provider text generation for thread titles", () => {
     const requests: Array<{ url: string; authorization: string | undefined; body: unknown }> = [];
     const clientLayer = Layer.succeed(
       HttpClient.HttpClient,
@@ -45,9 +45,9 @@ describe("CompadreTextGeneration", () => {
 
       expect(result).toEqual({ title: "Deployment alerts" });
       expect(requests).toHaveLength(1);
-      expect(requests[0]?.url).toBe("https://compadre.example/prompt");
+      expect(requests[0]?.url).toBe("https://compadre.example/hosted/t3/text-generation");
       expect(requests[0]?.authorization).toBe("Bearer secret");
-      expect(requests[0]?.body).toMatchObject({ provider: "codex" });
+      expect(requests[0]?.body).toMatchObject({ provider: "codex", model: "codex" });
     }).pipe(Effect.provide(clientLayer));
   });
 });
