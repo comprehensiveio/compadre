@@ -5,11 +5,42 @@ import {
   decodeCompadreUserSubject,
   encodeCompadreUserSubject,
   exchangeCompadreLoginGrant,
+  isAllowedCompadreSession,
+  isCompadreAuthEnabled,
   normalizeCompadreReturnTo,
 } from "./CompadreAuth.ts";
 import { CommandId, MessageId, ThreadId } from "@t3tools/contracts";
 
 describe("CompadreAuth", () => {
+  it("requires Slack-backed browser sessions only in hosted Compadre mode", () => {
+    const enabled = { VITE_COMPADRE_AUTH_ENABLED: "true" };
+    expect(isCompadreAuthEnabled(enabled)).toBe(true);
+    expect(
+      isAllowedCompadreSession(
+        { method: "browser-session-cookie", subject: "pairing-session" },
+        enabled,
+      ),
+    ).toBe(false);
+    expect(
+      isAllowedCompadreSession(
+        {
+          method: "browser-session-cookie",
+          subject: encodeCompadreUserSubject({ id: "user-1", displayName: "Isaac" }),
+        },
+        enabled,
+      ),
+    ).toBe(true);
+    expect(
+      isAllowedCompadreSession({ method: "bearer-access-token", subject: "relay" }, enabled),
+    ).toBe(true);
+    expect(
+      isAllowedCompadreSession(
+        { method: "browser-session-cookie", subject: "pairing-session" },
+        {},
+      ),
+    ).toBe(true);
+  });
+
   it("allows only same-origin relative return paths", () => {
     expect(normalizeCompadreReturnTo("/environment/thread?view=full")).toBe(
       "/environment/thread?view=full",

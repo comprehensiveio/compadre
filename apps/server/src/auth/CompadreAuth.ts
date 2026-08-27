@@ -51,6 +51,24 @@ export function decodeCompadreUserSubject(subject: string) {
   }
 }
 
+export function isCompadreAuthEnabled(environment: NodeJS.ProcessEnv = process.env): boolean {
+  const value = environment.COMPADRE_AUTH_ENABLED ?? environment.VITE_COMPADRE_AUTH_ENABLED ?? "";
+  return value.trim().toLowerCase() === "true";
+}
+
+/**
+ * Hosted Compadre must not inherit access from an older pairing-issued browser
+ * cookie. Service/bearer sessions remain valid for the API and relay.
+ */
+export function isAllowedCompadreSession(
+  session: { method: string; subject: string },
+  environment: NodeJS.ProcessEnv = process.env,
+): boolean {
+  if (!isCompadreAuthEnabled(environment)) return true;
+  if (session.method !== "browser-session-cookie") return true;
+  return decodeCompadreUserSubject(session.subject) !== null;
+}
+
 export function attributeCompadreWebCommand(
   command: ClientOrchestrationCommand,
   subject: string,
@@ -188,7 +206,43 @@ const compadreSlackCallbackRouteLayer = HttpRouter.add(
   ),
 );
 
+const compadreLogoutRouteLayer = HttpRouter.add(
+  "POST",
+  "/auth/compadre/logout",
+  Effect.gen(function* () {
+    const request = yield* HttpServerRequest.HttpServerRequest;
+    const requestUrl = HttpServerRequest.toURL(request);
+    const sessions = yield* SessionStore.SessionStore;
+    const token = request.cookies[sessions.cookieName];
+    if (token) {
+      yield* sessions.verify(token).pipe(
+        Effect.flatMap((session) => sessions.revoke(session.sessionId)),
+        Effect.ignore,
+      );
+    }
+    const cookies = yield* Effect.fromResult(
+      Cookies.expireCookie(Cookies.empty, sessions.cookieName, {
+        httpOnly: true,
+        path: "/",
+        sameSite: "lax",
+        secure: Option.isSome(requestUrl) && requestUrl.value.protocol === "https:",
+      }),
+    );
+    return HttpServerResponse.mergeCookies(
+      HttpServerResponse.empty({ status: 204, headers: { "cache-control": "no-store" } }),
+      cookies,
+    );
+  }).pipe(
+    Effect.catch((cause) =>
+      Effect.logWarning("Failed to revoke Compadre browser session", { cause }).pipe(
+        Effect.as(HttpServerResponse.empty({ status: 500 })),
+      ),
+    ),
+  ),
+);
+
 export const compadreAuthRouteLayer = Layer.mergeAll(
   compadreSlackStartRouteLayer,
   compadreSlackCallbackRouteLayer,
+  compadreLogoutRouteLayer,
 );

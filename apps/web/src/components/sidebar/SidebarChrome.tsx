@@ -2,6 +2,7 @@ import {
   ArrowLeftIcon,
   ChartNoAxesColumnIcon,
   GitPullRequestIcon,
+  LogOutIcon,
   SettingsIcon,
 } from "lucide-react";
 import type { ReactNode } from "react";
@@ -31,6 +32,7 @@ import {
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { SidebarProviderUpdatePill } from "./SidebarProviderUpdatePill";
 import { SidebarUpdateArchitectureWarning, SidebarUpdatePill } from "./SidebarUpdatePill";
+import { COMPADRE_AUTH_ENABLED } from "../../branding";
 
 export const SidebarChromeHeader = memo(function SidebarChromeHeader({
   isElectron,
@@ -168,6 +170,16 @@ export const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
     void navigate({ to: "/usage" });
   }, [isMobile, navigate, setOpenMobile]);
 
+  const handleSignOutClick = useCallback(() => {
+    closeMobileSidebar();
+    void fetch("/auth/compadre/logout", {
+      method: "POST",
+      credentials: "same-origin",
+    }).finally(() => {
+      window.location.assign("/pair");
+    });
+  }, [closeMobileSidebar]);
+
   const handleBackClick = useCallback(() => {
     closeMobileSidebar();
     if (canGoBack) {
@@ -205,6 +217,13 @@ export const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
             label="Usage"
             onClick={handleUsageClick}
           />
+          {COMPADRE_AUTH_ENABLED ? (
+            <SidebarUtilityItem
+              icon={<LogOutIcon />}
+              label="Sign out"
+              onClick={handleSignOutClick}
+            />
+          ) : null}
         </>
       )}
       <SidebarUpdatePill />

@@ -29,6 +29,7 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import { identity } from "effect/Function";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Cookies from "effect/unstable/http/Cookies";
 import * as HttpEffect from "effect/unstable/http/HttpEffect";
 import { HttpServerRequest, HttpServerResponse } from "effect/unstable/http";
@@ -36,6 +37,7 @@ import * as HttpApiBuilder from "effect/unstable/httpapi/HttpApiBuilder";
 
 import * as EnvironmentAuth from "./EnvironmentAuth.ts";
 import * as SessionStore from "./SessionStore.ts";
+import { isAllowedCompadreSession } from "./CompadreAuth.ts";
 import { traceAuthenticatedRelayRequest, traceRelayRequest } from "../cloud/traceRelayRequest.ts";
 import { deriveAuthClientMetadata } from "./utils.ts";
 import { verifyRequestDpopProof } from "./dpop.ts";
@@ -186,6 +188,9 @@ export const environmentAuthenticatedAuthLayer = Layer.effect(
             failEnvironmentInternal("internal_error", error),
           ),
         );
+        if (!isAllowedCompadreSession(session)) {
+          return yield* failEnvironmentAuthInvalid("invalid_credential");
+        }
         return yield* httpEffect.pipe(
           Effect.provideService(EnvironmentAuthenticatedPrincipal, {
             ...session,
@@ -211,7 +216,11 @@ export const authHttpApiLayer = HttpApiBuilder.group(
           function* (args) {
             yield* annotateEnvironmentRequest(args.endpoint.name);
             const request = yield* HttpServerRequest.HttpServerRequest;
-            return yield* serverAuth.getSessionState(request);
+            const state = yield* serverAuth.getSessionState(request);
+            if (!state.authenticated) return state;
+            const session = yield* serverAuth.authenticateHttpRequest(request).pipe(Effect.option);
+            if (Option.isSome(session) && isAllowedCompadreSession(session.value)) return state;
+            return { authenticated: false, auth: state.auth } as const;
           },
           Effect.catchIf(EnvironmentAuth.isServerAuthInternalError, (error) =>
             failEnvironmentInternal("internal_error", error),

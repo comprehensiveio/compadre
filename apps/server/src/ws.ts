@@ -133,7 +133,7 @@ import * as VcsProjectConfig from "./vcs/VcsProjectConfig.ts";
 import * as VcsProcess from "./vcs/VcsProcess.ts";
 import * as PairingGrantStore from "./auth/PairingGrantStore.ts";
 import * as SessionStore from "./auth/SessionStore.ts";
-import { attributeCompadreWebCommand } from "./auth/CompadreAuth.ts";
+import { attributeCompadreWebCommand, isAllowedCompadreSession } from "./auth/CompadreAuth.ts";
 import { failEnvironmentAuthInvalid, failEnvironmentInternal } from "./auth/http.ts";
 import * as RelayClient from "@t3tools/shared/relayClient";
 const isOrchestrationDispatchCommandError = Schema.is(OrchestrationDispatchCommandError);
@@ -2481,6 +2481,9 @@ export const websocketRpcRouteLayer = Layer.unwrap(
             failEnvironmentInternal("internal_error", error),
           ),
         );
+        if (!isAllowedCompadreSession(session)) {
+          return yield* failEnvironmentAuthInvalid("invalid_credential");
+        }
         const clientOrigin = readClientConnectionOrigin(request);
         yield* sessions.recordClientConnection(session.sessionId, clientOrigin);
         yield* analytics.record("client.connected", {
