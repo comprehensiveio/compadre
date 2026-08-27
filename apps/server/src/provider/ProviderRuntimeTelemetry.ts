@@ -377,7 +377,9 @@ export const makeProviderRuntimeTelemetry = Effect.fn("makeProviderRuntimeTeleme
         tools: new Map(),
         completedTools: [],
         startedAtNs,
-        llmTraceId: randomId(16),
+        // Reuse the worker's 128-bit OTel trace ID so Datadog can correlate
+        // the direct Agent Observability trace without an SDK-specific bridge.
+        llmTraceId: span.traceId,
         llmSpanId: randomId(8),
         input: prompt,
         model: input.model,
