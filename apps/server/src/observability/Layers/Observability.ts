@@ -16,6 +16,52 @@ import * as BrowserTraceCollector from "../BrowserTraceCollector.ts";
 
 const otlpSerializationLayer = OtlpSerialization.layerJson;
 
+function parseOtlpHeaders(value: string | undefined): Record<string, string> {
+  if (!value?.trim()) return {};
+  return Object.fromEntries(
+    value
+      .split(",")
+      .map((entry) => entry.trim())
+      .filter(Boolean)
+      .flatMap((entry) => {
+        const separator = entry.indexOf("=");
+        if (separator <= 0) return [];
+        const name = entry.slice(0, separator).trim();
+        const encodedValue = entry.slice(separator + 1).trim();
+        if (!name || !encodedValue) return [];
+        try {
+          return [[name, decodeURIComponent(encodedValue)]] as const;
+        } catch {
+          return [[name, encodedValue]] as const;
+        }
+      }),
+  );
+}
+
+function isDatadogOtlpEndpoint(url: string): boolean {
+  try {
+    return new URL(url).hostname.toLowerCase().includes("datadoghq");
+  } catch {
+    return false;
+  }
+}
+
+export function otlpTraceHeaders(
+  url: string,
+  environment: NodeJS.ProcessEnv = process.env,
+): Record<string, string> {
+  const headers = parseOtlpHeaders(environment.OTEL_EXPORTER_OTLP_TRACES_HEADERS);
+  const apiKey = environment.DD_API_KEY?.trim();
+  if (!apiKey || !isDatadogOtlpEndpoint(url)) return headers;
+  return {
+    ...headers,
+    "dd-api-key": apiKey,
+    "dd-ml-app": environment.DD_LLMOBS_ML_APP?.trim() || "compadre-t3-experiment",
+    "dd-otlp-source": "llmobs",
+    compute_stats: "true",
+  };
+}
+
 export const ObservabilityLive = Layer.unwrap(
   Effect.gen(function* () {
     const config = yield* ServerConfig.ServerConfig;
@@ -48,6 +94,7 @@ export const ObservabilityLive = Layer.unwrap(
             ? undefined
             : yield* OtlpTracer.make({
                 url: config.otlpTracesUrl,
+                headers: otlpTraceHeaders(config.otlpTracesUrl),
                 exportInterval: `${config.otlpExportIntervalMs} millis`,
                 resource: {
                   serviceName: config.otlpServiceName,

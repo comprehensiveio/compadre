@@ -26,6 +26,7 @@ import {
   type ProviderSession,
 } from "@t3tools/contracts";
 import { causeErrorTag } from "@t3tools/shared/observability";
+import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -59,6 +60,7 @@ import * as AnalyticsService from "../../telemetry/AnalyticsService.ts";
 import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
 import * as McpSessionRegistry from "../../mcp/McpSessionRegistry.ts";
 import * as ServerSettings from "../../serverSettings.ts";
+import { makeProviderRuntimeTelemetry } from "../ProviderRuntimeTelemetry.ts";
 const isModelSelection = Schema.is(ModelSelection);
 
 /**
@@ -232,6 +234,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
   const revokeMcpCredential =
     options?.revokeMcpCredential ?? McpSessionRegistry.revokeActiveMcpThread;
   const runtimeEventPubSub = yield* PubSub.unbounded<ProviderRuntimeEvent>();
+  const runtimeTelemetry = yield* makeProviderRuntimeTelemetry();
   const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
   /**
    * Attach the `t3-code` MCP server to the session that is about to start.
@@ -346,10 +349,15 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
   ): Effect.Effect<void> =>
     Effect.sync(() => correlateRuntimeEventWithInstance(source, event)).pipe(
       Effect.flatMap((canonicalEvent) =>
-        increment(providerRuntimeEventsTotal, {
-          provider: canonicalEvent.provider,
-          eventType: canonicalEvent.type,
-        }).pipe(Effect.andThen(publishRuntimeEvent(canonicalEvent))),
+        runtimeTelemetry.observe(canonicalEvent).pipe(
+          Effect.andThen(
+            increment(providerRuntimeEventsTotal, {
+              provider: canonicalEvent.provider,
+              eventType: canonicalEvent.type,
+            }),
+          ),
+          Effect.andThen(publishRuntimeEvent(canonicalEvent)),
+        ),
       ),
     );
 
@@ -785,7 +793,16 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
       // rather than issuing a new one: sessions that go a long time between
       // browser tool calls used to lose the toolkit outright.
       yield* McpSessionRegistry.touchActiveMcpThread(input.threadId);
-      const turn = yield* routed.adapter.sendTurn(input);
+      const turnTelemetry = yield* runtimeTelemetry.beginTurn({
+        threadId: input.threadId,
+        provider: routed.adapter.provider,
+        ...(input.modelSelection?.model ? { model: input.modelSelection.model } : {}),
+      });
+      const turn = yield* routed.adapter.sendTurn(input).pipe(
+        Effect.withParentSpan(turnTelemetry.span),
+        Effect.tapCause((cause) => runtimeTelemetry.failTurn(turnTelemetry, Cause.squash(cause))),
+      );
+      yield* runtimeTelemetry.bindTurn(turnTelemetry, turn.turnId);
       yield* directory.upsert({
         threadId: input.threadId,
         provider: routed.adapter.provider,
