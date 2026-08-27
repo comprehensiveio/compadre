@@ -181,6 +181,12 @@ COMPADRE_T3_PACKAGE_URL=<pinned fork release>
 COMPADRE_T3_PACKAGE_SHA256=<required digest>
 ```
 
+The Compadre T3 fork defaults `enableAgentBrowserAccess` to `false`. This is a
+server-side provider boundary: workers do not mint the `t3-code` MCP credential,
+attach the browser MCP server, or include `preview_*` tool descriptions in agent
+prompts. The user-facing web application remains available; this setting only
+removes agent control of T3's in-app preview browser.
+
 Central T3:
 
 ```text

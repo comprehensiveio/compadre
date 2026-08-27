@@ -19,6 +19,10 @@ isolated deployment, not that the equivalent production change has been made.
 - [x] Slack messages retain canonical user attribution and origin in the T3 UI.
 - [x] Each T3 thread is bound to an isolated Modal sandbox and native Codex or
   Claude Code harness.
+- [x] Agent access to T3's in-app preview browser defaults off at the server
+  boundary, so the `t3-code` MCP server, its credential, prompt text, and all
+  `preview_*` tools are absent from provider sessions. A fresh deployed Modal
+  turn verified `T3_BROWSER_HIDDEN` on 2026-08-27.
 - [x] Completed provider events can be replayed from the central event log.
 - [x] Datadog receives one Agent/LLM Observability application while controller
   and worker remain distinct APM services.
