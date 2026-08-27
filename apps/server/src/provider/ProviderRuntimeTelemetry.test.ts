@@ -93,8 +93,10 @@ it.effect("records one provider turn with model, usage, cost, and named tool spa
     assert.equal(providerSpan.attributes.get("gen_ai.usage.input_tokens"), 30);
     assert.equal(providerSpan.attributes.get("gen_ai.usage.cache_read.input_tokens"), 12);
     assert.equal(providerSpan.attributes.get("gen_ai.usage.output_tokens"), 9);
+    assert.equal(providerSpan.attributes.get("gen_ai.usage.total_tokens"), 39);
     assert.equal(providerSpan.attributes.get("gen_ai.usage.reasoning_tokens"), 4);
-    assert.equal(providerSpan.attributes.get("gen_ai.usage.cost"), 0.042);
+    assert.equal(providerSpan.attributes.get("gen_ai.cost.estimated_total"), 0.042);
+    assert.equal(providerSpan.sampled, true);
     assert.ok(toolSpan);
     assert.equal(toolSpan.attributes.get("gen_ai.tool.name"), "render deploy");
     assert.equal(toolSpan.parent._tag, "Some");

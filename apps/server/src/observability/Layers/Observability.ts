@@ -101,6 +101,10 @@ export const ObservabilityLive = Layer.unwrap(
                   attributes: {
                     "service.runtime": "t3-server",
                     "service.mode": config.mode,
+                    "deployment.environment.name": process.env.DD_ENV?.trim() || config.mode,
+                    ...(process.env.RENDER_GIT_COMMIT?.trim()
+                      ? { "service.version": process.env.RENDER_GIT_COMMIT.trim() }
+                      : {}),
                   },
                 },
               });

@@ -45,12 +45,17 @@ function usageAttributes(
   const cachedInputTokens = usage.lastCachedInputTokens ?? usage.cachedInputTokens;
   const outputTokens = usage.lastOutputTokens ?? usage.outputTokens;
   const reasoningTokens = usage.lastReasoningOutputTokens ?? usage.reasoningOutputTokens;
+  const totalTokens =
+    inputTokens !== undefined && outputTokens !== undefined
+      ? inputTokens + outputTokens
+      : (usage.lastUsedTokens ?? usage.usedTokens);
   return {
     ...(inputTokens !== undefined ? { "gen_ai.usage.input_tokens": inputTokens } : {}),
     ...(cachedInputTokens !== undefined
       ? { "gen_ai.usage.cache_read.input_tokens": cachedInputTokens }
       : {}),
     ...(outputTokens !== undefined ? { "gen_ai.usage.output_tokens": outputTokens } : {}),
+    ...(totalTokens !== undefined ? { "gen_ai.usage.total_tokens": totalTokens } : {}),
     ...(reasoningTokens !== undefined ? { "gen_ai.usage.reasoning_tokens": reasoningTokens } : {}),
   };
 }
@@ -89,13 +94,23 @@ export const makeProviderRuntimeTelemetry = Effect.fn("makeProviderRuntimeTeleme
       activeByThread.delete(turn.threadId);
       if (turn.turnId) activeByTurn.delete(turnKey(turn.threadId, turn.turnId));
       turn.span.end(yield* Clock.currentTimeNanos, exit);
+      yield* Effect.logInfo("provider-runtime-telemetry.turn-finished", {
+        provider: turn.provider,
+        threadId: turn.threadId,
+        turnId: turn.turnId ?? "unbound",
+        outcome: Exit.isFailure(exit) ? "error" : "success",
+      });
     });
 
     const beginTurn: ProviderRuntimeTelemetry["beginTurn"] = Effect.fn(
       "ProviderRuntimeTelemetry.beginTurn",
     )(function* (input) {
+      const modelProvider = input.provider === "codex" ? "openai" : "anthropic";
       const span = yield* Effect.makeSpan("t3.provider.turn", {
         kind: "internal",
+        level: "Info",
+        root: true,
+        sampled: true,
         attributes: {
           "provider.kind": input.provider,
           "provider.thread_id": input.threadId,
@@ -103,7 +118,8 @@ export const makeProviderRuntimeTelemetry = Effect.fn("makeProviderRuntimeTeleme
           "gen_ai.operation.name": "invoke_agent",
           "gen_ai.conversation.id":
             process.env.COMPADRE_CANONICAL_THREAD_ID?.trim() || input.threadId,
-          "gen_ai.provider.name": input.provider === "codex" ? "openai" : "anthropic",
+          "gen_ai.provider.name": modelProvider,
+          "gen_ai.system": modelProvider,
           ...(input.model ? { "gen_ai.request.model": input.model } : {}),
           ...(process.env.COMPADRE_CANONICAL_THREAD_ID
             ? { "compadre.canonical_thread_id": process.env.COMPADRE_CANONICAL_THREAD_ID }
@@ -119,6 +135,12 @@ export const makeProviderRuntimeTelemetry = Effect.fn("makeProviderRuntimeTeleme
       };
       pendingByThread.set(input.threadId, tracked);
       activeByThread.set(input.threadId, tracked);
+      yield* Effect.logInfo("provider-runtime-telemetry.turn-started", {
+        provider: input.provider,
+        threadId: input.threadId,
+        model: input.model ?? "provider-default",
+        sampled: span.sampled,
+      });
       return tracked;
     });
 
@@ -173,6 +195,8 @@ export const makeProviderRuntimeTelemetry = Effect.fn("makeProviderRuntimeTeleme
           const span = yield* Effect.makeSpan(`execute_tool ${name}`, {
             parent: turn.span,
             kind: "internal",
+            level: "Info",
+            sampled: true,
             attributes: {
               "gen_ai.operation.name": "execute_tool",
               "gen_ai.tool.name": name,
@@ -196,7 +220,7 @@ export const makeProviderRuntimeTelemetry = Effect.fn("makeProviderRuntimeTeleme
         }
         case "turn.completed": {
           if (event.payload.totalCostUsd !== undefined) {
-            turn.span.attribute("gen_ai.usage.cost", event.payload.totalCostUsd);
+            turn.span.attribute("gen_ai.cost.estimated_total", event.payload.totalCostUsd);
             turn.span.attribute("cost.total_usd", event.payload.totalCostUsd);
           }
           if (event.payload.errorMessage) {
