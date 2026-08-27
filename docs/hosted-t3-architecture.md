@@ -174,3 +174,10 @@ the isolated controller hostname. It accepts direct-message and `app_mention`
 events and dynamically resolves the installation-specific bot identity. Do not
 point the existing production Slack app at this endpoint; install a distinct app
 when end-to-end testing begins.
+
+The isolated Comprehensive workspace installation is `Secret dre experiment`
+(app `A0BT4LVRRTL`, bot user `U0BT6K6FZPT`, workspace `T01N1PDFS5V`). Its
+request URL is the manifest's `/slack/events` endpoint and is verified by Slack.
+The bot token and signing secret belong only in the
+`compadre-t3-experiment` Render environment; never copy them into source,
+central T3, or the existing Compadre service.

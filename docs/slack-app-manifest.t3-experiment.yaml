@@ -1,10 +1,10 @@
 display_information:
-  name: Compadre T3 Experiment
+  name: Secret dre experiment
   description: Experimental Slack entrypoint for the hosted T3 agent
   background_color: "#111111"
 features:
   bot_user:
-    display_name: Compadre T3 Experiment
+    display_name: Secret dre experiment
     always_online: true
   agent_view:
     agent_description: Ask the coding agent, then open T3 for the full trace and tool calls.
