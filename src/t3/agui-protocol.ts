@@ -14,9 +14,10 @@ export const EventType = {
   TOOL_CALL_START: "TOOL_CALL_START",
   TOOL_CALL_ARGS: "TOOL_CALL_ARGS",
   TOOL_CALL_RESULT: "TOOL_CALL_RESULT",
+  THREAD_TOKEN_USAGE_UPDATED: "THREAD_TOKEN_USAGE_UPDATED",
 } as const;
 
-export const NATIVE_T3_PROTOCOL_VERSION = 1 as const;
+export const NATIVE_T3_PROTOCOL_VERSION = 2 as const;
 export const NATIVE_T3_PROTOCOL_HEADER = "X-Compadre-T3-Protocol-Version";
 
 /** Reserved now so future authentication can attribute every persisted event. */
@@ -48,6 +49,7 @@ export interface StreamChunk {
   status?: string;
   finishReason?: string | null;
   message?: string;
+  usage?: Record<string, unknown>;
 }
 
 export function toServerSentEventsResponse(

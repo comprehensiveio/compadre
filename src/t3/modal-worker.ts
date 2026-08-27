@@ -91,6 +91,13 @@ export function projectedProviderEnvironment(
     result.T3CODE_OTLP_SERVICE_NAME =
       environment.T3CODE_OTLP_SERVICE_NAME?.trim() || "compadre-t3-worker";
   }
+  // The central T3 environment owns the single logical LLM Observability
+  // trace after it receives the worker's full native event stream. Modal still
+  // exports ordinary OTel/APM spans as the distinct worker service.
+  if (environment.DD_API_KEY?.trim()) {
+    result.T3CODE_DD_LLMOBS_EXPORT_ENABLED =
+      environment.T3CODE_DD_LLMOBS_EXPORT_ENABLED?.trim() || "false";
+  }
   return result;
 }
 

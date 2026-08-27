@@ -65,6 +65,7 @@ test("projects direct Datadog OTLP telemetry into the isolated T3 worker", () =>
       COMPADRE_PROVIDER_INSTANCE_ID: "codex",
       T3CODE_OTLP_TRACES_URL: "https://otlp.datadoghq.eu/v1/traces",
       T3CODE_OTLP_SERVICE_NAME: "compadre-t3-worker",
+      T3CODE_DD_LLMOBS_EXPORT_ENABLED: "false",
     },
   );
 });

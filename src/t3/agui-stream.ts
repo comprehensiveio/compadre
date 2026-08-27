@@ -194,6 +194,29 @@ function json(value: unknown): string {
   }
 }
 
+function nonNegativeInteger(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0
+    ? Math.trunc(value)
+    : undefined;
+}
+
+function projectedUsage(
+  activity: T3Activity,
+  snapshot: T3ThreadSnapshot,
+): Record<string, unknown> | undefined {
+  if (activity.kind !== "context-window.updated") return undefined;
+  const payload = activity.payload ?? {};
+  const usedTokens = nonNegativeInteger(payload.usedTokens);
+  if (usedTokens === undefined) return undefined;
+  const provider = snapshot.thread.modelSelection.instanceId === "codex" ? "codex" : "claude";
+  return {
+    ...payload,
+    usedTokens,
+    usageProvider: provider,
+    model: snapshot.thread.modelSelection.model,
+  };
+}
+
 function normalizedActivitySummary(activity: T3Activity): string | undefined {
   const summary = activity.summary?.trim();
   if (!summary) return undefined;
@@ -268,6 +291,15 @@ export class NativeT3SnapshotProjector {
     for (const activity of activities(snapshot)) {
       if (activity.turnId !== this.turnId || this.seenActivities.has(activity.id)) continue;
       this.seenActivities.add(activity.id);
+      const usage = projectedUsage(activity, snapshot);
+      if (usage) {
+        chunks.push({
+          type: EventType.THREAD_TOKEN_USAGE_UPDATED,
+          usage,
+          timestamp: timestamp(activity.createdAt),
+        });
+        continue;
+      }
       if (!activity.kind.startsWith("tool.")) continue;
       const payload = activity.payload ?? {};
       const toolCallId = stringValue(payload.toolCallId) ?? activity.id;

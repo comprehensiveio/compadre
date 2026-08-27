@@ -259,19 +259,33 @@ test("streams a native Modal T3 turn through the central provider endpoint", asy
         },
         ...snapshot.thread.messages,
       ],
-      activities: [{
-        id: "tool-complete",
-        kind: "tool.completed",
-        turnId: "turn-1",
-        summary: "Command run",
-        createdAt: "2026-08-26T15:00:01.500Z",
-        payload: {
-          toolCallId: "tool-1",
-          detail: "Bash: pwd",
-          status: "completed",
-          data: { command: "pwd" },
+      activities: [
+        {
+          id: "usage-1",
+          kind: "context-window.updated",
+          turnId: "turn-1",
+          summary: "Context window updated",
+          createdAt: "2026-08-26T15:00:01.250Z",
+          payload: {
+            usedTokens: 15,
+            lastInputTokens: 10,
+            lastOutputTokens: 5,
+          },
         },
-      }],
+        {
+          id: "tool-complete",
+          kind: "tool.completed",
+          turnId: "turn-1",
+          summary: "Command run",
+          createdAt: "2026-08-26T15:00:01.500Z",
+          payload: {
+            toolCallId: "tool-1",
+            detail: "Bash: pwd",
+            status: "completed",
+            data: { command: "pwd" },
+          },
+        },
+      ],
     },
   };
   const gateway = {
@@ -335,13 +349,15 @@ test("streams a native Modal T3 turn through the central provider endpoint", asy
 
   assert.equal(response.status, 200, await response.clone().text());
   assert.match(response.headers.get("content-type") ?? "", /text\/event-stream/);
-  assert.equal(response.headers.get("x-compadre-t3-protocol-version"), "1");
+  assert.equal(response.headers.get("x-compadre-t3-protocol-version"), "2");
   const body = await response.text();
   assert.match(body, /"type":"RUN_STARTED"/);
   assert.match(body, /"type":"TOOL_CALL_START"/);
+  assert.match(body, /"type":"THREAD_TOKEN_USAGE_UPDATED"/);
+  assert.match(body, /"usageProvider":"codex"/);
   assert.match(body, /"type":"TEXT_MESSAGE_CONTENT"/);
   assert.match(body, /"type":"RUN_FINISHED"/);
-  assert.match(body, /"protocolVersion":1/);
+  assert.match(body, /"protocolVersion":2/);
   assert.deepEqual(selection, {
     instanceId: "claudeAgent",
     model: "claude-sonnet-5",

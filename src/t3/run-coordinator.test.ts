@@ -59,7 +59,7 @@ test("persists native T3 events independently of any subscriber", async (t) => {
     EventType.RUN_STARTED,
     EventType.RUN_FINISHED,
   ]);
-  assert.ok(replayed.every((event) => event.protocolVersion === 1));
+  assert.ok(replayed.every((event) => event.protocolVersion === 2));
   assert.equal((await coordinator.run("native-run-1"))?.status, "completed");
 });
 
