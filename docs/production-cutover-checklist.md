@@ -27,9 +27,11 @@ isolated deployment, not that the equivalent production change has been made.
   it by user without reading Modal transcripts.
 - [x] Datadog LLM Observability receives prompt, response, model, token totals,
   initiating user, origin, and model-priced cost for a live Slack turn.
-- [x] The isolated Slack app authenticates as `Secret dre experiment`, owns
-  progress updates and final delivery, and posts the canonical Open in web
-  link from the same app identity.
+- [x] The isolated Slack app authenticates as `Secret dre experiment`, shows
+  tool-specific progress, withholds intermediate assistant narration, posts
+  exactly the final T3 assistant message, and follows it with the canonical
+  Open in web link from the same app identity. Live proof on 2026-08-27 used a
+  shell-tool turn and returned only `FINAL_ONLY_SLACK_VERIFIED` plus the link.
 - [x] The legacy `/prompt`, `/webhook/:source`, `/ag-ui`, and `/workflow-runs`
   contracts dispatch through central T3 and complete with durable status and
   replay on the isolated deployment.
@@ -137,8 +139,10 @@ central transcript, Modal logs, Datadog content, or source control.
 - [ ] Forward Slack file attachments into native T3 turns and verify that both
   Codex and Claude can read them from their isolated workers.
 - [ ] Give Slack answer delivery a single architectural owner. Verify that an
-  agent cannot produce a second final answer by calling a Slack tool after its
-  ordinary streamed output has already been delivered.
+  agent cannot produce a second final answer by calling a same-thread Slack
+  tool after automatic final delivery. The automatic path now posts only T3's
+  designated final assistant message, and the Slack-only hidden prompt forbids
+  duplicate self-delivery, but the destination still needs a structural guard.
 - [x] Correct the isolated app credential mismatch and verify a fresh deployed
   instance posts progress, final output, and the Open in web link as
   `Secret dre experiment` rather than the legacy Compadre bot.
@@ -220,6 +224,11 @@ central transcript, Modal logs, Datadog content, or source control.
   without duplicate runs or divergent history.
 - [ ] Implement or explicitly defer controller-restart takeover with persisted
   dispatch metadata, heartbeats, leases, and epoch fencing.
+- [ ] Make Slack completion delivery durable across controller rollouts. A live
+  2026-08-27 probe entered through a retiring controller while its central T3
+  turn continued on the replacement instance; the old in-memory completion
+  callback did not survive to post the result. Persist the delivery job and let
+  the replacement controller claim it idempotently.
 - [ ] Decide whether cancelled compatibility streams require an explicit
   terminal AG-UI chunk; durable status currently reaches `aborted`, while the
   event log closes after the last already-persisted event.
