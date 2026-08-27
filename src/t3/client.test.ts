@@ -186,6 +186,23 @@ test("reads the public T3 environment identity without sending the service token
   assert.equal(request?.headers.get("authorization"), null);
 });
 
+test("retries a transient gateway response while reading the orchestration snapshot", async () => {
+  let calls = 0;
+  const client = new T3Client("https://t3.example", "secret", {
+    fetch: async () => {
+      calls += 1;
+      return calls === 1
+        ? new Response("upstream unavailable", { status: 502 })
+        : json({ snapshotSequence: 1, projects: [], threads: [], updatedAt: now.toISOString() });
+    },
+  });
+
+  const snapshot = await client.snapshot();
+
+  assert.equal(calls, 2);
+  assert.equal(snapshot.snapshotSequence, 1);
+});
+
 test("preserves native T3 activity and tool detail fields in thread snapshots", async () => {
   const client = new T3Client("https://t3.example", "secret", {
     fetch: async () =>

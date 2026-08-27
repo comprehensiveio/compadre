@@ -91,8 +91,9 @@ Prefer exact identifiers and narrow time windows. Render service instance suffix
 - A Render cutover can briefly return a non-JSON 502 for an otherwise healthy
   central T3 thread snapshot while the provider turn finishes successfully.
   Correlate the request failure with deploy lifecycle and T3 turn completion;
-  Compadre retries transient snapshot transport, timeout, and HTTP 500-504
-  failures for a bounded window rather than canceling the run immediately.
+  Compadre retries transient idempotent T3 reads (including startup and thread
+  snapshots) after transport, timeout, and HTTP 500-504 failures for a bounded
+  window rather than canceling the run immediately.
 - In central-native mode, Slack ingress must first create or continue the
   hosted Render T3 thread; the central T3 provider callback then invokes the
   Compadre/Modal worker. Correlate the Slack channel/thread with the stable
