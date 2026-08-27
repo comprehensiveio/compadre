@@ -22,6 +22,16 @@ import {
   createNativeT3AguiStream,
 } from "../t3/agui-stream.js";
 import { isAgentProvider } from "../tanstack/protocol.js";
+import { getConfiguredThreadPersistence } from "../persistence/runtime.js";
+import {
+  HostedThreadBindingStore,
+  type HostedSlackBinding,
+} from "../services/hosted-thread-bindings.js";
+import { mirrorNativeT3RunToSlack } from "../services/native-t3-slack-delivery.js";
+import {
+  centralT3DetailsUrl,
+  isSlackEntrypointMessageId,
+} from "../t3/central-conversation.js";
 
 const MAX_TITLE_LENGTH = 200;
 const MAX_MESSAGE_LENGTH = 100_000;
@@ -73,6 +83,7 @@ export interface T3DirectoryRoutesDependencies {
   getGateway(): Promise<T3DirectoryGateway | null>;
   createId(): string;
   watchTurn(gateway: T3DirectoryGateway, turn: T3GatewayTurn): void;
+  getSlackBinding?(threadId: string): Promise<HostedSlackBinding | null>;
 }
 
 const defaultDependencies: T3DirectoryRoutesDependencies = {
@@ -87,6 +98,13 @@ const defaultDependencies: T3DirectoryRoutesDependencies = {
           `[t3-directory] terminal watch failed thread=${turn.binding.canonicalThreadId} provider=${turn.binding.providerInstanceId} error=${error instanceof Error ? error.name : "UnknownError"}`,
         );
       });
+  },
+  async getSlackBinding(threadId) {
+    const runtime = await getConfiguredThreadPersistence();
+    if (!runtime) return null;
+    return new HostedThreadBindingStore(
+      runtime.persistence.stores.metadata,
+    ).slack(threadId);
   },
 };
 
@@ -183,6 +201,19 @@ async function latestUserMessage(messages: unknown): Promise<string | null> {
     if (message?.role === "user") return textContent(message);
   }
   return null;
+}
+
+function latestUserMessageId(messages: unknown): string | undefined {
+  if (!Array.isArray(messages)) return undefined;
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index];
+    if (!message || typeof message !== "object") continue;
+    const record = message as Record<string, unknown>;
+    if (record.role === "user" && typeof record.id === "string") {
+      return record.id;
+    }
+  }
+  return undefined;
 }
 
 function nativeModelSelection(
@@ -303,7 +334,7 @@ export function createT3DirectoryRoutes(
     }
     const runId = params.runId || dependencies.createId();
     const canonicalThreadId = params.threadId || dependencies.createId();
-    const stream = createNativeT3AguiStream({
+    const nativeStream = createNativeT3AguiStream({
       gateway,
       canonicalThreadId,
       runId,
@@ -324,6 +355,31 @@ export function createT3DirectoryRoutes(
         activeRuns.delete(runId);
       },
     });
+    const messageId = latestUserMessageId(params.messages);
+    const slackBinding =
+      process.env.COMPADRE_HOSTED_SLACK_DELIVERY_ENABLED !== "false" &&
+      !isSlackEntrypointMessageId(messageId) &&
+      dependencies.getSlackBinding
+        ? await dependencies.getSlackBinding(canonicalThreadId)
+        : null;
+    const botToken = process.env.SLACK_BOT_TOKEN?.trim();
+    const hostedAppUrl = process.env.COMPADRE_T3_HOSTED_APP_URL?.trim();
+    const detailsUrl =
+      slackBinding?.t3ProjectId && slackBinding.t3ThreadId && hostedAppUrl
+        ? centralT3DetailsUrl({
+            baseUrl: hostedAppUrl,
+            projectId: slackBinding.t3ProjectId,
+            threadId: slackBinding.t3ThreadId,
+          })
+        : undefined;
+    const stream = slackBinding && botToken
+      ? mirrorNativeT3RunToSlack(nativeStream, {
+          binding: slackBinding,
+          userMessage: text,
+          detailsUrl,
+          botToken,
+        })
+      : nativeStream;
     return toServerSentEventsResponse(stream, {
       headers: {
         "X-Accel-Buffering": "no",

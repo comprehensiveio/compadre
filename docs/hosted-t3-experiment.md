@@ -44,6 +44,16 @@ The browser reads that hosted T3 log; it does not contact Modal to render a
 completed thread. Codex and Claude still appear as T3's built-in providers, but
 their provider adapters route execution to the per-thread Modal environment.
 
+Slack ingress now uses T3's authenticated orchestration HTTP API rather than
+calling the Modal worker coordinator directly. A Slack channel/thread identity
+maps deterministically to one central T3 thread. The Slack turn is committed to
+the central event log before T3's normal remote provider adapter invokes
+Compadre and Modal. Slack streams its concise answer by reading the central T3
+thread snapshot, while its details link opens the same central project/thread
+rendered by the browser. A browser follow-up on that bound thread is mirrored
+back to Slack. Slack-originated message ids carry an entrypoint marker so the
+provider callback is not echoed into Slack a second time.
+
 There are therefore two intentional durable records during the experiment:
 Compadre's worker snapshot archive is the recovery/source record for remote
 execution, and hosted T3's event log is the canonical UI read model. The next
@@ -140,6 +150,8 @@ static-app build flags.
 COMPADRE_T3_DIRECTORY_ENABLED=true \
 COMPADRE_T3_SLACK_ENABLED=true \
 COMPADRE_T3_HOSTED_APP_URL=http://localhost:5733 \
+COMPADRE_T3_CENTRAL_URL=http://localhost:5733 \
+COMPADRE_T3_CENTRAL_TOKEN=<scoped-t3-bearer> \
 COMPADRE_DURABILITY_BACKEND=memory \
 npm run dev
 ```
@@ -164,19 +176,17 @@ COMPADRE_T3_HOSTED_APP_URL=http://localhost:5733 \
 npm run slack:simulate -- --claude-code Reply with exactly: SLACK-SIM-OK
 ```
 
-The native simulator uses the real T3 gateway, thread persistence, Modal
-sandbox, T3 provider driver, Slack prompt, assistant streaming, and hosted deep
-link. Only Slack API delivery is synthetic. Without the native flag it retains
-the legacy TanStack workflow simulator for checkpoint comparison.
+The native simulator dispatches through the central T3 orchestration API, then
+uses the real thread persistence, Modal sandbox, native provider driver, Slack
+prompt, assistant streaming, and central hosted deep link. Only Slack API
+delivery is synthetic. Without the native flag it retains the legacy TanStack
+workflow simulator for checkpoint comparison.
 
-To open a Slack-originated conversation, use its canonical Compadre thread ID
-(currently the Slack thread timestamp). The existing transcript will hydrate
-when the browser and production relay share the same Postgres durability
-database. To make new browser turns appear in Slack, enter the channel ID and
-thread timestamp in “Mirror to Slack” once. The binding is durable metadata.
-That operation also aliases the browser/T3-native id to the Slack-backed
-canonical thread, so history, locks, provider sessions, and Modal snapshot
-lineage are shared in both directions.
+Slack-originated conversations appear directly in the central T3 project and
+need no manual history merge or “Mirror to Slack” step. The durable Slack
+binding stores the central project/thread coordinates, so a later browser turn
+uses the same worker identity and delivers its concise projection back into the
+original Slack thread.
 
 ## Parallel deployment
 
@@ -211,6 +221,8 @@ COMPADRE_DURABILITY_BACKEND=postgres
 COMPADRE_PUBLIC_URL=https://<experiment-host>
 COMPADRE_PROCESS_ROLE=hosted-experiment
 COMPADRE_MODAL_SECRET_NAMES=compadre-t3-codex-auth-experiment
+COMPADRE_T3_CENTRAL_URL=https://t3code-compadre-experiment.onrender.com
+COMPADRE_T3_CENTRAL_TOKEN=<scoped bearer issued by central T3>
 ```
 
 The named Modal secret supplies `CODEX_AUTH_JSON_BASE64`, a base64-encoded
@@ -296,8 +308,8 @@ Vitally, Google Workspace, and Postgres. Postgres uses the production database's
 dedicated read-only role over its external TLS endpoint; no write-capable
 database credentials were added to the experiment.
 
-Remaining product gaps are user-scoped authentication, a Slack discovery and
-pairing UI, resumable central stream cursors, attachment materialization in the
+Remaining product gaps are user-scoped authentication, Slack discovery UI,
+resumable central stream cursors, attachment materialization in the
 native worker route, multi-instance cancellation and tool-bridge ownership,
 and T3-native presentation for remote workspace diffs, checkpoints, shells,
 and interactive approval or elicitation requests. Until the in-memory tool

@@ -393,6 +393,7 @@ export class T3Client {
 
   async startNewThread(input: {
     threadId?: string;
+    messageId?: string;
     projectId: string;
     title: string;
     text: string;
@@ -430,6 +431,7 @@ export class T3Client {
     );
     return this.startTurn({
       threadId,
+      messageId: input.messageId,
       text: input.text,
       displayText: input.displayText,
       modelSelection: input.modelSelection,
@@ -441,6 +443,7 @@ export class T3Client {
 
   async startTurn(input: {
     threadId: string;
+    messageId?: string;
     text: string;
     displayText?: string;
     modelSelection: T3ModelSelection;
@@ -449,7 +452,7 @@ export class T3Client {
     signal?: AbortSignal;
   }): Promise<T3TurnDispatch> {
     const commandId = this.idFactory();
-    const messageId = this.idFactory();
+    const messageId = input.messageId ?? this.idFactory();
     const createdAt = this.now().toISOString();
     const sequence = await this.dispatch(
       {

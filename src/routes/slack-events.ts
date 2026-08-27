@@ -24,10 +24,12 @@ import { verifySlackSignature } from "../services/slack-verify.js";
 import {
   canonicalSlackThreadId,
   nativeT3SlackEnabled,
-  runT3SlackConversation,
   t3SlackDetailsMarkdown,
 } from "../services/t3-slack-conversation.js";
-import { getConfiguredT3Gateway } from "../t3/runtime.js";
+import {
+  configuredCentralT3Client,
+  runCentralT3Conversation,
+} from "../t3/central-conversation.js";
 import {
   mergeSlackFileReferences,
   slackFileReferences,
@@ -208,16 +210,17 @@ async function handleAIMessage(
     runtime.persistence.stores.metadata,
     runtime.persistence.stores.runs,
   );
-  await new HostedThreadBindingStore(
+  const hostedBindings = new HostedThreadBindingStore(
     runtime.persistence.stores.metadata,
-  ).bindSlack(threadKey, {
+  );
+  const slackBinding = {
     channelId: event.channel,
     threadTs,
     ...(event.user ? { recipientUserId: event.user } : {}),
     ...((event.user_team || event.team || teamId)
       ? { recipientTeamId: event.user_team || event.team || teamId }
       : {}),
-  });
+  };
 
   // In non-DM contexts, use a reaction to indicate processing
   if (!isDM && slackStream) {
@@ -237,17 +240,28 @@ async function handleAIMessage(
       channel: event.channel,
       threadTs,
     });
-    const nativeConversation = getConfiguredT3Gateway().then(async (gateway) => {
-      if (!gateway) {
-        throw new Error("Native T3 Slack requires durable thread persistence.");
+    const nativeConversation = Promise.resolve().then(async () => {
+      const client = configuredCentralT3Client();
+      if (!client) {
+        throw new Error(
+          "Native T3 Slack requires COMPADRE_T3_CENTRAL_URL and COMPADRE_T3_CENTRAL_TOKEN.",
+        );
       }
-      return runT3SlackConversation({
-        gateway,
+      return runCentralT3Conversation({
+        client,
         canonicalThreadId,
         title: transcriptUserMessage.slice(0, 200) || "Slack request",
         prompt,
         displayText: transcriptUserMessage,
         profile,
+        async onPrepared(prepared) {
+          await hostedBindings.bindAlias(canonicalThreadId, prepared.t3ThreadId);
+          await hostedBindings.bindSlack(prepared.t3ThreadId, {
+            ...slackBinding,
+            t3ProjectId: prepared.projectId,
+            t3ThreadId: prepared.t3ThreadId,
+          });
+        },
         onTextDelta: slackStream
           ? (text) => {
               slackStream.appendText(text);
@@ -259,9 +273,7 @@ async function handleAIMessage(
     nativeConversation
       .then(async (result) => {
         if (slackStream) {
-          if (result.detailsUrl) {
-            slackStream.appendText(`\n\n${t3SlackDetailsMarkdown(result.detailsUrl)}`);
-          }
+          slackStream.appendText(`\n\n${t3SlackDetailsMarkdown(result.detailsUrl)}`);
           await slackStream.stopStream();
           await slackStream.clearStatus();
         }
@@ -270,7 +282,7 @@ async function handleAIMessage(
         }
         await slackRuns.forget(event.channel, event.ts);
         console.log(
-          `[slack-events] native T3 completed user=${event.user ?? "unknown"} thread=${canonicalThreadId} provider=${result.modelSelection.instanceId} model=${result.modelSelection.model}`,
+          `[slack-events] central T3 completed user=${event.user ?? "unknown"} thread=${result.t3ThreadId} provider=${result.modelSelection.instanceId} model=${result.modelSelection.model} resumed=${result.resumed}`,
         );
       })
       .catch(async (err) => {
@@ -286,6 +298,8 @@ async function handleAIMessage(
       });
     return;
   }
+
+  await hostedBindings.bindSlack(threadKey, slackBinding);
 
   const runner = configuredConversationRunner();
   const conversationOptions: Omit<ConversationOptions, "stream"> = {

@@ -296,12 +296,17 @@ test("streams a native Modal T3 turn through the central provider endpoint", asy
       return turnSnapshot;
     },
   };
+  const slackBindingLookups: string[] = [];
   const app = new Hono();
   app.route("/", createT3DirectoryRoutes({
     enabled: () => true,
     createId: () => "generated",
     getGateway: async () => gateway,
     watchTurn() {},
+    async getSlackBinding(threadId) {
+      slackBindingLookups.push(threadId);
+      return null;
+    },
   }));
   const response = await app.request("/hosted/t3/chat", authorized({
     threadId: "central-thread",
@@ -329,6 +334,24 @@ test("streams a native Modal T3 turn through the central provider endpoint", asy
     model: "claude-sonnet-5",
     options: [{ id: "effort", value: "high" }],
   });
+  assert.deepEqual(slackBindingLookups, ["central-thread"]);
+
+  const slackResponse = await app.request("/hosted/t3/chat", authorized({
+    threadId: "central-thread",
+    runId: "run-from-slack",
+    messages: [{
+      id: "slack-entrypoint:message-2",
+      role: "user",
+      content: "continue from Slack",
+    }],
+    tools: [],
+    context: [],
+    state: {},
+    forwardedProps: { provider: "claude-code", model: "claude-sonnet-5" },
+  }));
+  assert.equal(slackResponse.status, 200, await slackResponse.clone().text());
+  await slackResponse.text();
+  assert.deepEqual(slackBindingLookups, ["central-thread"]);
 });
 
 test("does not expose Modal bootstrap details when provisioning fails", async (t) => {

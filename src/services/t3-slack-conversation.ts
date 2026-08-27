@@ -92,20 +92,14 @@ export function assistantTextForDispatch(
   const requestedAt = Date.parse(requestedMessage.createdAt || dispatch.createdAt);
   if (Date.parse(latestTurn.requestedAt) < requestedAt) return "";
 
-  const assistant = latestTurn.assistantMessageId
-    ? snapshot.thread.messages.find(
-        (message) =>
-          message.id === latestTurn.assistantMessageId &&
-          message.role === "assistant",
-      )
-    : [...snapshot.thread.messages]
-        .reverse()
-        .find(
-          (message) =>
-            message.role === "assistant" &&
-            message.turnId === latestTurn.turnId,
-        );
-  return assistant?.text ?? "";
+  const turnId = requestedMessage.turnId ?? latestTurn.turnId;
+  return snapshot.thread.messages
+    .filter(
+      (message) => message.role === "assistant" && message.turnId === turnId,
+    )
+    .map((message) => message.text.trim())
+    .filter(Boolean)
+    .join("\n\n");
 }
 
 function responseDelta(previous: string, next: string): string {

@@ -88,6 +88,16 @@ Prefer exact identifiers and narrow time windows. Render service instance suffix
   `compadre.t3.thread-snapshots.v1` worker snapshot before diagnosing an early
   harness exit; fewer central messages indicates a projection loss rather than
   missing provider output.
+- In central-native mode, Slack ingress must first create or continue the
+  hosted Render T3 thread; the central T3 provider callback then invokes the
+  Compadre/Modal worker. Correlate the Slack channel/thread with the stable
+  central T3 thread id, then the Compadre binding and Modal sandbox. A direct
+  Slack-to-worker dispatch bypasses the authoritative UI event log and is a
+  routing defect, even when Slack receives a valid answer.
+- Central T3 message ids marked `slack-entrypoint:` suppress the reverse
+  web-to-Slack mirror for that turn. If a Slack prompt is delivered twice,
+  verify that the marker survived T3 orchestration into the Compadre provider
+  request before diagnosing Slack retries or event deduplication.
 - Slack automatically removes an `assistant.threads.setStatus` indicator after
   two minutes if the app has not sent a message. This can make a healthy
   pre-text tool run look abandoned even though no native `chat.startStream`

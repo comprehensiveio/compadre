@@ -17,6 +17,12 @@ import {
   t3SlackDetailsMarkdown,
 } from "./t3-slack-conversation.js";
 import { getConfiguredT3Gateway } from "../t3/runtime.js";
+import {
+  configuredCentralT3Client,
+  runCentralT3Conversation,
+} from "../t3/central-conversation.js";
+import { getConfiguredThreadPersistence } from "../persistence/runtime.js";
+import { HostedThreadBindingStore } from "./hosted-thread-bindings.js";
 
 export interface SlackSimulationOptions {
   messageText: string;
@@ -155,26 +161,54 @@ export async function runT3SlackSimulation({
     userId,
   });
   const canonicalThreadId = canonicalSlackThreadId({ teamId, channel, threadTs });
-  const configuredGateway = gateway ?? (await getConfiguredT3Gateway());
-  if (!configuredGateway) {
-    throw new Error("Native T3 Slack simulation requires durable thread persistence.");
-  }
   let output = "";
-  const result = await runT3SlackConversation({
-    gateway: configuredGateway,
-    canonicalThreadId,
-    title: input.transcriptUserMessage.slice(0, 200) || "Slack simulation",
-    prompt: input.prompt,
-    displayText: input.transcriptUserMessage,
-    profile: route.profile,
-    onTextDelta(text) {
-      output += text;
-      onTextDelta?.(text);
-    },
-  });
-  if (!result.detailsUrl) {
-    throw new Error("Native T3 Slack simulation did not receive a details link.");
-  }
+  const deliver = (text: string) => {
+    output += text;
+    onTextDelta?.(text);
+  };
+  const centralClient = gateway ? null : configuredCentralT3Client();
+  const result = centralClient
+    ? await runCentralT3Conversation({
+        client: centralClient,
+        canonicalThreadId,
+        title: input.transcriptUserMessage.slice(0, 200) || "Slack simulation",
+        prompt: input.prompt,
+        displayText: input.transcriptUserMessage,
+        profile: route.profile,
+        async onPrepared(prepared) {
+          const runtime = await getConfiguredThreadPersistence();
+          if (!runtime) return;
+          const bindings = new HostedThreadBindingStore(
+            runtime.persistence.stores.metadata,
+          );
+          await bindings.bindAlias(canonicalThreadId, prepared.t3ThreadId);
+          await bindings.bindSlack(prepared.t3ThreadId, {
+            channelId: channel,
+            threadTs,
+            recipientUserId: userId,
+            recipientTeamId: teamId,
+            t3ProjectId: prepared.projectId,
+            t3ThreadId: prepared.t3ThreadId,
+          });
+        },
+        onTextDelta: deliver,
+      })
+    : await (async () => {
+        const configuredGateway = gateway ?? (await getConfiguredT3Gateway());
+        if (!configuredGateway) {
+          throw new Error("Native T3 Slack simulation requires central T3 configuration.");
+        }
+        return runT3SlackConversation({
+          gateway: configuredGateway,
+          canonicalThreadId,
+          title: input.transcriptUserMessage.slice(0, 200) || "Slack simulation",
+          prompt: input.prompt,
+          displayText: input.transcriptUserMessage,
+          profile: route.profile,
+          onTextDelta: deliver,
+        });
+      })();
+  if (!result.detailsUrl) throw new Error("Native T3 Slack simulation did not receive a details link.");
   const details = `\n\n${t3SlackDetailsMarkdown(result.detailsUrl)}`;
   output += details;
   onTextDelta?.(details);

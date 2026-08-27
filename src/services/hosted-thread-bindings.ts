@@ -9,6 +9,8 @@ export interface HostedSlackBinding {
   threadTs: string;
   recipientUserId?: string;
   recipientTeamId?: string;
+  t3ProjectId?: string;
+  t3ThreadId?: string;
 }
 
 interface HostedThreadAlias {
@@ -24,7 +26,9 @@ function isHostedSlackBinding(value: unknown): value is HostedSlackBinding {
     (record.recipientUserId === undefined ||
       typeof record.recipientUserId === "string") &&
     (record.recipientTeamId === undefined ||
-      typeof record.recipientTeamId === "string")
+      typeof record.recipientTeamId === "string") &&
+    (record.t3ProjectId === undefined || typeof record.t3ProjectId === "string") &&
+    (record.t3ThreadId === undefined || typeof record.t3ThreadId === "string")
   );
 }
 

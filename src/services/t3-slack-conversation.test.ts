@@ -113,6 +113,36 @@ test("does not project an older assistant turn into Slack", () => {
   assert.equal(assistantTextForDispatch(old, turn.dispatch), "");
 });
 
+test("keeps native T3 narration, updates, and final answer in Slack", () => {
+  const segmented = snapshot("final answer", "completed");
+  segmented.thread.messages = [
+    segmented.thread.messages[0]!,
+    {
+      id: "assistant-preamble",
+      role: "assistant",
+      text: "I will check that.",
+      turnId: "turn-1",
+      streaming: false,
+      createdAt: "2026-08-26T15:00:00.050Z",
+      updatedAt: "2026-08-26T15:00:00.060Z",
+    },
+    {
+      id: "assistant-update",
+      role: "assistant",
+      text: "I found the relevant code.",
+      turnId: "turn-1",
+      streaming: false,
+      createdAt: "2026-08-26T15:00:00.070Z",
+      updatedAt: "2026-08-26T15:00:00.080Z",
+    },
+    segmented.thread.messages[1]!,
+  ];
+  assert.equal(
+    assistantTextForDispatch(segmented, turn.dispatch),
+    "I will check that.\n\nI found the relevant code.\n\nfinal answer",
+  );
+});
+
 test("scopes canonical Slack threads by workspace and channel", () => {
   assert.equal(
     canonicalSlackThreadId({ teamId: "T1", channel: "C1", threadTs: "123.4" }),
