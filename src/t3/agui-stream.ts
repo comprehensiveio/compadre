@@ -84,6 +84,37 @@ function json(value: unknown): string {
   }
 }
 
+function normalizedActivitySummary(activity: T3Activity): string | undefined {
+  const summary = activity.summary?.trim();
+  if (!summary) return undefined;
+  return summary.replace(/\s+(?:started|complete|completed)\s*$/iu, "").trim();
+}
+
+function toolNameForActivity(activity: T3Activity): string {
+  const payload = activity.payload ?? {};
+  const data = record(payload.data);
+  const item = record(data?.item);
+  if (payload.itemType === "mcp_tool_call") {
+    const server = stringValue(item?.server);
+    const tool = stringValue(item?.tool);
+    if (server && tool) return `${server} · ${tool}`;
+    if (tool) return tool;
+    const providerToolName = stringValue(data?.toolName);
+    if (providerToolName) return providerToolName;
+  }
+  return (
+    stringValue(payload.detail) ??
+    normalizedActivitySummary(activity) ??
+    stringValue(payload.itemType)?.replaceAll("_", " ") ??
+    "Tool"
+  );
+}
+
+interface ProjectedAssistantMessage {
+  text: string;
+  ended: boolean;
+}
+
 /**
  * Incremental projection from a native worker T3 snapshot into the provider
  * event stream consumed by the central T3 environment. The worker owns the
@@ -92,12 +123,10 @@ function json(value: unknown): string {
  */
 export class NativeT3SnapshotProjector {
   private turnId: string | undefined;
-  private assistantMessageId: string | undefined;
-  private assistantText = "";
-  private assistantEnded = false;
   private terminal = false;
   private readonly seenActivities = new Set<string>();
   private readonly startedTools = new Set<string>();
+  private readonly assistantMessages = new Map<string, ProjectedAssistantMessage>();
 
   constructor(
     private readonly runId: string,
@@ -121,11 +150,7 @@ export class NativeT3SnapshotProjector {
       if (!activity.kind.startsWith("tool.")) continue;
       const payload = activity.payload ?? {};
       const toolCallId = stringValue(payload.toolCallId) ?? activity.id;
-      const toolName =
-        stringValue(payload.detail) ??
-        stringValue(payload.itemType) ??
-        activity.summary ??
-        "Tool";
+      const toolName = toolNameForActivity(activity);
       if (!this.startedTools.has(toolCallId)) {
         this.startedTools.add(toolCallId);
         chunks.push({
@@ -159,12 +184,14 @@ export class NativeT3SnapshotProjector {
       }
     }
 
-    const assistant = snapshot.thread.messages.find(
+    const assistants = snapshot.thread.messages.filter(
       (message) => message.role === "assistant" && message.turnId === this.turnId,
     );
-    if (assistant) {
-      if (!this.assistantMessageId) {
-        this.assistantMessageId = assistant.id;
+    for (const assistant of assistants) {
+      let projected = this.assistantMessages.get(assistant.id);
+      if (!projected) {
+        projected = { text: "", ended: false };
+        this.assistantMessages.set(assistant.id, projected);
         chunks.push({
           type: EventType.TEXT_MESSAGE_START,
           messageId: assistant.id,
@@ -172,11 +199,11 @@ export class NativeT3SnapshotProjector {
           timestamp: timestamp(assistant.createdAt),
         });
       }
-      const delta = assistant.text.startsWith(this.assistantText)
-        ? assistant.text.slice(this.assistantText.length)
+      const delta = assistant.text.startsWith(projected.text)
+        ? assistant.text.slice(projected.text.length)
         : assistant.text;
       if (delta) {
-        this.assistantText = assistant.text;
+        projected.text = assistant.text;
         chunks.push({
           type: EventType.TEXT_MESSAGE_CONTENT,
           messageId: assistant.id,
@@ -185,8 +212,8 @@ export class NativeT3SnapshotProjector {
           timestamp: timestamp(assistant.updatedAt),
         });
       }
-      if (!assistant.streaming && !this.assistantEnded) {
-        this.assistantEnded = true;
+      if (!assistant.streaming && !projected.ended) {
+        projected.ended = true;
         chunks.push({
           type: EventType.TEXT_MESSAGE_END,
           messageId: assistant.id,
@@ -199,13 +226,15 @@ export class NativeT3SnapshotProjector {
     if (latestTurn?.turnId !== this.turnId || latestTurn.state === "running") {
       return chunks;
     }
-    if (this.assistantMessageId && !this.assistantEnded) {
-      this.assistantEnded = true;
-      chunks.push({
-        type: EventType.TEXT_MESSAGE_END,
-        messageId: this.assistantMessageId,
-        timestamp: timestamp(latestTurn.completedAt ?? undefined),
-      });
+    for (const [messageId, projected] of this.assistantMessages) {
+      if (!projected.ended) {
+        projected.ended = true;
+        chunks.push({
+          type: EventType.TEXT_MESSAGE_END,
+          messageId,
+          timestamp: timestamp(latestTurn.completedAt ?? undefined),
+        });
+      }
     }
     this.terminal = true;
     if (latestTurn.state === "completed") {

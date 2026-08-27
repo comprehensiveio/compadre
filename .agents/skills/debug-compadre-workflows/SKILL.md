@@ -81,6 +81,13 @@ Prefer exact identifiers and narrow time windows. Render service instance suffix
   active and can also indicate a stuck or runaway process. Require repeated
   samples plus completion, process exit, or sandbox-lifecycle evidence before
   declaring validation successful.
+- A central T3 thread that shows only pre-tool narration may have completed
+  successfully in its Modal worker. Native T3 providers can emit multiple
+  assistant messages in one turn (narration, an intermediate update, then the
+  final answer). Compare the hosted T3 message projection with the archived
+  `compadre.t3.thread-snapshots.v1` worker snapshot before diagnosing an early
+  harness exit; fewer central messages indicates a projection loss rather than
+  missing provider output.
 - Slack automatically removes an `assistant.threads.setStatus` indicator after
   two minutes if the app has not sent a message. This can make a healthy
   pre-text tool run look abandoned even though no native `chat.startStream`

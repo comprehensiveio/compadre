@@ -134,3 +134,102 @@ test("ignores a stale terminal snapshot from before the requested message", () =
     streaming: false,
   })), []);
 });
+
+test("preserves the native MCP server and tool name", () => {
+  const projector = new NativeT3SnapshotProjector("run-1", "central-thread", "user-1");
+  const events = projector.project(snapshot({
+    sequence: 4,
+    state: "running",
+    text: "",
+    streaming: true,
+    activities: [{
+      id: "mcp-start",
+      kind: "tool.started",
+      turnId: "turn-1",
+      summary: "compadre · github_search_repositories started",
+      createdAt: "2026-08-26T16:00:00.400Z",
+      payload: {
+        toolCallId: "mcp-1",
+        itemType: "mcp_tool_call",
+        data: {
+          item: {
+            type: "mcpToolCall",
+            server: "compadre",
+            tool: "github_search_repositories",
+            arguments: { query: "user:tanstack" },
+          },
+        },
+      },
+    }],
+  }));
+
+  const start = events.find((event) => event.type === EventType.TOOL_CALL_START);
+  assert.equal(start?.toolCallName, "compadre · github_search_repositories");
+  assert.equal(start?.toolName, "compadre · github_search_repositories");
+});
+
+test("projects every assistant segment from a native T3 turn", () => {
+  const projector = new NativeT3SnapshotProjector("run-1", "central-thread", "user-1");
+  const first = snapshot({
+    sequence: 4,
+    state: "running",
+    text: "I will gather the data.",
+    streaming: false,
+  });
+  const terminalSnapshot = snapshot({
+    sequence: 12,
+    state: "completed",
+    text: "I will gather the data.",
+    streaming: false,
+  });
+  const terminal: T3ThreadSnapshot = {
+    ...terminalSnapshot,
+    thread: {
+      ...terminalSnapshot.thread,
+      messages: [
+        ...terminalSnapshot.thread.messages,
+        {
+          id: "assistant-2",
+          role: "assistant",
+          text: "I found compatible sources.",
+          turnId: "turn-1",
+          streaming: false,
+          createdAt: "2026-08-26T16:00:01.100Z",
+          updatedAt: "2026-08-26T16:00:01.100Z",
+        },
+        {
+          id: "assistant-3",
+          role: "assistant",
+          text: "Here is the completed joined result.",
+          turnId: "turn-1",
+          streaming: false,
+          createdAt: "2026-08-26T16:00:02.000Z",
+          updatedAt: "2026-08-26T16:00:02.000Z",
+        },
+      ],
+    },
+  };
+
+  const events = [...projector.project(first), ...projector.project(terminal)];
+  assert.deepEqual(
+    events
+      .filter((event) => event.type === EventType.TEXT_MESSAGE_START)
+      .map((event) => event.messageId),
+    ["assistant-1", "assistant-2", "assistant-3"],
+  );
+  assert.deepEqual(
+    events
+      .filter((event) => event.type === EventType.TEXT_MESSAGE_CONTENT)
+      .map((event) => event.delta),
+    [
+      "I will gather the data.",
+      "I found compatible sources.",
+      "Here is the completed joined result.",
+    ],
+  );
+  assert.equal(
+    events.filter((event) => event.type === EventType.TEXT_MESSAGE_END).length,
+    3,
+  );
+  assert.equal(events.at(-1)?.type, EventType.RUN_FINISHED);
+});
