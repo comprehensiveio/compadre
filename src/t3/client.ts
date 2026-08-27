@@ -8,6 +8,7 @@ const ENVIRONMENT_BOOTSTRAP_TOKEN_TYPE =
 
 const DEFAULT_TIMEOUT_MS = 15_000;
 const DEFAULT_POLL_INTERVAL_MS = 350;
+const TRANSIENT_SNAPSHOT_FAILURE_WINDOW_MS = 30_000;
 
 export type T3RuntimeMode =
   "approval-required" | "auto-accept-edits" | "auto" | "full-access";
@@ -128,6 +129,17 @@ export class T3GatewayError extends Error {
     super(message);
     this.name = "T3GatewayError";
   }
+}
+
+function isTransientSnapshotFailure(error: unknown): boolean {
+  if (!(error instanceof T3GatewayError)) return false;
+  if (error.kind === "transport" || error.kind === "timeout") return true;
+  return (
+    (error.kind === "http" || error.kind === "protocol") &&
+    error.status !== undefined &&
+    error.status >= 500 &&
+    error.status <= 504
+  );
 }
 
 const modelSelectionSchema = z.object({
@@ -570,6 +582,7 @@ export class T3Client {
     const timeoutMs = input.timeoutMs ?? 30 * 60_000;
     const deadline = Date.now() + timeoutMs;
     const pollIntervalMs = input.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS;
+    let transientFailureStartedAt: number | null = null;
     while (Date.now() < deadline) {
       if (input.signal?.aborted) {
         throw new T3GatewayError(
@@ -578,34 +591,51 @@ export class T3Client {
           "T3 wait for turn was aborted",
         );
       }
-      const snapshot = await this.threadSnapshot(input.threadId, input.signal);
-      await input.onSnapshot?.(snapshot);
-      const requestedMessage = input.messageId
-        ? snapshot.thread.messages.find(
-            (message) =>
-              message.id === input.messageId && message.role === "user",
-          )
-        : undefined;
-      const latestTurn = snapshot.thread.latestTurn;
-      // T3 normalizes the persisted user-message timestamp on the server. Use
-      // that value once available so a few milliseconds of host/Modal clock
-      // skew cannot keep a completed turn looking perpetually in-flight.
-      const correlationTimestamp =
-        requestedMessage?.createdAt ?? input.requestedAt;
-      const matchesRequestedTurn =
-        (!input.messageId || requestedMessage !== undefined) &&
-        (!correlationTimestamp ||
-          (latestTurn !== null &&
-            Date.parse(latestTurn.requestedAt) >=
-              Date.parse(correlationTimestamp))) &&
-        (requestedMessage?.turnId == null ||
-          requestedMessage.turnId === latestTurn?.turnId);
-      if (
-        snapshot.snapshotSequence >= input.minimumSequence &&
-        matchesRequestedTurn &&
-        terminalTurn(snapshot.thread)
-      ) {
-        return snapshot;
+      let snapshot: T3ThreadSnapshot | null = null;
+      try {
+        snapshot = await this.threadSnapshot(input.threadId, input.signal);
+        transientFailureStartedAt = null;
+      } catch (error) {
+        const failedAt = Date.now();
+        if (
+          !isTransientSnapshotFailure(error) ||
+          (transientFailureStartedAt !== null &&
+            failedAt - transientFailureStartedAt >=
+              TRANSIENT_SNAPSHOT_FAILURE_WINDOW_MS)
+        ) {
+          throw error;
+        }
+        transientFailureStartedAt ??= failedAt;
+      }
+      if (snapshot !== null) {
+        await input.onSnapshot?.(snapshot);
+        const requestedMessage = input.messageId
+          ? snapshot.thread.messages.find(
+              (message) =>
+                message.id === input.messageId && message.role === "user",
+            )
+          : undefined;
+        const latestTurn = snapshot.thread.latestTurn;
+        // T3 normalizes the persisted user-message timestamp on the server. Use
+        // that value once available so a few milliseconds of host/Modal clock
+        // skew cannot keep a completed turn looking perpetually in-flight.
+        const correlationTimestamp =
+          requestedMessage?.createdAt ?? input.requestedAt;
+        const matchesRequestedTurn =
+          (!input.messageId || requestedMessage !== undefined) &&
+          (!correlationTimestamp ||
+            (latestTurn !== null &&
+              Date.parse(latestTurn.requestedAt) >=
+                Date.parse(correlationTimestamp))) &&
+          (requestedMessage?.turnId == null ||
+            requestedMessage.turnId === latestTurn?.turnId);
+        if (
+          snapshot.snapshotSequence >= input.minimumSequence &&
+          matchesRequestedTurn &&
+          terminalTurn(snapshot.thread)
+        ) {
+          return snapshot;
+        }
       }
       await new Promise<void>((resolve, reject) => {
         const onAbort = () => {
