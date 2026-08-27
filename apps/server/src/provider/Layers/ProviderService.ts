@@ -800,6 +800,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
             threadId: input.threadId,
             provider: routed.adapter.provider,
             ...(input.modelSelection?.model ? { model: input.modelSelection.model } : {}),
+            ...(input.input ? { input: input.input } : {}),
           })
         : undefined;
       const sendTurnEffect = routed.adapter.sendTurn(input);

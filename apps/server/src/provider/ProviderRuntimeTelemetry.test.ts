@@ -1,3 +1,4 @@
+// @effect-diagnostics preferSchemaOverJson:off - This test inspects the HTTP JSON payload boundary.
 import { assert, it } from "@effect/vitest";
 import {
   EventId,
@@ -15,6 +16,16 @@ import { makeProviderRuntimeTelemetry } from "./ProviderRuntimeTelemetry.ts";
 
 it.effect("records one provider turn with model, usage, cost, and named tool spans", () => {
   const endedSpans: Array<Tracer.NativeSpan> = [];
+  const intakePayloads: unknown[] = [];
+  const originalFetch = globalThis.fetch;
+  const originalApiKey = process.env.DD_API_KEY;
+  const originalMlApp = process.env.DD_LLMOBS_ML_APP;
+  process.env.DD_API_KEY = "test-key";
+  process.env.DD_LLMOBS_ML_APP = "compadre-t3-experiment";
+  globalThis.fetch = (async (_input, init) => {
+    intakePayloads.push(JSON.parse(String(init?.body)));
+    return new Response(null, { status: 202 });
+  }) as typeof fetch;
   const tracer = Tracer.make({
     span: (options) => {
       const span = new Tracer.NativeSpan(options);
@@ -43,6 +54,7 @@ it.effect("records one provider turn with model, usage, cost, and named tool spa
       threadId,
       provider: ProviderDriverKind.make("codex"),
       model: "gpt-5.6-sol",
+      input: "Deploy this with token=super-secret-value",
     });
     yield* telemetry.bindTurn(turn, turnId);
     yield* telemetry.observe({
@@ -72,13 +84,28 @@ it.effect("records one provider turn with model, usage, cost, and named tool spa
       ...base,
       itemId,
       type: "item.started",
-      payload: { itemType: "mcp_tool_call", status: "inProgress", title: "render deploy" },
+      payload: {
+        itemType: "mcp_tool_call",
+        status: "inProgress",
+        title: "render deploy",
+        data: { input: { service: "worker", apiKey: "tool-secret" } },
+      },
     } satisfies ProviderRuntimeEvent);
     yield* telemetry.observe({
       ...base,
       itemId,
       type: "item.completed",
-      payload: { itemType: "mcp_tool_call", status: "completed", title: "render deploy" },
+      payload: {
+        itemType: "mcp_tool_call",
+        status: "completed",
+        title: "render deploy",
+        data: { result: { deploymentId: "dep-123" } },
+      },
+    } satisfies ProviderRuntimeEvent);
+    yield* telemetry.observe({
+      ...base,
+      type: "content.delta",
+      payload: { streamKind: "assistant_text", delta: "Deployment completed." },
     } satisfies ProviderRuntimeEvent);
     yield* telemetry.observe({
       ...base,
@@ -97,12 +124,42 @@ it.effect("records one provider turn with model, usage, cost, and named tool spa
     assert.equal(providerSpan.attributes.get("gen_ai.usage.total_tokens"), 39);
     assert.equal(providerSpan.attributes.get("gen_ai.usage.reasoning_tokens"), 4);
     assert.equal(providerSpan.attributes.get("gen_ai.cost.estimated_total"), 0.042);
+    assert.match(
+      String(providerSpan.attributes.get("gen_ai.input.messages")),
+      /token=\[REDACTED\]/,
+    );
+    assert.match(
+      String(providerSpan.attributes.get("gen_ai.output.messages")),
+      /Deployment completed\./,
+    );
+    assert.equal(providerSpan.attributes.get("dd_llmobs_enabled"), false);
     assert.equal(providerSpan.sampled, true);
     assert.ok(toolSpan);
     assert.equal(toolSpan.attributes.get("gen_ai.tool.name"), "render deploy");
+    assert.match(String(toolSpan.attributes.get("gen_ai.tool.call.arguments")), /\[REDACTED\]/);
+    assert.match(String(toolSpan.attributes.get("gen_ai.tool.call.result")), /dep-123/);
     assert.equal(toolSpan.parent._tag, "Some");
     if (toolSpan.parent._tag === "Some") {
       assert.equal(toolSpan.parent.value.spanId, providerSpan.spanId);
     }
-  }).pipe(Effect.provideService(References.TracerEnabled, false), Effect.withTracer(tracer));
+    assert.equal(intakePayloads.length, 1);
+    const payload = intakePayloads[0] as {
+      data: { attributes: { ml_app: string; spans: Array<{ meta: unknown }> } };
+    };
+    assert.equal(payload.data.attributes.ml_app, "compadre-t3-experiment");
+    assert.match(JSON.stringify(payload), /Deployment completed\./);
+    assert.equal(/super-secret-value|tool-secret/.test(JSON.stringify(payload)), false);
+  }).pipe(
+    Effect.ensuring(
+      Effect.sync(() => {
+        globalThis.fetch = originalFetch;
+        if (originalApiKey === undefined) delete process.env.DD_API_KEY;
+        else process.env.DD_API_KEY = originalApiKey;
+        if (originalMlApp === undefined) delete process.env.DD_LLMOBS_ML_APP;
+        else process.env.DD_LLMOBS_ML_APP = originalMlApp;
+      }),
+    ),
+    Effect.provideService(References.TracerEnabled, false),
+    Effect.withTracer(tracer),
+  );
 });

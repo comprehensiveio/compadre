@@ -5,6 +5,7 @@ import {
   type ThreadId,
   type TurnId,
 } from "@t3tools/contracts";
+import * as NodeCrypto from "node:crypto";
 import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -15,9 +16,32 @@ export interface TrackedProviderTurn {
   readonly threadId: ThreadId;
   readonly provider: ProviderDriverKind;
   readonly span: Tracer.Span;
-  readonly tools: Map<string, Tracer.Span>;
+  readonly tools: Map<string, TrackedProviderTool>;
+  readonly completedTools: Array<CompletedProviderTool>;
+  readonly startedAtNs: bigint;
+  readonly llmTraceId: string;
+  readonly llmSpanId: string;
+  readonly input: string;
+  model: string | undefined;
+  assistantOutput: string;
+  usage: Record<string, number>;
+  totalCostUsd?: number;
   turnId?: TurnId;
   ended: boolean;
+}
+
+interface TrackedProviderTool {
+  readonly span: Tracer.Span;
+  readonly name: string;
+  readonly llmSpanId: string;
+  readonly startedAtNs: bigint;
+  input: string | undefined;
+  output: string | undefined;
+}
+
+interface CompletedProviderTool extends Omit<TrackedProviderTool, "span"> {
+  readonly endedAtNs: bigint;
+  readonly failed: boolean;
 }
 
 export interface ProviderRuntimeTelemetry {
@@ -25,6 +49,7 @@ export interface ProviderRuntimeTelemetry {
     readonly threadId: ThreadId;
     readonly provider: ProviderDriverKind;
     readonly model?: string;
+    readonly input?: string;
   }) => Effect.Effect<TrackedProviderTurn>;
   readonly bindTurn: (turn: TrackedProviderTurn, turnId: TurnId) => Effect.Effect<void>;
   readonly failTurn: (turn: TrackedProviderTurn, error: unknown) => Effect.Effect<void>;
@@ -34,7 +59,10 @@ export interface ProviderRuntimeTelemetry {
 const turnKey = (threadId: ThreadId, turnId: TurnId) => `${threadId}:${turnId}`;
 
 function toolName(
-  event: Extract<ProviderRuntimeEvent, { type: "item.started" | "item.completed" }>,
+  event: Extract<
+    ProviderRuntimeEvent,
+    { type: "item.started" | "item.updated" | "item.completed" }
+  >,
 ) {
   return event.payload.title?.trim() || event.payload.itemType.replaceAll("_", " ");
 }
@@ -63,6 +91,169 @@ function usageAttributes(
 
 const errorMessage = (error: unknown) => (error instanceof Error ? error.message : String(error));
 
+const MAX_CONTENT_CHARS = 32_000;
+const SENSITIVE_KEY = /(?:authorization|cookie|credential|password|secret|token|api[-_]?key)/i;
+
+export function redactTelemetryText(value: string): string {
+  return value
+    .replace(/\bBearer\s+[A-Za-z0-9._~+/-]+/gi, "Bearer [REDACTED]")
+    .replace(/\b(?:sk|xox[baprs]|gh[opsu])[-_][A-Za-z0-9_-]{8,}\b/g, "[REDACTED]")
+    .replace(
+      /\b(api[-_]?key|authorization|cookie|password|secret|token)\s*[:=]\s*([^\s,;}]+)/gi,
+      "$1=[REDACTED]",
+    )
+    .slice(0, MAX_CONTENT_CHARS);
+}
+
+function redactTelemetryValue(value: unknown, depth = 0): unknown {
+  if (depth > 6) return "[TRUNCATED]";
+  if (typeof value === "string") return redactTelemetryText(value);
+  if (typeof value !== "object" || value === null) return value;
+  if (Array.isArray(value)) {
+    return value.slice(0, 100).map((entry) => redactTelemetryValue(entry, depth + 1));
+  }
+  return Object.fromEntries(
+    Object.entries(value as Record<string, unknown>)
+      .slice(0, 100)
+      .map(([key, entry]) => [
+        key,
+        SENSITIVE_KEY.test(key) ? "[REDACTED]" : redactTelemetryValue(entry, depth + 1),
+      ]),
+  );
+}
+
+export function serializeTelemetryValue(value: unknown): string {
+  if (typeof value === "string") return redactTelemetryText(value);
+  try {
+    return JSON.stringify(redactTelemetryValue(value)).slice(0, MAX_CONTENT_CHARS);
+  } catch {
+    return redactTelemetryText(String(value));
+  }
+}
+
+function lifecycleInput(data: unknown, detail?: string): string | undefined {
+  if (data && typeof data === "object") {
+    const record = data as Record<string, unknown>;
+    const item =
+      record.item && typeof record.item === "object"
+        ? (record.item as Record<string, unknown>)
+        : undefined;
+    const value = record.input ?? record.arguments ?? item?.arguments ?? item?.command;
+    if (value !== undefined) return serializeTelemetryValue(value);
+  }
+  return detail ? serializeTelemetryValue(detail) : undefined;
+}
+
+function lifecycleOutput(data: unknown): string | undefined {
+  if (!data || typeof data !== "object") return undefined;
+  const record = data as Record<string, unknown>;
+  const item =
+    record.item && typeof record.item === "object"
+      ? (record.item as Record<string, unknown>)
+      : undefined;
+  const value = record.result ?? record.output ?? item?.result ?? item?.output;
+  return value === undefined ? undefined : serializeTelemetryValue(value);
+}
+
+const randomId = (bytes: number) => NodeCrypto.randomBytes(bytes).toString("hex");
+
+function datadogApiOrigin(site: string): string {
+  return `https://api.${site}`;
+}
+
+// @effect-diagnostics globalFetch:off - This optional exporter targets Datadog's agentless HTTP intake.
+async function submitDatadogAgentTrace(
+  turn: TrackedProviderTurn,
+  endedAtNs: bigint,
+  failed: boolean,
+): Promise<void> {
+  const apiKey = process.env.DD_API_KEY?.trim();
+  if (!apiKey) return;
+  const site = process.env.DD_SITE?.trim() || "datadoghq.com";
+  const mlApp = process.env.DD_LLMOBS_ML_APP?.trim() || "compadre-t3-experiment";
+  const service = process.env.DD_SERVICE?.trim() || "compadre-t3-worker";
+  const provider = turn.provider === "codex" ? "openai" : "anthropic";
+  const sessionId = process.env.COMPADRE_CANONICAL_THREAD_ID?.trim() || turn.threadId;
+  const status = failed ? "error" : "ok";
+  const commonMeta = {
+    model_name: turn.model,
+    model_provider: provider,
+    metadata: {
+      provider: turn.provider,
+      thread_id: turn.threadId,
+      turn_id: turn.turnId,
+      apm_trace_id: turn.span.traceId,
+      apm_span_id: turn.span.spanId,
+    },
+  };
+  const spans = [
+    {
+      parent_id: "undefined",
+      trace_id: turn.llmTraceId,
+      span_id: turn.llmSpanId,
+      name: "t3.provider.turn",
+      meta: {
+        kind: "agent",
+        input: { value: turn.input },
+        output: { value: turn.assistantOutput },
+        ...commonMeta,
+      },
+      metrics: {
+        ...(turn.usage["gen_ai.usage.input_tokens"] !== undefined
+          ? { input_tokens: turn.usage["gen_ai.usage.input_tokens"] }
+          : {}),
+        ...(turn.usage["gen_ai.usage.output_tokens"] !== undefined
+          ? { output_tokens: turn.usage["gen_ai.usage.output_tokens"] }
+          : {}),
+        ...(turn.usage["gen_ai.usage.total_tokens"] !== undefined
+          ? { total_tokens: turn.usage["gen_ai.usage.total_tokens"] }
+          : {}),
+        ...(turn.totalCostUsd !== undefined ? { total_cost: turn.totalCostUsd } : {}),
+      },
+      status,
+      start_ns: Number(turn.startedAtNs),
+      duration: Number(endedAtNs - turn.startedAtNs),
+    },
+    ...turn.completedTools.map((tool) => ({
+      parent_id: turn.llmSpanId,
+      trace_id: turn.llmTraceId,
+      span_id: tool.llmSpanId,
+      name: tool.name,
+      meta: {
+        kind: "tool",
+        input: { value: tool.input ?? "" },
+        output: { value: tool.output ?? "" },
+        metadata: { tool_name: tool.name },
+      },
+      status: tool.failed ? "error" : "ok",
+      start_ns: Number(tool.startedAtNs),
+      duration: Number(tool.endedAtNs - tool.startedAtNs),
+    })),
+  ];
+  const response = await fetch(`${datadogApiOrigin(site)}/api/intake/llm-obs/v1/trace/spans`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "DD-API-KEY": apiKey },
+    body: JSON.stringify({
+      data: {
+        type: "span",
+        attributes: {
+          ml_app: mlApp,
+          session_id: sessionId,
+          tags: [
+            `service:${service}`,
+            `env:${process.env.DD_ENV?.trim() || "development"}`,
+            `provider:${turn.provider}`,
+          ],
+          spans,
+        },
+      },
+    }),
+  });
+  if (!response.ok) {
+    throw new Error(`Datadog Agent Observability intake returned ${response.status}`);
+  }
+}
+
 export const makeProviderRuntimeTelemetry = Effect.fn("makeProviderRuntimeTelemetry")(
   function* (): Effect.fn.Return<ProviderRuntimeTelemetry> {
     const pendingByThread = new Map<ThreadId, TrackedProviderTurn>();
@@ -73,13 +264,30 @@ export const makeProviderRuntimeTelemetry = Effect.fn("makeProviderRuntimeTeleme
       turn: TrackedProviderTurn,
       itemId: string,
       failed: boolean,
+      payload?: {
+        readonly detail?: string | undefined;
+        readonly data?: unknown;
+      },
     ) {
-      const span = turn.tools.get(itemId);
-      if (!span) return;
+      const tool = turn.tools.get(itemId);
+      if (!tool) return;
       turn.tools.delete(itemId);
-      span.attribute("tool.outcome", failed ? "error" : "success");
+      tool.input ??= lifecycleInput(payload?.data, payload?.detail);
+      tool.output ??= lifecycleOutput(payload?.data);
+      if (tool.input !== undefined) tool.span.attribute("gen_ai.tool.call.arguments", tool.input);
+      if (tool.output !== undefined) tool.span.attribute("gen_ai.tool.call.result", tool.output);
+      tool.span.attribute("tool.outcome", failed ? "error" : "success");
       const endedAt = yield* Clock.currentTimeNanos;
-      span.end(endedAt, failed ? Exit.fail("Provider tool failed") : Exit.succeed(undefined));
+      tool.span.end(endedAt, failed ? Exit.fail("Provider tool failed") : Exit.succeed(undefined));
+      turn.completedTools.push({
+        name: tool.name,
+        llmSpanId: tool.llmSpanId,
+        startedAtNs: tool.startedAtNs,
+        input: tool.input,
+        output: tool.output,
+        endedAtNs: endedAt,
+        failed,
+      });
     });
 
     const finishTurn = Effect.fn("ProviderRuntimeTelemetry.finishTurn")(function* (
@@ -94,7 +302,25 @@ export const makeProviderRuntimeTelemetry = Effect.fn("makeProviderRuntimeTeleme
       pendingByThread.delete(turn.threadId);
       activeByThread.delete(turn.threadId);
       if (turn.turnId) activeByTurn.delete(turnKey(turn.threadId, turn.turnId));
-      turn.span.end(yield* Clock.currentTimeNanos, exit);
+      turn.span.attribute(
+        "gen_ai.output.messages",
+        // @effect-diagnostics-next-line preferSchemaOverJson:off - OTel defines this attribute as JSON text.
+        JSON.stringify([
+          { role: "assistant", parts: [{ type: "text", content: turn.assistantOutput }] },
+        ]),
+      );
+      const endedAt = yield* Clock.currentTimeNanos;
+      turn.span.end(endedAt, exit);
+      yield* Effect.promise(() =>
+        submitDatadogAgentTrace(turn, endedAt, Exit.isFailure(exit)),
+      ).pipe(
+        Effect.catchCause((cause) =>
+          Effect.logWarning("provider-runtime-telemetry.datadog-export-failed", {
+            cause: String(cause),
+            threadId: turn.threadId,
+          }),
+        ),
+      );
       yield* Effect.logInfo("provider-runtime-telemetry.turn-finished", {
         provider: turn.provider,
         threadId: turn.threadId,
@@ -107,6 +333,8 @@ export const makeProviderRuntimeTelemetry = Effect.fn("makeProviderRuntimeTeleme
       "ProviderRuntimeTelemetry.beginTurn",
     )(function* (input) {
       const modelProvider = input.provider === "codex" ? "openai" : "anthropic";
+      const startedAtNs = yield* Clock.currentTimeNanos;
+      const prompt = redactTelemetryText(input.input ?? "");
       // Provider dispatch RPCs intentionally disable the general-purpose
       // tracer to avoid recording very chatty protocol traffic. This span is
       // the low-volume semantic boundary we do want, so opt it back in even
@@ -125,6 +353,11 @@ export const makeProviderRuntimeTelemetry = Effect.fn("makeProviderRuntimeTeleme
             process.env.COMPADRE_CANONICAL_THREAD_ID?.trim() || input.threadId,
           "gen_ai.provider.name": modelProvider,
           "gen_ai.system": modelProvider,
+          dd_llmobs_enabled: false,
+          // @effect-diagnostics-next-line preferSchemaOverJson:off - OTel defines this attribute as JSON text.
+          "gen_ai.input.messages": JSON.stringify([
+            { role: "user", parts: [{ type: "text", content: prompt }] },
+          ]),
           ...(input.model ? { "gen_ai.request.model": input.model } : {}),
           ...(process.env.COMPADRE_CANONICAL_THREAD_ID
             ? { "compadre.canonical_thread_id": process.env.COMPADRE_CANONICAL_THREAD_ID }
@@ -136,6 +369,14 @@ export const makeProviderRuntimeTelemetry = Effect.fn("makeProviderRuntimeTeleme
         provider: input.provider,
         span,
         tools: new Map(),
+        completedTools: [],
+        startedAtNs,
+        llmTraceId: randomId(16),
+        llmSpanId: randomId(8),
+        input: prompt,
+        model: input.model,
+        assistantOutput: "",
+        usage: {},
         ended: false,
       };
       pendingByThread.set(input.threadId, tracked);
@@ -184,12 +425,15 @@ export const makeProviderRuntimeTelemetry = Effect.fn("makeProviderRuntimeTeleme
       switch (event.type) {
         case "turn.started": {
           if (event.payload.model) {
+            turn.model = event.payload.model;
             turn.span.attribute("gen_ai.response.model", event.payload.model);
           }
           break;
         }
         case "thread.token-usage.updated": {
-          for (const [key, value] of Object.entries(usageAttributes(event.payload.usage))) {
+          const usage = usageAttributes(event.payload.usage);
+          Object.assign(turn.usage, usage);
+          for (const [key, value] of Object.entries(usage)) {
             turn.span.attribute(key, value);
           }
           break;
@@ -197,6 +441,7 @@ export const makeProviderRuntimeTelemetry = Effect.fn("makeProviderRuntimeTeleme
         case "item.started": {
           if (!event.itemId || !isToolLifecycleItemType(event.payload.itemType)) break;
           const name = toolName(event);
+          const startedAtNs = yield* Clock.currentTimeNanos;
           const span = yield* Effect.makeSpan(`execute_tool ${name}`, {
             parent: turn.span,
             kind: "internal",
@@ -214,17 +459,47 @@ export const makeProviderRuntimeTelemetry = Effect.fn("makeProviderRuntimeTeleme
               "provider.item_type": event.payload.itemType,
             },
           }).pipe(Effect.provideService(References.TracerEnabled, true));
-          turn.tools.set(event.itemId, span);
+          const input = lifecycleInput(event.payload.data, event.payload.detail);
+          if (input !== undefined) span.attribute("gen_ai.tool.call.arguments", input);
+          turn.tools.set(event.itemId, {
+            span,
+            name,
+            llmSpanId: randomId(8),
+            startedAtNs,
+            input,
+            output: undefined,
+          });
+          break;
+        }
+        case "item.updated": {
+          if (!event.itemId || !isToolLifecycleItemType(event.payload.itemType)) break;
+          const tool = turn.tools.get(event.itemId);
+          if (!tool) break;
+          tool.input = lifecycleInput(event.payload.data, event.payload.detail) ?? tool.input;
+          tool.output = lifecycleOutput(event.payload.data) ?? tool.output;
+          if (tool.input !== undefined) {
+            tool.span.attribute("gen_ai.tool.call.arguments", tool.input);
+          }
+          if (tool.output !== undefined) {
+            tool.span.attribute("gen_ai.tool.call.result", tool.output);
+          }
           break;
         }
         case "item.completed": {
           if (!event.itemId || !isToolLifecycleItemType(event.payload.itemType)) break;
           const failed = event.payload.status === "declined";
-          yield* finishTool(turn, event.itemId, failed);
+          yield* finishTool(turn, event.itemId, failed, event.payload);
+          break;
+        }
+        case "content.delta": {
+          if (event.payload.streamKind === "assistant_text") {
+            turn.assistantOutput = redactTelemetryText(turn.assistantOutput + event.payload.delta);
+          }
           break;
         }
         case "turn.completed": {
           if (event.payload.totalCostUsd !== undefined) {
+            turn.totalCostUsd = event.payload.totalCostUsd;
             turn.span.attribute("gen_ai.cost.estimated_total", event.payload.totalCostUsd);
             turn.span.attribute("cost.total_usd", event.payload.totalCostUsd);
           }
