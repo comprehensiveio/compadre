@@ -67,8 +67,9 @@ changing event ownership. The remaining production-hardening work is:
 - Usage and cost events.
 - Approvals and user-input requests.
 - Workspace diffs, checkpoints, attachments, and shell lifecycle.
-- Persisted worker dispatch metadata and controller-restart takeover.
-- Epoch fencing of both the event log and terminal run record.
+- Deferred: persisted worker dispatch metadata and controller-restart takeover.
+- Deferred with takeover: epoch fencing of both the event log and terminal run
+  record.
 
 The HTTP seam negotiates `X-Compadre-T3-Protocol-Version: 1`. Postgres assigns
 ordered event offsets and enforces one append sequence per run. A distributed
@@ -76,6 +77,15 @@ per-run advisory lock prevents concurrent producers while the controller is
 alive. It is not yet a complete takeover implementation: after a controller
 process dies, a new process can replay the stored prefix but cannot reconstruct
 and continue the worker snapshot projection yet.
+
+This is an accepted reliability tradeoff for the current internal deployment,
+not an immediate roadmap item. A controller restart during an active run may
+leave that run incomplete, but completed events remain durable and replayable.
+Revisit takeover when observed orphaned runs make it operationally worthwhile,
+when controller deploy frequency materially increases, or before running more
+than one controller instance. Until then, prefer clear failure recovery and a
+manual retry over the substantially more complex lease, reattachment, and
+fencing protocol.
 
 ## Usage
 
