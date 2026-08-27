@@ -316,7 +316,7 @@ it.layer(BaseTestLayer)("OrchestrationProjectionPipeline", (it) => {
 it.layer(Layer.fresh(makeProjectionPipelinePrefixedTestLayer("t3-base-")))(
   "OrchestrationProjectionPipeline",
   (it) => {
-    it.effect("stores message attachment references without mutating payloads", () =>
+    it.effect("stores message attachments and sender attribution without mutating payloads", () =>
       Effect.gen(function* () {
         const projectionPipeline = yield* OrchestrationProjectionPipeline;
         const eventStore = yield* OrchestrationEventStore;
@@ -347,6 +347,17 @@ it.layer(Layer.fresh(makeProjectionPipelinePrefixedTestLayer("t3-base-")))(
                 sizeBytes: 5,
               },
             ],
+            attribution: {
+              userId: "user-1",
+              displayName: "Isaac Sherrill",
+              origin: "slack",
+              slack: {
+                workspaceId: "T123",
+                userId: "U123",
+                channelId: "C123",
+                messageTs: "123.456",
+              },
+            },
             turnId: null,
             streaming: false,
             createdAt: now,
@@ -358,9 +369,11 @@ it.layer(Layer.fresh(makeProjectionPipelinePrefixedTestLayer("t3-base-")))(
 
         const rows = yield* sql<{
           readonly attachmentsJson: string | null;
+          readonly attributionJson: string | null;
         }>`
             SELECT
-              attachments_json AS "attachmentsJson"
+              attachments_json AS "attachmentsJson",
+              attribution_json AS "attributionJson"
             FROM projection_thread_messages
             WHERE message_id = 'message-attachments'
           `;
@@ -375,6 +388,18 @@ it.layer(Layer.fresh(makeProjectionPipelinePrefixedTestLayer("t3-base-")))(
             sizeBytes: 5,
           },
         ]);
+        // @effect-diagnostics-next-line preferSchemaOverJson:off
+        assert.deepEqual(JSON.parse(rows[0]?.attributionJson ?? "null"), {
+          userId: "user-1",
+          displayName: "Isaac Sherrill",
+          origin: "slack",
+          slack: {
+            workspaceId: "T123",
+            userId: "U123",
+            channelId: "C123",
+            messageTs: "123.456",
+          },
+        });
       }),
     );
   },

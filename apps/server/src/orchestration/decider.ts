@@ -970,6 +970,9 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           role: "user",
           text: command.message.text,
           attachments: command.message.attachments,
+          ...(command.message.attribution !== undefined
+            ? { attribution: command.message.attribution }
+            : {}),
           turnId: null,
           streaming: false,
           createdAt: command.createdAt,

@@ -264,11 +264,31 @@ export type OrchestrationProject = typeof OrchestrationProject.Type;
 export const OrchestrationMessageRole = Schema.Literals(["user", "assistant", "system"]);
 export type OrchestrationMessageRole = typeof OrchestrationMessageRole.Type;
 
+export const MessageOrigin = Schema.Literals(["web", "slack", "api"]);
+export type MessageOrigin = typeof MessageOrigin.Type;
+
+export const MessageAttribution = Schema.Struct({
+  userId: TrimmedNonEmptyString,
+  displayName: TrimmedNonEmptyString,
+  avatarUrl: Schema.optional(TrimmedNonEmptyString),
+  origin: MessageOrigin,
+  slack: Schema.optional(
+    Schema.Struct({
+      workspaceId: TrimmedNonEmptyString,
+      userId: TrimmedNonEmptyString,
+      channelId: TrimmedNonEmptyString,
+      messageTs: TrimmedNonEmptyString,
+    }),
+  ),
+});
+export type MessageAttribution = typeof MessageAttribution.Type;
+
 export const OrchestrationMessage = Schema.Struct({
   id: MessageId,
   role: OrchestrationMessageRole,
   text: Schema.String,
   attachments: Schema.optional(Schema.Array(ChatAttachment)),
+  attribution: Schema.optional(MessageAttribution),
   turnId: Schema.NullOr(TurnId),
   streaming: Schema.Boolean,
   createdAt: IsoDateTime,
@@ -855,6 +875,7 @@ export const ThreadTurnStartCommand = Schema.Struct({
     text: Schema.String,
     providerPrompt: Schema.optional(Schema.String),
     attachments: Schema.Array(ChatAttachment),
+    attribution: Schema.optional(MessageAttribution),
   }),
   modelSelection: Schema.optional(ModelSelection),
   titleSeed: Schema.optional(TrimmedNonEmptyString),
@@ -877,6 +898,7 @@ const ClientThreadTurnStartCommand = Schema.Struct({
     text: Schema.String,
     providerPrompt: Schema.optional(Schema.String),
     attachments: Schema.Array(Schema.Union([UploadChatAttachment, ChatAttachment])),
+    attribution: Schema.optional(MessageAttribution),
   }),
   modelSelection: Schema.optional(ModelSelection),
   titleSeed: Schema.optional(TrimmedNonEmptyString),
@@ -1264,6 +1286,7 @@ export const ThreadMessageSentPayload = Schema.Struct({
   role: OrchestrationMessageRole,
   text: Schema.String,
   attachments: Schema.optional(Schema.Array(ChatAttachment)),
+  attribution: Schema.optional(MessageAttribution),
   turnId: Schema.NullOr(TurnId),
   streaming: Schema.Boolean,
   createdAt: IsoDateTime,

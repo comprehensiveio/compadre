@@ -1067,8 +1067,28 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
           markdownCwd={ctx.markdownCwd}
         />
       </div>
-      <div className="flex w-full max-w-[80%] items-center justify-end pe-1 text-xs tabular-nums opacity-0 transition-opacity duration-200 focus-within:opacity-100 group-hover:opacity-100">
-        <div className="flex shrink-0 items-center gap-2">
+      <div className="flex w-full max-w-[80%] items-center justify-between gap-3 pe-1 text-xs tabular-nums">
+        {row.message.attribution ? (
+          <div className="flex min-w-0 items-center gap-1.5 text-muted-foreground">
+            {row.message.attribution.avatarUrl ? (
+              <img
+                src={row.message.attribution.avatarUrl}
+                alt=""
+                className="size-4 shrink-0 rounded-full"
+              />
+            ) : null}
+            <span className="truncate">{row.message.attribution.displayName}</span>
+            {row.message.attribution.origin === "slack" ? (
+              <span className="flex shrink-0 items-center gap-1 text-secondary-label">
+                <MessageCircleIcon className="size-3" />
+                via Slack
+              </span>
+            ) : null}
+          </div>
+        ) : (
+          <span />
+        )}
+        <div className="flex shrink-0 items-center gap-2 opacity-0 transition-opacity duration-200 focus-within:opacity-100 group-hover:opacity-100">
           <Tooltip>
             <TooltipTrigger render={<p className="text-muted-foreground text-xs tabular-nums" />}>
               {formatDayAwareTimestamp(row.message.createdAt, ctx.timestampFormat)}

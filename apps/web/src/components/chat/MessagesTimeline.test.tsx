@@ -237,6 +237,39 @@ function buildAssistantTimelineEntry(text: string) {
 }
 
 describe("MessagesTimeline", () => {
+  it("shows who sent an attributed Slack message", () => {
+    const entry = buildUserTimelineEntry("Please check the deploy.");
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        timelineEntries={[
+          {
+            ...entry,
+            message: {
+              ...entry.message,
+              attribution: {
+                userId: "user-1",
+                displayName: "Isaac Sherrill",
+                avatarUrl: "https://example.com/isaac.png",
+                origin: "slack" as const,
+                slack: {
+                  workspaceId: "T123",
+                  userId: "U123",
+                  channelId: "C123",
+                  messageTs: "123.456",
+                },
+              },
+            },
+          },
+        ]}
+      />,
+    );
+
+    expect(markup).toContain("Isaac Sherrill");
+    expect(markup).toContain("via Slack");
+    expect(markup).toContain("https://example.com/isaac.png");
+  });
+
   it("renders a feedback command and its pending response as normal thread messages", () => {
     const submission = {
       id: MessageId.make("feedback-command"),
