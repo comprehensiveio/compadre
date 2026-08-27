@@ -16,4 +16,9 @@ test("keeps Slack delivery context out of the provider-neutral transcript", () =
   assert.match(input.prompt, /Thread context/);
   assert.match(input.prompt, /earlier answer/);
   assert.match(input.prompt, /slack_thread_url/);
+  assert.match(
+    input.prompt,
+    /automatically streamed back to this Slack thread/,
+  );
+  assert.match(input.prompt, /Do not use a Slack tool to duplicate/);
 });
