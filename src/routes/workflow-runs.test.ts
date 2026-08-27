@@ -17,7 +17,10 @@ const modelSelection: T3ModelSelection = {
   model: "gpt-5.6-sol",
 };
 
-function centralClient(): CentralT3ConversationClient & {
+function centralClient(options: {
+  hold?: boolean;
+  onInterrupt?(): void;
+} = {}): CentralT3ConversationClient & {
   interruptTurn(input: { threadId: string }): Promise<number>;
 } {
   let dispatch: T3TurnDispatch | undefined;
@@ -61,6 +64,14 @@ function centralClient(): CentralT3ConversationClient & {
     },
     async waitForTurnTerminal(request) {
       assert.ok(dispatch);
+      if (options.hold) {
+        await new Promise<void>((resolve) => {
+          request.signal?.addEventListener("abort", () => resolve(), {
+            once: true,
+          });
+        });
+        throw request.signal?.reason ?? new Error("aborted");
+      }
       const snapshot: T3ThreadSnapshot = {
         snapshotSequence: 3,
         thread: {
@@ -104,6 +115,7 @@ function centralClient(): CentralT3ConversationClient & {
       return snapshot;
     },
     async interruptTurn() {
+      options.onInterrupt?.();
       return 1;
     },
   };
@@ -209,5 +221,61 @@ test("rejects legacy workflow attachments instead of silently dropping them", as
     });
     assert.equal(response.status, 409);
     assert.match(await response.text(), /attachments are not supported/);
+  });
+});
+
+test("preserves the legacy cancelling response while interrupting central T3", async (t) => {
+  await withApiKey(async () => {
+    const durability = await createAgentRunDurability({
+      COMPADRE_DURABILITY_BACKEND: "memory",
+    });
+    assert.ok(durability);
+    t.after(() => durability.close());
+    const coordinator = new NativeT3RunCoordinator(durability);
+    let interrupts = 0;
+    const app = new Hono();
+    app.route(
+      "/",
+      createWorkflowRunRoutes({
+        enabled: () => true,
+        getClient: () =>
+          centralClient({
+            hold: true,
+            onInterrupt() {
+              interrupts += 1;
+            },
+          }),
+        getRunCoordinator: async () => coordinator,
+        createId: () => "cancel-route-run",
+      }),
+    );
+    const started = await app.request("/workflow-runs", {
+      method: "POST",
+      headers: {
+        Authorization: "Bearer test-key",
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ prompt: "wait" }),
+    });
+    assert.equal(started.status, 202);
+    await new Promise<void>((resolve) => setImmediate(resolve));
+
+    const cancelled = await app.request(
+      "/workflow-runs/cancel-route-run/cancel",
+      {
+        method: "POST",
+        headers: { Authorization: "Bearer test-key" },
+      },
+    );
+    assert.equal(cancelled.status, 202);
+    assert.deepEqual(await cancelled.json(), {
+      ok: true,
+      found: true,
+      requested: true,
+      local: true,
+      cancelled: true,
+      status: "cancelling",
+    });
+    assert.equal(interrupts, 1);
   });
 });

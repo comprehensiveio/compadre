@@ -146,9 +146,9 @@ export function createWorkflowRunRoutes(
     return c.json(
       {
         ok: true,
+        ...result,
         cancelled: result.requested,
         status: result.requested ? "cancelling" : result.status,
-        ...result,
       },
       result.requested ? 202 : 200,
     );
