@@ -353,7 +353,7 @@ describe("applyThreadDetailEvent", () => {
   });
 
   describe("thread.message-sent", () => {
-    it("appends a new message", () => {
+    it("appends a new message with its sender attribution", () => {
       const result = applyThreadDetailEvent(baseThread, {
         ...baseEventFields,
         sequence: 6,
@@ -366,6 +366,12 @@ describe("applyThreadDetailEvent", () => {
           messageId: MessageId.make("msg-1"),
           role: "user",
           text: "Hello, world!",
+          attribution: {
+            userId: "user-sam",
+            displayName: "Sam Miles",
+            avatarUrl: "https://example.com/sam.png",
+            origin: "web",
+          },
           turnId: null,
           streaming: false,
           createdAt: "2026-04-01T06:00:00.000Z",
@@ -377,6 +383,62 @@ describe("applyThreadDetailEvent", () => {
       if (result.kind === "updated") {
         expect(result.thread.messages).toHaveLength(1);
         expect(result.thread.messages[0]?.text).toBe("Hello, world!");
+        expect(result.thread.messages[0]?.attribution).toEqual({
+          userId: "user-sam",
+          displayName: "Sam Miles",
+          avatarUrl: "https://example.com/sam.png",
+          origin: "web",
+        });
+      }
+    });
+
+    it("adds attribution when a message event updates an existing message", () => {
+      const threadWithMessage: OrchestrationThread = {
+        ...baseThread,
+        messages: [
+          {
+            id: MessageId.make("msg-attributed"),
+            role: "user",
+            text: "Hello",
+            turnId: null,
+            streaming: false,
+            createdAt: "2026-04-01T06:00:00.000Z",
+            updatedAt: "2026-04-01T06:00:00.000Z",
+          },
+        ],
+      };
+
+      const result = applyThreadDetailEvent(threadWithMessage, {
+        ...baseEventFields,
+        sequence: 7,
+        occurredAt: "2026-04-01T06:01:00.000Z",
+        aggregateKind: "thread",
+        aggregateId: ThreadId.make("thread-1"),
+        type: "thread.message-sent",
+        payload: {
+          threadId: ThreadId.make("thread-1"),
+          messageId: MessageId.make("msg-attributed"),
+          role: "user",
+          text: "Hello",
+          attribution: {
+            userId: "user-sam",
+            displayName: "Sam Miles",
+            origin: "web",
+          },
+          turnId: null,
+          streaming: false,
+          createdAt: "2026-04-01T06:00:00.000Z",
+          updatedAt: "2026-04-01T06:01:00.000Z",
+        },
+      });
+
+      expect(result.kind).toBe("updated");
+      if (result.kind === "updated") {
+        expect(result.thread.messages[0]?.attribution).toEqual({
+          userId: "user-sam",
+          displayName: "Sam Miles",
+          origin: "web",
+        });
       }
     });
 

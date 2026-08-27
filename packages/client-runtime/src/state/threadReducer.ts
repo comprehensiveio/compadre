@@ -292,6 +292,9 @@ export function applyThreadDetailEvent(
         ...(event.payload.attachments !== undefined
           ? { attachments: event.payload.attachments }
           : {}),
+        ...(event.payload.attribution !== undefined
+          ? { attribution: event.payload.attribution }
+          : {}),
         turnId: event.payload.turnId,
         streaming: event.payload.streaming,
         createdAt: event.payload.createdAt,
@@ -315,6 +318,9 @@ export function applyThreadDetailEvent(
                   ...(message.streaming ? {} : { updatedAt: message.updatedAt }),
                   ...(message.attachments !== undefined
                     ? { attachments: message.attachments }
+                    : {}),
+                  ...(message.attribution !== undefined
+                    ? { attribution: message.attribution }
                     : {}),
                 },
           )
