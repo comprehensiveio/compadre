@@ -13,6 +13,13 @@ import * as Exit from "effect/Exit";
 import * as References from "effect/References";
 import type * as Tracer from "effect/Tracer";
 
+import {
+  LITELLM_RATES_URL,
+  parseRateTable,
+  priceUsage,
+  type RateTable,
+} from "../usage/usagePricing.ts";
+
 export interface TrackedProviderTurn {
   readonly threadId: ThreadId;
   readonly provider: ProviderDriverKind;
@@ -163,6 +170,53 @@ const randomId = (bytes: number) => NodeCrypto.randomBytes(bytes).toString("hex"
 
 function datadogApiOrigin(site: string): string {
   return `https://api.${site}`;
+}
+
+let telemetryRateTablePromise: Promise<RateTable | null> | undefined;
+
+// @effect-diagnostics globalFetch:off - Pricing uses the same public LiteLLM table as UsageService.
+function loadTelemetryRateTable(): Promise<RateTable | null> {
+  telemetryRateTablePromise ??= fetch(LITELLM_RATES_URL, {
+    signal: AbortSignal.timeout(10_000),
+  })
+    .then(async (response) => {
+      if (!response.ok) throw new Error(`LiteLLM pricing returned ${response.status}`);
+      const parsed = parseRateTable(await response.json());
+      return parsed.size > 0 ? parsed : null;
+    })
+    .catch(() => {
+      telemetryRateTablePromise = undefined;
+      return null;
+    });
+  return telemetryRateTablePromise;
+}
+
+export function estimateTurnCostUsd(
+  table: RateTable,
+  model: string | undefined,
+  usage: Readonly<Record<string, number>>,
+): number | null {
+  if (!model) return null;
+  const inputTokens = usage["gen_ai.usage.input_tokens"];
+  const outputTokens = usage["gen_ai.usage.output_tokens"];
+  if (inputTokens === undefined && outputTokens === undefined) return null;
+  const cachedInputTokens = Math.min(
+    inputTokens ?? 0,
+    usage["gen_ai.usage.cache_read.input_tokens"] ?? 0,
+  );
+  const priced = priceUsage(
+    table,
+    model,
+    {
+      uncachedInputTokens: Math.max(0, (inputTokens ?? 0) - cachedInputTokens),
+      cachedInputTokens,
+      cacheCreationTokens: 0,
+      outputTokens: outputTokens ?? 0,
+      reasoningTokens: usage["gen_ai.usage.reasoning_tokens"] ?? 0,
+    },
+    null,
+  );
+  return priced.costSource === "unpriced" ? null : priced.costUsd;
 }
 
 // @effect-diagnostics globalFetch:off - This optional exporter targets Datadog's agentless HTTP intake.
@@ -330,6 +384,18 @@ export const makeProviderRuntimeTelemetry = Effect.fn("makeProviderRuntimeTeleme
           { role: "assistant", parts: [{ type: "text", content: turn.assistantOutput }] },
         ]),
       );
+      if (turn.totalCostUsd === undefined) {
+        const rateTable = yield* Effect.promise(loadTelemetryRateTable);
+        if (rateTable !== null) {
+          const estimatedCostUsd = estimateTurnCostUsd(rateTable, turn.model, turn.usage);
+          if (estimatedCostUsd !== null) {
+            turn.totalCostUsd = estimatedCostUsd;
+            turn.span.attribute("gen_ai.cost.estimated_total", estimatedCostUsd);
+            turn.span.attribute("cost.total_usd", estimatedCostUsd);
+            turn.span.attribute("compadre.cost.source", "model_priced");
+          }
+        }
+      }
       const endedAt = yield* Clock.currentTimeNanos;
       turn.span.end(endedAt, exit);
       yield* Effect.promise(() =>

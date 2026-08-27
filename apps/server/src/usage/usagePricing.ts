@@ -9,6 +9,9 @@
  */
 import type { UsageCostSource, UsageTokenTotals } from "@t3tools/contracts";
 
+export const LITELLM_RATES_URL =
+  "https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json";
+
 /**
  * The subset of a LiteLLM entry we price against. All values are USD per token.
  *

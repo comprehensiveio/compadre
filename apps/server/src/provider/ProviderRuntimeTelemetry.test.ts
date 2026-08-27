@@ -12,7 +12,30 @@ import * as Effect from "effect/Effect";
 import * as References from "effect/References";
 import * as Tracer from "effect/Tracer";
 
-import { makeProviderRuntimeTelemetry } from "./ProviderRuntimeTelemetry.ts";
+import { parseRateTable } from "../usage/usagePricing.ts";
+import { estimateTurnCostUsd, makeProviderRuntimeTelemetry } from "./ProviderRuntimeTelemetry.ts";
+
+it("prices telemetry with the same cached-token semantics as the usage dashboard", () => {
+  const table = parseRateTable({
+    "gpt-5.6-sol": {
+      input_cost_per_token: 0.000004,
+      output_cost_per_token: 0.00002,
+      cache_read_input_token_cost: 0.0000004,
+    },
+  });
+
+  const estimated = estimateTurnCostUsd(table, "gpt-5.6-sol", {
+    "gen_ai.usage.input_tokens": 29_230,
+    "gen_ai.usage.cache_read.input_tokens": 24_320,
+    "gen_ai.usage.output_tokens": 9,
+    "gen_ai.usage.reasoning_tokens": 0,
+  });
+  assert.ok(estimated !== null && Math.abs(estimated - 0.029548) < 1e-12);
+  assert.equal(
+    estimateTurnCostUsd(table, "unknown-model", { "gen_ai.usage.input_tokens": 1 }),
+    null,
+  );
+});
 
 it.effect("records one provider turn with model, usage, cost, and named tool spans", () => {
   const endedSpans: Array<Tracer.NativeSpan> = [];
@@ -174,6 +197,7 @@ it.effect("records one provider turn with model, usage, cost, and named tool spa
           ml_app: string;
           spans: Array<{
             meta: unknown;
+            metrics?: { total_cost?: number };
             trace_id: string;
             _dd?: { apm_trace_id?: string };
           }>;
@@ -183,6 +207,7 @@ it.effect("records one provider turn with model, usage, cost, and named tool spa
     assert.equal(payload.data.attributes.ml_app, "compadre-t3-experiment");
     assert.equal(payload.data.attributes.spans[0]?.trace_id, providerSpan.traceId);
     assert.equal(payload.data.attributes.spans[0]?._dd?.apm_trace_id, providerSpan.traceId);
+    assert.equal(payload.data.attributes.spans[0]?.metrics?.total_cost, 0.042);
     assert.match(JSON.stringify(payload), /Deployment completed\./);
     assert.match(JSON.stringify(payload), /user_id:user-1/);
     assert.equal(/super-secret-value|tool-secret/.test(JSON.stringify(payload)), false);
