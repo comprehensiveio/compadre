@@ -1646,19 +1646,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
               {/* Always the branch. The plan step used to take this slot while
                   working, but it truncated to a half-sentence and dropped the
                   branch, so the row lost its most stable identifier. */}
-              {COMPADRE_AUTH_ENABLED && thread.externalThread ? (
-                <a
-                  href={thread.externalThread.url}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  onPointerDown={(event) => event.stopPropagation()}
-                  onClick={(event) => event.stopPropagation()}
-                  className="inline-flex min-w-0 flex-1 items-center gap-1 truncate hover:text-foreground hover:underline"
-                >
-                  <MessageSquareIcon className="size-3 shrink-0" />
-                  <span className="truncate">Slack thread</span>
-                </a>
-              ) : !COMPADRE_AUTH_ENABLED && thread.branch ? (
+              {!COMPADRE_AUTH_ENABLED && thread.branch ? (
                 <>
                   <ThreadWorktreeIndicator thread={thread} />
                   <span className="min-w-0 flex-1 truncate whitespace-nowrap">{thread.branch}</span>
@@ -1676,7 +1664,10 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
               ) : null}
               <span
                 aria-hidden
-                className="pointer-events-none ml-auto inline-flex shrink-0 items-center gap-1"
+                className={cn(
+                  "pointer-events-none inline-flex shrink-0 items-center gap-1",
+                  !COMPADRE_AUTH_ENABLED && "ml-auto",
+                )}
               >
                 {isRemote ? (
                   <span className="inline-flex shrink-0 items-center text-sidebar-muted-foreground/70">
@@ -1701,6 +1692,18 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
                   </span>
                 ) : null}
               </span>
+              {COMPADRE_AUTH_ENABLED && thread.externalThread ? (
+                <a
+                  href={thread.externalThread.url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  onPointerDown={(event) => event.stopPropagation()}
+                  onClick={(event) => event.stopPropagation()}
+                  className="ml-auto shrink-0 hover:text-foreground hover:underline"
+                >
+                  Slack thread
+                </a>
+              ) : null}
             </div>
           </div>
           {props.jumpLabel ? <JumpHintBadge label={props.jumpLabel} /> : null}

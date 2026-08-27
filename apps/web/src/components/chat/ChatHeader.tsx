@@ -11,7 +11,7 @@ import {
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 import type { ChangeRequestSettleSource } from "@t3tools/client-runtime/state/thread-settled";
-import { ChevronDownIcon } from "lucide-react";
+import { ChevronDownIcon, MessageSquareIcon } from "lucide-react";
 import {
   memo,
   useCallback,
@@ -52,6 +52,7 @@ interface ChatHeaderProps {
   activeThreadId: ThreadId;
   draftId?: DraftId;
   activeThreadTitle: string;
+  externalThreadUrl: string | null;
   /** Drafts have no server thread yet, so the title carries no action menu. */
   isServerThread: boolean;
   /** PR feeding the settled classification, resolved by ChatView. */
@@ -123,6 +124,7 @@ export const ChatHeader = memo(function ChatHeader({
   activeThreadId,
   draftId,
   activeThreadTitle,
+  externalThreadUrl,
   isServerThread,
   changeRequest,
   activeProjectName,
@@ -374,6 +376,21 @@ export const ChatHeader = memo(function ChatHeader({
           )}
         </WorkspaceBreadcrumbItem>
       </WorkspaceBreadcrumb>
+      {COMPADRE_AUTH_ENABLED && externalThreadUrl ? (
+        <a
+          data-chat-header-actions
+          href={externalThreadUrl}
+          target="_blank"
+          rel="noopener noreferrer"
+          className={cn(
+            "inline-flex shrink-0 items-center gap-1.5 rounded-md border border-border bg-secondary/50 px-2.5 py-1 text-xs font-medium text-secondary-foreground transition-colors hover:bg-secondary focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring",
+            !rightPanelOpen && "mr-16",
+          )}
+        >
+          <MessageSquareIcon aria-hidden className="size-3.5" />
+          Open in Slack
+        </a>
+      ) : null}
       <div
         data-chat-header-actions
         data-compadre-hidden-control
