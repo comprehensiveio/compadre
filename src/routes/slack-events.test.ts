@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   isSupportedUserMessage,
+  resolveSlackBotUserId,
+  stripSlackBotMention,
   type SlackEvent,
 } from "./slack-events.js";
 
@@ -30,6 +32,13 @@ test("accepts an ordinary user message", () => {
   assert.equal(isSupportedUserMessage(message()), true);
 });
 
+test("accepts Slack app_mention events", () => {
+  assert.equal(
+    isSupportedUserMessage(message({ type: "app_mention", subtype: undefined })),
+    true,
+  );
+});
+
 test("rejects bot and non-user message subtypes", () => {
   assert.equal(isSupportedUserMessage(message({ bot_id: "B123" })), false);
   assert.equal(
@@ -39,5 +48,34 @@ test("rejects bot and non-user message subtypes", () => {
   assert.equal(
     isSupportedUserMessage(message({ subtype: "channel_join" })),
     false,
+  );
+});
+
+test("resolves the bot user id from configuration, event authorization, or mention", () => {
+  assert.equal(
+    resolveSlackBotUserId({
+      configured: "UCONFIGURED",
+      authorizations: [{ user_id: "UAUTHORIZED", is_bot: true }],
+    }),
+    "UCONFIGURED",
+  );
+  assert.equal(
+    resolveSlackBotUserId({
+      authorizations: [{ user_id: "UAUTHORIZED", is_bot: true }],
+    }),
+    "UAUTHORIZED",
+  );
+  assert.equal(
+    resolveSlackBotUserId({
+      event: message({ type: "app_mention", text: "<@UMENTIONED> hello" }),
+    }),
+    "UMENTIONED",
+  );
+});
+
+test("strips only this installation's bot mention", () => {
+  assert.equal(
+    stripSlackBotMention("<@UNEWBOT> hello <@UOTHER>", "UNEWBOT"),
+    "hello <@UOTHER>",
   );
 });

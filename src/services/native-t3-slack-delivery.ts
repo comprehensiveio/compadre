@@ -1,4 +1,4 @@
-import { EventType, type StreamChunk } from "@tanstack/ai";
+import { EventType, type StreamChunk } from "../t3/agui-protocol.js";
 import type { HostedSlackBinding } from "./hosted-thread-bindings.js";
 import { SlackStream } from "./slack-stream.js";
 import { slackFailureNotice } from "./terminal-response.js";

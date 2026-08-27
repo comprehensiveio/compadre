@@ -1,6 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
 import fs from "node:fs/promises";
-import type { SandboxHandle } from "@tanstack/ai-sandbox";
 import { COMPADRE_SKILL_NAMES } from "../compadre-skills.js";
 import { gitAuthenticationEnvironment } from "../repo.js";
 import { ModalHandle } from "../tanstack/modal-sandbox.js";
@@ -17,6 +16,25 @@ const T3_FORK_ARCHIVE = "/tmp/compadre-t3-fork.tgz";
 const MAX_T3_FORK_ARCHIVE_BYTES = 50 * 1024 * 1024;
 export const T3_GATEWAY_CREDENTIAL_PATH =
   "/var/lib/t3/compadre-gateway-access-token";
+
+interface T3SandboxHandle {
+  readonly id: string;
+  readonly workspaceRoot?: string;
+  readonly process: {
+    exec(command: string | string[]): Promise<{
+      exitCode: number;
+      stdout: string;
+      stderr: string;
+    }>;
+  };
+  readonly fs: {
+    read(path: string): Promise<string>;
+    write(path: string, contents: string): Promise<void>;
+  };
+  readonly env: { set(values: Record<string, string>): Promise<void> };
+  readonly ports: { connect(port: number): Promise<{ url: string }> };
+  destroy(): Promise<void>;
+}
 
 function quote(value: string): string {
   return `'${value.replaceAll("'", `'\\''`)}'`;
@@ -77,7 +95,7 @@ export function projectedProviderEnvironment(
 }
 
 async function configureNativeHarnessAuthentication(
-  handle: SandboxHandle,
+  handle: T3SandboxHandle,
 ): Promise<void> {
   const login = await handle.process.exec(
     [
@@ -99,7 +117,7 @@ async function configureNativeHarnessAuthentication(
 }
 
 async function installLocalT3Fork(
-  handle: SandboxHandle,
+  handle: T3SandboxHandle,
   archivePath: string | undefined,
 ): Promise<void> {
   if (!archivePath?.trim()) return;
@@ -171,7 +189,7 @@ export async function resolveT3ForkArchive(
 }
 
 async function bootstrapT3Project(
-  handle: SandboxHandle,
+  handle: T3SandboxHandle,
   workspaceRoot: string,
 ): Promise<void> {
   const bootstrap = await handle.process.exec(
@@ -200,7 +218,7 @@ function redactT3StartupLog(log: string): string {
 }
 
 async function waitForT3Startup(
-  handle: SandboxHandle,
+  handle: T3SandboxHandle,
   logPath: string,
 ): Promise<string> {
   const deadline = Date.now() + STARTUP_TIMEOUT_MS;

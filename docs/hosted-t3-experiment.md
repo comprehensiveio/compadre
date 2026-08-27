@@ -318,3 +318,18 @@ during a rolling deploy: a Modal callback can otherwise land on the replacement
 instance before the bridge registration moves. These are
 integration/productization work rather than evidence that the shared
 T3/Slack/Modal thread model is infeasible.
+
+## Temporary Slack app
+
+The checked-in [experimental app manifest](./slack-app-manifest.t3-experiment.yaml)
+targets only the isolated Render service. Create an app from that manifest in
+Slack's app configuration UI, install it to the test workspace, then copy its
+Bot User OAuth Token and Signing Secret into the experimental Render service as
+`SLACK_BOT_TOKEN` and `SLACK_SIGNING_SECRET`. `SLACK_BOT_USER_ID` is optional:
+normal Events API callbacks carry the installation-specific bot identity, while
+synthetic callbacks may set it explicitly.
+
+The ingress accepts both direct-message `message.im` callbacks and the native
+`app_mention` callback, so it does not depend on the production Compadre bot ID.
+Do not point the production app at this endpoint; the manifest intentionally
+uses a separate request URL so both applications can run in parallel.

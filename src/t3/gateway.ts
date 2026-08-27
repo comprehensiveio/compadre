@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { InMemoryLockStore, type LockStore } from "@tanstack/ai/locks";
+import { InMemoryLockStore, type LockStore } from "./storage.js";
 import type {
   T3Client,
   T3ModelSelection,

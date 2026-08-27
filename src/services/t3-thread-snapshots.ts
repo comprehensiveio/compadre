@@ -1,5 +1,8 @@
-import type { MetadataStore } from "@tanstack/ai-persistence";
-import { InMemoryLockStore, type LockStore } from "@tanstack/ai/locks";
+import {
+  InMemoryLockStore,
+  type LockStore,
+  type MetadataStore,
+} from "../t3/storage.js";
 import {
   decodeT3ThreadSnapshot,
   type T3ThreadSnapshot,

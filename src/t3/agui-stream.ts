@@ -1,7 +1,4 @@
-import {
-  EventType,
-  type StreamChunk,
-} from "@tanstack/ai";
+import { EventType, type StreamChunk } from "./agui-protocol.js";
 import {
   SpanKind,
   SpanStatusCode,
@@ -66,6 +63,9 @@ export function traceNativeT3AguiStream(
         "agui.run_id": options.runId,
         "agent.provider": options.provider,
         "gen_ai.operation.name": "invoke_agent",
+        // The worker exports the logical Agent Observability trace directly so
+        // this controller span remains an APM-only distributed-service span.
+        "dd_llmobs_enabled": false,
         "gen_ai.conversation.id": options.canonicalThreadId,
         "gen_ai.provider.name":
           options.provider === "codex" ? "openai" : "anthropic",

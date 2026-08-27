@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { EventType, type StreamChunk } from "@tanstack/ai";
+import { EventType, type StreamChunk } from "../t3/agui-protocol.js";
 import {
   mirrorNativeT3RunToSlack,
   type NativeT3SlackDeliveryStream,

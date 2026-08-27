@@ -1,5 +1,8 @@
-import type { MetadataStore } from "@tanstack/ai-persistence";
-import { InMemoryLockStore, type LockStore } from "@tanstack/ai/locks";
+import {
+  InMemoryLockStore,
+  type LockStore,
+  type MetadataStore,
+} from "../t3/storage.js";
 import type { T3ModelSelection } from "../t3/client.js";
 
 const NAMESPACE = "compadre.t3.thread-bindings.v2";

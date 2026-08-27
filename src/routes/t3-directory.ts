@@ -2,7 +2,6 @@ import crypto from "node:crypto";
 import {
   chatParamsFromRequestBody,
   convertMessagesToModelMessages,
-  toServerSentEventsResponse,
   type ModelMessage,
 } from "@tanstack/ai";
 import { Hono, type Context, type Handler } from "hono";
@@ -22,6 +21,7 @@ import {
   createNativeT3AguiStream,
   traceNativeT3AguiStream,
 } from "../t3/agui-stream.js";
+import { toServerSentEventsResponse } from "../t3/agui-protocol.js";
 import { isAgentProvider } from "../tanstack/protocol.js";
 import { getConfiguredThreadPersistence } from "../persistence/runtime.js";
 import {

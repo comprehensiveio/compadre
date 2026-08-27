@@ -55,8 +55,12 @@ function isDuplicate(ts: string): boolean {
 }
 
 const APP_LINK_REGEX = /https:\/\/(?:www\.)?app\.comprehensive\.io\/\S+/i;
-const SLACKBOT_USER_ID = "U073509NYP7";
 const PRODUCTION_SUPPORT_CHANNEL_ID = "C04D24LB4J1";
+
+interface SlackAuthorization {
+  user_id?: string;
+  is_bot?: boolean;
+}
 
 export interface SlackEvent {
   type: string;
@@ -74,8 +78,34 @@ export interface SlackEvent {
 
 /** Accept ordinary user messages, including messages with attached files. */
 export function isSupportedUserMessage(event: SlackEvent): boolean {
-  if (event.type !== "message" || event.bot_id) return false;
+  if (event.bot_id) return false;
+  if (event.type === "app_mention") return event.subtype === undefined;
+  if (event.type !== "message") return false;
   return event.subtype === undefined || event.subtype === "file_share";
+}
+
+/** Resolve this installation's bot identity without coupling ingress to one Slack app. */
+export function resolveSlackBotUserId(input: {
+  configured?: string;
+  authorizations?: SlackAuthorization[];
+  event?: SlackEvent;
+}): string | undefined {
+  const configured = input.configured?.trim();
+  if (configured) return configured;
+  const authorized = input.authorizations?.find(
+    (authorization) => authorization.is_bot && authorization.user_id,
+  )?.user_id;
+  if (authorized) return authorized;
+  if (input.event?.type === "app_mention") {
+    return /<@([A-Z0-9]+)>/.exec(input.event.text || "")?.[1];
+  }
+  return undefined;
+}
+
+export function stripSlackBotMention(text: string, botUserId?: string): string {
+  return botUserId
+    ? text.replaceAll(`<@${botUserId}>`, "").trim()
+    : text.trim();
 }
 
 slackEventsRoutes.post("/slack/events", async (c) => {
@@ -116,7 +146,14 @@ slackEventsRoutes.post("/slack/events", async (c) => {
     if (event && typeof event === "object") {
       const teamId =
         typeof payload.team_id === "string" ? payload.team_id : undefined;
-      handleEvent(event as SlackEvent, teamId).catch((err) =>
+      const botUserId = resolveSlackBotUserId({
+        configured: process.env.SLACK_BOT_USER_ID,
+        authorizations: Array.isArray(payload.authorizations)
+          ? (payload.authorizations as SlackAuthorization[])
+          : undefined,
+        event: event as SlackEvent,
+      });
+      handleEvent(event as SlackEvent, teamId, botUserId).catch((err) =>
         console.error("[slack-events] unhandled error in handleEvent:", err),
       );
     }
@@ -125,12 +162,18 @@ slackEventsRoutes.post("/slack/events", async (c) => {
   return c.json({ ok: true });
 });
 
-async function handleEvent(event: SlackEvent, teamId?: string) {
+async function handleEvent(
+  event: SlackEvent,
+  teamId?: string,
+  botUserId?: string,
+) {
   if (!isSupportedUserMessage(event)) return;
   if (isDuplicate(event.ts)) return;
 
   const isDM = event.channel.startsWith("D");
-  const isMention = event.text?.includes(`<@${SLACKBOT_USER_ID}>`);
+  const isMention =
+    event.type === "app_mention" ||
+    Boolean(botUserId && event.text?.includes(`<@${botUserId}>`));
 
   // Check for prod-support links before routing to AI, so @mentions in
   // #production-support that contain app links still get debug-link treatment.
@@ -142,7 +185,7 @@ async function handleEvent(event: SlackEvent, teamId?: string) {
   }
 
   if (isDM || isMention) {
-    handleAIMessage(event, isDM, teamId).catch((err) =>
+    handleAIMessage(event, isDM, teamId, botUserId).catch((err) =>
       console.error("[slack-events] unhandled error in handleAIMessage:", err),
     );
   }
@@ -152,13 +195,12 @@ async function handleAIMessage(
   event: SlackEvent,
   isDM: boolean,
   teamId?: string,
+  botUserId?: string,
 ) {
   const botToken = process.env.SLACK_BOT_TOKEN;
   const threadTs = event.thread_ts || event.ts;
 
-  const rawMessageText = (event.text || "")
-    .replaceAll(`<@${SLACKBOT_USER_ID}>`, "")
-    .trim();
+  const rawMessageText = stripSlackBotMention(event.text || "", botUserId);
   const route = parseAgentRouteDirective(rawMessageText);
   if (!route.ok) {
     const errorStream = createSlackStream(event, threadTs, botToken, teamId);
