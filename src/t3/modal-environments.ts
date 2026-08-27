@@ -2,7 +2,7 @@ import {
   launchManagedT3ModalEnvironment,
   T3_GATEWAY_CREDENTIAL_PATH,
   type ManagedT3ModalEnvironment,
-} from "../experiments/t3-modal.js";
+} from "./modal-worker.js";
 import { modalSandboxProvider } from "../tanstack/modal-sandbox.js";
 import { T3Client } from "./client.js";
 import type { T3OrchestrationSnapshot } from "./client.js";
@@ -57,7 +57,7 @@ export class T3ModalEnvironmentManager
     ) => void | Promise<void>,
   ) {}
 
-  private experimentEnvironment(): NodeJS.ProcessEnv {
+  private workerEnvironment(): NodeJS.ProcessEnv {
     return {
       ...this.environment,
       COMPADRE_MODAL_APP:
@@ -85,7 +85,7 @@ export class T3ModalEnvironmentManager
 
   async reconnect(binding: T3ThreadBinding): Promise<T3EnvironmentConnection> {
     const provider = modalSandboxProvider({
-      environment: this.experimentEnvironment(),
+      environment: this.workerEnvironment(),
       encryptedPorts: [T3_PORT],
     });
     const handle = await provider.resume({ id: binding.sandboxId });
@@ -111,7 +111,7 @@ export class T3ModalEnvironmentManager
 
   async discard(connection: T3EnvironmentConnection): Promise<void> {
     const provider = modalSandboxProvider({
-      environment: this.experimentEnvironment(),
+      environment: this.workerEnvironment(),
       encryptedPorts: [T3_PORT],
     });
     await provider.destroy({ id: connection.sandboxId });

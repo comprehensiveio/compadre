@@ -3,7 +3,7 @@ import test from "node:test";
 import {
   parseT3StartupToken,
   projectedProviderEnvironment,
-} from "./t3-modal.js";
+} from "./modal-worker.js";
 
 test("extracts T3's one-time startup token without accepting lookalikes", () => {
   assert.equal(

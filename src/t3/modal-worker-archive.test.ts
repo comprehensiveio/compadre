@@ -4,7 +4,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { resolveT3ForkArchive } from "./t3-modal.js";
+import { resolveT3ForkArchive } from "./modal-worker.js";
 
 test("prefers a local T3 fork path without downloading", async () => {
   assert.equal(

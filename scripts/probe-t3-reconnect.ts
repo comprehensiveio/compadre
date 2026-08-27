@@ -1,5 +1,5 @@
 import dotenv from "dotenv";
-import { T3_GATEWAY_CREDENTIAL_PATH } from "../src/experiments/t3-modal.js";
+import { T3_GATEWAY_CREDENTIAL_PATH } from "../src/t3/modal-worker.js";
 import type { T3ThreadBinding } from "../src/services/t3-thread-bindings.js";
 import { modalSandboxProvider } from "../src/tanstack/modal-sandbox.js";
 import { T3Client } from "../src/t3/client.js";

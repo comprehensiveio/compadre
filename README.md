@@ -31,10 +31,8 @@ POST /prompt                 # Ad-hoc prompt (Bearer COMPADRE_API_KEY)
 POST /slack/events           # Primary signed Slack Events ingress
 POST /ag-ui                  # Optional authenticated AG-UI stream
 GET  /ag-ui?threadId=...     # Optional authenticated thread hydration
-GET  /hosted                  # Optional hosted browser client (feature flagged)
-GET|POST /hosted/chat        # Hosted hydration/resumable stream and new turns
-POST /hosted/runs/:id/cancel # Cancel a browser-started hosted run
-POST /hosted/threads/:id/slack # Link browser thread output to a Slack thread
+POST /hosted/t3/chat          # Native T3 remote-provider stream
+POST /hosted/t3/runs/:id/cancel # Cancel an active native T3 provider run
 POST /workflow-runs          # Optional durable Workflow launcher (Bearer COMPADRE_API_KEY)
 GET  /workflow-runs/:id      # Durable run lifecycle status (Bearer COMPADRE_API_KEY)
 GET  /workflow-runs/:id/events # Resumable AG-UI event stream (Bearer COMPADRE_API_KEY; any authenticated caller may replay a known run ID)
@@ -78,7 +76,7 @@ See `.env.example` for the full list. Key notes:
 - **GOOGLE_WORKSPACE_USER_EMAIL / GOOGLE_OAUTH_CLIENT_ID / GOOGLE_OAUTH_CLIENT_SECRET / GOOGLE_OAUTH_REFRESH_TOKEN**: OAuth credentials for the Compadre Google Workspace bot user. When set, Compadre enables Google Workspace tools through `workspace-mcp`.
 - **REPO_PATH**: Local checkout used by development and the optional PR deployment watcher. Coding-agent checkouts live in Modal and are not allocated on the Render request path.
 - **COMPADRE_API_KEY**: Auth token for the API. Generate with `openssl rand -hex 32`.
-- **COMP_APP_API_KEY**: Optional credential for the Comp app MCP and debug-link API when it differs from the relay's own `COMPADRE_API_KEY` (as it does in the isolated hosted experiment).
+- **COMP_APP_API_KEY**: Optional credential for the Comp app MCP and debug-link API when it differs from the relay's own `COMPADRE_API_KEY`.
 - **CODEX_API_KEY**: API key for the Codex CLI harness; a persisted Codex login is also supported for local development.
 - **COMPADRE_AGENT_PROVIDER**: Select the default Claude Code or Codex harness. `/prompt` and AG-UI callers may override it per request.
 - **MODAL_TOKEN_ID / MODAL_TOKEN_SECRET**: Modal is the coding-harness runtime. Compadre bakes its pinned Claude Code and Codex CLIs into the cached Modal image, keeping per-request setup to the repository clone. After each successful persisted turn, Compadre snapshots the filesystem, stores its image ID with the thread, and terminates the billed sandbox. The next turn restores that snapshot.
@@ -89,14 +87,13 @@ See `.env.example` for the full list. Key notes:
 - Modal isolates harness resource usage from the persistent Render relay and
   applies its own sandbox lifecycle limits.
 - **COMPADRE_TANSTACK_AI_ENABLED**: Expose the authenticated AG-UI endpoint without changing Slack routing.
-- **COMPADRE_HOSTED_T3_ENABLED**: Serve the experimental browser conversation surface and its authenticated chat routes at `/hosted`. It uses the same durable thread and Modal workflow path as Slack. See [the hosted T3 experiment runbook](docs/hosted-t3-experiment.md).
-- **COMPADRE_T3_DIRECTORY_ENABLED**: Enable the native-T3 coordinator API. Render stores credential-free routing metadata; every external conversation owns one Modal sandbox and one native T3 thread.
+- **COMPADRE_T3_DIRECTORY_ENABLED**: Enable the native-T3 controller routes. Render stores credential-free routing metadata; every external conversation owns one Modal sandbox and one native T3 thread.
 - **COMPADRE_T3_SLACK_ENABLED**: Route Slack and `npm run slack:simulate` through the central hosted T3 environment and then T3's native Codex/Claude harnesses in Modal. Slack receives assistant text plus a central “View details in T3” link; the same conversation can be continued from Slack or the T3 UI without copying history between stores.
 - **COMPADRE_T3_API_ENABLED**: Preserve the authenticated `/prompt` contract while executing new API runs through the same native-T3 coordinator. Synchronous responses also include `threadId` and `detailsUrl`; async responses return the accepted canonical `threadId`.
 - **COMPADRE_T3_HOSTED_APP_URL**: Hosted T3 web origin used for deep links, for example `https://t3code-compadre-experiment.onrender.com`.
 - **COMPADRE_T3_CENTRAL_URL / COMPADRE_T3_CENTRAL_TOKEN**: Central T3 environment and its scoped service-account bearer. Slack dispatches through T3's authenticated orchestration API so its turns are committed to the same event log the browser reads. Issue the bearer with T3's native `auth session issue` command.
 - **COMPADRE_T3_CENTRAL_PROJECT_ID**: Optional project for new Slack-originated threads when the central T3 environment contains multiple projects. The first active project is used when omitted.
-- **COMPADRE_T3_PACKAGE_PATH**: Local-only archive used to overlay the experiment fork into a new Modal environment. Production should bake the same fork artifact into the Modal image instead of depending on a host path.
+- **COMPADRE_T3_PACKAGE_PATH**: Local-only archive used to install the pinned T3 fork into a new Modal environment. Deployed environments use the verified release URL and digest instead of a host path.
 - **COMPADRE_T3_PACKAGE_URL / COMPADRE_T3_PACKAGE_SHA256**: HTTPS release archive and required digest for reproducible Render-to-Modal fork installation. The controller caches the verified artifact locally before copying it into a new sandbox.
 - **COMPADRE_HOSTED_SLACK_DELIVERY_ENABLED**: Set to `false` to suppress browser-to-Slack mirroring during synthetic hosted probes without removing the Slack token used by agent tools. Defaults to enabled.
 - **FABLE_MODEL**: Optional model ID used by Slack's `--fable` routing profile. Defaults to `claude-fable-5`; normal Claude Code prompts use `DEFAULT_MODEL` or the built-in default.

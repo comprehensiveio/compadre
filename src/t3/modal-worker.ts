@@ -255,14 +255,14 @@ function skillProjectionCommand(workspaceRoot: string): string {
   ].join(" && ");
 }
 
-export interface T3ModalExperiment {
+export interface T3ModalWorker {
   sandboxId: string;
   baseUrl: string;
   pairingUrl: string;
   workspaceRoot: string;
 }
 
-export interface ManagedT3ModalEnvironment extends T3ModalExperiment {
+export interface ManagedT3ModalEnvironment extends T3ModalWorker {
   projectId: string;
   client: T3Client;
 }
@@ -271,29 +271,29 @@ export interface ManagedT3ModalEnvironment extends T3ModalExperiment {
  * Launch T3's native headless server inside an isolated Modal sandbox.
  *
  * This intentionally bypasses Compadre's TanStack harness adapters. TanStack
- * remains only as the existing sandbox provisioning layer for this spike.
+ * remains only as the existing sandbox provisioning adapter.
  */
 export async function launchManagedT3ModalEnvironment(
   environment: NodeJS.ProcessEnv = process.env,
 ): Promise<ManagedT3ModalEnvironment> {
   const port = DEFAULT_T3_PORT;
-  const experimentEnvironment: NodeJS.ProcessEnv = {
+  const workerEnvironment: NodeJS.ProcessEnv = {
     ...environment,
     COMPADRE_MODAL_APP:
       environment.COMPADRE_T3_MODAL_APP?.trim() || "compadre-t3-experiment",
   };
-  const forkArchivePath = await resolveT3ForkArchive(experimentEnvironment);
+  const forkArchivePath = await resolveT3ForkArchive(workerEnvironment);
   let startupToken: string | undefined;
   const sandbox = createHarnessSandbox({
     worktreeId: `t3-modal-${randomUUID()}`,
     localWorktreePath: "/unused",
     reuseThread: true,
-    environment: experimentEnvironment,
+    environment: workerEnvironment,
     encryptedPorts: [port],
     onReady: async (handle) => {
       const workspaceRoot = handle.workspaceRoot ?? "/workspace";
       const providerEnvironment = projectedProviderEnvironment(
-        experimentEnvironment,
+        workerEnvironment,
       );
       await installLocalT3Fork(
         handle,
@@ -350,7 +350,7 @@ export async function launchManagedT3ModalEnvironment(
   });
   try {
     // `ensure()` is the advanced provisioning API. TanStack's chat middleware
-    // normally owns lifecycle hooks, so this direct experiment must invoke the
+    // normally owns lifecycle hooks, so this direct worker launch must invoke the
     // ready hook after the workspace bootstrap itself.
     await sandbox.hooks?.onReady?.(handle);
   } catch (error) {
@@ -377,7 +377,7 @@ export async function launchManagedT3ModalEnvironment(
       throw new Error("T3 project bootstrap completed without a workspace project");
     }
     const browserPairing = await gatewaySession.client.mintPairingCredential({
-      label: "Compadre experiment browser",
+      label: "Compadre native T3 worker",
     });
     await handle.fs.write(
       T3_GATEWAY_CREDENTIAL_PATH,
@@ -403,9 +403,9 @@ export async function launchManagedT3ModalEnvironment(
   }
 }
 
-export async function launchT3ModalExperiment(
+export async function launchT3ModalWorker(
   environment: NodeJS.ProcessEnv = process.env,
-): Promise<T3ModalExperiment> {
+): Promise<T3ModalWorker> {
   const managed = await launchManagedT3ModalEnvironment(environment);
   return {
     sandboxId: managed.sandboxId,
