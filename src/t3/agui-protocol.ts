@@ -41,6 +41,11 @@ export interface StreamChunk {
   toolCallName?: string;
   toolName?: string;
   args?: string;
+  itemType?: string;
+  title?: string;
+  detail?: string;
+  data?: unknown;
+  status?: string;
   finishReason?: string | null;
   message?: string;
 }

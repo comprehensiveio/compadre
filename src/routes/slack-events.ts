@@ -309,6 +309,11 @@ async function handleAIMessage(
               slackStream.appendText(text);
             }
           : undefined,
+        onToolStart: slackStream
+          ? (name) => slackStream.setStatus(
+              `is ${humanizeToolName(name).toLowerCase()}...`,
+            )
+          : undefined,
       });
     });
 

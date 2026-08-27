@@ -183,8 +183,12 @@ function toolNameForActivity(activity: T3Activity): string {
     const providerToolName = stringValue(data?.toolName);
     if (providerToolName) return providerToolName;
   }
+  const providerToolName = stringValue(data?.toolName);
+  if (providerToolName) return providerToolName;
+  const detail = stringValue(payload.detail);
+  const detailToolName = detail?.match(/^([\p{L}\p{N}_-]+)\s*:/u)?.[1];
+  if (detailToolName) return detailToolName;
   return (
-    stringValue(payload.detail) ??
     normalizedActivitySummary(activity) ??
     stringValue(payload.itemType)?.replaceAll("_", " ") ??
     "Tool"
@@ -194,6 +198,13 @@ function toolNameForActivity(activity: T3Activity): string {
 interface ProjectedAssistantMessage {
   text: string;
   ended: boolean;
+}
+
+interface ProjectedTool {
+  itemType?: string;
+  title: string;
+  detail?: string;
+  data?: unknown;
 }
 
 /**
@@ -206,7 +217,7 @@ export class NativeT3SnapshotProjector {
   private turnId: string | undefined;
   private terminal = false;
   private readonly seenActivities = new Set<string>();
-  private readonly startedTools = new Set<string>();
+  private readonly tools = new Map<string, ProjectedTool>();
   private readonly assistantMessages = new Map<string, ProjectedAssistantMessage>();
 
   constructor(
@@ -232,20 +243,37 @@ export class NativeT3SnapshotProjector {
       const payload = activity.payload ?? {};
       const toolCallId = stringValue(payload.toolCallId) ?? activity.id;
       const toolName = toolNameForActivity(activity);
-      if (!this.startedTools.has(toolCallId)) {
-        this.startedTools.add(toolCallId);
+      const existingTool = this.tools.get(toolCallId);
+      const itemType = stringValue(payload.itemType) ?? existingTool?.itemType;
+      const title = normalizedActivitySummary(activity) ?? existingTool?.title ?? toolName;
+      const detail = stringValue(payload.detail) ?? existingTool?.detail;
+      const data = payload.data !== undefined ? payload.data : existingTool?.data;
+      if (!existingTool) {
+        this.tools.set(toolCallId, {
+          ...(itemType ? { itemType } : {}),
+          title,
+          ...(detail ? { detail } : {}),
+          ...(data !== undefined ? { data } : {}),
+        });
         chunks.push({
           type: EventType.TOOL_CALL_START,
           toolCallId,
           toolCallName: toolName,
           toolName,
+          ...(itemType ? { itemType } : {}),
+          title,
+          ...(detail ? { detail } : {}),
+          ...(data !== undefined ? { data } : {}),
+          ...(stringValue(payload.status) ? { status: stringValue(payload.status) } : {}),
           timestamp: timestamp(activity.createdAt),
         });
         chunks.push({
           type: EventType.TOOL_CALL_ARGS,
           toolCallId,
-          delta: json(payload.data),
-          args: json(payload.data),
+          delta: json(data),
+          args: json(data),
+          ...(itemType ? { itemType } : {}),
+          ...(data !== undefined ? { data } : {}),
           timestamp: timestamp(activity.createdAt),
         });
       }
@@ -254,6 +282,11 @@ export class NativeT3SnapshotProjector {
           type: EventType.TOOL_CALL_RESULT,
           toolCallId,
           messageId: activity.id,
+          ...(itemType ? { itemType } : {}),
+          title,
+          ...(detail ? { detail } : {}),
+          ...(data !== undefined ? { data } : {}),
+          ...(stringValue(payload.status) ? { status: stringValue(payload.status) } : {}),
           content: json({
             summary: activity.summary,
             detail: payload.detail,

@@ -43,6 +43,35 @@ export interface CentralT3ConversationResult extends CentralT3ConversationPrepar
   snapshot: T3ThreadSnapshot;
 }
 
+function record(value: unknown): Record<string, unknown> | undefined {
+  return value !== null && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : undefined;
+}
+
+function stringValue(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim().length > 0
+    ? value.trim()
+    : undefined;
+}
+
+function toolStatusName(activity: Record<string, unknown>): string {
+  const payload = record(activity.payload);
+  const data = record(payload?.data);
+  const item = record(data?.item);
+  const server = stringValue(item?.server);
+  const tool = stringValue(item?.tool);
+  if (server && tool) return `${server} · ${tool}`;
+  if (tool) return tool;
+  const providerToolName = stringValue(data?.toolName);
+  if (providerToolName) return providerToolName;
+  const detail = stringValue(payload?.detail);
+  const detailToolName = detail?.match(/^([\p{L}\p{N}_-]+)\s*:/u)?.[1];
+  if (detailToolName) return detailToolName;
+  const summary = stringValue(activity.summary)?.replace(/\s+started\s*$/iu, "").trim();
+  return summary || stringValue(payload?.itemType)?.replaceAll("_", " ") || "Tool";
+}
+
 function stableUuid(value: string): string {
   const bytes = crypto.createHash("sha256").update(value).digest().subarray(0, 16);
   bytes[6] = (bytes[6]! & 0x0f) | 0x50;
@@ -112,6 +141,7 @@ export async function runCentralT3Conversation(input: {
   idFactory?: () => string;
   onPrepared?(prepared: CentralT3ConversationPrepared): void | Promise<void>;
   onTextDelta?(text: string): void | Promise<void>;
+  onToolStart?(name: string): void | Promise<void>;
 }): Promise<CentralT3ConversationResult> {
   const environment = input.environment ?? process.env;
   const idFactory = input.idFactory ?? crypto.randomUUID;
@@ -164,7 +194,29 @@ export async function runCentralT3Conversation(input: {
       });
 
   let delivered = "";
+  const deliveredToolStarts = new Set<string>();
   const deliverSnapshot = async (snapshot: T3ThreadSnapshot) => {
+    const requestedTurnId = snapshot.thread.messages.find(
+      (message) => message.id === dispatch.messageId,
+    )?.turnId;
+    const rawActivities = snapshot.thread.activities;
+    if (requestedTurnId && Array.isArray(rawActivities)) {
+      for (const rawActivity of rawActivities) {
+        const activity = record(rawActivity);
+        const activityId = stringValue(activity?.id);
+        if (
+          !activity ||
+          !activityId ||
+          deliveredToolStarts.has(activityId) ||
+          activity.kind !== "tool.started" ||
+          activity.turnId !== requestedTurnId
+        ) {
+          continue;
+        }
+        deliveredToolStarts.add(activityId);
+        await input.onToolStart?.(toolStatusName(activity));
+      }
+    }
     const next = assistantTextForDispatch(snapshot, dispatch);
     if (!next || next === delivered) return;
     const delta = next.startsWith(delivered) ? next.slice(delivered.length) : "";

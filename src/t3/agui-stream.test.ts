@@ -128,6 +128,15 @@ test("projects native T3 text and tool snapshots incrementally", () => {
       .map((event) => event.delta).join(""),
     "hello world",
   );
+  const toolStart = events.find((event) => event.type === EventType.TOOL_CALL_START);
+  assert.equal(toolStart?.toolName, "Bash");
+  assert.equal(toolStart?.itemType, "command_execution");
+  assert.equal(toolStart?.title, "Command run");
+  assert.equal(toolStart?.detail, "Bash: pwd");
+  assert.deepEqual(toolStart?.data, { command: "pwd" });
+  const toolResult = events.find((event) => event.type === EventType.TOOL_CALL_RESULT);
+  assert.equal(toolResult?.itemType, "command_execution");
+  assert.deepEqual(toolResult?.data, { command: "pwd" });
 });
 
 test("ignores a stale terminal snapshot from before the requested message", () => {
@@ -171,6 +180,15 @@ test("preserves the native MCP server and tool name", () => {
   const start = events.find((event) => event.type === EventType.TOOL_CALL_START);
   assert.equal(start?.toolCallName, "compadre · github_search_repositories");
   assert.equal(start?.toolName, "compadre · github_search_repositories");
+  assert.equal(start?.itemType, "mcp_tool_call");
+  assert.deepEqual(start?.data, {
+    item: {
+      type: "mcpToolCall",
+      server: "compadre",
+      tool: "github_search_repositories",
+      arguments: { query: "user:tanstack" },
+    },
+  });
 });
 
 test("projects every assistant segment from a native T3 turn", () => {

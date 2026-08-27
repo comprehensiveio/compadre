@@ -80,6 +80,26 @@ function terminalSnapshot(dispatch: T3TurnDispatch): T3ThreadSnapshot {
         activeTurnId: null,
         lastError: null,
       },
+      activities: [
+        {
+          id: "tool-current",
+          kind: "tool.started",
+          turnId: "turn-central",
+          summary: "Command run started",
+          payload: {
+            itemType: "command_execution",
+            detail: "Bash: git status --short",
+            data: { command: "git status --short" },
+          },
+        },
+        {
+          id: "tool-previous",
+          kind: "tool.started",
+          turnId: "turn-previous",
+          summary: "Write started",
+          payload: { detail: "Write: old.txt" },
+        },
+      ],
     },
   };
 }
@@ -134,6 +154,7 @@ test("a Slack turn is created in the central T3 project and streams every assist
     },
   };
   const deltas: string[] = [];
+  const toolStarts: string[] = [];
   const result = await runCentralT3Conversation({
     client,
     canonicalThreadId: "slack:T1:C1:123.4",
@@ -149,11 +170,15 @@ test("a Slack turn is created in the central T3 project and streams every assist
     onTextDelta(text) {
       deltas.push(text);
     },
+    onToolStart(name) {
+      toolStarts.push(name);
+    },
   });
 
   assert.deepEqual(events, ["prepared", "dispatch"]);
   assert.equal(result.output, "I am checking.\n\nThe answer is 42.");
   assert.deepEqual(deltas, ["I am checking.\n\nThe answer is 42."]);
+  assert.deepEqual(toolStarts, ["Bash"]);
   assert.equal(result.t3ThreadId, centralT3ThreadId("slack:T1:C1:123.4"));
   assert.equal(
     result.detailsUrl,
