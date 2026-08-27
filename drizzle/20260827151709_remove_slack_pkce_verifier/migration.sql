@@ -1,0 +1,1 @@
+ALTER TABLE "compadre_auth_login_flows" DROP COLUMN "code_verifier";

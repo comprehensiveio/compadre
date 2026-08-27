@@ -206,7 +206,6 @@ export const authLoginFlows = pgTable(
   {
     stateHash: text("state_hash").primaryKey(),
     nonce: text("nonce").notNull(),
-    codeVerifier: text("code_verifier").notNull(),
     returnTo: text("return_to").notNull(),
     expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
     consumedAt: timestamp("consumed_at", { withTimezone: true }),

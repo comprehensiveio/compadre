@@ -31,14 +31,11 @@ export function normalizeAuthReturnTo(value: string | undefined): string {
 export interface PendingSlackLogin {
   state: string;
   nonce: string;
-  codeVerifier: string;
-  codeChallenge: string;
   returnTo: string;
 }
 
 export interface ConsumedSlackLogin {
   nonce: string;
-  codeVerifier: string;
   returnTo: string;
 }
 
@@ -51,19 +48,16 @@ export class AuthStore {
   async beginSlackLogin(returnToInput?: string): Promise<PendingSlackLogin> {
     const state = token();
     const nonce = token();
-    const codeVerifier = token(48);
-    const codeChallenge = hashAuthSecret(codeVerifier);
     const returnTo = normalizeAuthReturnTo(returnToInput);
     const now = this.now();
     await this.db.insert(authLoginFlows).values({
       stateHash: hashAuthSecret(state),
       nonce,
-      codeVerifier,
       returnTo,
       createdAt: now,
       expiresAt: new Date(now.getTime() + LOGIN_FLOW_TTL_MS),
     });
-    return { state, nonce, codeVerifier, codeChallenge, returnTo };
+    return { state, nonce, returnTo };
   }
 
   async consumeSlackLogin(state: string): Promise<ConsumedSlackLogin | null> {
@@ -80,7 +74,6 @@ export class AuthStore {
       )
       .returning({
         nonce: authLoginFlows.nonce,
-        codeVerifier: authLoginFlows.codeVerifier,
         returnTo: authLoginFlows.returnTo,
       });
     return rows[0] ?? null;

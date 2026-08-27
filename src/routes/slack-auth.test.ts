@@ -37,13 +37,11 @@ function dependencies(): SlackAuthDependencies {
       beginSlackLogin: async (returnTo?: string) => ({
         state: "state-1",
         nonce: "nonce-1",
-        codeVerifier: "verifier-1",
-        codeChallenge: "challenge-1",
         returnTo: returnTo ?? "/",
       }),
       consumeSlackLogin: async (state: string) =>
         state === "state-1"
-          ? { nonce: "nonce-1", codeVerifier: "verifier-1", returnTo: "/env/thread" }
+          ? { nonce: "nonce-1", returnTo: "/env/thread" }
           : null,
       issueLoginGrant: async () => "grant-12345678901234567890",
       consumeLoginGrant: async (code: string) =>
@@ -68,7 +66,7 @@ function dependencies(): SlackAuthDependencies {
   };
 }
 
-test("starts a workspace-scoped Slack OpenID flow with PKCE", async () => {
+test("starts a workspace-scoped Slack OpenID flow", async () => {
   const routes = createSlackAuthRoutes(dependencies());
   const response = await routes.request(
     "https://controller.example/auth/slack/start?return_to=%2Fenv%2Fthread",
@@ -81,8 +79,7 @@ test("starts a workspace-scoped Slack OpenID flow with PKCE", async () => {
   assert.equal(location.searchParams.get("team"), "T123");
   assert.equal(location.searchParams.get("state"), "state-1");
   assert.equal(location.searchParams.get("nonce"), "nonce-1");
-  assert.equal(location.searchParams.get("code_challenge"), "challenge-1");
-  assert.equal(location.searchParams.get("code_challenge_method"), "S256");
+  assert.equal(location.searchParams.has("code_challenge"), false);
 });
 
 test("provisions the Slack identity and redirects with only a one-time grant", async () => {

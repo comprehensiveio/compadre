@@ -19,7 +19,6 @@ export function slackAuthorizeUrl(input: {
   config: SlackOpenIdConfig;
   state: string;
   nonce: string;
-  codeChallenge: string;
   workspaceId?: string;
 }): string {
   const url = new URL("https://slack.com/openid/connect/authorize");
@@ -29,8 +28,6 @@ export function slackAuthorizeUrl(input: {
   url.searchParams.set("redirect_uri", input.config.redirectUri);
   url.searchParams.set("state", input.state);
   url.searchParams.set("nonce", input.nonce);
-  url.searchParams.set("code_challenge", input.codeChallenge);
-  url.searchParams.set("code_challenge_method", "S256");
   if (input.workspaceId) url.searchParams.set("team", input.workspaceId);
   return url.toString();
 }
@@ -38,7 +35,6 @@ export function slackAuthorizeUrl(input: {
 export async function exchangeSlackOpenIdCode(input: {
   config: SlackOpenIdConfig;
   code: string;
-  codeVerifier: string;
   fetch?: typeof globalThis.fetch;
 }): Promise<string> {
   const response = await (input.fetch ?? globalThis.fetch)(
@@ -51,7 +47,6 @@ export async function exchangeSlackOpenIdCode(input: {
         client_secret: input.config.clientSecret,
         code: input.code,
         redirect_uri: input.config.redirectUri,
-        code_verifier: input.codeVerifier,
       }),
     },
   );

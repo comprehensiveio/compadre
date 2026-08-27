@@ -92,7 +92,6 @@ export function createSlackAuthRoutes(
         config: config.slack,
         state: flow.state,
         nonce: flow.nonce,
-        codeChallenge: flow.codeChallenge,
         workspaceId: config.allowedWorkspaceId,
       }),
     );
@@ -119,7 +118,6 @@ export function createSlackAuthRoutes(
       const idToken = await exchangeSlackOpenIdCode({
         config: config.slack,
         code,
-        codeVerifier: flow.codeVerifier,
         fetch: deps.fetch,
       });
       const claims = await deps.verifyIdToken({
