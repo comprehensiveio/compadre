@@ -8,6 +8,7 @@ import {
 import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import * as References from "effect/References";
 import type * as Tracer from "effect/Tracer";
 
 export interface TrackedProviderTurn {
@@ -106,6 +107,10 @@ export const makeProviderRuntimeTelemetry = Effect.fn("makeProviderRuntimeTeleme
       "ProviderRuntimeTelemetry.beginTurn",
     )(function* (input) {
       const modelProvider = input.provider === "codex" ? "openai" : "anthropic";
+      // Provider dispatch RPCs intentionally disable the general-purpose
+      // tracer to avoid recording very chatty protocol traffic. This span is
+      // the low-volume semantic boundary we do want, so opt it back in even
+      // when the caller's fiber has TracerEnabled=false.
       const span = yield* Effect.makeSpan("t3.provider.turn", {
         kind: "internal",
         level: "Info",
@@ -125,7 +130,7 @@ export const makeProviderRuntimeTelemetry = Effect.fn("makeProviderRuntimeTeleme
             ? { "compadre.canonical_thread_id": process.env.COMPADRE_CANONICAL_THREAD_ID }
             : {}),
         },
-      });
+      }).pipe(Effect.provideService(References.TracerEnabled, true));
       const tracked: TrackedProviderTurn = {
         threadId: input.threadId,
         provider: input.provider,
@@ -208,7 +213,7 @@ export const makeProviderRuntimeTelemetry = Effect.fn("makeProviderRuntimeTeleme
               ...(event.turnId ? { "provider.turn_id": event.turnId } : {}),
               "provider.item_type": event.payload.itemType,
             },
-          });
+          }).pipe(Effect.provideService(References.TracerEnabled, true));
           turn.tools.set(event.itemId, span);
           break;
         }

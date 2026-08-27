@@ -8,6 +8,7 @@ import {
   type ProviderRuntimeEvent,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as References from "effect/References";
 import * as Tracer from "effect/Tracer";
 
 import { makeProviderRuntimeTelemetry } from "./ProviderRuntimeTelemetry.ts";
@@ -103,5 +104,5 @@ it.effect("records one provider turn with model, usage, cost, and named tool spa
     if (toolSpan.parent._tag === "Some") {
       assert.equal(toolSpan.parent.value.spanId, providerSpan.spanId);
     }
-  }).pipe(Effect.withTracer(tracer));
+  }).pipe(Effect.provideService(References.TracerEnabled, false), Effect.withTracer(tracer));
 });
