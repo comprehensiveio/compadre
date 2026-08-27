@@ -146,6 +146,9 @@ export class UserDirectory {
       ...(input.email ? { email: input.email } : {}),
     };
     const displayName = input.displayName?.trim() || input.realName?.trim() || "Slack user";
+    const realName = input.realName?.trim();
+    const avatarUrl = input.avatarUrl?.trim();
+    const email = input.email?.trim();
 
     await this.db.transaction(async (tx) => {
       await tx
@@ -153,9 +156,9 @@ export class UserDirectory {
         .values({
           id: userId,
           displayName,
-          realName: input.realName?.trim() || null,
-          avatarUrl: input.avatarUrl?.trim() || null,
-          email: input.email?.trim() || null,
+          realName: realName || null,
+          avatarUrl: avatarUrl || null,
+          email: email || null,
           status: "active",
           createdAt: observedAt,
           updatedAt: observedAt,
@@ -165,9 +168,9 @@ export class UserDirectory {
           target: users.id,
           set: {
             displayName,
-            realName: input.realName?.trim() || null,
-            avatarUrl: input.avatarUrl?.trim() || null,
-            email: input.email?.trim() || null,
+            ...(realName ? { realName } : {}),
+            ...(avatarUrl ? { avatarUrl } : {}),
+            ...(email ? { email } : {}),
             status: "active",
             updatedAt: observedAt,
             lastSeenAt: observedAt,
