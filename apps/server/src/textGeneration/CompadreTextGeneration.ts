@@ -21,6 +21,9 @@ import {
 } from "./TextGenerationUtils.ts";
 
 const COMPADRE_TIMEOUT_MS = 180_000;
+const COMPADRE_METADATA_PROVIDER = "codex";
+const COMPADRE_METADATA_MODEL = "gpt-5.6-luna";
+const COMPADRE_METADATA_OPTIONS = [{ id: "reasoningEffort", value: "low" }] as const;
 const PromptResponse = Schema.Struct({ result: Schema.String });
 const isTextGenerationError = Schema.is(TextGenerationError);
 
@@ -38,16 +41,6 @@ function textGenerationEndpoint(endpoint: string): string {
   return url.toString();
 }
 
-function selectedProvider(
-  selection: ModelSelection,
-  fallback: CompadreAgentProvider | undefined,
-): CompadreAgentProvider | undefined {
-  if (selection.model === "claude-code" || selection.model === "codex") {
-    return selection.model;
-  }
-  return fallback;
-}
-
 export const makeCompadreTextGeneration = Effect.fn("makeCompadreTextGeneration")(function* (
   options: CompadreTextGenerationOptions,
 ) {
@@ -63,13 +56,12 @@ export const makeCompadreTextGeneration = Effect.fn("makeCompadreTextGeneration"
     readonly outputSchema: S;
     readonly modelSelection: ModelSelection;
   }): Effect.Effect<S["Type"], TextGenerationError, S["DecodingServices"]> => {
-    const provider = selectedProvider(input.modelSelection, options.provider);
     let request = HttpClientRequest.post(textGenerationEndpoint(options.endpoint), {
       body: HttpBody.jsonUnsafe({
         prompt: input.prompt,
-        ...(provider ? { provider } : {}),
-        model: input.modelSelection.model,
-        ...(input.modelSelection.options ? { modelOptions: input.modelSelection.options } : {}),
+        provider: COMPADRE_METADATA_PROVIDER,
+        model: COMPADRE_METADATA_MODEL,
+        modelOptions: COMPADRE_METADATA_OPTIONS,
       }),
     });
     if (options.apiKey) {

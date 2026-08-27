@@ -40,14 +40,20 @@ describe("CompadreTextGeneration", () => {
       const result = yield* textGeneration.generateThreadTitle({
         cwd: "/workspace",
         message: "Alert this Slack thread when the deploy finishes",
-        modelSelection: createModelSelection(ProviderInstanceId.make("compadre"), "codex"),
+        modelSelection: createModelSelection(ProviderInstanceId.make("compadre"), "gpt-5.6-sol", [
+          { id: "reasoningEffort", value: "high" },
+        ]),
       });
 
       expect(result).toEqual({ title: "Deployment alerts" });
       expect(requests).toHaveLength(1);
       expect(requests[0]?.url).toBe("https://compadre.example/hosted/t3/text-generation");
       expect(requests[0]?.authorization).toBe("Bearer secret");
-      expect(requests[0]?.body).toMatchObject({ provider: "codex", model: "codex" });
+      expect(requests[0]?.body).toMatchObject({
+        provider: "codex",
+        model: "gpt-5.6-luna",
+        modelOptions: [{ id: "reasoningEffort", value: "low" }],
+      });
     }).pipe(Effect.provide(clientLayer));
   });
 });
