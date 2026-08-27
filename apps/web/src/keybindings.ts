@@ -179,6 +179,7 @@ function findEffectiveShortcutForCommand(
   for (let index = keybindings.length - 1; index >= 0; index -= 1) {
     const binding = keybindings[index];
     if (!binding) continue;
+    if (isDisabledCompadreShortcut(binding, platform)) continue;
     if (!matchesWhenClause(binding.whenAst, context)) continue;
 
     const conflictKey = shortcutConflictKey(binding.shortcut, platform);
@@ -204,6 +205,28 @@ function matchesCommandShortcut(
   return resolveShortcutCommand(event, keybindings, options) === command;
 }
 
+function isDisabledCompadreShortcut(
+  binding: ResolvedKeybindingsConfig[number],
+  platform: string,
+): boolean {
+  if (binding.command !== "modelPicker.toggle") return false;
+
+  return (
+    shortcutConflictKey(binding.shortcut, platform) ===
+    shortcutConflictKey(
+      {
+        key: "m",
+        metaKey: false,
+        ctrlKey: false,
+        shiftKey: true,
+        altKey: false,
+        modKey: true,
+      },
+      platform,
+    )
+  );
+}
+
 export function resolveShortcutCommand(
   event: ShortcutEventLike,
   keybindings: ResolvedKeybindingsConfig,
@@ -215,6 +238,7 @@ export function resolveShortcutCommand(
   for (let index = keybindings.length - 1; index >= 0; index -= 1) {
     const binding = keybindings[index];
     if (!binding) continue;
+    if (isDisabledCompadreShortcut(binding, platform)) continue;
     if (!matchesWhenClause(binding.whenAst, context)) continue;
     if (!matchesShortcut(event, binding.shortcut, platform)) continue;
     return binding.command;

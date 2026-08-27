@@ -3489,7 +3489,7 @@ export default function Sidebar() {
               </div>
             </div>
             {projectGroups.length > 0 ? (
-              <div className="flex items-center gap-1">
+              <div className="flex items-center gap-1" data-compadre-hidden-control>
                 <Menu open={projectScopeMenuOpen} onOpenChange={setProjectScopeMenuOpen}>
                   <MenuTrigger
                     render={
