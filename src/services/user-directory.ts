@@ -104,6 +104,13 @@ export function slackIdentityFromOpenIdClaims(
   };
 }
 
+/** One canonical label for the same Slack identity across event and login APIs. */
+export function canonicalSlackDisplayName(
+  profile: Pick<SlackIdentityProfile, "displayName" | "realName">,
+): string {
+  return profile.realName?.trim() || profile.displayName?.trim() || "Slack user";
+}
+
 /** Stable for one Slack identity, while remaining an ordinary UUID. */
 export function slackBackedUserId(
   workspaceId: string,
@@ -168,8 +175,7 @@ export class UserDirectory {
       ...(input.avatarUrl ? { avatarUrl: input.avatarUrl } : {}),
       ...(input.email ? { email: input.email } : {}),
     };
-    const displayName =
-      input.displayName?.trim() || input.realName?.trim() || "Slack user";
+    const displayName = canonicalSlackDisplayName(input);
     const realName = input.realName?.trim();
     const avatarUrl = input.avatarUrl?.trim();
     const email = input.email?.trim();

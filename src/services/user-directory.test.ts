@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  canonicalSlackDisplayName,
   slackBackedUserId,
+  slackIdentityFromOpenIdClaims,
   slackIdentityFromUserInfo,
   slackMessageAttribution,
 } from "./user-directory.js";
@@ -36,6 +38,26 @@ test("falls back safely when Slack profile fields are sparse", () => {
     { displayName: "isaac" },
   );
   assert.deepEqual(slackIdentityFromUserInfo({}), { displayName: "Slack user" });
+});
+
+test("uses one canonical name for Slack events and browser login", () => {
+  const fromEvent = slackIdentityFromUserInfo({
+    user: {
+      name: "isaac",
+      profile: {
+        display_name: "isaac",
+        real_name: "Isaac Sherrill",
+      },
+    },
+  });
+  const fromLogin = slackIdentityFromOpenIdClaims({
+    preferred_username: "isaac",
+    name: "Isaac Sherrill",
+  });
+
+  assert.equal(canonicalSlackDisplayName(fromEvent), "Isaac Sherrill");
+  assert.equal(canonicalSlackDisplayName(fromLogin), "Isaac Sherrill");
+  assert.equal(canonicalSlackDisplayName({ displayName: "isaac" }), "isaac");
 });
 
 test("uses a stable UUID and creates Slack message attribution", () => {
