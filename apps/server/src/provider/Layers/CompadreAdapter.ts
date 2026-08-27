@@ -37,8 +37,6 @@ import {
 import type { ProviderAdapterShape, ProviderThreadSnapshot } from "../Services/ProviderAdapter.ts";
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
 
-const PROVIDER = ProviderDriverKind.make("compadre");
-
 export interface CompadreTurnRequest {
   readonly endpoint: string;
   readonly apiKey: string | undefined;
@@ -78,10 +76,10 @@ export type CompadreCancelTransport = (
 export interface CompadreAdapterOptions {
   readonly endpoint: string;
   readonly apiKey?: string;
-  readonly instanceId?: ProviderInstanceId;
+  readonly instanceId: ProviderInstanceId;
   readonly provider?: "claude-code" | "codex";
-  /** Provider identity presented to T3 orchestration. Defaults to `compadre`. */
-  readonly runtimeProvider?: ProviderDriverKind;
+  /** Native provider identity presented to T3 orchestration. */
+  readonly runtimeProvider: ProviderDriverKind;
   readonly transport?: CompadreTransport;
   readonly cancelTransport?: CompadreCancelTransport;
   readonly attachmentsDir?: string;
@@ -94,10 +92,6 @@ interface CompadreSessionContext {
   activeFiber: Fiber.Fiber<void, ProviderAdapterRequestError> | undefined;
   activeRunId: string | undefined;
   stopped: boolean;
-}
-
-function isCompadreProvider(value: string | undefined): value is "claude-code" | "codex" {
-  return value === "claude-code" || value === "codex";
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -229,8 +223,8 @@ function makeLiveCancelTransport(
 
 export function makeCompadreAdapter(options: CompadreAdapterOptions) {
   return Effect.gen(function* () {
-    const runtimeProvider = options.runtimeProvider ?? PROVIDER;
-    const boundInstanceId = options.instanceId ?? ProviderInstanceId.make("compadre");
+    const runtimeProvider = options.runtimeProvider;
+    const boundInstanceId = options.instanceId;
     const crypto = yield* Crypto.Crypto;
     const adapterScope = yield* Scope.make("sequential");
     const httpClient = yield* HttpClient.HttpClient;
@@ -433,10 +427,7 @@ export function makeCompadreAdapter(options: CompadreAdapterOptions) {
           input.modelSelection?.instanceId === boundInstanceId
             ? (input.modelSelection.options ?? [])
             : context.modelOptions;
-        const selectedProvider =
-          runtimeProvider === PROVIDER && isCompadreProvider(selectedModel)
-            ? selectedModel
-            : options.provider;
+        const selectedProvider = options.provider;
 
         const turnId = TurnId.make(yield* randomId);
         const runId = yield* randomId;

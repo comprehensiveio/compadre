@@ -43,7 +43,6 @@
  */
 import {
   defaultInstanceIdForDriver,
-  ProviderDriverKind,
   type ProviderInstanceConfig,
   type ProviderInstanceConfigMap,
   ServerSettings,
@@ -73,35 +72,14 @@ import { ProviderInstanceRegistryMutableLayer } from "./ProviderInstanceRegistry
  */
 export const deriveProviderInstanceConfigMap = (
   settings: ServerSettings,
-  environment: NodeJS.ProcessEnv = process.env,
 ): ProviderInstanceConfigMap => {
   const merged: Record<string, ProviderInstanceConfig> = { ...settings.providerInstances };
-
-  const compadreDriver = ProviderDriverKind.make("compadre");
-  const compadreInstanceId = defaultInstanceIdForDriver(compadreDriver);
-  const compadreHosted = Boolean(environment.COMPADRE_PROVIDER_URL?.trim());
-  if (compadreHosted && !(compadreInstanceId in merged)) {
-    merged[compadreInstanceId] = {
-      driver: compadreDriver,
-      displayName: "Compadre",
-      config: {},
-    };
-  }
 
   for (const driver of BUILT_IN_DRIVERS) {
     const instanceId = defaultInstanceIdForDriver(driver.driverKind);
     if (instanceId in merged) {
       // Explicit `providerInstances` entry for this slot — user-authored
       // config always wins over the legacy mirror.
-      continue;
-    }
-
-    // A hosted Compadre environment delegates every turn to the remote
-    // controller, so synthesized local providers are misleading (and are
-    // commonly unavailable on the web-service host). Explicit instance
-    // entries still win above for installations that intentionally mix a
-    // native provider with Compadre.
-    if (compadreHosted) {
       continue;
     }
 

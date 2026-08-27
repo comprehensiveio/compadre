@@ -51,107 +51,6 @@ it("uses the native Codex catalog instead of stale experiment model aliases", ()
 });
 
 it.layer(Layer.merge(NodeServices.layer, FetchHttpClient.layer))("CompadreAdapter", (it) => {
-  it.effect("maps a Compadre AG-UI text turn to T3 runtime events", () =>
-    Effect.gen(function* () {
-      const threadId = ThreadId.make("compadre-thread");
-      const requests: Array<{
-        readonly input: string;
-        readonly threadId: string;
-        readonly provider: "claude-code" | "codex" | undefined;
-      }> = [];
-      const adapter = yield* makeCompadreAdapter({
-        endpoint: "http://compadre.test/hosted/chat",
-        instanceId: ProviderInstanceId.make("compadre"),
-        transport: (request) => {
-          requests.push({
-            input: request.input,
-            threadId: request.threadId,
-            provider: request.provider,
-          });
-          return Stream.fromIterable([
-            { type: "RUN_STARTED", runId: request.runId, threadId: request.threadId },
-            {
-              type: "TEXT_MESSAGE_START",
-              messageId: "assistant-1",
-              role: "assistant",
-            },
-            {
-              type: "TEXT_MESSAGE_CONTENT",
-              messageId: "assistant-1",
-              delta: "hello from Modal",
-            },
-            { type: "TEXT_MESSAGE_END", messageId: "assistant-1" },
-            { type: "RUN_FINISHED", runId: request.runId, threadId: request.threadId },
-          ]);
-        },
-      });
-
-      const events: Array<ProviderRuntimeEvent> = [];
-      const completed = yield* Deferred.make<void>();
-      const eventsFiber = yield* Stream.runForEach(adapter.streamEvents, (event) =>
-        Effect.sync(() => events.push(event)).pipe(
-          Effect.andThen(
-            event.type === "session.state.changed" &&
-              event.payload.reason === "Compadre turn completed"
-              ? Deferred.succeed(completed, undefined)
-              : Effect.void,
-          ),
-        ),
-      ).pipe(Effect.forkChild);
-      yield* Effect.yieldNow;
-
-      const session = yield* adapter.startSession({
-        threadId,
-        provider: ProviderDriverKind.make("compadre"),
-        cwd: process.cwd(),
-        runtimeMode: "full-access",
-        modelSelection: {
-          instanceId: ProviderInstanceId.make("compadre"),
-          model: "claude-code",
-        },
-      });
-      const turn = yield* adapter.sendTurn({
-        threadId,
-        input: "inspect the repo",
-        modelSelection: {
-          instanceId: ProviderInstanceId.make("compadre"),
-          model: "codex",
-        },
-      });
-
-      yield* Deferred.await(completed);
-      yield* Fiber.interrupt(eventsFiber);
-
-      assert.equal(session.provider, "compadre");
-      assert.equal(turn.threadId, threadId);
-      assert.deepStrictEqual(requests, [
-        { input: "inspect the repo", threadId, provider: "codex" },
-      ]);
-      assert.deepStrictEqual(
-        events.map((event) => event.type),
-        [
-          "session.started",
-          "session.state.changed",
-          "thread.started",
-          "turn.started",
-          "item.started",
-          "content.delta",
-          "item.completed",
-          "turn.completed",
-          "session.state.changed",
-        ],
-      );
-      const delta = events.find((event) => event.type === "content.delta");
-      assert.equal(delta?.payload.delta, "hello from Modal");
-      const terminalSessionState = events.at(-1);
-      assert.equal(terminalSessionState?.type, "session.state.changed");
-      if (terminalSessionState?.type === "session.state.changed") {
-        assert.equal(terminalSessionState.payload.state, "ready");
-        assert.equal(terminalSessionState.payload.reason, "Compadre turn completed");
-      }
-    }),
-  );
-
   it.effect("presents a remote worker as the native provider and forwards its model", () =>
     Effect.gen(function* () {
       const threadId = ThreadId.make("remote-codex-thread");
@@ -222,6 +121,9 @@ it.layer(Layer.merge(NodeServices.layer, FetchHttpClient.layer))("CompadreAdapte
       const threadId = ThreadId.make("compadre-error-thread");
       const adapter = yield* makeCompadreAdapter({
         endpoint: "http://compadre.test/hosted/chat",
+        instanceId: ProviderInstanceId.make("codex"),
+        runtimeProvider: ProviderDriverKind.make("codex"),
+        provider: "codex",
         transport: () => Stream.make({ type: "RUN_ERROR", message: "Modal failed" }),
       });
       const events: Array<ProviderRuntimeEvent> = [];
@@ -277,6 +179,9 @@ it.layer(Layer.merge(NodeServices.layer, FetchHttpClient.layer))("CompadreAdapte
         const completed = yield* Deferred.make<void>();
         const adapter = yield* makeCompadreAdapter({
           endpoint: "http://compadre.test/hosted/chat",
+          instanceId: ProviderInstanceId.make("codex"),
+          runtimeProvider: ProviderDriverKind.make("codex"),
+          provider: "codex",
           attachmentsDir,
           transport: (request) => {
             received.push(...request.inputFiles);
@@ -328,6 +233,9 @@ it.layer(Layer.merge(NodeServices.layer, FetchHttpClient.layer))("CompadreAdapte
       const cancelledRunIds: string[] = [];
       const adapter = yield* makeCompadreAdapter({
         endpoint: "http://compadre.test/hosted/chat",
+        instanceId: ProviderInstanceId.make("codex"),
+        runtimeProvider: ProviderDriverKind.make("codex"),
+        provider: "codex",
         transport: () => Stream.never,
         cancelTransport: ({ runId }) =>
           Effect.sync(() => {
