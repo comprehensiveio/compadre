@@ -55,12 +55,16 @@ through the bot-authenticated `users.info` API, and canonical sender
 attribution is copied into the T3 message event. Web messages are attributed
 from the authenticated T3 session rather than from client-supplied fields.
 
-Browser login uses Sign in with Slack (OpenID Connect) with state, nonce, PKCE,
-and a workspace allowlist. The controller verifies Slack and issues a
+Browser login uses Sign in with Slack (OpenID Connect) as a confidential web
+client, with state, nonce, signed-token verification, and a workspace
+allowlist. The controller verifies Slack and issues a
 short-lived, single-use handoff grant. Central T3 exchanges that grant
 server-to-server and creates one of T3's existing persisted, signed browser
 sessions. Slack tokens and service credentials never reach the browser or
-Modal.
+Modal. In hosted Compadre mode, T3 rejects older pairing-issued browser
+sessions while preserving service/bearer sessions for the relay API. Users can
+explicitly sign out, which revokes the persisted T3 session and expires its
+browser cookie.
 
 The initial authorization policy is intentionally simple: every active member
 of the allowed Slack workspace can access every Compadre conversation. The
