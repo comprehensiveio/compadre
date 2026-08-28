@@ -117,6 +117,18 @@ export function stripSlackBotMention(text: string, botUserId?: string): string {
     : text.trim();
 }
 
+export function isAllowedSlackWorkspace(input: {
+  configuredWorkspaceId?: string;
+  eventWorkspaceId?: string;
+}): boolean {
+  const configuredWorkspaceId = input.configuredWorkspaceId?.trim();
+  return Boolean(
+    configuredWorkspaceId &&
+      input.eventWorkspaceId &&
+      input.eventWorkspaceId === configuredWorkspaceId,
+  );
+}
+
 slackEventsRoutes.post("/slack/events", async (c) => {
   const rawBody = await c.req.text();
 
@@ -151,10 +163,29 @@ slackEventsRoutes.post("/slack/events", async (c) => {
   }
 
   if (payload.type === "event_callback") {
+    const teamId =
+      typeof payload.team_id === "string" ? payload.team_id : undefined;
+    const configuredWorkspaceId = process.env.COMPADRE_SLACK_WORKSPACE_ID;
+    if (!configuredWorkspaceId?.trim()) {
+      console.error(
+        "[slack-events] COMPADRE_SLACK_WORKSPACE_ID not configured",
+      );
+      return c.json({ error: "server misconfigured" }, 500);
+    }
+    if (
+      !isAllowedSlackWorkspace({
+        configuredWorkspaceId,
+        eventWorkspaceId: teamId,
+      })
+    ) {
+      console.warn("[slack-events] rejected event from unauthorized workspace", {
+        teamId,
+      });
+      return c.json({ error: "workspace not allowed" }, 403);
+    }
+
     const event = payload.event;
     if (event && typeof event === "object") {
-      const teamId =
-        typeof payload.team_id === "string" ? payload.team_id : undefined;
       const botUserId = resolveSlackBotUserId({
         configured: process.env.SLACK_BOT_USER_ID,
         authorizations: Array.isArray(payload.authorizations)

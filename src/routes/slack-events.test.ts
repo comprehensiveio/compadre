@@ -1,11 +1,89 @@
 import assert from "node:assert/strict";
+import crypto from "node:crypto";
 import test from "node:test";
 import {
+  isAllowedSlackWorkspace,
   isSupportedUserMessage,
   resolveSlackBotUserId,
+  slackEventsRoutes,
   stripSlackBotMention,
   type SlackEvent,
 } from "./slack-events.js";
+
+test("allows Slack events only from the configured workspace", () => {
+  assert.equal(
+    isAllowedSlackWorkspace({
+      configuredWorkspaceId: "T123",
+      eventWorkspaceId: "T123",
+    }),
+    true,
+  );
+  assert.equal(
+    isAllowedSlackWorkspace({
+      configuredWorkspaceId: "T123",
+      eventWorkspaceId: "T999",
+    }),
+    false,
+  );
+  assert.equal(
+    isAllowedSlackWorkspace({
+      configuredWorkspaceId: "T123",
+    }),
+    false,
+  );
+  assert.equal(
+    isAllowedSlackWorkspace({
+      eventWorkspaceId: "T123",
+    }),
+    false,
+  );
+});
+
+test("rejects a validly signed event callback from another workspace", async () => {
+  const signingSecret = "test-signing-secret";
+  const timestamp = String(Math.floor(Date.now() / 1000));
+  const body = JSON.stringify({
+    type: "event_callback",
+    team_id: "T999",
+    event: {},
+  });
+  const signature = `v0=${crypto
+    .createHmac("sha256", signingSecret)
+    .update(`v0:${timestamp}:${body}`)
+    .digest("hex")}`;
+  const previousSigningSecret = process.env.SLACK_SIGNING_SECRET;
+  const previousWorkspaceId = process.env.COMPADRE_SLACK_WORKSPACE_ID;
+  process.env.SLACK_SIGNING_SECRET = signingSecret;
+  process.env.COMPADRE_SLACK_WORKSPACE_ID = "T123";
+
+  try {
+    const response = await slackEventsRoutes.request(
+      "https://controller.example/slack/events",
+      {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-slack-request-timestamp": timestamp,
+          "x-slack-signature": signature,
+        },
+        body,
+      },
+    );
+    assert.equal(response.status, 403);
+    assert.deepEqual(await response.json(), { error: "workspace not allowed" });
+  } finally {
+    if (previousSigningSecret === undefined) {
+      delete process.env.SLACK_SIGNING_SECRET;
+    } else {
+      process.env.SLACK_SIGNING_SECRET = previousSigningSecret;
+    }
+    if (previousWorkspaceId === undefined) {
+      delete process.env.COMPADRE_SLACK_WORKSPACE_ID;
+    } else {
+      process.env.COMPADRE_SLACK_WORKSPACE_ID = previousWorkspaceId;
+    }
+  }
+});
 
 function message(overrides: Partial<SlackEvent> = {}): SlackEvent {
   return {
