@@ -1,4 +1,5 @@
 import type {
+  ChatAttachment as ContractChatAttachment,
   ChatFileAttachment as ContractChatFileAttachment,
   ChatImageAttachment as ContractChatImageAttachment,
   OrchestrationCheckpointFile,
@@ -40,7 +41,10 @@ export interface ChatFileAttachment extends ContractChatFileAttachment {
   readonly downloadUrl?: string;
 }
 
-export type ChatAttachment = ChatImageAttachment | ChatFileAttachment;
+export type ChatAttachment =
+  | ChatImageAttachment
+  | ChatFileAttachment
+  | Exclude<ContractChatAttachment, ContractChatImageAttachment | ContractChatFileAttachment>;
 
 export function isImageAttachment(attachment: ChatAttachment): attachment is ChatImageAttachment {
   return attachment.type === "image";
