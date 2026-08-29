@@ -218,6 +218,11 @@ export const authHttpApiLayer = HttpApiBuilder.group(
             const request = yield* HttpServerRequest.HttpServerRequest;
             const state = yield* serverAuth.getSessionState(request);
             if (!state.authenticated) return state;
+            // `getSessionState` has already authenticated the request. Re-authenticating a
+            // DPoP request consumes the same proof twice and correctly trips replay
+            // protection, so only inspect the full session for browser cookies where we
+            // need the hosted Slack user subject for the UI.
+            if (state.sessionMethod !== "browser-session-cookie") return state;
             const session = yield* serverAuth.authenticateHttpRequest(request).pipe(Effect.option);
             if (Option.isSome(session) && isAllowedCompadreSession(session.value)) {
               const user = decodeCompadreUserSubject(session.value.subject);
