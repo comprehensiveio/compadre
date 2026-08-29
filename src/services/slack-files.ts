@@ -3,6 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { z } from "zod";
 import { SlackClient, type DownloadedSlackFile } from "./slack-client.js";
+import type { InputFile } from "./input-files.js";
 
 export const MAX_SLACK_INPUT_FILES = 5;
 export const MAX_SLACK_INPUT_FILE_BYTES = 10 * 1024 * 1024;
@@ -35,6 +36,70 @@ export interface MaterializedSlackFiles {
   prompt: string;
   uploads: Array<{ path: string; data: Uint8Array }>;
   cleanup(): Promise<void>;
+}
+
+export interface DownloadedSlackInputFiles {
+  files: InputFile[];
+  warnings: string[];
+}
+
+const T3_IMAGE_MIME_TYPES = new Set<InputFile["mimetype"]>([
+  "image/gif",
+  "image/jpeg",
+  "image/png",
+  "image/webp",
+]);
+
+/** Download Slack images into T3's authenticated inline-attachment format. */
+export async function downloadSlackInputFiles(
+  files: readonly SlackFileReference[],
+  options: {
+    downloader?: SlackFileDownloader;
+    environment?: NodeJS.ProcessEnv;
+  } = {},
+): Promise<DownloadedSlackInputFiles> {
+  const references = mergeSlackFileReferences(files);
+  if (references.length === 0) return { files: [], warnings: [] };
+  const environment = options.environment ?? process.env;
+  let downloader = options.downloader;
+  if (!downloader) {
+    const botToken = environment.SLACK_BOT_TOKEN;
+    const teamId = environment.SLACK_TEAM_ID;
+    if (botToken && teamId) downloader = new SlackClient({ botToken, teamId });
+  }
+  if (!downloader) {
+    return {
+      files: [],
+      warnings: ["Slack attachments could not be downloaded because Slack credentials are unavailable."],
+    };
+  }
+
+  const downloadedFiles: InputFile[] = [];
+  const warnings: string[] = [];
+  for (const reference of references) {
+    try {
+      const downloaded = await downloader.downloadFile(
+        reference.id,
+        MAX_SLACK_INPUT_FILE_BYTES,
+      );
+      const mimetype = downloaded.mimetype.toLowerCase();
+      if (!T3_IMAGE_MIME_TYPES.has(mimetype as InputFile["mimetype"])) {
+        warnings.push(`${fileLabel(reference)} is not a supported image attachment (${mimetype}).`);
+        continue;
+      }
+      downloadedFiles.push({
+        name: path.basename(downloaded.name).slice(0, 255) || "slack-image",
+        mimetype: mimetype as InputFile["mimetype"],
+        sizeBytes: downloaded.data.byteLength,
+        dataBase64: Buffer.from(downloaded.data).toString("base64"),
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.warn(`[slack-files] failed to download ${reference.id}: ${message}`);
+      warnings.push(`${fileLabel(reference)} could not be downloaded: ${message}`);
+    }
+  }
+  return { files: downloadedFiles, warnings };
 }
 
 export function slackFileReferences(

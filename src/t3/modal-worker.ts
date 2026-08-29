@@ -3,6 +3,7 @@ import fs from "node:fs/promises";
 import { COMPADRE_SKILL_NAMES } from "../compadre-skills.js";
 import { gitAuthenticationEnvironment } from "../repo.js";
 import { ModalHandle } from "../tanstack/modal-sandbox.js";
+import type { SandboxHandle } from "@tanstack/ai-sandbox";
 import { configuredEnvironmentBridgeToken } from "../tanstack/relay-tool-bridge.js";
 import { createHarnessSandbox } from "../tanstack/sandbox-runtime.js";
 import { exchangeT3PairingToken, type T3Client } from "../t3/client.js";
@@ -272,6 +273,7 @@ export interface T3ModalWorker {
 export interface ManagedT3ModalEnvironment extends T3ModalWorker {
   projectId: string;
   client: T3Client;
+  handle: SandboxHandle;
 }
 
 /**
@@ -403,6 +405,7 @@ export async function launchManagedT3ModalEnvironment(
       workspaceRoot: handle.workspaceRoot ?? "/workspace",
       projectId: project.id,
       client: gatewaySession.client,
+      handle,
     };
   } catch (error) {
     await handle.destroy().catch(() => undefined);

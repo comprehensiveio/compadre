@@ -6,9 +6,38 @@ import { T3ThreadSnapshotStore } from "../services/t3-thread-snapshots.js";
 import { T3Gateway } from "./gateway.js";
 import { T3ModalEnvironmentManager } from "./modal-environments.js";
 import { NativeT3RunCoordinator } from "./run-coordinator.js";
+import {
+  S3T3ArtifactObjectStore,
+  T3ArtifactStore,
+} from "./artifact-store.js";
 
 let configuredGateway: Promise<T3Gateway | null> | undefined;
 let configuredRunCoordinator: Promise<NativeT3RunCoordinator | null> | undefined;
+let configuredArtifactStore: Promise<T3ArtifactStore | null> | undefined;
+
+export async function getConfiguredT3ArtifactStore(): Promise<T3ArtifactStore | null> {
+  if (!configuredArtifactStore) {
+    const initialization = getConfiguredThreadPersistence().then(async (runtime) => {
+      const bucket = process.env.COMPADRE_T3_ARTIFACT_BUCKET?.trim();
+      const region =
+        process.env.COMPADRE_T3_ARTIFACT_REGION?.trim() ||
+        process.env.AWS_REGION?.trim() ||
+        process.env.AWS_DEFAULT_REGION?.trim();
+      if (!runtime || !bucket || !region) return null;
+      const store = new T3ArtifactStore(
+        new S3T3ArtifactObjectStore(bucket, { region }),
+        runtime.persistence.stores.metadata,
+      );
+      await store.check();
+      return store;
+    }).catch((error) => {
+      if (configuredArtifactStore === initialization) configuredArtifactStore = undefined;
+      throw error;
+    });
+    configuredArtifactStore = initialization;
+  }
+  return configuredArtifactStore;
+}
 
 /** Shared native-T3 coordinator used by HTTP, Slack, and simulations. */
 export async function getConfiguredT3Gateway(): Promise<T3Gateway | null> {

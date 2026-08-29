@@ -17,6 +17,7 @@ import {
 } from "../t3/gateway.js";
 import {
   getConfiguredNativeT3RunCoordinator,
+  getConfiguredT3ArtifactStore,
   getConfiguredT3Gateway,
 } from "../t3/runtime.js";
 import { requireCompadreApiKey } from "./auth.js";
@@ -42,11 +43,19 @@ import {
   isSlackEntrypointMessageId,
 } from "../t3/central-conversation.js";
 import type { NativeT3RunCoordinator } from "../t3/run-coordinator.js";
+import { inputFilesSchema, type InputFile } from "../services/input-files.js";
+import { SlackClient } from "../services/slack-client.js";
+import type { T3ArtifactStore } from "../t3/artifact-store.js";
+import type { T3OutputArtifact } from "../t3/output-artifacts.js";
 
 const MAX_TITLE_LENGTH = 200;
 const MAX_MESSAGE_LENGTH = 100_000;
 const TERMINAL_WAIT_TIMEOUT_MS = 20 * 60 * 1000;
 const TEXT_GENERATION_TIMEOUT_MS = 165_000;
+const OUTPUT_ARTIFACT_INSTRUCTIONS = [
+  "When you create a file for the user, write the final downloadable copy under /tmp/agent-outputs.",
+  "Use a descriptive filename and keep temporary/intermediate files elsewhere.",
+].join(" ");
 
 export interface ActiveNativeT3Run {
   gateway: T3DirectoryGateway;
@@ -58,6 +67,7 @@ interface T3DirectoryGateway {
   generateText?(input: {
     prompt: string;
     modelSelection: T3ModelSelection;
+    inputFiles?: ReadonlyArray<InputFile>;
     timeoutMs: number;
     signal?: AbortSignal;
   }): Promise<{ dispatch: T3TurnDispatch; snapshot: T3ThreadSnapshot }>;
@@ -93,12 +103,17 @@ interface T3DirectoryGateway {
     signal?: AbortSignal;
     onSnapshot?(snapshot: T3ThreadSnapshot): void | Promise<void>;
   }): Promise<T3ThreadSnapshot>;
+  collectOutputArtifacts?(
+    turn: T3GatewayTurn,
+    publish: (artifact: T3OutputArtifact) => Promise<void>,
+  ): Promise<{ published: Array<{ path: string; digest: string }>; failures: string[] }>;
 }
 
 export interface T3DirectoryRoutesDependencies {
   enabled(): boolean;
   getGateway(): Promise<T3DirectoryGateway | null>;
   getRunCoordinator?(): Promise<NativeT3RunCoordinator | null>;
+  getArtifactStore?(): Promise<T3ArtifactStore | null>;
   createId(): string;
   watchTurn(gateway: T3DirectoryGateway, turn: T3GatewayTurn): void;
   getSlackBinding?(threadId: string): Promise<HostedSlackBinding | null>;
@@ -108,6 +123,7 @@ const defaultDependencies: T3DirectoryRoutesDependencies = {
   enabled: () => process.env.COMPADRE_T3_DIRECTORY_ENABLED === "true",
   getGateway: getConfiguredT3Gateway,
   getRunCoordinator: getConfiguredNativeT3RunCoordinator,
+  getArtifactStore: getConfiguredT3ArtifactStore,
   createId: crypto.randomUUID,
   watchTurn(gateway, turn) {
     void gateway
@@ -301,6 +317,26 @@ export function createT3DirectoryRoutes(
     return c.json({ threads: (await gateway.list()).map(publicBinding) });
   }));
 
+  routes.get("/hosted/t3/artifacts", guarded(async (c) => {
+    const runId = c.req.query("runId")?.trim() ?? "";
+    const artifactId = c.req.query("artifactId")?.trim() ?? "";
+    if (!runId || runId.length > 200 || !/^[a-f0-9]{64}$/u.test(artifactId)) {
+      return c.json({ error: "invalid T3 artifact reference" }, 400);
+    }
+    const artifacts = await dependencies.getArtifactStore?.();
+    if (!artifacts) return c.json({ error: "T3 artifact storage is unavailable" }, 503);
+    const artifact = await artifacts.read(runId, artifactId);
+    if (!artifact) return c.json({ error: "T3 artifact not found" }, 404);
+    return new Response(Uint8Array.from(artifact.bytes).buffer, {
+      headers: {
+        "cache-control": "private, max-age=31536000, immutable",
+        "content-length": String(artifact.bytes.byteLength),
+        "content-type": artifact.metadata.mimetype,
+        etag: `"sha256-${artifact.metadata.artifactId}"`,
+      },
+    });
+  }));
+
   routes.post("/hosted/t3/threads", guarded(async (c) => {
     const body = await requestBody(c.req.raw);
     const title = nonEmptyString(body?.title, MAX_TITLE_LENGTH);
@@ -409,6 +445,7 @@ export function createT3DirectoryRoutes(
     if (!runCoordinator) {
       return c.json({ error: "native T3 run durability is not configured" }, 503);
     }
+    const artifactStore = await dependencies.getArtifactStore?.();
     const runId = params.runId || dependencies.createId();
     const canonicalThreadId = params.threadId || dependencies.createId();
     const selectedModel = nativeModelSelection(
@@ -416,12 +453,20 @@ export function createT3DirectoryRoutes(
       params.forwardedProps.model,
       params.forwardedProps.modelOptions,
     );
+    const parsedInputFiles = inputFilesSchema.safeParse(
+      params.forwardedProps.inputFiles ?? [],
+    );
+    if (!parsedInputFiles.success) {
+      return c.json({ error: "forwardedProps.inputFiles is invalid" }, 400);
+    }
     const messageId = latestUserMessageId(params.messages);
+    const linkedSlackBinding = dependencies.getSlackBinding
+      ? await dependencies.getSlackBinding(canonicalThreadId)
+      : null;
     const slackBinding =
       process.env.COMPADRE_HOSTED_SLACK_DELIVERY_ENABLED !== "false" &&
-      !isSlackEntrypointMessageId(messageId) &&
-      dependencies.getSlackBinding
-        ? await dependencies.getSlackBinding(canonicalThreadId)
+      !isSlackEntrypointMessageId(messageId)
+        ? linkedSlackBinding
         : null;
     const botToken = process.env.SLACK_BOT_TOKEN?.trim();
     const hostedAppUrl = process.env.COMPADRE_T3_HOSTED_APP_URL?.trim();
@@ -444,8 +489,70 @@ export function createT3DirectoryRoutes(
           title:
             nonEmptyString(params.forwardedProps.title, MAX_TITLE_LENGTH) ??
             "T3 thread",
-          text,
+          text: artifactStore ? `${text}\n\n${OUTPUT_ARTIFACT_INSTRUCTIONS}` : text,
           modelSelection: selectedModel,
+          inputFiles: parsedInputFiles.data,
+          outputArtifactEvents:
+            artifactStore && gateway.collectOutputArtifacts
+              ? async (turn) => {
+                  const events: import("../t3/agui-protocol.js").StreamChunk[] = [];
+                  const collection = await gateway.collectOutputArtifacts!(
+                    turn,
+                    async (artifact) => {
+                      const metadata = await artifactStore.publish({
+                        runId,
+                        artifactId: artifact.digest,
+                        path: artifact.path,
+                        name: artifact.filename,
+                        title: artifact.title,
+                        mimetype: artifact.mimetype,
+                        bytes: artifact.bytes,
+                      });
+                      const slackTeamId =
+                        linkedSlackBinding?.recipientTeamId ??
+                        process.env.SLACK_TEAM_ID?.trim() ??
+                        process.env.COMPADRE_SLACK_WORKSPACE_ID?.trim();
+                      if (linkedSlackBinding && botToken && slackTeamId) {
+                        try {
+                          await new SlackClient({ botToken, teamId: slackTeamId }).uploadBytes({
+                            channel: linkedSlackBinding.channelId,
+                            threadTs: linkedSlackBinding.threadTs,
+                            data: artifact.bytes,
+                            filename: artifact.filename,
+                            title: artifact.title,
+                          });
+                        } catch (error) {
+                          console.warn("[t3-artifacts] Slack artifact delivery failed", {
+                            runId,
+                            artifactId: metadata.artifactId,
+                            error,
+                          });
+                        }
+                      }
+                      events.push({
+                        type: "OUTPUT_ARTIFACT",
+                        timestamp: Date.now(),
+                        artifact: {
+                          artifactId: metadata.artifactId,
+                          path: metadata.path,
+                          name: metadata.name,
+                          title: metadata.title,
+                          mimetype: metadata.mimetype,
+                          sizeBytes: metadata.sizeBytes,
+                          storage: "hosted-object",
+                        },
+                      });
+                    },
+                  );
+                  for (const failure of collection.failures) {
+                    console.warn("[t3-artifacts] output artifact was not published", {
+                      runId,
+                      failure,
+                    });
+                  }
+                  return events;
+                }
+              : undefined,
           signal,
           onTurn(turn) {
             activeRuns.set(runId, { gateway, turn });

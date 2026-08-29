@@ -46,6 +46,23 @@ export interface T3MessageAttribution {
   };
 }
 
+export interface T3InputFile {
+  name: string;
+  mimetype: "image/gif" | "image/jpeg" | "image/png" | "image/webp";
+  sizeBytes: number;
+  dataBase64: string;
+}
+
+function inlineImageAttachment(file: T3InputFile) {
+  return {
+    type: "image" as const,
+    name: file.name,
+    mimeType: file.mimetype,
+    sizeBytes: file.sizeBytes,
+    dataUrl: `data:${file.mimetype};base64,${file.dataBase64}`,
+  };
+}
+
 export interface T3Project {
   id: string;
   title: string;
@@ -497,6 +514,7 @@ export class T3Client {
     text: string;
     displayText?: string;
     attribution?: T3MessageAttribution;
+    inputFiles?: ReadonlyArray<T3InputFile>;
     modelSelection: T3ModelSelection;
     runtimeMode?: T3RuntimeMode;
     interactionMode?: T3InteractionMode;
@@ -534,6 +552,7 @@ export class T3Client {
       text: input.text,
       displayText: input.displayText,
       attribution: input.attribution,
+      inputFiles: input.inputFiles,
       modelSelection: input.modelSelection,
       runtimeMode,
       interactionMode,
@@ -547,6 +566,7 @@ export class T3Client {
     text: string;
     displayText?: string;
     attribution?: T3MessageAttribution;
+    inputFiles?: ReadonlyArray<T3InputFile>;
     modelSelection: T3ModelSelection;
     runtimeMode?: T3RuntimeMode;
     interactionMode?: T3InteractionMode;
@@ -568,7 +588,7 @@ export class T3Client {
             ? { providerPrompt: input.text }
             : {}),
           ...(input.attribution ? { attribution: input.attribution } : {}),
-          attachments: [],
+          attachments: (input.inputFiles ?? []).map(inlineImageAttachment),
         },
         modelSelection: input.modelSelection,
         runtimeMode: input.runtimeMode ?? "full-access",

@@ -5,6 +5,7 @@ import {
   isAllowedSlackWorkspace,
   isSupportedUserMessage,
   resolveSlackBotUserId,
+  slackMessageTextForAgent,
   slackEventsRoutes,
   stripSlackBotMention,
   type SlackEvent,
@@ -155,5 +156,24 @@ test("strips only this installation's bot mention", () => {
   assert.equal(
     stripSlackBotMention("<@UNEWBOT> hello <@UOTHER>", "UNEWBOT"),
     "hello <@UOTHER>",
+  );
+});
+
+test("a mention-only thread reply asks the agent to answer preceding context", () => {
+  assert.equal(
+    slackMessageTextForAgent({
+      messageText: "",
+      isThreadReply: true,
+      mentionsBot: true,
+    }),
+    "Respond to the preceding Slack message.",
+  );
+  assert.equal(
+    slackMessageTextForAgent({
+      messageText: "",
+      isThreadReply: false,
+      mentionsBot: true,
+    }),
+    "",
   );
 });

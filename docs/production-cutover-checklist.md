@@ -122,6 +122,12 @@ central transcript, Modal logs, Datadog content, or source control.
 
 ## Slack application
 
+Canonical endpoints:
+
+- Web UI: `https://compadre.comprehensive.io`
+- Slack Events/API: `https://compadre-api.comprehensive.io/slack/events`
+- Slack OIDC callback: `https://compadre-api.comprehensive.io/auth/slack/callback`
+
 - [ ] Decide whether to update the current Compadre Slack app or create a new
   production app and migrate installations.
 - [ ] Set the production event request URL to `/slack/events` and pass Slack's
@@ -132,6 +138,8 @@ central transcript, Modal logs, Datadog content, or source control.
   mentions, DMs, channel history, message writing, reactions, and user lookup.
   The isolated app currently logs `conversations.info` `missing_scope` and
   falls back without channel metadata, even though message execution succeeds.
+- [ ] Grant the bot `files:read` for image inputs and `files:write` for generated
+  artifact delivery, then reinstall the app so the expanded scopes take effect.
 - [ ] Reinstall/reauthorize the app after scope changes and confirm the bot is in
   every required channel.
 - [ ] Verify signing-secret validation, replay-window enforcement, event
@@ -190,6 +198,15 @@ central transcript, Modal logs, Datadog content, or source control.
   explicit RPO/RTO targets.
 - [ ] Move attachments and large artifacts to durable object storage with
   authorization and retention policies.
+- [x] Create the private `s3://compadre` bucket in Comprehensive AWS account
+  `629591269808`, block public access, enable encryption and versioning, and
+  grant the Render `compadre` identity `s3:GetBucketLocation`/`s3:ListBucket`
+  plus `s3:GetObject`/`s3:PutObject` on `attachments/v1/*` only.
+- [x] Set `COMPADRE_T3_ARTIFACT_BUCKET=compadre` and
+  `COMPADRE_T3_ARTIFACT_REGION=us-west-2` on the Comprehensive Render
+  experiment service.
+- [ ] After deploying the attachment implementation, verify byte-for-byte web
+  download plus Slack upload from one generated artifact.
 - [ ] Define deletion propagation across T3, Postgres, Modal/provider
   transcripts, object storage, Slack, and Datadog.
 - [x] Add normalized, idempotent central usage records so model context, token

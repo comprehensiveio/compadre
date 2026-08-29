@@ -28,7 +28,7 @@ test("simulates the real Slack-shaped Modal conversation without Slack I/O", asy
     assert.equal(options.profile, "codex");
     assert.equal(options.transcriptUserMessage, "Reply with SLACK-SIM-OK");
     assert.match(options.prompt, /User query:\nReply with SLACK-SIM-OK/);
-    assert.match(options.prompt, /Thread context \(prior messages in this thread\):/);
+    assert.match(options.prompt, /Thread context \(prior messages in this Slack thread\):/);
     assert.match(options.prompt, /- channel: D_TEST/);
     assert.match(options.prompt, /- channel_name: direct-message/);
     options.stream?.onToolStart?.("read_file");

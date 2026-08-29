@@ -9,6 +9,7 @@ import {
 } from "@opentelemetry/api";
 import type {
   T3MessageAttribution,
+  T3InputFile,
   T3ModelSelection,
   T3ThreadSnapshot,
   T3TurnDispatch,
@@ -27,6 +28,7 @@ export interface NativeT3AguiGateway {
     title: string;
     text: string;
     modelSelection: T3ModelSelection;
+    inputFiles?: ReadonlyArray<T3InputFile>;
     signal?: AbortSignal;
   }): Promise<T3GatewayTurn>;
   waitForTerminal(input: {
@@ -35,6 +37,10 @@ export interface NativeT3AguiGateway {
     signal?: AbortSignal;
     onSnapshot?(snapshot: T3ThreadSnapshot): void | Promise<void>;
   }): Promise<T3ThreadSnapshot>;
+  collectOutputArtifacts?(
+    turn: T3GatewayTurn,
+    publish: (artifact: import("./output-artifacts.js").T3OutputArtifact) => Promise<void>,
+  ): Promise<{ published: Array<{ path: string; digest: string }>; failures: string[] }>;
 }
 
 export interface NativeT3AguiStreamInput {
@@ -44,9 +50,11 @@ export interface NativeT3AguiStreamInput {
   title: string;
   text: string;
   modelSelection: T3ModelSelection;
+  inputFiles?: ReadonlyArray<T3InputFile>;
   signal?: AbortSignal;
   onTurn?(turn: T3GatewayTurn): void | Promise<void>;
   onTerminal?(): void | Promise<void>;
+  outputArtifactEvents?(turn: T3GatewayTurn): Promise<StreamChunk[]>;
 }
 
 export interface CentralT3AguiStreamInput {
@@ -454,6 +462,7 @@ export async function* createNativeT3AguiStream(
       title: input.title,
       text: input.text,
       modelSelection: input.modelSelection,
+      inputFiles: input.inputFiles,
       signal: input.signal,
     });
     await input.onTurn?.(turn);
@@ -498,7 +507,16 @@ export async function* createNativeT3AguiStream(
         });
         continue;
       }
-      yield pending.shift()!;
+      const chunk = pending.shift()!;
+      if (
+        chunk.type === EventType.RUN_FINISHED &&
+        input.outputArtifactEvents
+      ) {
+        for (const artifactEvent of await input.outputArtifactEvents(turn)) {
+          yield artifactEvent;
+        }
+      }
+      yield chunk;
     }
     await waiter;
     if (failure) throw failure;

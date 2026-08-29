@@ -4,6 +4,7 @@ import { Hono } from "hono";
 import type { T3ThreadBinding } from "../services/t3-thread-bindings.js";
 import type { T3ThreadSnapshot } from "../t3/client.js";
 import type { T3GatewayTurn } from "../t3/gateway.js";
+import type { T3ArtifactStore } from "../t3/artifact-store.js";
 import { createAgentRunDurability } from "../durability/runtime.js";
 import { NativeT3RunCoordinator } from "../t3/run-coordinator.js";
 import {
@@ -118,6 +119,51 @@ test("lists directory metadata without waking a T3 sandbox", async (t) => {
   assert.equal(body.threads[0]?.canonicalThreadId, "thread-1");
   assert.equal(body.threads[0]?.sandboxId, undefined);
   assert.equal(body.threads[0]?.baseUrl, undefined);
+});
+
+test("serves a durable artifact only through the authenticated controller route", async (t) => {
+  const previousApiKey = process.env.COMPADRE_API_KEY;
+  process.env.COMPADRE_API_KEY = "test-key";
+  t.after(() => {
+    if (previousApiKey === undefined) delete process.env.COMPADRE_API_KEY;
+    else process.env.COMPADRE_API_KEY = previousApiKey;
+  });
+  const artifactId = "a".repeat(64);
+  const artifacts = {
+    async read(runId: string, requestedArtifactId: string) {
+      assert.equal(runId, "run-1");
+      assert.equal(requestedArtifactId, artifactId);
+      return {
+        metadata: {
+          runId,
+          artifactId,
+          objectKey: `attachments/v1/run/${artifactId}`,
+          path: "proof.png",
+          name: "proof.png",
+          title: "Proof",
+          mimetype: "image/png",
+          sizeBytes: 3,
+          createdAt: "2026-08-26T15:00:00.000Z",
+        },
+        bytes: Uint8Array.from([1, 2, 3]),
+      };
+    },
+  } as unknown as T3ArtifactStore;
+  const app = new Hono();
+  app.route("/", createT3DirectoryRoutes({
+    enabled: () => true,
+    createId: () => "generated",
+    getGateway: async () => null,
+    getArtifactStore: async () => artifacts,
+    watchTurn() {},
+  }));
+  const path = `/hosted/t3/artifacts?runId=run-1&artifactId=${artifactId}`;
+
+  assert.equal((await app.request(path)).status, 401);
+  const response = await app.request(path, authorized());
+  assert.equal(response.status, 200);
+  assert.equal(response.headers.get("content-type"), "image/png");
+  assert.deepEqual(new Uint8Array(await response.arrayBuffer()), Uint8Array.from([1, 2, 3]));
 });
 
 test("creates, reads, sends, opens, and cancels one native T3 thread", async (t) => {
@@ -344,6 +390,7 @@ test("streams a native Modal T3 turn through the central provider endpoint", asy
   });
 
   let selection: unknown;
+  let inputFiles: unknown;
   let sends = 0;
   const turnSnapshot: T3ThreadSnapshot = {
     ...snapshot,
@@ -392,9 +439,10 @@ test("streams a native Modal T3 turn through the central provider endpoint", asy
   };
   const gateway = {
     async list() { return []; },
-    async send(input: { modelSelection: unknown }): Promise<T3GatewayTurn> {
+    async send(input: { modelSelection: unknown; inputFiles?: unknown }): Promise<T3GatewayTurn> {
       sends += 1;
       selection = input.modelSelection;
+      inputFiles = input.inputFiles;
       return {
         binding: { ...binding, status: "working" as const },
         dispatch: {
@@ -446,6 +494,14 @@ test("streams a native Modal T3 turn through the central provider endpoint", asy
       provider: "claude-code",
       model: "claude-sonnet-5",
       modelOptions: [{ id: "effort", value: "high" }],
+      inputFiles: [
+        {
+          name: "screen.png",
+          mimetype: "image/png",
+          sizeBytes: 3,
+          dataBase64: "AQID",
+        },
+      ],
     },
   }));
 
@@ -465,6 +521,14 @@ test("streams a native Modal T3 turn through the central provider endpoint", asy
     model: "claude-sonnet-5",
     options: [{ id: "effort", value: "high" }],
   });
+  assert.deepEqual(inputFiles, [
+    {
+      name: "screen.png",
+      mimetype: "image/png",
+      sizeBytes: 3,
+      dataBase64: "AQID",
+    },
+  ]);
   assert.deepEqual(slackBindingLookups, ["central-thread"]);
   assert.equal(sends, 1);
 
@@ -503,7 +567,11 @@ test("streams a native Modal T3 turn through the central provider endpoint", asy
   }));
   assert.equal(slackResponse.status, 200, await slackResponse.clone().text());
   await slackResponse.text();
-  assert.deepEqual(slackBindingLookups, ["central-thread", "central-thread"]);
+  assert.deepEqual(slackBindingLookups, [
+    "central-thread",
+    "central-thread",
+    "central-thread",
+  ]);
   assert.equal(sends, 2);
 });
 

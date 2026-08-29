@@ -12,6 +12,16 @@ export interface SlackAgentInput {
   transcriptUserMessage: string;
 }
 
+export function slackThreadContextPrompt(threadContext: string | null): string {
+  const normalized = threadContext?.trim();
+  return normalized
+    ? [
+        "Thread context (prior messages in this Slack thread):",
+        normalized,
+      ].join("\n")
+    : "";
+}
+
 export function buildSlackThreadUrl(channel: string, threadTs: string): string {
   return `https://comprehensiveio.slack.com/archives/${channel}/p${threadTs.replace(".", "")}`;
 }
@@ -27,11 +37,7 @@ export function buildSlackAgentInput({
 }: SlackAgentInputOptions): SlackAgentInput {
   const promptParts = ["User query:", messageText];
   if (threadContext) {
-    promptParts.push(
-      "",
-      "Thread context (prior messages in this thread):",
-      threadContext,
-    );
+    promptParts.push("", slackThreadContextPrompt(threadContext));
   }
   promptParts.push(
     "",

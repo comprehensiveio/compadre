@@ -106,6 +106,7 @@ export class T3ModalEnvironmentManager
       sandboxId: binding.sandboxId,
       projectId: binding.projectId,
       client,
+      sandbox: handle,
     };
   }
 
@@ -124,6 +125,7 @@ export class T3ModalEnvironmentManager
       sandboxId: launched.sandboxId,
       projectId: launched.projectId,
       client: launched.client,
+      sandbox: launched.handle,
     };
   }
 }

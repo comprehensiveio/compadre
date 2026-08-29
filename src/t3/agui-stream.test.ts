@@ -4,6 +4,7 @@ import { EventType, type StreamChunk } from "./agui-protocol.js";
 import { InMemorySpanExporter, SimpleSpanProcessor } from "@opentelemetry/sdk-trace-base";
 import { NodeTracerProvider } from "@opentelemetry/sdk-trace-node";
 import {
+  createNativeT3AguiStream,
   NativeT3SnapshotProjector,
   traceNativeT3AguiStream,
 } from "./agui-stream.js";
@@ -293,4 +294,71 @@ test("keeps a provider span open for the full native T3 stream", async () => {
   assert.equal(span?.attributes["gen_ai.request.model"], "claude-opus-5");
   assert.equal(span?.attributes["agui.thread_id"], "thread-telemetry");
   await provider.shutdown();
+});
+
+test("publishes durable output artifacts before finishing the provider run", async () => {
+  const terminal = snapshot({
+    sequence: 8,
+    state: "completed",
+    text: "Here is the file.",
+    streaming: false,
+  });
+  const events: StreamChunk[] = [];
+  for await (const event of createNativeT3AguiStream({
+    gateway: {
+      async send() {
+        return {
+          binding: {
+            canonicalThreadId: "central-thread",
+            providerInstanceId: "codex",
+            t3ThreadId: "worker-thread",
+            projectId: "project",
+            sandboxId: "sandbox-1",
+            baseUrl: "https://sandbox.test",
+            modelSelection: { instanceId: "codex", model: "gpt-5.6-sol" },
+            status: "working",
+            createdAt: "2026-08-26T16:00:00.000Z",
+            updatedAt: "2026-08-26T16:00:00.000Z",
+          },
+          dispatch: {
+            sequence: 1,
+            commandId: "command-1",
+            messageId: "user-1",
+            threadId: "worker-thread",
+            createdAt: "2026-08-26T16:00:00.000Z",
+          },
+        };
+      },
+      async waitForTerminal({ onSnapshot }) {
+        await onSnapshot?.(terminal);
+        return terminal;
+      },
+    },
+    canonicalThreadId: "central-thread",
+    runId: "run-1",
+    title: "Artifact test",
+    text: "create a file",
+    modelSelection: { instanceId: "codex", model: "gpt-5.6-sol" },
+    async outputArtifactEvents() {
+      return [{
+        type: EventType.OUTPUT_ARTIFACT,
+        artifact: {
+          artifactId: "a".repeat(64),
+          path: "proof.png",
+          name: "proof.png",
+          title: "Proof",
+          mimetype: "image/png",
+          sizeBytes: 8,
+          storage: "hosted-object",
+        },
+      }];
+    },
+  })) {
+    events.push(event);
+  }
+
+  const artifactIndex = events.findIndex((event) => event.type === EventType.OUTPUT_ARTIFACT);
+  const finishedIndex = events.findIndex((event) => event.type === EventType.RUN_FINISHED);
+  assert.ok(artifactIndex >= 0);
+  assert.ok(finishedIndex > artifactIndex);
 });

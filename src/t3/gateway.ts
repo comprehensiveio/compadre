@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { InMemoryLockStore, type LockStore } from "./storage.js";
 import type {
   T3Client,
+  T3InputFile,
   T3ModelSelection,
   T3ThreadSnapshot,
   T3TurnDispatch,
@@ -11,6 +12,11 @@ import {
   type T3ThreadBinding,
 } from "../services/t3-thread-bindings.js";
 import { T3ThreadSnapshotStore } from "../services/t3-thread-snapshots.js";
+import type { SandboxHandle } from "@tanstack/ai-sandbox";
+import {
+  collectT3OutputArtifacts,
+  type T3OutputArtifact,
+} from "./output-artifacts.js";
 
 export interface T3CommandClient {
   readonly baseUrl: string;
@@ -21,6 +27,7 @@ export interface T3CommandClient {
     text: string;
     displayText?: string;
     modelSelection: T3ModelSelection;
+    inputFiles?: ReadonlyArray<T3InputFile>;
     signal?: AbortSignal;
   }): Promise<T3TurnDispatch>;
   startTurn(input: {
@@ -28,6 +35,7 @@ export interface T3CommandClient {
     text: string;
     displayText?: string;
     modelSelection: T3ModelSelection;
+    inputFiles?: ReadonlyArray<T3InputFile>;
     signal?: AbortSignal;
   }): Promise<T3TurnDispatch>;
   interruptTurn(input: {
@@ -59,6 +67,7 @@ export interface T3EnvironmentConnection {
   sandboxId: string;
   projectId: string;
   client: T3CommandClient;
+  sandbox?: SandboxHandle;
 }
 
 export interface T3EnvironmentConnectionManager {
@@ -177,6 +186,7 @@ export class T3Gateway {
     text: string;
     displayText?: string;
     modelSelection: T3ModelSelection;
+    inputFiles?: ReadonlyArray<T3InputFile>;
     signal?: AbortSignal;
   }): Promise<T3GatewayTurn> {
     return this.locks.withLock(
@@ -194,6 +204,7 @@ export class T3Gateway {
     text: string;
     displayText?: string;
     modelSelection: T3ModelSelection;
+    inputFiles?: ReadonlyArray<T3InputFile>;
     signal?: AbortSignal;
   }): Promise<T3GatewayTurn> {
     const providerInstanceId = input.modelSelection.instanceId;
@@ -210,6 +221,7 @@ export class T3Gateway {
         text: input.text,
         displayText: input.displayText,
         modelSelection: input.modelSelection,
+        inputFiles: input.inputFiles,
         signal: input.signal,
       });
       const updated: T3ThreadBinding = {
@@ -400,6 +412,17 @@ export class T3Gateway {
       updatedAt: this.now().toISOString(),
     });
     return snapshot;
+  }
+
+  async collectOutputArtifacts(
+    turn: T3GatewayTurn,
+    publish: (artifact: T3OutputArtifact) => Promise<void>,
+  ): Promise<{ published: Array<{ path: string; digest: string }>; failures: string[] }> {
+    const environment = await this.environments.reconnect(turn.binding);
+    if (!environment.sandbox) {
+      return { published: [], failures: ["The T3 sandbox filesystem is unavailable."] };
+    }
+    return collectT3OutputArtifacts(environment.sandbox, publish);
   }
 }
 

@@ -230,6 +230,43 @@ test("uploads a local file directly to the requested Slack thread", async (t) =>
   });
 });
 
+test("uploads in-memory artifact bytes directly to a Slack thread", async () => {
+  const { calls, fetchImpl } = createSlackFetch([
+    {
+      body: {
+        ok: true,
+        upload_url: "https://uploads.slack.test/artifact",
+        file_id: "F456",
+      },
+    },
+    { body: { ok: true } },
+    { body: { ok: true, files: [{ id: "F456" }] } },
+  ]);
+  const client = new SlackClient({
+    botToken: "xoxb-test",
+    teamId: "T123",
+    fetchImpl,
+  });
+
+  await client.uploadBytes({
+    channel: "C123",
+    threadTs: "99.001",
+    data: Uint8Array.from([1, 2, 3]),
+    filename: "proof.png",
+    title: "Proof",
+  });
+
+  const uploadRequest = new URLSearchParams(String(calls[0]!.init?.body));
+  assert.equal(uploadRequest.get("filename"), "proof.png");
+  assert.equal(uploadRequest.get("length"), "3");
+  assert.deepEqual(Buffer.from(calls[1]!.init?.body as Uint8Array), Buffer.from([1, 2, 3]));
+  assert.deepEqual(jsonBody(calls[2]!), {
+    files: [{ id: "F456", title: "Proof" }],
+    channel_id: "C123",
+    thread_ts: "99.001",
+  });
+});
+
 test("surfaces Slack API errors to the agent", async () => {
   const { fetchImpl } = createSlackFetch([
     { body: { ok: false, error: "not_in_channel" } },

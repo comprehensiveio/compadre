@@ -13,13 +13,15 @@ features:
         message: What should I know about this codebase?
 oauth_config:
   redirect_urls:
-    - https://compadre-t3-experiment.onrender.com/auth/slack/callback
+    - https://compadre-api.comprehensive.io/auth/slack/callback
   scopes:
     bot:
       - app_mentions:read
       - assistant:write
       - channels:history
       - chat:write
+      - files:read
+      - files:write
       - groups:history
       - im:history
       - mpim:history
@@ -32,7 +34,7 @@ oauth_config:
       - email
 settings:
   event_subscriptions:
-    request_url: https://compadre-t3-experiment.onrender.com/slack/events
+    request_url: https://compadre-api.comprehensive.io/slack/events
     bot_events:
       - app_mention
       - message.im

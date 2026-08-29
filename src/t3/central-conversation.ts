@@ -6,6 +6,7 @@ import {
 } from "../services/t3-slack-conversation.js";
 import {
   T3Client,
+  type T3InputFile,
   type T3MessageAttribution,
   type T3ModelSelection,
   type T3ThreadSnapshot,
@@ -13,6 +14,9 @@ import {
 } from "./client.js";
 
 const CENTRAL_T3_TIMEOUT_MS = 20 * 60 * 1_000;
+const MAX_PROVIDER_PROMPT_CHARS = 95_000;
+const TRUNCATED_CONTEXT_NOTICE =
+  "[Earlier Slack thread context truncated to fit the agent prompt.]";
 const SLACK_MESSAGE_PREFIX = "slack-entrypoint:";
 const API_MESSAGE_PREFIX = "api-entrypoint:";
 
@@ -47,6 +51,31 @@ export interface CentralT3ConversationResult extends CentralT3ConversationPrepar
   output: string;
   dispatch: T3TurnDispatch;
   snapshot: T3ThreadSnapshot;
+}
+
+/**
+ * Add transport-only context without persisting it as the visible user text.
+ * Keep the newest context when Slack history exceeds T3's prompt budget.
+ */
+export function prependConversationContext(
+  context: string,
+  prompt: string,
+): string {
+  const normalized = context.trim();
+  if (!normalized) return prompt;
+  const separator = "\n\n";
+  const contextBudget =
+    MAX_PROVIDER_PROMPT_CHARS - prompt.length - separator.length;
+  if (contextBudget <= 0) return prompt.slice(0, MAX_PROVIDER_PROMPT_CHARS);
+  const boundedContext =
+    normalized.length <= contextBudget
+      ? normalized
+      : contextBudget <= TRUNCATED_CONTEXT_NOTICE.length + 1
+        ? normalized.slice(-contextBudget)
+        : `${TRUNCATED_CONTEXT_NOTICE}\n${normalized.slice(
+            -(contextBudget - TRUNCATED_CONTEXT_NOTICE.length - 1),
+          )}`;
+  return `${boundedContext}${separator}${prompt}`;
 }
 
 function record(value: unknown): Record<string, unknown> | undefined {
@@ -156,9 +185,14 @@ export async function runCentralT3Conversation(input: {
   prompt: string;
   displayText?: string;
   attribution?: T3MessageAttribution;
+  inputFiles?: ReadonlyArray<T3InputFile>;
   profile?: AgentProfile;
   modelSelection?: T3ModelSelection;
   entrypoint?: "slack" | "api";
+  loadInitialContext?: () => Promise<string>;
+  loadTurnContext?: () => Promise<string>;
+  loadInitialInputFiles?: () => Promise<ReadonlyArray<T3InputFile>>;
+  loadTurnInputFiles?: () => Promise<ReadonlyArray<T3InputFile>>;
   signal?: AbortSignal;
   environment?: NodeJS.ProcessEnv;
   idFactory?: () => string;
@@ -205,14 +239,30 @@ export async function runCentralT3Conversation(input: {
   };
   await input.onPrepared?.(prepared);
 
+  const promptContext = input.loadTurnContext
+    ? (await input.loadTurnContext()).trim()
+    : existing
+      ? ""
+      : (await input.loadInitialContext?.())?.trim() ?? "";
+  const providerPrompt = prependConversationContext(
+    promptContext,
+    input.prompt,
+  );
+  const inputFiles = input.loadTurnInputFiles
+    ? await input.loadTurnInputFiles()
+    : existing
+      ? input.inputFiles
+      : (await input.loadInitialInputFiles?.()) ?? input.inputFiles;
+
   const messageId = `${input.entrypoint === "api" ? API_MESSAGE_PREFIX : SLACK_MESSAGE_PREFIX}${idFactory()}`;
   const dispatch = existing
     ? await input.client.startTurn({
         threadId: t3ThreadId,
         messageId,
-        text: input.prompt,
+        text: providerPrompt,
         displayText: input.displayText,
         attribution: input.attribution,
+        inputFiles,
         modelSelection,
         signal: input.signal,
       })
@@ -221,9 +271,10 @@ export async function runCentralT3Conversation(input: {
         messageId,
         projectId,
         title: input.title,
-        text: input.prompt,
+        text: providerPrompt,
         displayText: input.displayText,
         attribution: input.attribution,
+        inputFiles,
         modelSelection,
         signal: input.signal,
       });

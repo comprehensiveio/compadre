@@ -4,10 +4,12 @@ import {
   centralT3DetailsUrl,
   centralT3ThreadId,
   isSlackEntrypointMessageId,
+  prependConversationContext,
   runCentralT3Conversation,
   type CentralT3ConversationClient,
 } from "./central-conversation.js";
 import type {
+  T3InputFile,
   T3ModelSelection,
   T3OrchestrationSnapshot,
   T3Thread,
@@ -16,6 +18,19 @@ import type {
 } from "./client.js";
 
 const codex: T3ModelSelection = { instanceId: "codex", model: "gpt-5.6-sol" };
+
+const currentImage: T3InputFile = {
+  name: "current.png",
+  mimetype: "image/png",
+  sizeBytes: 3,
+  dataBase64: "AQID",
+};
+const contextualImage: T3InputFile = {
+  name: "earlier.png",
+  mimetype: "image/png",
+  sizeBytes: 2,
+  dataBase64: "BAU=",
+};
 
 function thread(input: {
   id: string;
@@ -271,6 +286,248 @@ test("a Slack continuation follows the model already selected in the web UI", as
 
   assert.deepEqual(selection, claude);
   assert.equal(result.resumed, true);
+});
+
+test("Slack history is hidden initial context only when creating a central thread", async () => {
+  const prompts: string[] = [];
+  let initialLoads = 0;
+  let dispatch: T3TurnDispatch | undefined;
+  const client: CentralT3ConversationClient = {
+    baseUrl: "https://central.example",
+    async environmentDescriptor() {
+      return { environmentId: "environment-central", label: "Central", serverVersion: "1" };
+    },
+    async snapshot() {
+      return {
+        snapshotSequence: 1,
+        projects: [{
+          id: "project-central",
+          title: "Compadre",
+          workspaceRoot: "/workspace",
+          defaultModelSelection: codex,
+        }],
+        threads: [],
+        updatedAt: "2026-08-26T16:00:00.000Z",
+      };
+    },
+    async startNewThread(input) {
+      prompts.push(input.text);
+      dispatch = {
+        sequence: 2,
+        commandId: "command-context",
+        messageId: input.messageId!,
+        threadId: input.threadId!,
+        createdAt: "2026-08-26T16:00:00.000Z",
+      };
+      return dispatch;
+    },
+    async startTurn() {
+      throw new Error("should create the thread");
+    },
+    async waitForTurnTerminal() {
+      assert.ok(dispatch);
+      return terminalSnapshot(dispatch);
+    },
+  };
+
+  await runCentralT3Conversation({
+    client,
+    canonicalThreadId: "slack:T1:C1:context",
+    title: "Investigate",
+    prompt: "User query:\nInvestigate",
+    displayText: "Investigate",
+    loadInitialContext: async () => {
+      initialLoads += 1;
+      return "Thread context:\nSam: Earlier detail";
+    },
+  });
+
+  assert.equal(initialLoads, 1);
+  assert.equal(
+    prompts[0],
+    "Thread context:\nSam: Earlier detail\n\nUser query:\nInvestigate",
+  );
+});
+
+test("a new central thread loads contextual Slack images once", async () => {
+  let receivedFiles: ReadonlyArray<T3InputFile> | undefined;
+  let inputLoads = 0;
+  let dispatch: T3TurnDispatch | undefined;
+  const client: CentralT3ConversationClient = {
+    baseUrl: "https://central.example",
+    async environmentDescriptor() {
+      return { environmentId: "environment-central", label: "Central", serverVersion: "1" };
+    },
+    async snapshot() {
+      return {
+        snapshotSequence: 1,
+        projects: [{ id: "project-central", title: "Compadre", workspaceRoot: "/workspace", defaultModelSelection: codex }],
+        threads: [],
+        updatedAt: "2026-08-26T16:00:00.000Z",
+      };
+    },
+    async startNewThread(input) {
+      receivedFiles = input.inputFiles;
+      dispatch = {
+        sequence: 2,
+        commandId: "command-input-context",
+        messageId: input.messageId!,
+        threadId: input.threadId!,
+        createdAt: "2026-08-26T16:00:00.000Z",
+      };
+      return dispatch;
+    },
+    async startTurn() {
+      throw new Error("should create the thread");
+    },
+    async waitForTurnTerminal() {
+      assert.ok(dispatch);
+      return terminalSnapshot(dispatch);
+    },
+  };
+
+  await runCentralT3Conversation({
+    client,
+    canonicalThreadId: "slack:T1:C1:new-with-images",
+    title: "Investigate",
+    prompt: "Investigate",
+    inputFiles: [currentImage],
+    loadInitialInputFiles: async () => {
+      inputLoads += 1;
+      return [contextualImage, currentImage];
+    },
+  });
+
+  assert.equal(inputLoads, 1);
+  assert.deepEqual(receivedFiles, [contextualImage, currentImage]);
+});
+
+test("a continuation uses current images unless explicit turn context overrides them", async () => {
+  const threadId = centralT3ThreadId("slack:T1:C1:existing-with-images");
+  const receivedFiles: Array<ReadonlyArray<T3InputFile> | undefined> = [];
+  let initialLoads = 0;
+  let dispatchSequence = 3;
+  let dispatch: T3TurnDispatch | undefined;
+  const client: CentralT3ConversationClient = {
+    baseUrl: "https://central.example",
+    async environmentDescriptor() {
+      return { environmentId: "environment-central", label: "Central", serverVersion: "1" };
+    },
+    async snapshot() {
+      return {
+        snapshotSequence: 2,
+        projects: [{ id: "project-central", title: "Compadre", workspaceRoot: "/workspace", defaultModelSelection: codex }],
+        threads: [thread({ id: threadId })],
+        updatedAt: "2026-08-26T16:00:00.000Z",
+      };
+    },
+    async startNewThread() {
+      throw new Error("should resume the thread");
+    },
+    async startTurn(input) {
+      receivedFiles.push(input.inputFiles);
+      dispatch = {
+        sequence: dispatchSequence++,
+        commandId: `command-input-${dispatchSequence}`,
+        messageId: input.messageId!,
+        threadId: input.threadId,
+        createdAt: "2026-08-26T16:00:00.000Z",
+      };
+      return dispatch;
+    },
+    async waitForTurnTerminal() {
+      assert.ok(dispatch);
+      return terminalSnapshot(dispatch);
+    },
+  };
+
+  const shared = {
+    client,
+    canonicalThreadId: "slack:T1:C1:existing-with-images",
+    title: "Investigate",
+    prompt: "Investigate",
+    inputFiles: [currentImage],
+    loadInitialInputFiles: async () => {
+      initialLoads += 1;
+      return [contextualImage, currentImage];
+    },
+  };
+  await runCentralT3Conversation(shared);
+  await runCentralT3Conversation({
+    ...shared,
+    loadTurnInputFiles: async () => [contextualImage, currentImage],
+  });
+
+  assert.equal(initialLoads, 0);
+  assert.deepEqual(receivedFiles, [
+    [currentImage],
+    [contextualImage, currentImage],
+  ]);
+});
+
+test("turn context is loaded for an existing central thread", async () => {
+  const threadId = centralT3ThreadId("slack:T1:C1:mention-only");
+  let prompt = "";
+  let turnLoads = 0;
+  let dispatch: T3TurnDispatch | undefined;
+  const client: CentralT3ConversationClient = {
+    baseUrl: "https://central.example",
+    async environmentDescriptor() {
+      return { environmentId: "environment-central", label: "Central", serverVersion: "1" };
+    },
+    async snapshot() {
+      return {
+        snapshotSequence: 3,
+        projects: [{ id: "project-central", title: "Compadre", workspaceRoot: "/workspace", defaultModelSelection: codex }],
+        threads: [thread({ id: threadId })],
+        updatedAt: "2026-08-26T16:00:00.000Z",
+      };
+    },
+    async startNewThread() {
+      throw new Error("should resume the thread");
+    },
+    async startTurn(input) {
+      prompt = input.text;
+      dispatch = {
+        sequence: 4,
+        commandId: "command-turn-context",
+        messageId: input.messageId!,
+        threadId: input.threadId,
+        createdAt: "2026-08-26T16:00:00.000Z",
+      };
+      return dispatch;
+    },
+    async waitForTurnTerminal() {
+      assert.ok(dispatch);
+      return terminalSnapshot(dispatch);
+    },
+  };
+
+  await runCentralT3Conversation({
+    client,
+    canonicalThreadId: "slack:T1:C1:mention-only",
+    title: "Respond to the preceding Slack message.",
+    prompt: "Respond to the preceding Slack message.",
+    loadInitialContext: async () => "must not load",
+    loadTurnContext: async () => {
+      turnLoads += 1;
+      return "Thread context:\nSam: Can you investigate this?";
+    },
+  });
+
+  assert.equal(turnLoads, 1);
+  assert.equal(
+    prompt,
+    "Thread context:\nSam: Can you investigate this?\n\nRespond to the preceding Slack message.",
+  );
+});
+
+test("conversation context stays within the provider prompt budget", () => {
+  const prompt = "Question";
+  const result = prependConversationContext("x".repeat(100_000), prompt);
+  assert.equal(result.length, 95_000);
+  assert.match(result, /^\[Earlier Slack thread context truncated/);
+  assert.match(result, /\n\nQuestion$/);
 });
 
 test("central thread links and Slack source markers are explicit", () => {

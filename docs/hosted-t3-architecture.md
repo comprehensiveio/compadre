@@ -137,10 +137,13 @@ The running productionization and migration work is tracked in
 [Production cutover checklist](./production-cutover-checklist.md). Keep that
 checklist updated as the isolated deployment reveals additional requirements.
 
-The current internal deployment retains its existing isolated resource names:
+The current internal deployment uses stable Comprehensive domains while
+retaining its existing isolated Render resource names:
 
-- T3 UI: `https://t3code-compadre-experiment.onrender.com`
-- Compadre controller: `https://compadre-t3-experiment.onrender.com`
+- T3 UI: `https://compadre.comprehensive.io` (Render service
+  `t3code-compadre-experiment`)
+- Compadre controller: `https://compadre-api.comprehensive.io` (Render service
+  `compadre-t3-experiment`)
 - Compadre Postgres: `compadre-t3-experiment-postgres`
 - Central T3 disk: 1 GB persistent disk mounted at `/var/data`
 
@@ -170,16 +173,28 @@ COMPADRE_T3_DIRECTORY_ENABLED=true
 COMPADRE_T3_SLACK_ENABLED=true
 COMPADRE_T3_API_ENABLED=true
 COMPADRE_DURABILITY_BACKEND=postgres
-COMPADRE_T3_CENTRAL_URL=https://t3code-compadre-experiment.onrender.com
+COMPADRE_PUBLIC_URL=https://compadre-api.comprehensive.io
+COMPADRE_T3_CENTRAL_URL=https://compadre.comprehensive.io
+COMPADRE_T3_HOSTED_APP_URL=https://compadre.comprehensive.io
 COMPADRE_T3_CENTRAL_TOKEN=<scoped T3 bearer>
 COMPADRE_SLACK_WORKSPACE_ID=<allowed Slack workspace ID>
 SLACK_CLIENT_ID=<Sign in with Slack client ID>
 SLACK_CLIENT_SECRET=<Sign in with Slack client secret>
-SLACK_OIDC_REDIRECT_URI=https://compadre-t3-experiment.onrender.com/auth/slack/callback
+SLACK_OIDC_REDIRECT_URI=https://compadre-api.comprehensive.io/auth/slack/callback
 COMPADRE_AUTH_EXCHANGE_SECRET=<random shared controller/T3 credential>
 COMPADRE_T3_PACKAGE_URL=<pinned fork release>
 COMPADRE_T3_PACKAGE_SHA256=<required digest>
+COMPADRE_T3_ARTIFACT_BUCKET=compadre
+COMPADRE_T3_ARTIFACT_REGION=us-west-2
 ```
+
+Slack thread history from before the bot mention is supplied as hidden context
+only when a conversation is created, or for an explicit mention-only resumed
+turn. Slack image inputs are downloaded with the bot credential and forwarded
+to the native T3 harness without becoming a second transcript. Generated files
+written under `/tmp/agent-outputs` are content-addressed into the private S3
+bucket; Postgres retains their metadata, while authenticated controller reads
+serve the central UI and the same bytes are uploaded to a linked Slack thread.
 
 The Compadre T3 fork defaults `enableAgentBrowserAccess` to `false`. This is a
 server-side provider boundary: workers do not mint the `t3-code` MCP credential,
@@ -190,8 +205,8 @@ removes agent control of T3's in-app preview browser.
 Central T3:
 
 ```text
-COMPADRE_NATIVE_T3_URL=https://compadre-t3-experiment.onrender.com/hosted/t3/chat
-COMPADRE_CONTROLLER_URL=https://compadre-t3-experiment.onrender.com
+COMPADRE_NATIVE_T3_URL=https://compadre-api.comprehensive.io/hosted/t3/chat
+COMPADRE_CONTROLLER_URL=https://compadre-api.comprehensive.io
 COMPADRE_AUTH_EXCHANGE_SECRET=<same random controller/T3 credential>
 VITE_COMPADRE_AUTH_ENABLED=true
 T3CODE_INSTALL_GH_CLI=true

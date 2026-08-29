@@ -13,6 +13,7 @@ import { parseAgentRouteDirective } from "../services/agent-routing.js";
 import {
   buildSlackAgentInput,
   buildSlackThreadUrl,
+  slackThreadContextPrompt,
 } from "../services/slack-prompt.js";
 import { SlackStream } from "../services/slack-stream.js";
 import { configuredConversationRunner } from "../services/conversation-runner.js";
@@ -35,6 +36,7 @@ import {
   runCentralT3Conversation,
 } from "../t3/central-conversation.js";
 import {
+  downloadSlackInputFiles,
   mergeSlackFileReferences,
   slackFileReferences,
   type SlackEventFile,
@@ -115,6 +117,20 @@ export function stripSlackBotMention(text: string, botUserId?: string): string {
   return botUserId
     ? text.replaceAll(`<@${botUserId}>`, "").trim()
     : text.trim();
+}
+
+export const MENTION_ONLY_THREAD_PROMPT =
+  "Respond to the preceding Slack message.";
+
+export function slackMessageTextForAgent(input: {
+  messageText: string;
+  isThreadReply: boolean;
+  mentionsBot: boolean;
+}): string {
+  if (input.messageText.trim()) return input.messageText.trim();
+  return input.isThreadReply && input.mentionsBot
+    ? MENTION_ONLY_THREAD_PROMPT
+    : "";
 }
 
 export function isAllowedSlackWorkspace(input: {
@@ -253,7 +269,19 @@ async function handleAIMessage(
     return;
   }
 
-  const { messageText, profile } = route;
+  const { messageText: routedMessageText, profile } = route;
+  const mentionsBot =
+    event.type === "app_mention" ||
+    Boolean(botUserId && event.text?.includes(`<@${botUserId}>`));
+  const isThreadReply = Boolean(event.thread_ts && event.thread_ts !== event.ts);
+  const isMentionOnlyThreadReply =
+    isThreadReply && !routedMessageText.trim() && mentionsBot;
+  const messageText = slackMessageTextForAgent({
+    messageText: routedMessageText,
+    isThreadReply,
+    mentionsBot,
+  });
+  if (!messageText) return;
 
   const threadKey = threadTs;
   const workspaceId = event.user_team || event.team || teamId;
@@ -313,19 +341,32 @@ async function handleAIMessage(
     return undefined;
   });
   const threadContext = thread?.text ?? null;
+  const currentSlackFiles = slackFileReferences(event.files);
   const slackFiles = mergeSlackFileReferences(
-    slackFileReferences(event.files),
+    currentSlackFiles,
     thread?.files,
   );
+  const nativeSlackInputFiles = nativeT3SlackEnabled()
+    ? await downloadSlackInputFiles(currentSlackFiles)
+    : { files: [], warnings: [] };
+  let contextualSlackInputFiles: ReturnType<typeof downloadSlackInputFiles> | undefined;
+  const loadContextualSlackInputFiles = async () => {
+    contextualSlackInputFiles ??= downloadSlackInputFiles(slackFiles);
+    return (await contextualSlackInputFiles).files;
+  };
 
+  const useNativeT3 = nativeT3SlackEnabled();
   const { prompt, transcriptUserMessage } = buildSlackAgentInput({
     messageText,
-    threadContext,
+    threadContext: useNativeT3 ? null : threadContext,
     channel: event.channel,
     channelName,
     threadTs,
     userId: event.user,
   });
+  const nativePrompt = nativeSlackInputFiles.warnings.length > 0
+    ? `${prompt}\n\nSlack attachment warnings:\n${nativeSlackInputFiles.warnings.map((warning) => `- ${warning}`).join("\n")}`
+    : prompt;
 
   const slackStream = createSlackStream(event, threadTs, botToken, teamId);
 
@@ -355,7 +396,7 @@ async function handleAIMessage(
     await slackStream.setStatus("is thinking...");
   }
 
-  const routedProvider = nativeT3SlackEnabled()
+  const routedProvider = useNativeT3
     ? t3ModelSelectionForProfile(profile).instanceId
     : profile
       ? providerForAgentProfile(profile)
@@ -364,7 +405,7 @@ async function handleAIMessage(
     `[slack-events] routing user=${event.user ?? "unknown"} provider=${routedProvider} profile=${profile ?? "default"}`,
   );
 
-  if (nativeT3SlackEnabled()) {
+  if (useNativeT3) {
     const canonicalThreadId = canonicalSlackThreadId({
       teamId: event.user_team || event.team || teamId,
       channel: event.channel,
@@ -381,10 +422,24 @@ async function handleAIMessage(
         client,
         canonicalThreadId,
         title: transcriptUserMessage.slice(0, 200) || "Slack request",
-        prompt,
+        prompt: nativePrompt,
         displayText: transcriptUserMessage,
         attribution,
+        inputFiles: nativeSlackInputFiles.files,
         profile,
+        ...(isThreadReply
+          ? isMentionOnlyThreadReply
+            ? {
+                loadTurnContext: async () =>
+                  slackThreadContextPrompt(threadContext),
+                loadTurnInputFiles: loadContextualSlackInputFiles,
+              }
+            : {
+                loadInitialContext: async () =>
+                  slackThreadContextPrompt(threadContext),
+                loadInitialInputFiles: loadContextualSlackInputFiles,
+              }
+          : {}),
         async onPrepared(prepared) {
           await hostedBindings.bindAlias(
             canonicalThreadId,

@@ -215,9 +215,31 @@ export class SlackClient {
   }): Promise<SlackResponse> {
     const file = await fs.readFile(filePath);
     const filename = path.basename(filePath);
+    return this.uploadBytes({
+      channel,
+      data: file,
+      filename,
+      threadTs,
+      title,
+    });
+  }
+
+  async uploadBytes({
+    channel,
+    data,
+    filename,
+    threadTs,
+    title,
+  }: {
+    channel: string;
+    data: Uint8Array;
+    filename: string;
+    threadTs?: string;
+    title?: string;
+  }): Promise<SlackResponse> {
     const upload = await this.postForm("files.getUploadURLExternal", {
       filename,
-      length: String(file.byteLength),
+      length: String(data.byteLength),
     });
     const uploadUrl = upload.upload_url;
     const fileId = upload.file_id;
@@ -228,7 +250,7 @@ export class SlackClient {
     const uploadResponse = await this.fetchImpl(uploadUrl, {
       method: "POST",
       headers: { "Content-Type": "application/octet-stream" },
-      body: file,
+      body: Buffer.from(data),
     });
     if (!uploadResponse.ok) {
       throw new Error(

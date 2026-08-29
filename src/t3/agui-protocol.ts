@@ -14,6 +14,7 @@ export const EventType = {
   TOOL_CALL_START: "TOOL_CALL_START",
   TOOL_CALL_ARGS: "TOOL_CALL_ARGS",
   TOOL_CALL_RESULT: "TOOL_CALL_RESULT",
+  OUTPUT_ARTIFACT: "OUTPUT_ARTIFACT",
   THREAD_TOKEN_USAGE_UPDATED: "THREAD_TOKEN_USAGE_UPDATED",
 } as const;
 
@@ -50,6 +51,15 @@ export interface StreamChunk {
   finishReason?: string | null;
   message?: string;
   usage?: Record<string, unknown>;
+  artifact?: {
+    artifactId: string;
+    path: string;
+    name: string;
+    title: string;
+    mimetype: string;
+    sizeBytes: number;
+    storage: "hosted-object";
+  };
 }
 
 export function toServerSentEventsResponse(

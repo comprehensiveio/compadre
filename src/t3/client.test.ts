@@ -83,6 +83,14 @@ test("creates a native T3 thread before dispatching its first HTTP turn", async 
         messageTs: "123.4",
       },
     },
+    inputFiles: [
+      {
+        name: "screenshot.png",
+        mimetype: "image/png",
+        sizeBytes: 3,
+        dataBase64: "AQID",
+      },
+    ],
   });
 
   assert.deepEqual(dispatch, {
@@ -119,7 +127,15 @@ test("creates a native T3 thread before dispatching its first HTTP turn", async 
       role: "user",
       text: "Please fix the failing test",
       providerPrompt: "Please fix the failing test\n\nSlack routing metadata",
-      attachments: [],
+      attachments: [
+        {
+          type: "image",
+          name: "screenshot.png",
+          mimeType: "image/png",
+          sizeBytes: 3,
+          dataUrl: "data:image/png;base64,AQID",
+        },
+      ],
       attribution: {
         userId: "user-1",
         displayName: "Isaac",
