@@ -26,6 +26,14 @@ export const SIDEBAR_THREAD_PREWARM_LIMIT = 3;
 
 export type SidebarIdentityFilter = "all" | "started-by-me" | "involved";
 
+export const DEFAULT_SIDEBAR_IDENTITY_FILTER = "involved" satisfies SidebarIdentityFilter;
+
+export const SIDEBAR_IDENTITY_FILTER_OPTIONS = [
+  { value: "involved", label: "With me" },
+  { value: "started-by-me", label: "Started by me" },
+  { value: "all", label: "All" },
+] as const satisfies ReadonlyArray<{ value: SidebarIdentityFilter; label: string }>;
+
 export function threadMatchesSidebarIdentityFilter(
   thread: SidebarThreadSummary,
   filter: SidebarIdentityFilter,

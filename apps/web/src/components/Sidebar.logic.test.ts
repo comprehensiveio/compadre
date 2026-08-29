@@ -6,6 +6,8 @@ import {
   buildBulkTitleRegenerationContextMenuItem,
   buildMultiSelectThreadContextMenuItems,
   createThreadJumpHintVisibilityController,
+  DEFAULT_SIDEBAR_IDENTITY_FILTER,
+  filterSidebarProjectScopeItems,
   getSidebarThreadIdsToPrewarm,
   getVisibleSidebarThreadIds,
   resolveAdjacentThreadId,
@@ -29,6 +31,7 @@ import {
   shouldClearThreadSelectionOnMouseDown,
   sortLogicalProjectsForSidebar,
   sortSettledThreadsForSidebar,
+  SIDEBAR_IDENTITY_FILTER_OPTIONS,
   pinOrderKeyBetween,
   planPinnedReorder,
   sortPinnedThreadsForSidebar,
@@ -111,6 +114,17 @@ describe("threadMatchesSidebarIdentityFilter", () => {
     expect(threadMatchesSidebarIdentityFilter(thread, "started-by-me", "user-starter")).toBe(true);
     expect(threadMatchesSidebarIdentityFilter(thread, "involved", "user-involved")).toBe(true);
     expect(threadMatchesSidebarIdentityFilter(thread, "involved", "user-web-only")).toBe(false);
+  });
+});
+
+describe("sidebar identity filter presentation", () => {
+  it("defaults to involvement and presents that filter first", () => {
+    expect(DEFAULT_SIDEBAR_IDENTITY_FILTER).toBe("involved");
+    expect(SIDEBAR_IDENTITY_FILTER_OPTIONS).toEqual([
+      { value: "involved", label: "With me" },
+      { value: "started-by-me", label: "Started by me" },
+      { value: "all", label: "All" },
+    ]);
   });
 });
 

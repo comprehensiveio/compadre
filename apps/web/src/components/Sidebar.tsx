@@ -125,6 +125,8 @@ import { buildThreadActionMenuItems } from "./threadActionMenu.logic";
 import {
   animatePinnedLayoutChanges,
   buildBulkTitleRegenerationContextMenuItem,
+  DEFAULT_SIDEBAR_IDENTITY_FILTER,
+  filterSidebarProjectScopeItems,
   formatWorkingDurationLabel,
   firstValidTimestampMs,
   hasUnseenCompletion,
@@ -142,6 +144,7 @@ import {
   sortPinnedThreadsForSidebar,
   sortSettledThreadsForSidebar,
   sortThreadsForSidebar,
+  SIDEBAR_IDENTITY_FILTER_OPTIONS,
   threadMatchesSidebarIdentityFilter,
   type SidebarIdentityFilter,
   useThreadJumpHintVisibility,
@@ -1837,7 +1840,9 @@ const SidebarSearchResultRow = memo(function SidebarSearchResultRow(props: {
 
 export default function Sidebar() {
   const currentCompadreUser = useCompadreSessionUser();
-  const [identityFilter, setIdentityFilter] = useState<SidebarIdentityFilter>("all");
+  const [identityFilter, setIdentityFilter] = useState<SidebarIdentityFilter>(
+    DEFAULT_SIDEBAR_IDENTITY_FILTER,
+  );
   const projects = useProjects();
   const projectOrder = useUiStateStore((store) => store.projectOrder);
   const threads = useThreadShells();
@@ -3619,13 +3624,7 @@ export default function Sidebar() {
                 aria-label="Filter conversations"
                 className="grid grid-cols-3 gap-0.5 rounded-md bg-sidebar-control-surface p-0.5 text-[11px]"
               >
-                {(
-                  [
-                    ["all", "All"],
-                    ["started-by-me", "Started by me"],
-                    ["involved", "I'm involved"],
-                  ] as const
-                ).map(([value, label]) => (
+                {SIDEBAR_IDENTITY_FILTER_OPTIONS.map(({ value, label }) => (
                   <button
                     key={value}
                     type="button"
