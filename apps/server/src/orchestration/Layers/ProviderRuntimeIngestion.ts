@@ -1,5 +1,6 @@
 import {
   ApprovalRequestId,
+  type ChatAttachment,
   type AssistantDeliveryMode,
   CommandId,
   MessageId,
@@ -1209,6 +1210,7 @@ const make = Effect.gen(function* () {
     commandTag: string;
     finalDeltaCommandTag: string;
     fallbackText?: string;
+    attachments?: ReadonlyArray<ChatAttachment>;
     hasProjectedMessage?: boolean;
   }) =>
     Effect.gen(function* () {
@@ -1233,12 +1235,13 @@ const make = Effect.gen(function* () {
         });
       }
 
-      if (input.hasProjectedMessage || hasRenderableText) {
+      if (input.hasProjectedMessage || hasRenderableText || (input.attachments?.length ?? 0) > 0) {
         yield* orchestrationEngine.dispatch({
           type: "thread.message.assistant.complete",
           commandId: yield* providerCommandId(input.event, input.commandTag),
           threadId: input.threadId,
           messageId: input.messageId,
+          ...(input.attachments !== undefined ? { attachments: [...input.attachments] } : {}),
           ...(input.turnId ? { turnId: input.turnId } : {}),
           createdAt: input.createdAt,
         });
@@ -1767,6 +1770,7 @@ const make = Effect.gen(function* () {
                 `assistant:${event.itemId ?? event.turnId ?? event.eventId}`,
               ),
               fallbackText: event.payload.detail,
+              attachments: event.payload.attachments,
             }
           : undefined;
       const proposedPlanCompletion =
@@ -1799,7 +1803,8 @@ const make = Effect.gen(function* () {
           Option.isNone(activeAssistantMessageId) &&
           turnId !== undefined &&
           hasAssistantMessagesForTurn &&
-          (assistantCompletion.fallbackText?.trim().length ?? 0) === 0;
+          (assistantCompletion.fallbackText?.trim().length ?? 0) === 0 &&
+          (assistantCompletion.attachments?.length ?? 0) === 0;
 
         if (!shouldSkipRedundantCompletion) {
           if (turnId && Option.isNone(activeAssistantMessageId)) {
@@ -1817,6 +1822,9 @@ const make = Effect.gen(function* () {
             hasProjectedMessage: existingAssistantMessage !== undefined,
             ...(assistantCompletion.fallbackText !== undefined && shouldApplyFallbackCompletionText
               ? { fallbackText: assistantCompletion.fallbackText }
+              : {}),
+            ...(assistantCompletion.attachments !== undefined
+              ? { attachments: assistantCompletion.attachments }
               : {}),
           });
 

@@ -38,7 +38,13 @@ import {
   workEntryDisplayIndicatesToolFailure,
   workLogEntryIsToolLike,
 } from "../../session-logic";
-import { type TurnDiffSummary } from "../../types";
+import {
+  isFileAttachment,
+  isImageAttachment,
+  type ChatFileAttachment,
+  type ChatImageAttachment,
+  type TurnDiffSummary,
+} from "../../types";
 import {
   getRenderablePatch,
   resolveDiffThemeName,
@@ -51,7 +57,9 @@ import {
   ChevronDownIcon,
   ChevronRightIcon,
   CircleAlertIcon,
+  DownloadIcon,
   EyeIcon,
+  FileIcon,
   GlobeIcon,
   HammerIcon,
   MessageCircleIcon,
@@ -1003,7 +1011,7 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
     : undefined;
   const attributionDisplayName = canonicalParticipant?.displayName ?? attribution?.displayName;
   const attributionAvatarUrl = canonicalParticipant?.avatarUrl ?? attribution?.avatarUrl;
-  const userImages = row.message.attachments ?? [];
+  const userImages = (row.message.attachments ?? []).filter(isImageAttachment);
   const displayedUserMessage = deriveDisplayedUserMessageState(row.message.text);
   const terminalContexts = displayedUserMessage.contexts;
   const previewAnnotations: ParsedPreviewAnnotation[] = [];
@@ -1026,7 +1034,7 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
       <div className="relative max-w-[80%] rounded-2xl bg-message p-3 text-message-foreground">
         {regularImages.length > 0 && (
           <div className="mb-2 grid max-w-[420px] grid-cols-2 gap-2">
-            {regularImages.map((image: NonNullable<TimelineMessage["attachments"]>[number]) => (
+            {regularImages.map((image: ChatImageAttachment) => (
               <div
                 key={image.id}
                 className="overflow-hidden rounded-lg border border-border/80 bg-background/70"
@@ -1138,18 +1146,29 @@ function TurnFoldTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "turn-
 
 function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" }> }) {
   const ctx = use(TimelineRowCtx);
-  const messageText = row.message.text || (row.message.streaming ? "" : "(empty response)");
+  const attachments = row.message.attachments ?? [];
+  const images = attachments.filter(isImageAttachment);
+  const files = attachments.filter(isFileAttachment);
+  const messageText =
+    row.message.text || (row.message.streaming || attachments.length > 0 ? "" : "(empty response)");
 
   return (
     <>
       <div className="relative min-w-0 px-1 py-0.5">
-        <ChatMarkdown
-          text={messageText}
-          cwd={ctx.markdownCwd}
-          threadRef={ctx.threadRef ?? undefined}
-          isStreaming={Boolean(row.message.streaming)}
-          lineBreaks={shouldPreserveAssistantLineBreaks(messageText)}
-          skills={ctx.skills}
+        {messageText ? (
+          <ChatMarkdown
+            text={messageText}
+            cwd={ctx.markdownCwd}
+            threadRef={ctx.threadRef ?? undefined}
+            isStreaming={Boolean(row.message.streaming)}
+            lineBreaks={shouldPreserveAssistantLineBreaks(messageText)}
+            skills={ctx.skills}
+          />
+        ) : null}
+        <InlineMessageImages images={images} {...(messageText ? { className: "mt-2" } : {})} />
+        <InlineMessageFiles
+          files={files}
+          {...(messageText || images.length > 0 ? { className: "mt-2" } : {})}
         />
         <AssistantChangedFilesSection
           turnSummary={row.assistantTurnDiffSummary}
@@ -1176,6 +1195,104 @@ function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "mess
         ) : null}
       </div>
     </>
+  );
+}
+
+function InlineMessageImages({
+  images,
+  className,
+}: {
+  images: ReadonlyArray<ChatImageAttachment>;
+  className?: string;
+}) {
+  const ctx = use(TimelineRowCtx);
+  if (images.length === 0) return null;
+  return (
+    <div className={cn("grid max-w-[560px] grid-cols-2 gap-2", className)}>
+      {images.map((image) => (
+        <div
+          key={image.id}
+          className="overflow-hidden rounded-lg border border-border/80 bg-background/70"
+        >
+          {image.previewUrl ? (
+            <button
+              type="button"
+              className="h-full w-full cursor-zoom-in"
+              aria-label={`Preview ${image.name}`}
+              onClick={() => {
+                const preview = buildExpandedImagePreview(images, image.id);
+                if (preview) ctx.onImageExpand(preview);
+              }}
+            >
+              <img
+                src={image.previewUrl}
+                alt={image.name}
+                className="block h-auto max-h-[360px] w-full object-contain"
+              />
+            </button>
+          ) : (
+            <div className="flex min-h-[72px] items-center justify-center px-2 py-3 text-center text-secondary-label text-[11px]">
+              {image.name}
+            </div>
+          )}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function formatArtifactSize(sizeBytes: number): string {
+  if (sizeBytes < 1024) return `${sizeBytes} B`;
+  if (sizeBytes < 1024 * 1024) return `${(sizeBytes / 1024).toFixed(1)} KB`;
+  return `${(sizeBytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function InlineMessageFiles({
+  files,
+  className,
+}: {
+  files: ReadonlyArray<ChatFileAttachment>;
+  className?: string;
+}) {
+  if (files.length === 0) return null;
+  return (
+    <div className={cn("flex max-w-[560px] flex-col gap-2", className)}>
+      {files.map((file) => {
+        const content = (
+          <>
+            <FileIcon className="size-5 shrink-0 text-muted-foreground" aria-hidden="true" />
+            <span className="min-w-0 flex-1">
+              <span className="block truncate text-sm font-medium text-foreground">
+                {file.name}
+              </span>
+              <span className="block text-secondary-label text-xs">
+                {formatArtifactSize(file.sizeBytes)}
+              </span>
+            </span>
+            {file.downloadUrl ? (
+              <DownloadIcon className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
+            ) : null}
+          </>
+        );
+        return file.downloadUrl ? (
+          <a
+            key={file.id}
+            href={file.downloadUrl}
+            download={file.name}
+            className="flex min-w-0 items-center gap-3 rounded-lg border border-border/80 bg-background/70 px-3 py-2.5 transition-colors hover:bg-muted/60"
+          >
+            {content}
+          </a>
+        ) : (
+          <div
+            key={file.id}
+            className="flex min-w-0 items-center gap-3 rounded-lg border border-border/80 bg-background/70 px-3 py-2.5"
+          >
+            {content}
+          </div>
+        );
+      })}
+    </div>
   );
 }
 
@@ -1735,7 +1852,7 @@ const UserMessageElementContextChip = memo(function UserMessageElementContextChi
 
 function UserMessagePreviewAnnotationCard(props: {
   annotation: ParsedPreviewAnnotation;
-  image: NonNullable<TimelineMessage["attachments"]>[number] | null;
+  image: ChatImageAttachment | null;
 }) {
   const ctx = use(TimelineRowCtx);
   return (

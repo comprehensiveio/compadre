@@ -2529,8 +2529,11 @@ function ChatViewContent(props: ChatViewProps) {
       return {
         ...message,
         attachments: message.attachments.map((attachment) => {
-          const previewUrl = serverAttachmentUrlById.get(attachment.id);
-          return previewUrl ? { ...attachment, previewUrl } : attachment;
+          const assetUrl = serverAttachmentUrlById.get(attachment.id);
+          if (!assetUrl) return attachment;
+          return attachment.type === "image"
+            ? { ...attachment, previewUrl: assetUrl }
+            : { ...attachment, downloadUrl: assetUrl };
         }),
       };
     });

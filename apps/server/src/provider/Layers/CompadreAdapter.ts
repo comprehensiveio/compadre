@@ -1,7 +1,11 @@
 import {
   ApprovalRequestId,
+  type ChatAttachment,
   EventId,
+  isProviderSendTurnSupportedImageMimeType,
   isToolLifecycleItemType,
+  PROVIDER_OUTPUT_ARTIFACT_MAX_BYTES,
+  PROVIDER_SEND_TURN_MAX_IMAGE_BYTES,
   ProviderDriverKind,
   ProviderInstanceId,
   type ProviderOptionSelection,
@@ -15,6 +19,7 @@ import {
   type ThreadId,
   TurnId,
 } from "@t3tools/contracts";
+import * as NodeCrypto from "node:crypto";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -25,6 +30,8 @@ import * as PubSub from "effect/PubSub";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import * as HttpClient from "effect/unstable/http/HttpClient";
+import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
+import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
 
 import {
   ProviderAdapterRequestError,
@@ -33,7 +40,7 @@ import {
   type ProviderAdapterError,
 } from "../Errors.ts";
 import type { ProviderAdapterShape, ProviderThreadSnapshot } from "../Services/ProviderAdapter.ts";
-import { resolveAttachmentPath } from "../../attachmentStore.ts";
+import { resolveAttachmentPath, toSafeThreadAttachmentSegment } from "../../attachmentStore.ts";
 import {
   makeCompadreCancelTransport,
   makeCompadreTransport,
@@ -142,6 +149,56 @@ function usageSnapshot(event: CompadreStreamEvent): ThreadTokenUsageSnapshot | u
       : {}),
     ...(model ? { model } : {}),
   };
+}
+
+function artifactAttachmentId(threadId: ThreadId, digest: string): string | undefined {
+  const segment = toSafeThreadAttachmentSegment(threadId);
+  if (!segment || !/^[a-f0-9]{64}$/iu.test(digest)) return undefined;
+  return `${segment}-${digest.slice(0, 8)}-${digest.slice(8, 12)}-${digest.slice(12, 16)}-${digest.slice(16, 20)}-${digest.slice(20, 32)}`;
+}
+
+function decodeOutputArtifact(
+  event: CompadreStreamEvent,
+  threadId: ThreadId,
+):
+  | {
+      artifactId: string;
+      attachment: ChatAttachment;
+    }
+  | undefined {
+  const artifact = record(event.artifact);
+  if (!artifact || artifact.storage !== "hosted-object") return undefined;
+  const digest = stringField(artifact, "artifactId");
+  const mimeType = stringField(artifact, "mimetype")?.toLowerCase();
+  const sizeBytes = nonNegativeInteger(artifact.sizeBytes);
+  const rawName = stringField(artifact, "name") ?? stringField(artifact, "path");
+  const id = digest ? artifactAttachmentId(threadId, digest) : undefined;
+  if (
+    !digest ||
+    !id ||
+    !mimeType ||
+    sizeBytes === undefined ||
+    sizeBytes > PROVIDER_OUTPUT_ARTIFACT_MAX_BYTES ||
+    !rawName
+  )
+    return undefined;
+  const name = rawName.split(/[\\/]/u).at(-1)?.trim().slice(0, 255);
+  if (!name) return undefined;
+  const attachment: ChatAttachment =
+    isProviderSendTurnSupportedImageMimeType(mimeType) &&
+    sizeBytes <= PROVIDER_SEND_TURN_MAX_IMAGE_BYTES
+      ? { type: "image", id, name, mimeType, sizeBytes }
+      : { type: "file", id, name, mimeType, sizeBytes };
+  return { artifactId: digest, attachment };
+}
+
+function outputArtifactEndpoint(endpoint: string, runId: string, artifactId: string): string {
+  const url = new URL(endpoint);
+  url.pathname = url.pathname.replace(/\/chat\/?$/u, "/artifacts");
+  url.search = "";
+  url.searchParams.set("runId", runId);
+  url.searchParams.set("artifactId", artifactId);
+  return url.toString();
 }
 
 export function makeCompadreAdapter(options: CompadreAdapterOptions) {
@@ -389,6 +446,8 @@ export function makeCompadreAdapter(options: CompadreAdapterOptions) {
               argsText?: string;
             }
           >();
+          const artifactAttachments = new Map<string, ChatAttachment>();
+          let lastAssistantItemId: RuntimeItemId | undefined;
           let terminal = false;
 
           const completeTurn = (
@@ -521,6 +580,7 @@ export function makeCompadreAdapter(options: CompadreAdapterOptions) {
                   const sourceId = stringField(event, "messageId") ?? `assistant-${runId}`;
                   const item = items.get(sourceId);
                   if (!item) return;
+                  lastAssistantItemId = item.id;
                   items.delete(sourceId);
                   yield* publish({
                     type: "item.completed",
@@ -531,6 +591,92 @@ export function makeCompadreAdapter(options: CompadreAdapterOptions) {
                     turnId,
                     itemId: item.id,
                     payload: { itemType: "assistant_message", status: "completed" },
+                  });
+                  return;
+                }
+                case "OUTPUT_ARTIFACT": {
+                  if (!options.attachmentsDir) {
+                    return yield* new ProviderAdapterRequestError({
+                      provider: runtimeProvider,
+                      method: "compadre/output-artifact",
+                      detail: "The Compadre attachment directory is not configured.",
+                    });
+                  }
+                  const decoded = decodeOutputArtifact(event, input.threadId);
+                  if (!decoded) return;
+                  const attachmentPath = resolveAttachmentPath({
+                    attachmentsDir: options.attachmentsDir,
+                    attachment: decoded.attachment,
+                  });
+                  if (!attachmentPath) {
+                    return yield* new ProviderAdapterRequestError({
+                      provider: runtimeProvider,
+                      method: "compadre/output-artifact",
+                      detail: "Compadre emitted an unsafe output artifact identifier.",
+                    });
+                  }
+                  let request = HttpClientRequest.get(
+                    outputArtifactEndpoint(options.endpoint, runId, decoded.artifactId),
+                  ).pipe(HttpClientRequest.setHeader("X-Compadre-T3-Protocol-Version", "2"));
+                  if (options.apiKey) {
+                    request = request.pipe(
+                      HttpClientRequest.setHeader("authorization", `Bearer ${options.apiKey}`),
+                    );
+                  }
+                  const bytes = yield* httpClient.execute(request).pipe(
+                    Effect.flatMap(HttpClientResponse.filterStatusOk),
+                    Effect.flatMap((response) => response.arrayBuffer),
+                    Effect.map((buffer) => new Uint8Array(buffer)),
+                    Effect.mapError(
+                      (cause) =>
+                        new ProviderAdapterRequestError({
+                          provider: runtimeProvider,
+                          method: "compadre/output-artifact",
+                          detail: "Failed to download a Compadre output artifact.",
+                          cause,
+                        }),
+                    ),
+                  );
+                  if (
+                    bytes.byteLength !== decoded.attachment.sizeBytes ||
+                    NodeCrypto.createHash("sha256").update(bytes).digest("hex") !==
+                      decoded.artifactId
+                  ) {
+                    return yield* new ProviderAdapterRequestError({
+                      provider: runtimeProvider,
+                      method: "compadre/output-artifact",
+                      detail: "Compadre output artifact failed integrity validation.",
+                    });
+                  }
+                  yield* fileSystem.makeDirectory(options.attachmentsDir, { recursive: true }).pipe(
+                    Effect.andThen(fileSystem.writeFile(attachmentPath, bytes)),
+                    Effect.mapError(
+                      (cause) =>
+                        new ProviderAdapterRequestError({
+                          provider: runtimeProvider,
+                          method: "compadre/output-artifact",
+                          detail: "Failed to persist a Compadre output artifact.",
+                          cause,
+                        }),
+                    ),
+                  );
+                  artifactAttachments.set(decoded.attachment.id, decoded.attachment);
+                  const itemId =
+                    lastAssistantItemId ?? RuntimeItemId.make(`output-artifacts-${runId}`);
+                  lastAssistantItemId = itemId;
+                  yield* publish({
+                    type: "item.completed",
+                    ...(yield* makeEventStamp()),
+                    provider: runtimeProvider,
+                    providerInstanceId: boundInstanceId,
+                    threadId: input.threadId,
+                    turnId,
+                    itemId,
+                    payload: {
+                      itemType: "assistant_message",
+                      status: "completed",
+                      attachments: [...artifactAttachments.values()],
+                    },
                   });
                   return;
                 }

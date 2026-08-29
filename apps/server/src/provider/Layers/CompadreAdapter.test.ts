@@ -1,6 +1,7 @@
 // @effect-diagnostics nodeBuiltinImport:off - Exercises reconnects against a real SSE socket.
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { createServer } from "node:http";
+import { createHash } from "node:crypto";
 import { assert, it } from "@effect/vitest";
 import {
   ProviderDriverKind,
@@ -466,6 +467,156 @@ it.layer(Layer.merge(NodeServices.layer, FetchHttpClient.layer))("CompadreAdapte
             mimetype: "image/png",
             sizeBytes: 4,
             dataBase64: "iVBORw==",
+          },
+        ]);
+      }),
+    ),
+  );
+
+  it.effect("downloads durable Compadre output images and files into the assistant message", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const attachmentsDir = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "t3-compadre-output-",
+        });
+        const png = new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10]);
+        const digest = createHash("sha256").update(png).digest("hex");
+        const csv = new TextEncoder().encode("service,status\napi,healthy\n");
+        const csvDigest = createHash("sha256").update(csv).digest("hex");
+        const requests: Array<{
+          authorization: string | undefined;
+          artifactId: string | null;
+        }> = [];
+        const server = createServer((request, response) => {
+          const url = new URL(request.url ?? "/", "http://localhost");
+          requests.push({
+            authorization: request.headers.authorization,
+            artifactId: url.searchParams.get("artifactId"),
+          });
+          const bytes = url.searchParams.get("artifactId") === csvDigest ? csv : png;
+          response.writeHead(200, { "content-type": "application/octet-stream" });
+          response.end(Buffer.from(bytes));
+        });
+        const port = yield* Effect.acquireRelease(
+          Effect.tryPromise(
+            () =>
+              new Promise<number>((resolve, reject) => {
+                server.once("error", reject);
+                server.listen(0, "127.0.0.1", () => {
+                  const address = server.address();
+                  if (!address || typeof address === "string") return reject(new Error("no port"));
+                  resolve(address.port);
+                });
+              }),
+          ),
+          () =>
+            Effect.promise(
+              () =>
+                new Promise<void>((resolve) => {
+                  server.close();
+                  server.closeAllConnections();
+                  resolve();
+                }),
+            ),
+        );
+        const threadId = ThreadId.make("output-thread");
+        const completed = yield* Deferred.make<void>();
+        const events: ProviderRuntimeEvent[] = [];
+        const adapter = yield* makeCompadreAdapter({
+          endpoint: `http://127.0.0.1:${port}/hosted/t3/chat`,
+          apiKey: "controller-secret",
+          instanceId: ProviderInstanceId.make("codex"),
+          runtimeProvider: ProviderDriverKind.make("codex"),
+          provider: "codex",
+          attachmentsDir,
+          transport: () =>
+            Stream.fromIterable([
+              { type: "TEXT_MESSAGE_START", messageId: "assistant-1" },
+              { type: "TEXT_MESSAGE_CONTENT", messageId: "assistant-1", delta: "Done" },
+              { type: "TEXT_MESSAGE_END", messageId: "assistant-1" },
+              {
+                type: "OUTPUT_ARTIFACT",
+                artifact: {
+                  artifactId: digest,
+                  path: "proof.png",
+                  name: "proof.png",
+                  title: "proof.png",
+                  mimetype: "image/png",
+                  sizeBytes: png.byteLength,
+                  storage: "hosted-object",
+                },
+              },
+              {
+                type: "OUTPUT_ARTIFACT",
+                artifact: {
+                  artifactId: csvDigest,
+                  path: "report.csv",
+                  name: "report.csv",
+                  title: "report.csv",
+                  mimetype: "text/csv",
+                  sizeBytes: csv.byteLength,
+                  storage: "hosted-object",
+                },
+              },
+              { type: "RUN_FINISHED" },
+            ]),
+        });
+        const eventsFiber = yield* Stream.runForEach(adapter.streamEvents, (event) =>
+          Effect.sync(() => events.push(event)).pipe(
+            Effect.andThen(
+              event.type === "turn.completed"
+                ? Deferred.succeed(completed, undefined)
+                : Effect.void,
+            ),
+          ),
+        ).pipe(Effect.forkChild);
+        yield* Effect.yieldNow;
+        yield* adapter.startSession({ threadId, runtimeMode: "full-access" });
+        yield* adapter.sendTurn({ threadId, input: "create proof" });
+        yield* Deferred.await(completed);
+        yield* Fiber.interrupt(eventsFiber);
+
+        const attachmentId = `output-thread-${digest.slice(0, 8)}-${digest.slice(8, 12)}-${digest.slice(12, 16)}-${digest.slice(16, 20)}-${digest.slice(20, 32)}`;
+        const csvAttachmentId = `output-thread-${csvDigest.slice(0, 8)}-${csvDigest.slice(8, 12)}-${csvDigest.slice(12, 16)}-${csvDigest.slice(16, 20)}-${csvDigest.slice(20, 32)}`;
+        assert.deepStrictEqual(
+          yield* fileSystem.readFile(path.join(attachmentsDir, `${attachmentId}.png`)),
+          png,
+        );
+        assert.deepStrictEqual(
+          yield* fileSystem.readFile(path.join(attachmentsDir, `${csvAttachmentId}.bin`)),
+          csv,
+        );
+        const output = events.findLast(
+          (event) => event.type === "item.completed" && event.payload.attachments !== undefined,
+        );
+        assert.deepInclude(output?.payload, {
+          attachments: [
+            {
+              type: "image",
+              id: attachmentId,
+              name: "proof.png",
+              mimeType: "image/png",
+              sizeBytes: png.byteLength,
+            },
+            {
+              type: "file",
+              id: csvAttachmentId,
+              name: "report.csv",
+              mimeType: "text/csv",
+              sizeBytes: csv.byteLength,
+            },
+          ],
+        });
+        assert.deepStrictEqual(requests, [
+          {
+            authorization: "Bearer controller-secret",
+            artifactId: digest,
+          },
+          {
+            authorization: "Bearer controller-secret",
+            artifactId: csvDigest,
           },
         ]);
       }),

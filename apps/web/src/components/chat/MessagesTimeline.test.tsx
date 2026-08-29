@@ -399,6 +399,46 @@ describe("MessagesTimeline", () => {
     expect(markup).toContain("px-1 text-sm leading-relaxed text-muted-foreground");
   });
 
+  it("renders hosted assistant images and downloadable files", () => {
+    const entry = buildAssistantTimelineEntry("Artifacts are ready.");
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        timelineEntries={[
+          {
+            ...entry,
+            message: {
+              ...entry.message,
+              attachments: [
+                {
+                  type: "image" as const,
+                  id: "artifact-image",
+                  name: "proof.png",
+                  mimeType: "image/png",
+                  sizeBytes: 8,
+                  previewUrl: "https://example.com/proof.png",
+                },
+                {
+                  type: "file" as const,
+                  id: "artifact-file",
+                  name: "report.csv",
+                  mimeType: "text/csv",
+                  sizeBytes: 2048,
+                  downloadUrl: "https://example.com/report.csv",
+                },
+              ],
+            },
+          },
+        ]}
+      />,
+    );
+
+    expect(markup).toContain('src="https://example.com/proof.png"');
+    expect(markup).toContain('href="https://example.com/report.csv"');
+    expect(markup).toContain('download="report.csv"');
+    expect(markup).toContain("2.0 KB");
+  });
+
   it("uses the larger leading inset only when the top fade is enabled", () => {
     const timelineEntries = [buildUserTimelineEntry("Hello")];
 
