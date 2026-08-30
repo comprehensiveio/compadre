@@ -4,6 +4,7 @@ import { replayRunStream } from "@tanstack/ai";
 import { createAgentRunDurability } from "../durability/runtime.js";
 import { EventType } from "./agui-protocol.js";
 import { NativeT3RunCoordinator } from "./run-coordinator.js";
+import type { LockStore } from "./storage.js";
 
 async function memoryCoordinator() {
   const durability = await createAgentRunDurability({
@@ -81,13 +82,69 @@ test("a repeated native run id replays one execution instead of starting another
     async cancel() {},
   };
 
-  const first = await coordinator.start(input);
-  const second = await coordinator.start(input);
+  const [first, second] = await Promise.all([
+    coordinator.start(input),
+    coordinator.start(input),
+  ]);
   await events(coordinator, input.runId);
 
-  assert.equal(first.started, true);
-  assert.equal(second.started, false);
+  assert.deepEqual(
+    [first.started, second.started].sort(),
+    [false, true],
+  );
   assert.equal(executions, 1);
+});
+
+test("releases the distributed start lock while provider runs are active", async (t) => {
+  const durability = await createAgentRunDurability({
+    COMPADRE_DURABILITY_BACKEND: "memory",
+  });
+  assert.ok(durability);
+  t.after(() => durability.close());
+
+  let heldLocks = 0;
+  let peakLocks = 0;
+  const locks: LockStore = {
+    async withLock(_key, operation) {
+      heldLocks += 1;
+      peakLocks = Math.max(peakLocks, heldLocks);
+      try {
+        return await operation(new AbortController().signal);
+      } finally {
+        heldLocks -= 1;
+      }
+    },
+  };
+  const coordinator = new NativeT3RunCoordinator(durability, locks);
+  let release!: () => void;
+  const gated = new Promise<void>((resolve) => { release = resolve; });
+  const runIds = Array.from({ length: 8 }, (_, index) => `concurrent-${index}`);
+
+  await Promise.all(runIds.map((runId) => coordinator.start({
+    runId,
+    threadId: `thread-${runId}`,
+    async *source() {
+      yield {
+        type: EventType.RUN_STARTED,
+        runId,
+        threadId: `thread-${runId}`,
+      };
+      await gated;
+      yield {
+        type: EventType.RUN_FINISHED,
+        runId,
+        threadId: `thread-${runId}`,
+      };
+    },
+    async cancel() {},
+  })));
+
+  assert.ok(peakLocks > 0);
+  assert.equal(heldLocks, 0, "active provider runs must not retain lock-pool clients");
+
+  release();
+  await Promise.all(runIds.map((runId) => events(coordinator, runId)));
+  assert.equal(heldLocks, 0);
 });
 
 test("cancel records durable intent and invokes the active worker fast path", async (t) => {
