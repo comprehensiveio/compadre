@@ -7,6 +7,12 @@ import type { SandboxHandle } from "@tanstack/ai-sandbox";
 import { configuredEnvironmentBridgeToken } from "../tanstack/relay-tool-bridge.js";
 import { createHarnessSandbox } from "../tanstack/sandbox-runtime.js";
 import { exchangeT3PairingToken, type T3Client } from "../t3/client.js";
+import {
+  COMP_DEV_SERVER_PORT,
+  devEnvironmentArtifactProjection,
+  devEnvironmentEnabled,
+  t3EncryptedPorts,
+} from "./dev-environment.js";
 
 const DEFAULT_T3_PORT = 3773;
 const DEFAULT_T3_BASE_DIR = "/var/lib/t3";
@@ -159,7 +165,8 @@ export async function resolveT3ForkArchive(
 
   const packageUrl = environment.COMPADRE_T3_PACKAGE_URL?.trim();
   if (!packageUrl) return undefined;
-  const expectedSha256 = environment.COMPADRE_T3_PACKAGE_SHA256?.trim().toLowerCase();
+  const expectedSha256 =
+    environment.COMPADRE_T3_PACKAGE_SHA256?.trim().toLowerCase();
   if (!/^[a-f0-9]{64}$/.test(expectedSha256 ?? "")) {
     throw new Error(
       "COMPADRE_T3_PACKAGE_SHA256 must be set to a 64-character SHA-256 when COMPADRE_T3_PACKAGE_URL is configured",
@@ -202,7 +209,7 @@ async function bootstrapT3Project(
 ): Promise<void> {
   const bootstrap = await handle.process.exec(
     [
-      "setpriv --reuid=node --regid=node --init-groups t3 project add",
+      "t3 project add",
       quote(workspaceRoot),
       `--base-dir ${quote(DEFAULT_T3_BASE_DIR)}`,
       `--title ${quote("comp")}`,
@@ -236,7 +243,8 @@ async function waitForT3Startup(
       lastLog = await handle.fs.read(logPath);
       const token = parseT3StartupToken(lastLog);
       if (token) return token;
-      if (/EADDRINUSE|address already in use|fatal startup/i.test(lastLog)) break;
+      if (/EADDRINUSE|address already in use|fatal startup/i.test(lastLog))
+        break;
     } catch {
       // The log is created asynchronously by the background server.
     }
@@ -292,24 +300,34 @@ export async function launchManagedT3ModalEnvironment(
       environment.COMPADRE_T3_MODAL_APP?.trim() || "compadre-t3-experiment",
   };
   const forkArchivePath = await resolveT3ForkArchive(workerEnvironment);
+  const devArtifactEnvironment =
+    await devEnvironmentArtifactProjection(workerEnvironment);
   let startupToken: string | undefined;
   const sandbox = createHarnessSandbox({
     worktreeId: `t3-modal-${randomUUID()}`,
     localWorktreePath: "/unused",
     reuseThread: true,
     environment: workerEnvironment,
-    encryptedPorts: [port],
+    encryptedPorts: t3EncryptedPorts(workerEnvironment),
     onReady: async (handle) => {
       const workspaceRoot = handle.workspaceRoot ?? "/workspace";
-      const providerEnvironment = projectedProviderEnvironment(
-        workerEnvironment,
-      );
-      await installLocalT3Fork(
-        handle,
-        forkArchivePath,
-      );
+      const providerEnvironment =
+        projectedProviderEnvironment(workerEnvironment);
+      await installLocalT3Fork(handle, forkArchivePath);
+      const devPreviewEnvironment: Record<string, string> =
+        devEnvironmentEnabled(workerEnvironment)
+          ? {
+              COMPADRE_DEV_PREVIEW_URL: (
+                await handle.ports.connect(COMP_DEV_SERVER_PORT)
+              ).url.replace(/\/$/, ""),
+              COMPADRE_DEV_PORT: String(COMP_DEV_SERVER_PORT),
+              AGENT_BROWSER_EXECUTABLE_PATH: "/usr/bin/chromium",
+            }
+          : {};
       await handle.env.set({
         ...providerEnvironment,
+        ...devArtifactEnvironment,
+        ...devPreviewEnvironment,
         HOME: "/home/node",
       });
       const projected = await handle.process.exec(
@@ -325,17 +343,15 @@ export async function launchManagedT3ModalEnvironment(
       if (prepare.exitCode !== 0) {
         throw new Error(prepare.stderr || prepare.stdout);
       }
-      const ownership = await handle.process.exec(
-        `chown -R node:node ${quote(workspaceRoot)} ${quote(DEFAULT_T3_BASE_DIR)} ${quote("/var/log/compadre")}`,
-      );
-      if (ownership.exitCode !== 0) {
-        throw new Error(ownership.stderr || ownership.stdout);
-      }
       await configureNativeHarnessAuthentication(handle);
       await bootstrapT3Project(handle, workspaceRoot);
 
+      // Modal enforces no_new_privs, so a process dropped to `node` cannot
+      // later start the stopped Postgres/Redis services. The per-thread Modal
+      // sandbox is the security boundary; keep T3 and its harnesses on the
+      // sandbox root identity so lazy dev startup remains possible.
       const command = [
-        "env -u CODEX_AUTH_JSON_BASE64 setpriv --reuid=node --regid=node --init-groups t3 serve",
+        "env -u CODEX_AUTH_JSON_BASE64 t3 serve",
         "--host 0.0.0.0",
         `--port ${port}`,
         `--base-dir ${quote(DEFAULT_T3_BASE_DIR)}`,
@@ -383,7 +399,9 @@ export async function launchManagedT3ModalEnvironment(
         candidate.workspaceRoot === (handle.workspaceRoot ?? "/workspace"),
     );
     if (!project) {
-      throw new Error("T3 project bootstrap completed without a workspace project");
+      throw new Error(
+        "T3 project bootstrap completed without a workspace project",
+      );
     }
     const browserPairing = await gatewaySession.client.mintPairingCredential({
       label: "Compadre native T3 worker",

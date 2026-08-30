@@ -78,11 +78,13 @@ test("writes Compadre skills after the setup-time clone", async () => {
     "/opt/compadre-skills/query-database",
     "/opt/compadre-skills/pull-request",
     "/opt/compadre-skills/integration-debugging",
+    "/opt/compadre-skills/dev-environment",
   ]);
   assert.deepEqual([...files.keys()], [
     "/opt/compadre-skills/query-database/SKILL.md",
     "/opt/compadre-skills/pull-request/SKILL.md",
     "/opt/compadre-skills/integration-debugging/SKILL.md",
+    "/opt/compadre-skills/dev-environment/SKILL.md",
   ]);
   for (const data of files.values()) {
     assert.match(Buffer.from(data).toString("utf8"), /^---\nname:/);

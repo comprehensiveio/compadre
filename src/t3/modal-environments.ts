@@ -11,6 +11,7 @@ import type {
   T3EnvironmentConnectionManager,
 } from "./gateway.js";
 import type { T3ThreadBinding } from "../services/t3-thread-bindings.js";
+import { t3EncryptedPorts } from "./dev-environment.js";
 
 const T3_PORT = 3773;
 
@@ -86,7 +87,7 @@ export class T3ModalEnvironmentManager
   async reconnect(binding: T3ThreadBinding): Promise<T3EnvironmentConnection> {
     const provider = modalSandboxProvider({
       environment: this.workerEnvironment(),
-      encryptedPorts: [T3_PORT],
+      encryptedPorts: t3EncryptedPorts(this.workerEnvironment()),
     });
     const handle = await provider.resume({ id: binding.sandboxId });
     if (!handle) {
@@ -113,7 +114,7 @@ export class T3ModalEnvironmentManager
   async discard(connection: T3EnvironmentConnection): Promise<void> {
     const provider = modalSandboxProvider({
       environment: this.workerEnvironment(),
-      encryptedPorts: [T3_PORT],
+      encryptedPorts: t3EncryptedPorts(this.workerEnvironment()),
     });
     await provider.destroy({ id: connection.sandboxId });
   }

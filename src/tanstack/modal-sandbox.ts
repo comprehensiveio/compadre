@@ -24,6 +24,7 @@ import {
   SpanStatusCode,
   trace,
 } from "@opentelemetry/api";
+import { devEnvironmentEnabled } from "../t3/dev-environment.js";
 
 export const MODAL_CAPS: SandboxCapabilities = {
   fs: true,
@@ -86,6 +87,9 @@ const CLAUDE_CODE_VERSION = "2.1.222";
 const CODEX_VERSION = "0.146.0";
 const PNPM_VERSION = "10.34.2";
 const T3_CODE_VERSION = "0.0.33";
+const AGENT_BROWSER_VERSION = "0.35.1";
+const COMP_DEV_POSTGRES_PASSWORD =
+  "Oe1lQ3diVMmKdJ4aFLSU9LsQcT2KkVpZMq4V025ABqcOCUtSKpluLNCsLZH60wMa";
 
 function positiveNumberSetting(
   name: string,
@@ -113,8 +117,16 @@ export function modalImageCommands(environment: NodeJS.ProcessEnv): string[] {
   const workdir = environment.COMPADRE_MODAL_WORKDIR?.trim() || DEFAULT_WORKDIR;
   const runtimeRoot =
     environment.COMPADRE_MODAL_CLI_ROOT?.trim() || "/opt/compadre-runtime";
+  const devEnvironmentCommands = devEnvironmentEnabled(environment)
+    ? [
+        "RUN install -m 0755 -d /etc/apt/keyrings && curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc | gpg --dearmor -o /etc/apt/keyrings/postgresql-keyring.gpg && echo \"deb [signed-by=/etc/apt/keyrings/postgresql-keyring.gpg] http://apt.postgresql.org/pub/repos/apt bookworm-pgdg main\" > /etc/apt/sources.list.d/postgresql.list && apt-get update -qq && apt-get install -y -qq --no-install-recommends postgresql-16 postgresql-client-16 redis-server zstd chromium procps && rm -rf /var/lib/apt/lists/*",
+        `RUN set -eux; sed -ri 's/^#?port = .*/port = 5433/' /etc/postgresql/16/main/postgresql.conf; pg_ctlcluster 16 main start; su postgres -c \"createuser -p 5433 -s comprehensiveapp\" || true; su postgres -c \"psql -p 5433 -v ON_ERROR_STOP=1 -c \\\"ALTER ROLE comprehensiveapp WITH LOGIN SUPERUSER PASSWORD '${COMP_DEV_POSTGRES_PASSWORD}'\\\"\"; su postgres -c \"createuser -p 5433 system_readonly\" || true; su postgres -c \"psql -p 5433 -v ON_ERROR_STOP=1 -c \\\"ALTER ROLE system_readonly WITH LOGIN PASSWORD 'flattentheslope'\\\"\"; su postgres -c \"createdb -p 5433 -O comprehensiveapp comprehensive\" || true; su postgres -c \"createdb -p 5433 -O comprehensiveapp benchmarking\" || true; pg_ctlcluster 16 main stop`,
+        `RUN npm install -g agent-browser@${AGENT_BROWSER_VERSION}`,
+        "ENV AGENT_BROWSER_EXECUTABLE_PATH=/usr/bin/chromium",
+      ]
+    : [];
   return [
-    "RUN apt-get update -qq && apt-get install -y -qq --no-install-recommends git ca-certificates curl gh jq postgresql-client ripgrep && rm -rf /var/lib/apt/lists/*",
+    "RUN apt-get update -qq && apt-get install -y -qq --no-install-recommends git ca-certificates curl gh gnupg jq postgresql-client ripgrep && rm -rf /var/lib/apt/lists/*",
     `RUN corepack enable && corepack prepare pnpm@${PNPM_VERSION} --activate`,
     `RUN mkdir -p ${quote(workdir)} ${quote(runtimeRoot)}`,
     ...(environment.COMPADRE_MODAL_SKIP_CLI_SETUP === "true"
@@ -123,6 +135,7 @@ export function modalImageCommands(environment: NodeJS.ProcessEnv): string[] {
           `RUN npm install --prefix ${quote(runtimeRoot)} --no-save @anthropic-ai/claude-code@${CLAUDE_CODE_VERSION} @openai/codex@${CODEX_VERSION} t3@${T3_CODE_VERSION}`,
           `RUN ln -sf ${quote(path.posix.join(runtimeRoot, "node_modules", ".bin", "claude"))} /usr/local/bin/claude && ln -sf ${quote(path.posix.join(runtimeRoot, "node_modules", ".bin", "codex"))} /usr/local/bin/codex && ln -sf ${quote(path.posix.join(runtimeRoot, "node_modules", ".bin", "t3"))} /usr/local/bin/t3`,
         ]),
+    ...devEnvironmentCommands,
   ];
 }
 

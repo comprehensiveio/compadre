@@ -215,6 +215,22 @@ test("bakes the app repository's required command-line tools", () => {
   assert.match(commands, /corepack prepare pnpm@10\.34\.2 --activate/);
 });
 
+test("adds stopped development services only when thread dev environments are enabled", () => {
+  const ordinary = modalImageCommands({}).join("\n");
+  const development = modalImageCommands({
+    COMPADRE_DEV_ENVIRONMENT_ENABLED: "true",
+  }).join("\n");
+
+  assert.doesNotMatch(ordinary, /agent-browser@/);
+  assert.doesNotMatch(ordinary, /postgresql-16/);
+  assert.match(development, /agent-browser@0\.35\.1/);
+  assert.match(development, /postgresql-16/);
+  assert.match(development, /redis-server/);
+  assert.doesNotMatch(development, /sudo/);
+  assert.match(development, /AGENT_BROWSER_EXECUTABLE_PATH=\/usr\/bin\/chromium/);
+  assert.match(development, /port = 5433/);
+});
+
 test("allows a custom Modal image to supply its own harness CLIs", () => {
   assert.doesNotMatch(
     modalImageCommands({ COMPADRE_MODAL_SKIP_CLI_SETUP: "true" }).join("\n"),

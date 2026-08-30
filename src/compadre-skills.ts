@@ -6,6 +6,7 @@ export const COMPADRE_SKILL_NAMES = [
   "query-database",
   "pull-request",
   "integration-debugging",
+  "dev-environment",
 ] as const;
 
 export type CompadreSkillName = (typeof COMPADRE_SKILL_NAMES)[number];

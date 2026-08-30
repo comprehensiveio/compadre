@@ -23,7 +23,7 @@ work so they survive handoffs and context compaction.
   not useful.
 - Support the main TanStack Start application only. Ignore Temporal, PIE, and
   auxiliary Toltagent services.
-- The agent can start the app, expose it through a secure preview URL, validate
+- The agent can start the app, expose it through a random TLS preview URL, validate
   it with agent-browser, and use an isolated database behind it.
 - Learn from Toltagent's current production flow, including its Modal microVM
   and database choices where those fit Compadre's architecture. Do not assume
@@ -36,3 +36,20 @@ work so they survive handoffs and context compaction.
 3. Implement a minimal end-to-end vertical slice, measure cold-start latency,
    and verify it programmatically in deployed Comprehensive canaries.
 4. Preserve useful unit/integration tests and remove temporary test harnesses.
+
+## Runtime boundary
+
+- Modal's per-thread sandbox is the isolation boundary. T3 and its native
+  harness run as the sandbox root user so the lazy command can start the
+  sandbox-local PostgreSQL and Redis services. Modal enforces `no_new_privs`,
+  so dropping to an internal user and later using sudo is not viable.
+- Root is scoped to that disposable sandbox. Each thread has a separate
+  checkout, process tree, database, tunnel, and filesystem snapshot.
+- Bootstrap inputs are synthetic or sanitized, read-only S3 objects in AWS
+  account `629591269808`, bucket `compadre`, prefix
+  `dev-environments/comp/`. Never substitute a Tolt resource or production
+  database dump.
+- The Modal preview is a random TLS tunnel, not an authenticated perimeter.
+  Treat review URLs as internal bearer links and do not publish them outside
+  the originating Compadre conversation. Add an authenticated preview gateway
+  before any external or broadly multi-tenant use.
