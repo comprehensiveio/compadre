@@ -149,6 +149,29 @@ thread rather than a historical sandbox:
 - the Render wildcard domain and TLS certificate were verified, and the main
   UI, session endpoint, and controller health endpoint all returned HTTP 200.
 
+The first production-derived data validation on 2026-08-30 also used a newly
+provisioned sandbox, canonical thread
+`33c9dd25-617d-48b4-bfdc-5191d49f781c`:
+
+- the sandbox received the thread-scoped manifest URL and token but no AWS
+  credentials or controller signing secret;
+- the controller selected
+  `hourly/db-backup-2026-08-30_12-00-51-no-audit-logs.sql.gz`, which was the
+  newest hourly Comprehensive backup at invocation time;
+- Hen restored, anonymized, and migrated the local database; 458,397 email
+  rows had zero values outside Hen's wrapping convention, apart from the one
+  documented synthetic Klaar admin exception, and customer Slack installations
+  were empty;
+- no raw SQL, gzip partial, or SQL partial file remained after completion;
+- Vite, PostgreSQL, and Redis returned healthy, dev-login returned HTTP 302,
+  and system Chromium loaded `Comprehensive - Employees`;
+- the terminal proof was durable in the central snapshot, an invalid manifest
+  token returned HTTP 401, and the stable preview still required Slack auth;
+- total thread time was 15m58s. Baseline synthetic startup completed first;
+  the optional current-data upgrade accounted for roughly 13 minutes. This is
+  correct and usable for explicit opt-in, but a pre-anonymized cached artifact
+  is the likely next optimization if the workflow becomes frequent.
+
 ## Security boundary
 
 The raw random Modal URL remains a bearer-style routing capability and must stay
