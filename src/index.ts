@@ -40,6 +40,7 @@ import {
   configuredCentralT3Backup,
   DEFAULT_CENTRAL_T3_BACKUP_INTERVAL_MS,
 } from "./services/central-t3-backup.js";
+import { closeHttpServer } from "./http-shutdown.js";
 
 const app = new Hono();
 
@@ -93,7 +94,7 @@ async function start() {
   console.log(`[agent] conversation provider=${agent.provider} harness=modal`);
 
   // Start the server first so Render sees the port binding
-  serve({ fetch: app.fetch, port }, (info) => {
+  const server = serve({ fetch: app.fetch, port }, (info) => {
     console.log(`[agent] server running on port ${info.port}`);
     if (isSlackRecoveryOwner()) {
       const backupCentralT3 = configuredCentralT3Backup();
@@ -181,6 +182,38 @@ async function start() {
       }
     }
   });
+
+  let shuttingDown = false;
+  const shutdown = (signal: NodeJS.Signals) => {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    console.log(`[shutdown] ${signal} received; draining in-flight requests`);
+    const configuredTimeout = Number(
+      process.env.COMPADRE_SHUTDOWN_TIMEOUT_MS ?? "295000",
+    );
+    const timeoutMs =
+      Number.isFinite(configuredTimeout) && configuredTimeout > 0
+        ? configuredTimeout
+        : 295_000;
+    const forceExit = setTimeout(() => {
+      console.error(`[shutdown] drain exceeded ${timeoutMs}ms`);
+      process.exit(1);
+    }, timeoutMs);
+    void closeHttpServer(server).then(
+      () => {
+        clearTimeout(forceExit);
+        console.log("[shutdown] in-flight requests drained");
+        process.exit(0);
+      },
+      (error) => {
+        clearTimeout(forceExit);
+        console.error("[shutdown] HTTP server close failed", error);
+        process.exit(1);
+      },
+    );
+  };
+  process.once("SIGTERM", shutdown);
+  process.once("SIGINT", shutdown);
 
   // Agent repositories live in Modal. The PR deployment watcher maintains
   // its own read-only Git clone only when that optional service is configured.
