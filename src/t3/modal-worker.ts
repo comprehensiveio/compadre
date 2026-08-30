@@ -4,7 +4,10 @@ import { COMPADRE_SKILL_NAMES } from "../compadre-skills.js";
 import { gitAuthenticationEnvironment } from "../repo.js";
 import { ModalHandle } from "../tanstack/modal-sandbox.js";
 import type { SandboxHandle } from "@tanstack/ai-sandbox";
-import { configuredEnvironmentBridgeToken } from "../tanstack/relay-tool-bridge.js";
+import {
+  configuredEnvironmentBridgeToken,
+  scopedEnvironmentBridgeToken,
+} from "../tanstack/relay-tool-bridge.js";
 import { createHarnessSandbox } from "../tanstack/sandbox-runtime.js";
 import { exchangeT3PairingToken, type T3Client } from "../t3/client.js";
 import {
@@ -75,8 +78,25 @@ export function projectedProviderEnvironment(
         "COMPADRE_T3_MCP_BEARER_TOKEN/COMPADRE_API_KEY and COMPADRE_PUBLIC_URL must be configured together for the T3 MCP bridge",
       );
     }
-    result.COMPADRE_MCP_URL = new URL("/internal/t3-mcp", publicUrl).toString();
-    result.COMPADRE_MCP_BEARER_TOKEN = bridgeToken;
+    const bridgeUrl = new URL("/internal/t3-mcp", publicUrl);
+    const blockedSlackChannelId =
+      environment.COMPADRE_BLOCKED_SLACK_CHANNEL_ID?.trim();
+    const blockedSlackThreadTs =
+      environment.COMPADRE_BLOCKED_SLACK_THREAD_TS?.trim();
+    if (blockedSlackChannelId && blockedSlackThreadTs) {
+      bridgeUrl.searchParams.set("slack_channel_id", blockedSlackChannelId);
+      bridgeUrl.searchParams.set("slack_thread_ts", blockedSlackThreadTs);
+      result.COMPADRE_MCP_BEARER_TOKEN = scopedEnvironmentBridgeToken(
+        bridgeToken,
+        {
+          channelId: blockedSlackChannelId,
+          threadTs: blockedSlackThreadTs,
+        },
+      );
+    } else {
+      result.COMPADRE_MCP_BEARER_TOKEN = bridgeToken;
+    }
+    result.COMPADRE_MCP_URL = bridgeUrl.toString();
   }
   for (const name of [
     "DD_API_KEY",

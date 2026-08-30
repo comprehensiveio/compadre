@@ -584,6 +584,12 @@ export function createT3DirectoryRoutes(
             : providerText,
           modelSelection: selectedModel,
           inputFiles: parsedInputFiles.data,
+          blockedSlackDestination: linkedSlackBinding
+            ? {
+                channelId: linkedSlackBinding.channelId,
+                threadTs: linkedSlackBinding.threadTs,
+              }
+            : undefined,
           outputArtifactEvents:
             artifactStore && gateway.collectOutputArtifacts
               ? async (turn) => {

@@ -4,6 +4,7 @@ import {
   parseT3StartupToken,
   projectedProviderEnvironment,
 } from "./modal-worker.js";
+import { scopedEnvironmentBridgeToken } from "../tanstack/relay-tool-bridge.js";
 
 test("extracts T3's one-time startup token without accepting lookalikes", () => {
   assert.equal(
@@ -33,6 +34,22 @@ test("projects one Compadre MCP bridge into T3's native provider environment", (
         COMPADRE_T3_MCP_BEARER_TOKEN: "bridge-token",
       }),
     /must be configured together/,
+  );
+  assert.deepEqual(
+    projectedProviderEnvironment({
+      COMPADRE_PUBLIC_URL: "https://compadre.example",
+      COMPADRE_T3_MCP_BEARER_TOKEN: "bridge-token",
+      COMPADRE_BLOCKED_SLACK_CHANNEL_ID: "C123",
+      COMPADRE_BLOCKED_SLACK_THREAD_TS: "123.456",
+    }),
+    {
+      COMPADRE_MCP_URL:
+        "https://compadre.example/internal/t3-mcp?slack_channel_id=C123&slack_thread_ts=123.456",
+      COMPADRE_MCP_BEARER_TOKEN: scopedEnvironmentBridgeToken(
+        "bridge-token",
+        { channelId: "C123", threadTs: "123.456" },
+      ),
+    },
   );
   assert.deepEqual(
     projectedProviderEnvironment({
