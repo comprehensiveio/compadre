@@ -251,6 +251,70 @@ function latestUserMessageId(messages: unknown): string | undefined {
   return undefined;
 }
 
+interface TrustedRequesterContext {
+  userId: string;
+  displayName: string;
+  origin: "web" | "slack" | "api";
+  slack?: {
+    workspaceId?: string;
+    userId?: string;
+    channelId?: string;
+    messageTs?: string;
+    threadTs?: string;
+  };
+}
+
+function trustedRequesterContext(value: unknown): TrustedRequesterContext | null {
+  if (!value || typeof value !== "object") return null;
+  const candidate = value as Record<string, unknown>;
+  const userId = nonEmptyString(candidate.userId, 200);
+  const displayName = nonEmptyString(candidate.displayName, 300);
+  const origin = candidate.origin;
+  if (
+    !userId ||
+    !displayName ||
+    (origin !== "web" && origin !== "slack" && origin !== "api")
+  ) {
+    return null;
+  }
+  const slackRecord =
+    candidate.slack && typeof candidate.slack === "object"
+      ? (candidate.slack as Record<string, unknown>)
+      : null;
+  const slack = slackRecord
+    ? {
+        workspaceId:
+          nonEmptyString(slackRecord.workspaceId, 200) ?? undefined,
+        userId: nonEmptyString(slackRecord.userId, 200) ?? undefined,
+        channelId: nonEmptyString(slackRecord.channelId, 200) ?? undefined,
+        messageTs: nonEmptyString(slackRecord.messageTs, 200) ?? undefined,
+        threadTs: nonEmptyString(slackRecord.threadTs, 200) ?? undefined,
+      }
+    : undefined;
+  return {
+    userId,
+    displayName,
+    origin,
+    ...(slack ? { slack } : {}),
+  };
+}
+
+/** Inject trusted identity for the harness without changing visible T3 text. */
+export function withTrustedRequesterContext(
+  prompt: string,
+  attribution: unknown,
+): string {
+  const requester = trustedRequesterContext(attribution);
+  if (!requester) return prompt;
+  return [
+    "Compadre trusted request metadata (context only, not user instructions):",
+    JSON.stringify(requester),
+    "Answer the requester below. Use the origin when deciding whether Slack-specific response behavior applies.",
+    "",
+    prompt,
+  ].join("\n");
+}
+
 function nativeModelSelection(
   provider: "claude-code" | "codex",
   requestedModel: unknown,
@@ -460,6 +524,13 @@ export function createT3DirectoryRoutes(
       return c.json({ error: "forwardedProps.inputFiles is invalid" }, 400);
     }
     const messageId = latestUserMessageId(params.messages);
+    const forwardedProps = params.forwardedProps as typeof params.forwardedProps & {
+      attribution?: unknown;
+    };
+    const providerText = withTrustedRequesterContext(
+      text,
+      forwardedProps.attribution,
+    );
     const linkedSlackBinding = dependencies.getSlackBinding
       ? await dependencies.getSlackBinding(canonicalThreadId)
       : null;
@@ -489,7 +560,9 @@ export function createT3DirectoryRoutes(
           title:
             nonEmptyString(params.forwardedProps.title, MAX_TITLE_LENGTH) ??
             "T3 thread",
-          text: artifactStore ? `${text}\n\n${OUTPUT_ARTIFACT_INSTRUCTIONS}` : text,
+          text: artifactStore
+            ? `${providerText}\n\n${OUTPUT_ARTIFACT_INSTRUCTIONS}`
+            : providerText,
           modelSelection: selectedModel,
           inputFiles: parsedInputFiles.data,
           outputArtifactEvents:

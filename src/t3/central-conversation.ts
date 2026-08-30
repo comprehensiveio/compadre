@@ -1,4 +1,5 @@
 import crypto from "node:crypto";
+import { SpanStatusCode, trace } from "@opentelemetry/api";
 import type { AgentProfile } from "../tanstack/protocol.js";
 import {
   finalAssistantTextForDispatch,
@@ -6,6 +7,7 @@ import {
 } from "../services/t3-slack-conversation.js";
 import {
   T3Client,
+  incompleteProviderStopReason,
   type T3InputFile,
   type T3MessageAttribution,
   type T3ModelSelection,
@@ -207,6 +209,19 @@ export async function runCentralT3Conversation(input: {
 }): Promise<CentralT3ConversationResult> {
   const environment = input.environment ?? process.env;
   const idFactory = input.idFactory ?? crypto.randomUUID;
+  const span = trace.getTracer("compadre.t3.central").startSpan(
+    "compadre.t3.conversation",
+    {
+      attributes: {
+        "gen_ai.operation.name": "invoke_agent",
+        "gen_ai.conversation.id": input.canonicalThreadId,
+        "compadre.entrypoint": input.entrypoint ?? "slack",
+        "dd_llmobs_enabled": false,
+      },
+    },
+  );
+  const startedAt = Date.now();
+  try {
   const [descriptor, orchestration] = await Promise.all([
     input.client.environmentDescriptor(input.signal),
     input.client.snapshot(input.signal),
@@ -237,6 +252,16 @@ export async function runCentralT3Conversation(input: {
     modelSelection,
     resumed: existing !== undefined,
   };
+  span.setAttributes({
+    "t3.environment_id": prepared.environmentId,
+    "t3.thread_id": prepared.t3ThreadId,
+    "t3.project_id": prepared.projectId,
+    "t3.thread_resumed": prepared.resumed,
+    "gen_ai.request.model": prepared.modelSelection.model,
+    "agent.provider": prepared.modelSelection.instanceId,
+    "compadre.prepare_ms": Date.now() - startedAt,
+  });
+  span.addEvent("t3.conversation.prepared");
   await input.onPrepared?.(prepared);
 
   const promptContext = input.loadTurnContext
@@ -279,9 +304,20 @@ export async function runCentralT3Conversation(input: {
         signal: input.signal,
       });
   await input.onDispatched?.(prepared, dispatch);
+  span.setAttribute("compadre.dispatch_ms", Date.now() - startedAt);
+  span.addEvent("t3.turn.dispatched", {
+    "t3.dispatch_sequence": dispatch.sequence,
+    "t3.message_id": dispatch.messageId,
+  });
 
   const deliveredToolStarts = new Set<string>();
+  let sawSnapshot = false;
   const deliverSnapshot = async (snapshot: T3ThreadSnapshot) => {
+    if (!sawSnapshot) {
+      sawSnapshot = true;
+      span.setAttribute("compadre.first_snapshot_ms", Date.now() - startedAt);
+      span.addEvent("t3.turn.first_snapshot");
+    }
     await input.onSnapshot?.(snapshot);
     const requestedTurnId = snapshot.thread.messages.find(
       (message) => message.id === dispatch.messageId,
@@ -324,6 +360,12 @@ export async function runCentralT3Conversation(input: {
     onSnapshot: deliverSnapshot,
   });
   await deliverSnapshot(snapshot);
+  span.setAttribute("compadre.terminal_ms", Date.now() - startedAt);
+  span.setAttribute(
+    "t3.turn.state",
+    snapshot.thread.latestTurn?.state ?? "missing",
+  );
+  span.addEvent("t3.turn.terminal");
 
   const state = snapshot.thread.latestTurn?.state;
   if (state === "error") {
@@ -333,6 +375,15 @@ export async function runCentralT3Conversation(input: {
   }
   if (state === "interrupted")
     throw new Error("The central T3 run was interrupted.");
+  const incompleteReason = incompleteProviderStopReason(
+    snapshot,
+    snapshot.thread.latestTurn?.turnId,
+  );
+  if (incompleteReason) {
+    throw new Error(
+      `The central T3 run stopped before completing (${incompleteReason}).`,
+    );
+  }
   const output = finalAssistantTextForDispatch(snapshot, dispatch);
   if (!output.trim()) {
     throw new Error(
@@ -341,4 +392,15 @@ export async function runCentralT3Conversation(input: {
   }
   await input.onTextDelta?.(output);
   return { ...prepared, output, dispatch, snapshot };
+  } catch (error) {
+    span.recordException(error instanceof Error ? error : String(error));
+    span.setStatus({
+      code: SpanStatusCode.ERROR,
+      message: error instanceof Error ? error.message : String(error),
+    });
+    throw error;
+  } finally {
+    span.setAttribute("compadre.total_ms", Date.now() - startedAt);
+    span.end();
+  }
 }

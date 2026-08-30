@@ -48,14 +48,16 @@ export interface T3MessageAttribution {
 
 export interface T3InputFile {
   name: string;
-  mimetype: "image/gif" | "image/jpeg" | "image/png" | "image/webp";
+  mimetype: string;
   sizeBytes: number;
   dataBase64: string;
 }
 
-function inlineImageAttachment(file: T3InputFile) {
+function inlineAttachment(file: T3InputFile) {
   return {
-    type: "image" as const,
+    type: file.mimetype.toLowerCase().startsWith("image/")
+      ? ("image" as const)
+      : ("file" as const),
     name: file.name,
     mimeType: file.mimetype,
     sizeBytes: file.sizeBytes,
@@ -117,6 +119,48 @@ export interface T3ThreadSnapshot {
   readonly [key: string]: unknown;
   snapshotSequence: number;
   thread: T3Thread;
+}
+
+const INCOMPLETE_PROVIDER_STOP_REASONS = new Set([
+  "length",
+  "max_tokens",
+  "max_turn_requests",
+  "tool_calls",
+  "tool_use",
+]);
+
+/** Return a provider stop reason only when it means the answer is incomplete. */
+export function incompleteProviderStopReason(
+  snapshot: T3ThreadSnapshot,
+  turnId?: string | null,
+): string | undefined {
+  const rawActivities = snapshot.thread.activities;
+  if (!Array.isArray(rawActivities)) return undefined;
+  for (let index = rawActivities.length - 1; index >= 0; index -= 1) {
+    const raw = rawActivities[index];
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) continue;
+    const activity = raw as Record<string, unknown>;
+    if (activity.kind !== "provider.turn.completed") continue;
+    if (
+      turnId &&
+      typeof activity.turnId === "string" &&
+      activity.turnId !== turnId
+    ) {
+      continue;
+    }
+    const payload = activity.payload;
+    if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+      continue;
+    }
+    const reason = (payload as Record<string, unknown>).stopReason;
+    if (
+      typeof reason === "string" &&
+      INCOMPLETE_PROVIDER_STOP_REASONS.has(reason.toLowerCase())
+    ) {
+      return reason;
+    }
+  }
+  return undefined;
 }
 
 export interface T3OrchestrationSnapshot {
@@ -588,7 +632,7 @@ export class T3Client {
             ? { providerPrompt: input.text }
             : {}),
           ...(input.attribution ? { attribution: input.attribution } : {}),
-          attachments: (input.inputFiles ?? []).map(inlineImageAttachment),
+          attachments: (input.inputFiles ?? []).map(inlineAttachment),
         },
         modelSelection: input.modelSelection,
         runtimeMode: input.runtimeMode ?? "full-access",

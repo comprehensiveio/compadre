@@ -47,6 +47,9 @@ import {
   resolveSlackMessageAttribution,
   resolveSlackThreadParticipants,
 } from "../services/slack-user-attribution.js";
+import { SlackTurnDeliveryStore } from "../services/slack-turn-delivery-store.js";
+import { deliverClaimedSlackTurn } from "../services/slack-turn-delivery.js";
+import { isAllowedSlackApp } from "../services/slack-installation.js";
 
 export const slackEventsRoutes = new Hono();
 
@@ -182,6 +185,19 @@ slackEventsRoutes.post("/slack/events", async (c) => {
     const teamId =
       typeof payload.team_id === "string" ? payload.team_id : undefined;
     const configuredWorkspaceId = process.env.COMPADRE_SLACK_WORKSPACE_ID;
+    const eventAppId =
+      typeof payload.api_app_id === "string" ? payload.api_app_id : undefined;
+    if (
+      !isAllowedSlackApp({
+        configuredAppId: process.env.COMPADRE_SLACK_APP_ID,
+        eventAppId,
+      })
+    ) {
+      console.warn("[slack-events] rejected event from unauthorized app", {
+        eventAppId,
+      });
+      return c.json({ error: "app not allowed" }, 403);
+    }
     if (!configuredWorkspaceId?.trim()) {
       console.error(
         "[slack-events] COMPADRE_SLACK_WORKSPACE_ID not configured",
@@ -379,6 +395,9 @@ async function handleAIMessage(
   const hostedBindings = new HostedThreadBindingStore(
     runtime.persistence.stores.metadata,
   );
+  const slackDeliveries = runtime.database
+    ? new SlackTurnDeliveryStore(runtime.database)
+    : null;
   const slackBinding = {
     channelId: event.channel,
     threadTs,
@@ -411,6 +430,8 @@ async function handleAIMessage(
       channel: event.channel,
       threadTs,
     });
+    let centralClient: ReturnType<typeof configuredCentralT3Client> = null;
+    let dispatchedMessageId: string | undefined;
     const nativeConversation = Promise.resolve().then(async () => {
       const client = configuredCentralT3Client();
       if (!client) {
@@ -418,6 +439,7 @@ async function handleAIMessage(
           "Native T3 Slack requires COMPADRE_T3_CENTRAL_URL and COMPADRE_T3_CENTRAL_TOKEN.",
         );
       }
+      centralClient = client;
       return runCentralT3Conversation({
         client,
         canonicalThreadId,
@@ -451,6 +473,29 @@ async function handleAIMessage(
             t3ThreadId: prepared.t3ThreadId,
           });
         },
+        async onDispatched(prepared, dispatch) {
+          dispatchedMessageId = dispatch.messageId;
+          if (!slackDeliveries || !slackStream) return;
+          const slackTeamId = workspaceId?.trim();
+          if (!slackTeamId) {
+            throw new Error(
+              "Cannot enqueue Slack completion without a workspace id.",
+            );
+          }
+          await slackDeliveries.enqueue({
+            id: crypto.randomUUID(),
+            canonicalThreadId,
+            t3ThreadId: prepared.t3ThreadId,
+            environmentId: prepared.environmentId,
+            dispatch,
+            slackTeamId,
+            slackChannelId: event.channel,
+            slackThreadTs: threadTs,
+            triggerMessageTs: event.ts,
+            ...(event.user ? { recipientUserId: event.user } : {}),
+            detailsUrl: prepared.detailsUrl,
+          });
+        },
         onToolStart: slackStream
           ? async (name) => {
               const status = `is ${humanizeToolName(name).toLowerCase()}...`;
@@ -468,14 +513,26 @@ async function handleAIMessage(
 
     nativeConversation
       .then(async (result) => {
-        if (slackStream) {
+        if (slackDeliveries && slackStream && centralClient) {
+          const delivery = await slackDeliveries.claimByMessageId(
+            result.dispatch.messageId,
+          );
+          if (delivery) {
+            await deliverClaimedSlackTurn({
+              delivery,
+              store: slackDeliveries,
+              t3: centralClient,
+              slack: slackStream,
+            });
+          }
+        } else if (slackStream) {
           await slackStream.postThreadMessage(result.output);
           await slackStream.postThreadContext(
             t3SlackDetailsMarkdown(result.detailsUrl),
           );
           await slackStream.clearStatus();
         }
-        if (!isDM && slackStream) {
+        if (!slackDeliveries && !isDM && slackStream) {
           await slackStream.markRunSucceeded(event.ts);
         }
         await slackRuns.forget(event.channel, event.ts);
@@ -485,6 +542,25 @@ async function handleAIMessage(
       })
       .catch(async (err) => {
         console.error(`[slack-events] native T3 error for ${event.user}:`, err);
+        if (
+          slackDeliveries &&
+          slackStream &&
+          centralClient &&
+          dispatchedMessageId
+        ) {
+          const delivery = await slackDeliveries.claimByMessageId(
+            dispatchedMessageId,
+          );
+          if (delivery) {
+            await deliverClaimedSlackTurn({
+              delivery,
+              store: slackDeliveries,
+              t3: centralClient,
+              slack: slackStream,
+            });
+          }
+          return;
+        }
         if (slackStream) {
           await slackStream.clearStatus();
           await slackStream.postThreadMessage(slackFailureNotice(err));

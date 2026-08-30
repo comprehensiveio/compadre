@@ -2,9 +2,50 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   exchangeT3PairingToken,
+  incompleteProviderStopReason,
   T3Client,
   T3GatewayError,
 } from "./client.js";
+
+test("detects only incomplete provider stop reasons for the current turn", () => {
+  const base = {
+    snapshotSequence: 1,
+    thread: {
+      id: "thread-1",
+      projectId: "project-1",
+      title: "Thread",
+      modelSelection: { instanceId: "codex", model: "gpt-5.6-sol" },
+      latestTurn: {
+        turnId: "turn-2",
+        state: "completed" as const,
+        requestedAt: now.toISOString(),
+        startedAt: now.toISOString(),
+        completedAt: now.toISOString(),
+        assistantMessageId: "assistant-2",
+      },
+      messages: [],
+      session: null,
+      activities: [
+        {
+          id: "old",
+          kind: "provider.turn.completed",
+          turnId: "turn-1",
+          payload: { stopReason: "max_tokens" },
+        },
+        {
+          id: "current",
+          kind: "provider.turn.completed",
+          turnId: "turn-2",
+          payload: { stopReason: "max_turn_requests" },
+        },
+      ],
+    },
+  };
+  assert.equal(incompleteProviderStopReason(base, "turn-2"), "max_turn_requests");
+  const complete = structuredClone(base);
+  complete.thread.activities[1]!.payload.stopReason = "end_turn";
+  assert.equal(incompleteProviderStopReason(complete, "turn-2"), undefined);
+});
 
 const now = new Date("2026-08-26T15:00:00.000Z");
 

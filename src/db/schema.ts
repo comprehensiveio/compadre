@@ -234,6 +234,69 @@ export const authLoginGrants = pgTable(
   (table) => [index("compadre_auth_login_grants_expires_idx").on(table.expiresAt)],
 );
 
+export type SlackTurnDeliveryStatus =
+  | "pending"
+  | "delivering"
+  | "delivered"
+  | "dead";
+
+/**
+ * Durable outbox for the final Slack response of a native T3 turn. The T3
+ * orchestration log remains the source of response text; this row records
+ * enough of the dispatch to recover delivery after a controller rollout.
+ */
+export const slackTurnDeliveries = pgTable(
+  "compadre_slack_turn_deliveries",
+  {
+    id: uuid("id").primaryKey(),
+    messageId: text("message_id").notNull(),
+    canonicalThreadId: text("canonical_thread_id").notNull(),
+    t3ThreadId: text("t3_thread_id").notNull(),
+    environmentId: text("environment_id").notNull(),
+    dispatchSequence: bigint("dispatch_sequence", { mode: "number" }).notNull(),
+    dispatchCreatedAt: timestamp("dispatch_created_at", {
+      withTimezone: true,
+    }).notNull(),
+    slackTeamId: text("slack_team_id").notNull(),
+    slackChannelId: text("slack_channel_id").notNull(),
+    slackThreadTs: text("slack_thread_ts").notNull(),
+    triggerMessageTs: text("trigger_message_ts").notNull(),
+    recipientUserId: text("recipient_user_id"),
+    detailsUrl: text("details_url").notNull(),
+    status: text("status")
+      .$type<SlackTurnDeliveryStatus>()
+      .notNull()
+      .default("pending"),
+    attempts: integer("attempts").notNull().default(0),
+    nextAttemptAt: timestamp("next_attempt_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    claimedAt: timestamp("claimed_at", { withTimezone: true }),
+    deliveredAt: timestamp("delivered_at", { withTimezone: true }),
+    lastError: text("last_error"),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    unique("compadre_slack_turn_deliveries_message_id_key").on(table.messageId),
+    check(
+      "compadre_slack_turn_deliveries_status_check",
+      sql`${table.status} in ('pending', 'delivering', 'delivered', 'dead')`,
+    ),
+    check(
+      "compadre_slack_turn_deliveries_attempts_check",
+      sql`${table.attempts} >= 0`,
+    ),
+    index("compadre_slack_turn_deliveries_ready_idx")
+      .on(table.nextAttemptAt, table.createdAt)
+      .where(sql`${table.status} in ('pending', 'delivering')`),
+  ],
+);
+
 export type PullRequestWatchStatus =
   | "waiting"
   | "delivering"

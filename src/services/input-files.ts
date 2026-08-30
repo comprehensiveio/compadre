@@ -2,7 +2,8 @@ import path from "node:path";
 import { z } from "zod";
 
 export const MAX_INPUT_FILES = 8;
-export const MAX_INPUT_FILE_BYTES = 10 * 1024 * 1024;
+export const MAX_INPUT_FILE_BYTES = 50 * 1024 * 1024;
+export const MAX_INPUT_FILES_TOTAL_BYTES = 50 * 1024 * 1024;
 const MAX_BASE64_CHARS = Math.ceil(MAX_INPUT_FILE_BYTES / 3) * 4;
 
 const IMAGE_EXTENSIONS: Record<string, string> = {
@@ -15,7 +16,7 @@ const IMAGE_EXTENSIONS: Record<string, string> = {
 export const inputFileSchema = z
   .object({
     name: z.string().trim().min(1).max(255),
-    mimetype: z.enum(["image/gif", "image/jpeg", "image/png", "image/webp"]),
+    mimetype: z.string().trim().min(1).max(100).regex(/^[\w.+-]+\/[\w.+-]+$/u),
     sizeBytes: z.number().int().nonnegative().max(MAX_INPUT_FILE_BYTES),
     dataBase64: z.string().min(1).max(MAX_BASE64_CHARS),
   })
@@ -40,7 +41,18 @@ export const inputFileSchema = z
     }
   });
 
-export const inputFilesSchema = z.array(inputFileSchema).max(MAX_INPUT_FILES);
+export const inputFilesSchema = z
+  .array(inputFileSchema)
+  .max(MAX_INPUT_FILES)
+  .superRefine((files, context) => {
+    const total = files.reduce((sum, file) => sum + file.sizeBytes, 0);
+    if (total > MAX_INPUT_FILES_TOTAL_BYTES) {
+      context.addIssue({
+        code: "custom",
+        message: "combined attachment size exceeds 50 MiB",
+      });
+    }
+  });
 
 export type InputFile = z.infer<typeof inputFileSchema>;
 
@@ -52,11 +64,14 @@ export interface MaterializedInputFiles {
 function safeFilename(file: InputFile, index: number): string {
   const original = path.basename(file.name).replaceAll(/[^a-zA-Z0-9._-]/g, "_");
   const extension = IMAGE_EXTENSIONS[file.mimetype];
-  const basename = original || `image${extension}`;
-  return `${index + 1}-web-${basename.endsWith(extension) ? basename : `${basename}${extension}`}`;
+  const basename = original || (extension ? `image${extension}` : "file.bin");
+  const normalized = extension && !basename.endsWith(extension)
+    ? `${basename}${extension}`
+    : basename;
+  return `${index + 1}-web-${normalized}`;
 }
 
-/** Materialize authenticated API/browser image bytes for upload into Modal. */
+/** Materialize authenticated API/browser file bytes for upload into Modal. */
 export function materializeInputFiles(
   files: readonly InputFile[],
   promptDirectory: string,
@@ -64,7 +79,7 @@ export function materializeInputFiles(
   if (files.length === 0) return { prompt: "", uploads: [] };
   const lines = [
     "Attachments for this request:",
-    "Inspect relevant image paths with your native image-reading tool before answering.",
+    "Inspect relevant paths with the appropriate file-reading tool before answering.",
   ];
   const uploads = files.map((file, index) => {
     const destination = path.posix.join(promptDirectory, safeFilename(file, index));

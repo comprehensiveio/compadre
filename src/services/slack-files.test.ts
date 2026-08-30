@@ -10,7 +10,7 @@ import {
   slackFileReferences,
 } from "./slack-files.js";
 
-test("downloads supported Slack images for native T3 turns", async () => {
+test("downloads Slack images and documents for native T3 turns", async () => {
   const result = await downloadSlackInputFiles(
     [
       { id: "F1", name: "screen.png" },
@@ -42,8 +42,14 @@ test("downloads supported Slack images for native T3 turns", async () => {
       sizeBytes: 3,
       dataBase64: "AQID",
     },
+    {
+      name: "notes.txt",
+      mimetype: "text/plain",
+      sizeBytes: 5,
+      dataBase64: "bm90ZXM=",
+    },
   ]);
-  assert.match(result.warnings[0] ?? "", /not a supported image/);
+  assert.deepEqual(result.warnings, []);
 });
 
 test("normalizes and deduplicates Slack event files", () => {

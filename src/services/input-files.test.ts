@@ -18,6 +18,18 @@ test("materializes an authenticated browser image for Modal", () => {
   assert.match(materialized.prompt, /1-web-screen_shot\.png/);
 });
 
+test("materializes a generic authenticated file without changing its extension", () => {
+  const file = inputFileSchema.parse({
+    name: "notes.txt",
+    mimetype: "text/plain",
+    sizeBytes: 5,
+    dataBase64: "bm90ZXM=",
+  });
+  const materialized = materializeInputFiles([file], "/workspace/.attachments");
+  assert.equal(materialized.uploads[0]?.path, "/workspace/.attachments/1-web-notes.txt");
+  assert.equal(new TextDecoder().decode(materialized.uploads[0]!.data), "notes");
+});
+
 test("rejects browser attachment sizes that do not match their bytes", () => {
   const parsed = inputFileSchema.safeParse({
     name: "probe.png",

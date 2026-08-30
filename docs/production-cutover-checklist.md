@@ -90,6 +90,7 @@ Controller secrets and configuration:
 - [ ] `DATABASE_URL`
 - [ ] `COMPADRE_T3_CENTRAL_URL`
 - [ ] `COMPADRE_T3_CENTRAL_TOKEN`
+- [ ] `COMPADRE_BACKUP_TOKEN` matching the hosted T3 service
 - [ ] `COMPADRE_AUTH_EXCHANGE_SECRET`
 - [ ] `COMPADRE_SLACK_WORKSPACE_ID`
 - [ ] `SLACK_CLIENT_ID`
@@ -110,6 +111,7 @@ Central T3 secrets and configuration:
 - [ ] `COMPADRE_NATIVE_T3_URL`
 - [ ] `COMPADRE_CONTROLLER_URL`
 - [ ] `COMPADRE_AUTH_EXCHANGE_SECRET` matching the controller
+- [ ] `COMPADRE_BACKUP_TOKEN` matching the controller
 - [ ] `VITE_COMPADRE_AUTH_ENABLED=true`
 - [ ] Persistent SQLite path and disk mount
 - [ ] `T3CODE_INSTALL_GH_CLI=true`
@@ -194,6 +196,9 @@ Canonical endpoints:
 - [ ] Define whether existing Compadre conversations are imported, linked
   read-only, or left in the legacy deployment during a retention window.
 - [ ] Add encrypted continuous backup for T3 SQLite and Postgres.
+- [x] Add authenticated, integrity-checked online SQLite snapshots to the
+  private Comprehensive S3 bucket and document the single-writer restore
+  procedure in `docs/runbooks/central-t3-restore.md`.
 - [ ] Run and time a restore into clean resources; verify thread text, tool
   calls, actor attribution, sessions, and external-thread bindings.
 - [ ] Add SQLite integrity checks, disk-capacity alerts, backup-age alerts, and

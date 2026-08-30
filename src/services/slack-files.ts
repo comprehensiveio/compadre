@@ -6,7 +6,7 @@ import { SlackClient, type DownloadedSlackFile } from "./slack-client.js";
 import type { InputFile } from "./input-files.js";
 
 export const MAX_SLACK_INPUT_FILES = 5;
-export const MAX_SLACK_INPUT_FILE_BYTES = 10 * 1024 * 1024;
+export const MAX_SLACK_INPUT_FILE_BYTES = 50 * 1024 * 1024;
 
 export const slackFileReferenceSchema = z.object({
   id: z.string().trim().min(1),
@@ -43,14 +43,7 @@ export interface DownloadedSlackInputFiles {
   warnings: string[];
 }
 
-const T3_IMAGE_MIME_TYPES = new Set<InputFile["mimetype"]>([
-  "image/gif",
-  "image/jpeg",
-  "image/png",
-  "image/webp",
-]);
-
-/** Download Slack images into T3's authenticated inline-attachment format. */
+/** Download Slack files into T3's authenticated inline-attachment format. */
 export async function downloadSlackInputFiles(
   files: readonly SlackFileReference[],
   options: {
@@ -83,13 +76,13 @@ export async function downloadSlackInputFiles(
         MAX_SLACK_INPUT_FILE_BYTES,
       );
       const mimetype = downloaded.mimetype.toLowerCase();
-      if (!T3_IMAGE_MIME_TYPES.has(mimetype as InputFile["mimetype"])) {
-        warnings.push(`${fileLabel(reference)} is not a supported image attachment (${mimetype}).`);
+      if (!/^[\w.+-]+\/[\w.+-]+$/u.test(mimetype)) {
+        warnings.push(`${fileLabel(reference)} has an invalid content type (${mimetype || "unknown"}).`);
         continue;
       }
       downloadedFiles.push({
         name: path.basename(downloaded.name).slice(0, 255) || "slack-image",
-        mimetype: mimetype as InputFile["mimetype"],
+        mimetype,
         sizeBytes: downloaded.data.byteLength,
         dataBase64: Buffer.from(downloaded.data).toString("base64"),
       });
@@ -169,7 +162,7 @@ export async function materializeSlackFiles(
 
   const lines = [
     "Slack attachments for this request:",
-    "Inspect relevant image paths with your native image-reading tool before answering.",
+    "Inspect relevant paths with the appropriate file-reading tool before answering.",
   ];
   if (!downloader) {
     for (const file of references) {

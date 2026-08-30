@@ -11,11 +11,13 @@ import {
   validatePostgresChatPersistenceSchema,
 } from "./postgres.js";
 import { metadataSandboxInstanceStore } from "../tanstack/sandbox-instance-store.js";
+import type { CompadreDatabase } from "../db/client.js";
 
 export interface ThreadPersistenceRuntime {
   persistence: ChatPersistence;
   locks: LockStore;
   sandboxInstances: SandboxInstanceStore;
+  database?: CompadreDatabase;
 }
 
 let configuredRuntime: Promise<ThreadPersistenceRuntime | null> | undefined;
@@ -46,6 +48,7 @@ export async function createThreadPersistenceRuntime(): Promise<ThreadPersistenc
     sandboxInstances: metadataSandboxInstanceStore(
       persistence.stores.metadata,
     ),
+    database: durability.database,
   };
 }
 

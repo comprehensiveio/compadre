@@ -9,8 +9,29 @@ import { createAgentRunDurability } from "../durability/runtime.js";
 import { NativeT3RunCoordinator } from "../t3/run-coordinator.js";
 import {
   createT3DirectoryRoutes,
+  withTrustedRequesterContext,
   type T3DirectoryRoutesDependencies,
 } from "./t3-directory.js";
+
+test("adds trusted requester identity to provider context without changing unknown callers", () => {
+  const prompt = withTrustedRequesterContext("Fix the issue", {
+    userId: "user-1",
+    displayName: "Isaac Sherrill",
+    origin: "slack",
+    slack: {
+      workspaceId: "T1",
+      userId: "U1",
+      channelId: "C1",
+      messageTs: "1.2",
+      threadTs: "1.0",
+    },
+  });
+  assert.match(prompt, /Compadre trusted request metadata/);
+  assert.match(prompt, /"displayName":"Isaac Sherrill"/);
+  assert.match(prompt, /"origin":"slack"/);
+  assert.match(prompt, /\n\nFix the issue$/);
+  assert.equal(withTrustedRequesterContext("Fix the issue", null), "Fix the issue");
+});
 
 const binding: T3ThreadBinding = {
   canonicalThreadId: "thread-1",

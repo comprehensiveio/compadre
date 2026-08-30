@@ -177,6 +177,7 @@ COMPADRE_PUBLIC_URL=https://compadre-api.comprehensive.io
 COMPADRE_T3_CENTRAL_URL=https://compadre.comprehensive.io
 COMPADRE_T3_HOSTED_APP_URL=https://compadre.comprehensive.io
 COMPADRE_T3_CENTRAL_TOKEN=<scoped T3 bearer>
+COMPADRE_BACKUP_TOKEN=<random controller/T3 backup credential>
 COMPADRE_SLACK_WORKSPACE_ID=<allowed Slack workspace ID>
 SLACK_CLIENT_ID=<Sign in with Slack client ID>
 SLACK_CLIENT_SECRET=<Sign in with Slack client secret>
@@ -208,6 +209,7 @@ Central T3:
 COMPADRE_NATIVE_T3_URL=https://compadre-api.comprehensive.io/hosted/t3/chat
 COMPADRE_CONTROLLER_URL=https://compadre-api.comprehensive.io
 COMPADRE_AUTH_EXCHANGE_SECRET=<same random controller/T3 credential>
+COMPADRE_BACKUP_TOKEN=<same random controller/T3 backup credential>
 VITE_COMPADRE_AUTH_ENABLED=true
 T3CODE_INSTALL_GH_CLI=true
 GH_TOKEN=<repository-scoped token for T3 source-control UI>
