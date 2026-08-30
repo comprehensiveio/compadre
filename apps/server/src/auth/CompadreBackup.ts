@@ -20,6 +20,10 @@ export interface SqliteBackupArtifact {
   readonly sha256: string;
 }
 
+export function configuredBackupToken(environment: NodeJS.ProcessEnv = process.env): string | null {
+  return environment.COMPADRE_BACKUP_TOKEN?.trim() || null;
+}
+
 /** Use SQLite's online backup API so the live WAL database remains writable. */
 export const createSqliteBackup = Effect.fn("CompadreBackup.createSqliteBackup")(function* (
   dbPath: string,
@@ -60,7 +64,7 @@ const route = HttpRouter.add(
   "/internal/compadre/state-backup",
   Effect.gen(function* () {
     const request = yield* HttpServerRequest.HttpServerRequest;
-    const token = process.env.COMPADRE_API_KEY?.trim();
+    const token = configuredBackupToken();
     if (!token || !equalSecret(request.headers.authorization, token)) {
       return HttpServerResponse.text("Unauthorized", {
         status: 401,

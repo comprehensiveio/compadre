@@ -8,9 +8,20 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 
-import { createSqliteBackup } from "./CompadreBackup.ts";
+import { configuredBackupToken, createSqliteBackup } from "./CompadreBackup.ts";
 
 describe("Compadre SQLite backup", () => {
+  it("requires a dedicated backup credential", () => {
+    assert.equal(
+      configuredBackupToken({
+        COMPADRE_API_KEY: "provider-key",
+        COMPADRE_T3_CENTRAL_TOKEN: "session-key",
+      }),
+      null,
+    );
+    assert.equal(configuredBackupToken({ COMPADRE_BACKUP_TOKEN: "  backup-key  " }), "backup-key");
+  });
+
   it.effect("creates a consistent standalone copy of a WAL database", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
