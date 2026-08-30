@@ -89,6 +89,22 @@ it("persists provider stop reasons as non-visible completion metadata", () => {
   });
 });
 
+it("persists ordinary turn completion for T3 Connect replication", () => {
+  const activities = runtimeEventToActivities({
+    type: "turn.completed",
+    eventId: asEventId("evt-turn-completed"),
+    provider: ProviderDriverKind.make("codex"),
+    threadId: asThreadId("thread-1"),
+    turnId: asTurnId("turn-1"),
+    createdAt: "2026-08-29T12:00:00.000Z",
+    payload: { state: "completed" },
+  });
+
+  expect(activities).toHaveLength(1);
+  expect(activities[0]?.kind).toBe("provider.turn.completed");
+  expect(activities[0]?.payload).toEqual({ state: "completed" });
+});
+
 type LegacyProviderRuntimeEvent = {
   readonly type: string;
   readonly eventId: EventId;
