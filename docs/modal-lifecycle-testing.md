@@ -2,7 +2,7 @@
 
 Use three gates before deploying the hosted-T3 worker lifecycle. The first is
 fully local and free. The second runs the local controller code against real
-Modal APIs, without deploying Render.
+Modal APIs, without deploying Render. The third is a deployment canary.
 
 ## Gate 1: deterministic local lifecycle
 

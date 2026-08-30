@@ -17,7 +17,9 @@ const environment: NodeJS.ProcessEnv = {
 const persistence = memoryPersistence();
 const bindings = new T3ThreadBindingStore(persistence.stores.metadata);
 const manager = new T3ModalEnvironmentManager(environment);
-const canonicalThreadId = `hibernation-probe-${Date.now()}`;
+// Production backup access deliberately accepts only UUID thread identities,
+// so the same probe works with either local or production-like configuration.
+const canonicalThreadId = crypto.randomUUID();
 const markerPath = "/workspace/.compadre-hibernation-probe";
 const marker = `resume-${crypto.randomUUID()}`;
 let clock = new Date();
