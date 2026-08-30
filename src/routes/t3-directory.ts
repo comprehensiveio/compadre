@@ -299,6 +299,24 @@ function trustedRequesterContext(value: unknown): TrustedRequesterContext | null
   };
 }
 
+/**
+ * The controller outbox owns final delivery for Slack-originated turns. The
+ * central provider mirror is only for turns that originate elsewhere and need
+ * to be reflected into an already-linked Slack thread. Attribution is the
+ * authoritative signal because provider adapters may omit message IDs while
+ * converting chat history; the prefixed ID remains a compatibility fallback.
+ */
+export function shouldMirrorNativeT3RunToSlack(input: {
+  messageId?: string;
+  attribution?: unknown;
+}): boolean {
+  const requester = trustedRequesterContext(input.attribution);
+  return (
+    requester?.origin !== "slack" &&
+    !isSlackEntrypointMessageId(input.messageId)
+  );
+}
+
 /** Inject trusted identity for the harness without changing visible T3 text. */
 export function withTrustedRequesterContext(
   prompt: string,
@@ -536,7 +554,10 @@ export function createT3DirectoryRoutes(
       : null;
     const slackBinding =
       process.env.COMPADRE_HOSTED_SLACK_DELIVERY_ENABLED !== "false" &&
-      !isSlackEntrypointMessageId(messageId)
+      shouldMirrorNativeT3RunToSlack({
+        messageId,
+        attribution: forwardedProps.attribution,
+      })
         ? linkedSlackBinding
         : null;
     const botToken = process.env.SLACK_BOT_TOKEN?.trim();

@@ -9,6 +9,7 @@ import { createAgentRunDurability } from "../durability/runtime.js";
 import { NativeT3RunCoordinator } from "../t3/run-coordinator.js";
 import {
   createT3DirectoryRoutes,
+  shouldMirrorNativeT3RunToSlack,
   withTrustedRequesterContext,
   type T3DirectoryRoutesDependencies,
 } from "./t3-directory.js";
@@ -31,6 +32,39 @@ test("adds trusted requester identity to provider context without changing unkno
   assert.match(prompt, /"origin":"slack"/);
   assert.match(prompt, /\n\nFix the issue$/);
   assert.equal(withTrustedRequesterContext("Fix the issue", null), "Fix the issue");
+});
+
+test("leaves Slack-originated final delivery to the controller outbox", () => {
+  assert.equal(
+    shouldMirrorNativeT3RunToSlack({
+      attribution: {
+        userId: "slack:T1:U1",
+        displayName: "Isaac Sherrill",
+        origin: "slack",
+      },
+    }),
+    false,
+    "trusted Slack attribution remains authoritative when an adapter drops the message id",
+  );
+  assert.equal(
+    shouldMirrorNativeT3RunToSlack({
+      messageId: "slack-entrypoint:legacy-message",
+    }),
+    false,
+    "the historical message-id marker remains a fallback",
+  );
+  assert.equal(
+    shouldMirrorNativeT3RunToSlack({
+      messageId: "web-message",
+      attribution: {
+        userId: "slack:T1:U1",
+        displayName: "Isaac Sherrill",
+        origin: "web",
+      },
+    }),
+    true,
+    "web turns continue mirroring into a linked Slack thread",
+  );
 });
 
 const binding: T3ThreadBinding = {
