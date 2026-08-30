@@ -51,8 +51,9 @@ isolated deployment, not that the equivalent production change has been made.
   service so traffic can be switched gradually and rolled back.
 - [x] Deploy `compadre-api` automatically from Compadre's `main` branch. The
   PR #126 production deploy was observed from commit discovery through live
-  health on 2026-08-30. `compadre-web` is also configured for its fork's
-  `main`, but its next commit-triggered deploy still needs to be observed.
+  health on 2026-08-30. `compadre-web` is configured for the T3 fork's `main`;
+  multiple `new_commit` deployments, including `2e5d6c4bb` on 2026-08-30,
+  reached live health successfully.
 - [ ] Pin the Compadre and T3 fork revisions. Publish a versioned T3 fork
   artifact and verify its SHA-256 before worker startup.
 - [ ] Preserve a documented upstream T3 remote and rehearse one upstream merge
@@ -88,6 +89,14 @@ isolated deployment, not that the equivalent production change has been made.
 
 Create fresh production credentials. Do not promote or reuse credentials from
 the isolated deployment.
+
+- [x] Use Render environment groups as the current production source of truth:
+  one shared group plus service-specific API and web groups in the
+  Comprehensive workspace. Keep credential values out of repository manifests
+  and document ownership and rotation in `docs/production-secrets.md`.
+- [ ] Revisit Doppler when centralized rotation across Render, Modal, and local
+  administration is worth the added dependency. Until then, avoid creating a
+  second authoritative copy of Render-managed production credentials.
 
 Controller secrets and configuration:
 
@@ -171,7 +180,10 @@ Canonical endpoints:
   tool after automatic final delivery. The controller now owns Slack-originated
   final delivery through a durable Postgres outbox with atomic reservation,
   lease recovery, attempt fencing, and stable Slack idempotency keys. A live
-  2026-08-30 canary produced exactly one answer and one web link.
+  2026-08-30 canary produced exactly one answer and one web link. A direct live
+  bridge probe also proved that a destination-scoped worker credential rejects
+  `slack_reply_to_thread` for its own thread and cannot be replayed without the
+  destination or against another thread.
 - [x] Correct the isolated app credential mismatch and verify a fresh deployed
   instance posts progress, final output, and the Open in web link as
   `Secret dre experiment` rather than the legacy Compadre bot.
