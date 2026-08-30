@@ -550,12 +550,19 @@ export function createT3DirectoryRoutes(
     const linkedSlackBinding = dependencies.getSlackBinding
       ? await dependencies.getSlackBinding(canonicalThreadId)
       : null;
+    const controllerOwnsSlackDelivery = !shouldMirrorNativeT3RunToSlack({
+      messageId,
+      attribution: forwardedProps.attribution,
+    });
+    if (controllerOwnsSlackDelivery && !linkedSlackBinding) {
+      return c.json(
+        { error: "Slack-originated turns require a durable thread binding" },
+        409,
+      );
+    }
     const slackBinding =
       process.env.COMPADRE_HOSTED_SLACK_DELIVERY_ENABLED !== "false" &&
-      shouldMirrorNativeT3RunToSlack({
-        messageId,
-        attribution: forwardedProps.attribution,
-      })
+      !controllerOwnsSlackDelivery
         ? linkedSlackBinding
         : null;
     const botToken = process.env.SLACK_BOT_TOKEN?.trim();
