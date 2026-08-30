@@ -3,8 +3,9 @@
 ## Central T3
 
 The long-lived T3 server and web application on Render. Central T3 owns the
-canonical conversation, including messages, turns, activities, and eventually
-users and message actors.
+canonical conversation, including messages, turns, activities, message actor
+attribution, and browser sessions. Compadre Postgres owns canonical users and
+their workspace-scoped Slack identities.
 
 ## Canonical thread
 
@@ -38,8 +39,9 @@ stop the Native T3 run.
 ## Actor
 
 The authenticated person or system responsible for a conversation message or
-command. The protocol reserves actor metadata, but Compadre does not create a
-trusted Actor until user or Slack authentication is implemented.
+command. Slack actors are resolved from the verified workspace and bot API;
+browser actors come from the authenticated central T3 session. Client-supplied
+display names are presentation data, never an authorization source.
 
 ## Controller
 

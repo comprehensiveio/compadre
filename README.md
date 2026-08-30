@@ -189,28 +189,28 @@ the remote execution boundary and deployment checks.
 ## Architecture
 
 ```text
-Slack / HTTP -> persistent Render relay/controller -> Modal harness
-                              |                         |
-                              +-> Postgres              +-> repo/shell/tests
-                              +-> MCP/private tools (via authenticated bridge)
-                              +-> Slack stream
+Slack / compatibility API --> Compadre controller ingress --+
+                              Postgres users/bindings         |
+Browser -----------------------------------------------------+--> central T3 on Render
+                                                                 SQLite transcript
+                                                                        |
+                                                                        v
+                                                          Compadre execution bridge
+                                                          Postgres lifecycle/recovery
+                                                                        |
+                                                                        v
+                                                             one Modal worker/thread
 ```
 
-The persistent relay keeps Postgres, Slack,
-MCP clients, and private-network tool execution on Render. Claude Code or Codex,
-the repository, shell commands, and tests run in Modal. Persisted threads
-restore their latest snapshot so changes to their working tree survive later messages.
+Central T3 owns the canonical transcript rendered by the web UI. The controller
+routes Slack/API ingress to that transcript. Compadre Postgres owns canonical
+users and Slack identities, external bindings, run/event delivery, worker
+lifecycle, and recovery metadata. Codex or Claude Code, the repository, shell,
+tests, and optional development stack run in one isolated Modal worker per
+canonical thread; conversation tool history remains part of central T3's
+SQLite transcript.
 
-When durability is configured, its persistence backend is the
-canonical source for the provider-neutral transcript and TanStack run/interrupt
-state. Production uses PostgreSQL for restart durability and cross-process
-advisory locking; memory mode is process-local and provides neither guarantee.
-Provider-native sessions and Modal snapshot IDs are persisted for durable
-conversation threads; one-shot requests use disposable sandboxes that are
-destroyed after completion. After a provider switch the PostgreSQL runtime can
-reconstruct context from the neutral transcript. Different threads may run
-concurrently in independent sandboxes, while a distributed lock serializes
-messages within one thread. The runtime correlates each Slack request with its
-durable run ID and reconciles stale reactions against that authoritative
-lifecycle after a restart. Postgres stores run lifecycle and ordered AG-UI
-delivery events.
+See [the hosted T3 architecture](docs/hosted-t3-architecture.md) for data
+ownership and flow. Maintainers changing any part of this system should load
+[the change-compadre-stack skill](.agents/skills/change-compadre-stack/SKILL.md)
+before editing.

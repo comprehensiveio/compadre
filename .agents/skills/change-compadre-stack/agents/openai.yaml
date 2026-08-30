@@ -1,0 +1,4 @@
+interface:
+  display_name: "Change Compadre Stack"
+  short_description: "Ship and verify cross-stack Compadre changes"
+  default_prompt: "Implement this Compadre change at the correct stack boundary and verify it after deployment."

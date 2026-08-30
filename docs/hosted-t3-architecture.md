@@ -9,27 +9,26 @@ own Modal sandbox.
 ## Data flow
 
 ```text
-Slack / API ──┐
-              ├──> central T3 on Render
-Browser UI ───┘      SQLite event log + projections
-                            |
-                            | native Codex/Claude provider command
-                            v
-                    Compadre controller
-                       Postgres control state
-                            |
-                            v
-                    one Modal worker per thread
-                       worker T3 server
-                       Codex or Claude Code
-                       isolated checkout
+Slack / API --> Compadre controller ingress --+
+                Postgres users/bindings         |
+Browser UI -------------------------------------+--> central T3 on Render
+                                                    SQLite event log + projections
+                                                               |
+                                                               v
+                                                    Compadre execution bridge
+                                                    Postgres lifecycle/recovery
+                                                               |
+                                                               v
+                                                    one Modal worker per thread
+                                                    worker T3 + provider + checkout
 ```
 
+The controller resolves Slack/API ingress to a canonical central thread.
 Central T3 commits a turn command before invoking the remote provider. The
-Compadre controller binds that central thread to one Modal worker, streams the
-worker's native T3 output back as provider events, and central T3 persists those
-events before the browser or Slack renders them. Reading a completed thread
-never requires waking Modal.
+controller then binds that central thread to one Modal worker, streams the
+worker's native T3 output back as provider events, and central T3 persists
+those events before the browser or Slack renders them. Reading a completed
+thread never requires waking Modal.
 
 Codex and Claude remain T3's built-in provider identities. When
 `COMPADRE_NATIVE_T3_URL` is configured, their adapters send provider work to
@@ -277,13 +276,15 @@ and must stay unset. The supported architecture exposes native `codex` and
 
 ## Security and retention
 
-The controller currently authenticates internal routes with a shared bearer.
-Before expanding access, bind user and Slack workspace identities to thread
-ownership, authorize every read and command, and record an audit event.
+The controller authenticates service routes with scoped shared credentials and
+browser users through Slack OIDC. Canonical users and workspace-scoped Slack
+identities live in Postgres; central T3 sessions and message attribution are
+persisted in SQLite. The current internal policy grants active members of the
+allowed Slack workspace access to all conversations. Thread-level membership,
+roles, and a complete administrative audit trail remain future hardening.
 
-The versioned event envelope already permits an optional actor reference. It is
-intentionally unused until authentication establishes trustworthy identities;
-the system must not turn unverified Slack display names into authorization data.
+The system must never turn client-supplied or unverified Slack display names
+into authorization data.
 
 Conversation deletion must eventually propagate to central T3, Postgres recovery
 records, Modal snapshots, provider-native transcripts, attachments, Slack where
@@ -298,9 +299,14 @@ canonical controller hostname. It accepts direct-message and `app_mention`
 events and dynamically resolves the installation-specific bot identity. The
 temporary app manifest remains only as a record of the dark-launch installation.
 
-The isolated Comprehensive workspace installation is `Secret dre experiment`
-(app `A0BT4LVRRTL`, bot user `U0BT6K6FZPT`, workspace `T01N1PDFS5V`). Its
-request URL is the manifest's `/slack/events` endpoint and is verified by Slack.
-The production bot token and signing secret belong only in the
-`compadre-production-api` Render environment group; never copy them into source,
-central T3, or Modal.
+The official `Compadre` app owns production Slack ingress for the allowed
+Comprehensive workspace. Its event URL is
+`https://compadre-api.comprehensive.io/slack/events`; Sign in with Slack uses
+`https://compadre-api.comprehensive.io/auth/slack/callback`. The production
+bot token, signing secret, client ID, and client secret belong only in the
+`compadre-production-api` Render environment group; never copy them into
+source, central T3, or Modal.
+
+The temporary `Secret dre experiment` app remains only as an explicit
+post-cutover cleanup/rollback decision. Do not route production traffic to it
+or delete it without authorization.
