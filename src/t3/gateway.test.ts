@@ -3,12 +3,67 @@ import test from "node:test";
 import { memoryPersistence } from "@tanstack/ai-persistence";
 import { T3ThreadBindingStore } from "../services/t3-thread-bindings.js";
 import { T3ThreadSnapshotStore } from "../services/t3-thread-snapshots.js";
+import type { LockStore } from "./storage.js";
 import {
   buildT3HostedThreadUrl,
   T3Gateway,
   type T3CommandClient,
   type T3EnvironmentConnectionManager,
 } from "./gateway.js";
+
+class CapacityLockStore implements LockStore {
+  private held = 0;
+  private readonly waiters: Array<{
+    resolve(): void;
+    reject(error: Error): void;
+    timer: ReturnType<typeof setTimeout>;
+  }> = [];
+
+  constructor(
+    private readonly capacity: number,
+    private readonly acquireTimeoutMs: number,
+  ) {}
+
+  private async acquire(): Promise<void> {
+    if (this.held < this.capacity) {
+      this.held += 1;
+      return;
+    }
+    await new Promise<void>((resolve, reject) => {
+      const waiter = {
+        resolve: () => {
+          clearTimeout(waiter.timer);
+          this.held += 1;
+          resolve();
+        },
+        reject,
+        timer: setTimeout(() => {
+          const index = this.waiters.indexOf(waiter);
+          if (index >= 0) this.waiters.splice(index, 1);
+          reject(new Error("test lock capacity exhausted"));
+        }, this.acquireTimeoutMs),
+      };
+      this.waiters.push(waiter);
+    });
+  }
+
+  private release(): void {
+    this.held -= 1;
+    this.waiters.shift()?.resolve();
+  }
+
+  async withLock<T>(
+    _key: string,
+    operation: (signal: AbortSignal) => Promise<T>,
+  ): Promise<T> {
+    await this.acquire();
+    try {
+      return await operation(new AbortController().signal);
+    } finally {
+      this.release();
+    }
+  }
+}
 
 test("builds one-time hosted T3 links that retain the native thread target", () => {
   const url = new URL(
@@ -105,6 +160,56 @@ test("routes model changes through the same provider-native T3 thread", async ()
     "new:t3-thread-1:first",
     "existing:t3-thread-1:second",
   ]);
+});
+
+test("does not nest directory-index locks inside first-turn environment locks", async () => {
+  const persistence = memoryPersistence();
+  const locks = new CapacityLockStore(4, 100);
+  const bindings = new T3ThreadBindingStore(
+    persistence.stores.metadata,
+    locks,
+  );
+  let nextId = 0;
+  const client: T3CommandClient = {
+    baseUrl: "https://t3.example",
+    async startNewThread(input) {
+      return {
+        sequence: 1,
+        commandId: `command-${input.threadId}`,
+        messageId: `message-${input.threadId}`,
+        threadId: input.threadId!,
+        createdAt: "2026-08-26T15:00:00.000Z",
+      };
+    },
+    async startTurn() { throw new Error("unused"); },
+    async interruptTurn() { throw new Error("unused"); },
+    async waitForTurnTerminal() { throw new Error("unused"); },
+    async threadSnapshot() { throw new Error("unused"); },
+    async mintPairingCredential() { throw new Error("unused"); },
+  };
+  const gateway = new T3Gateway(
+    bindings,
+    {
+      async provision() {
+        return { sandboxId: "sandbox", projectId: "project", client };
+      },
+      async reconnect() { throw new Error("unused"); },
+    },
+    () => `t3-thread-${nextId++}`,
+    () => new Date("2026-08-26T15:00:00.000Z"),
+    locks,
+  );
+
+  const turns = await Promise.all(Array.from({ length: 4 }, (_, index) =>
+    gateway.send({
+      canonicalThreadId: `canonical-${index}`,
+      title: `Concurrent ${index}`,
+      text: `Message ${index}`,
+      modelSelection: { instanceId: "codex", model: "gpt-5.6-sol" },
+    })));
+
+  assert.equal(turns.length, 4);
+  assert.ok(turns.every((turn) => turn.binding.status === "working"));
 });
 
 test("forwards image inputs on both new and resumed native T3 threads", async () => {

@@ -132,39 +132,53 @@ export class T3ThreadBindingStore {
       .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
   }
 
-  async bind(binding: T3ThreadBinding): Promise<void> {
+  /**
+   * Persist one binding without acquiring the global directory-index lock.
+   * Callers that already hold a per-thread lock use this method, release that
+   * lock, and then call `ensureIndexed` so a finite advisory-lock pool cannot
+   * deadlock on nested per-thread + global locks.
+   */
+  async bindRecord(binding: T3ThreadBinding): Promise<void> {
+    const bindingKey = key(binding.canonicalThreadId);
+    const existing = await this.read(bindingKey);
+    if (existing && existing.t3ThreadId !== binding.t3ThreadId) {
+      throw new Error(
+        `T3 thread binding is already assigned to ${existing.t3ThreadId}`,
+      );
+    }
+    if (
+      existing &&
+      existing.providerInstanceId !== binding.providerInstanceId
+    ) {
+      throw new Error(
+        `T3 thread binding is already assigned to provider ${existing.providerInstanceId}`,
+      );
+    }
+    await this.metadata.set(NAMESPACE, bindingKey, binding);
+  }
+
+  async ensureIndexed(canonicalThreadId: string): Promise<void> {
     await this.locks.withLock(INDEX_LOCK, async (signal) => {
       if (signal.aborted) throw signal.reason;
-      const bindingKey = key(binding.canonicalThreadId);
-      const existing = await this.read(bindingKey);
-      if (existing && existing.t3ThreadId !== binding.t3ThreadId) {
-        throw new Error(
-          `T3 thread binding is already assigned to ${existing.t3ThreadId}`,
-        );
-      }
-      if (
-        existing &&
-        existing.providerInstanceId !== binding.providerInstanceId
-      ) {
-        throw new Error(
-          `T3 thread binding is already assigned to provider ${existing.providerInstanceId}`,
-        );
-      }
-      await this.metadata.set(NAMESPACE, bindingKey, binding);
       const index = await this.readIndex();
       if (
         !index.some(
-          (entry) => entry.canonicalThreadId === binding.canonicalThreadId,
+          (entry) => entry.canonicalThreadId === canonicalThreadId,
         )
       ) {
         await this.metadata.set(NAMESPACE, INDEX_KEY, [
           ...index,
           {
-            canonicalThreadId: binding.canonicalThreadId,
+            canonicalThreadId,
           },
         ] satisfies T3ThreadBindingIndexEntry[]);
       }
     });
+  }
+
+  async bind(binding: T3ThreadBinding): Promise<void> {
+    await this.bindRecord(binding);
+    await this.ensureIndexed(binding.canonicalThreadId);
   }
 
   delete(canonicalThreadId: string): Promise<void> {

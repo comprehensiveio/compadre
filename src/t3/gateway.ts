@@ -189,13 +189,18 @@ export class T3Gateway {
     inputFiles?: ReadonlyArray<T3InputFile>;
     signal?: AbortSignal;
   }): Promise<T3GatewayTurn> {
-    return this.locks.withLock(
+    const turn = await this.locks.withLock(
       this.lockKey(input.canonicalThreadId),
       async (lockSignal) => {
         if (lockSignal.aborted) throw lockSignal.reason;
         return this.sendUnlocked(input);
       },
     );
+    // Never acquire the global directory-index lock while the per-thread lock
+    // is held. Four concurrent first turns previously exhausted the four-client
+    // Postgres advisory-lock pool and deadlocked here permanently.
+    await this.bindings.ensureIndexed(input.canonicalThreadId);
+    return turn;
   }
 
   private async sendUnlocked(input: {
@@ -231,7 +236,7 @@ export class T3Gateway {
         modelSelection: input.modelSelection,
         updatedAt: this.now().toISOString(),
       };
-      await this.bindings.bind(updated);
+      await this.bindings.bindRecord(updated);
       return { binding: updated, dispatch };
     }
 
@@ -265,7 +270,7 @@ export class T3Gateway {
         createdAt: timestamp,
         updatedAt: timestamp,
       };
-      await this.bindings.bind(binding);
+      await this.bindings.bindRecord(binding);
       return { binding, dispatch };
     } catch (error) {
       await this.environments.discard?.(environment).catch(() => undefined);
