@@ -133,14 +133,13 @@ migrations.
 
 Native Node.js service. Build: `npm ci --include=dev && npm run build`, Start: `npm start`.
 
-The active `compadre-relay` Web Service is declared in [`render.yaml`](render.yaml).
-Render runs `npm run db:migrate` as its pre-deploy command, so migrations finish
-before a newly built version can receive traffic. Secret environment variables
-are either omitted from the Blueprint or declared with `sync: false`; Render
-preserves their existing dashboard values during Blueprint updates without
-putting those values in Git. Linking the repository to the Blueprint is a one-time
-Render setup; subsequent service configuration changes and deploys sync from
-`main`.
+The production `compadre-api` controller and `compadre-web` T3 fork are declared
+in [`render.yaml`](render.yaml). Each service auto-deploys from `main` in its own
+repository; a Compadre merge does not restart the web UI unless the T3 fork also
+changed. Render runs `npm run db:migrate` before a new controller version can
+receive traffic. Secret values live in linked Render environment groups and are
+never committed. See [production secrets](docs/production-secrets.md) for the
+configuration boundary and rotation procedure.
 
 Google Workspace support uses `uvx` because `workspace-mcp` runs as a Python MCP server. `npm start` installs `uvx` at startup when Google Workspace env vars are present and `uvx` is not already available.
 

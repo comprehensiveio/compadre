@@ -9,7 +9,7 @@ if (sandboxIds.length === 0 || sandboxIds.some((id) => !/^sb-[A-Za-z0-9]+$/.test
 const environment = {
   ...process.env,
   COMPADRE_MODAL_APP:
-    process.env.COMPADRE_T3_MODAL_APP?.trim() || "compadre-t3-experiment",
+    process.env.COMPADRE_T3_MODAL_APP?.trim() || "compadre",
 };
 const provider = modalSandboxProvider({ environment, encryptedPorts: [3773] });
 for (const id of sandboxIds) {

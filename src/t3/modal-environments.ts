@@ -63,7 +63,7 @@ export class T3ModalEnvironmentManager
       ...this.environment,
       COMPADRE_MODAL_APP:
         this.environment.COMPADRE_T3_MODAL_APP?.trim() ||
-        "compadre-t3-experiment",
+        "compadre",
     };
   }
 

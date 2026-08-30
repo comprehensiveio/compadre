@@ -127,7 +127,7 @@ group cost and tokens by user.
 The central T3 process exports the logical Agent Observability span so one turn
 is not double-counted by both central and worker processes. Datadog receives
 input/output content, model/provider, tokens, model-priced or provider-reported
-cost, initiating user, and origin under one `compadre-t3-experiment` LLM
+cost, initiating user, and origin under one `compadre` LLM
 application. Worker and controller OpenTelemetry spans retain distinct service
 names for distributed-system latency analysis.
 
@@ -137,20 +137,21 @@ The running productionization and migration work is tracked in
 [Production cutover checklist](./production-cutover-checklist.md). Keep that
 checklist updated as the isolated deployment reveals additional requirements.
 
-The current internal deployment uses stable Comprehensive domains while
-retaining its existing isolated Render resource names:
+The production deployment uses stable Comprehensive domains and resource names:
 
 - T3 UI: `https://compadre.comprehensive.io` (Render service
-  `t3code-compadre-experiment`)
+  `compadre-web`)
 - Compadre controller: `https://compadre-api.comprehensive.io` (Render service
-  `compadre-t3-experiment`)
-- Compadre Postgres: `compadre-t3-experiment-postgres`
+  `compadre-api`)
+- Compadre Postgres: the existing production durability database
 - Central T3 disk: 1 GB persistent disk mounted at `/var/data`
 
-The names are deployment identifiers, not an architectural mode. The T3 server
-runs in same-origin mode; `VITE_HOSTED_APP_CHANNEL` and `VITE_HOSTED_APP_URL`
-remain blank. The controller requires Postgres durability and the T3 server uses
-the controller's `/hosted/t3/chat` remote-provider endpoint.
+The T3 server runs in same-origin mode; `VITE_HOSTED_APP_CHANNEL` and
+`VITE_HOSTED_APP_URL` remain blank. The controller requires Postgres durability
+and the T3 server uses the controller's `/hosted/t3/chat` remote-provider
+endpoint. Merges to the Compadre and T3 fork `main` branches independently
+auto-deploy `compadre-api` and `compadre-web`; per-thread Modal sandboxes remain
+lazy runtime resources and are not redeployed by either merge.
 
 The central T3 SQLite database is a single-writer deployment. Before treating it
 as production-critical state, add continuous encrypted backup, scheduled restore
@@ -251,15 +252,14 @@ inventory.
 
 ## Slack application
 
-The checked-in [Slack manifest](./slack-app-manifest.t3-experiment.yaml) targets
-the isolated controller hostname. It accepts direct-message and `app_mention`
-events and dynamically resolves the installation-specific bot identity. Do not
-point the existing production Slack app at this endpoint; install a distinct app
-when end-to-end testing begins.
+The checked-in [production Slack manifest](./slack-app-manifest.yaml) targets the
+canonical controller hostname. It accepts direct-message and `app_mention`
+events and dynamically resolves the installation-specific bot identity. The
+temporary app manifest remains only as a record of the dark-launch installation.
 
 The isolated Comprehensive workspace installation is `Secret dre experiment`
 (app `A0BT4LVRRTL`, bot user `U0BT6K6FZPT`, workspace `T01N1PDFS5V`). Its
 request URL is the manifest's `/slack/events` endpoint and is verified by Slack.
-The bot token and signing secret belong only in the
-`compadre-t3-experiment` Render environment; never copy them into source,
-central T3, or the existing Compadre service.
+The production bot token and signing secret belong only in the
+`compadre-production-api` Render environment group; never copy them into source,
+central T3, or Modal.

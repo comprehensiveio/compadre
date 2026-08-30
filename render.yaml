@@ -1,6 +1,9 @@
 services:
+  # Slack, API, auth, durable routing, and per-thread Modal fanout.
   - type: web
-    name: compadre-relay
+    name: compadre-api
+    repo: https://github.com/comprehensiveio/compadre
+    branch: main
     runtime: node
     region: oregon
     plan: standard
@@ -10,19 +13,82 @@ services:
     healthCheckPath: /health
     autoDeployTrigger: commit
     envVars:
+      - fromGroup: compadre-production-shared
+      - fromGroup: compadre-production-api
       - key: COMPADRE_PROCESS_ROLE
         value: relay
       - key: COMPADRE_DURABILITY_BACKEND
         value: postgres
-      - key: COMPADRE_DURABILITY_DATABASE_URL
-        sync: false
-      - key: MODAL_TOKEN_ID
-        sync: false
-      - key: MODAL_TOKEN_SECRET
-        sync: false
-      - key: GITHUB_PERSONAL_ACCESS_TOKEN
-        sync: false
+      - key: COMPADRE_T3_DIRECTORY_ENABLED
+        value: "true"
+      - key: COMPADRE_T3_SLACK_ENABLED
+        value: "true"
+      - key: COMPADRE_T3_API_ENABLED
+        value: "true"
+      - key: COMPADRE_HOSTED_T3_ENABLED
+        value: "true"
+      - key: COMPADRE_HOSTED_SLACK_DELIVERY_ENABLED
+        value: "true"
       - key: COMPADRE_PUBLIC_URL
-        sync: false
+        value: https://compadre-api.comprehensive.io
+      - key: COMPADRE_T3_CENTRAL_URL
+        value: https://compadre.comprehensive.io
+      - key: COMPADRE_T3_HOSTED_APP_URL
+        value: https://compadre.comprehensive.io
+      - key: COMPADRE_T3_MODAL_APP
+        value: compadre
+      - key: COMPADRE_PREVIEW_HOST_SUFFIX
+        value: dev.compadre.comprehensive.io
+      - key: DD_ENV
+        value: production
+      - key: DD_SERVICE
+        value: compadre-api
+      - key: DD_LLMOBS_ML_APP
+        value: compadre
+    previews:
+      generation: off
+
+  # Central, single-writer T3 UI and durable transcript store.
+  - type: web
+    name: compadre-web
+    repo: https://github.com/comprehensiveio/t3code
+    branch: main
+    runtime: node
+    region: oregon
+    plan: starter
+    buildCommand: >-
+      npm install -g pnpm@11.10.0 && pnpm install --frozen-lockfile &&
+      pnpm exec vp run --filter t3 build
+    startCommand: >-
+      mkdir -p /var/data/workspace && node apps/server/dist/bin.mjs serve
+      /var/data/workspace --mode web --host 0.0.0.0 --port "$PORT"
+      --base-dir /var/data/t3code --no-browser --auto-bootstrap-project-from-cwd
+    healthCheckPath: /
+    autoDeployTrigger: commit
+    envVars:
+      - fromGroup: compadre-production-shared
+      - fromGroup: compadre-production-web
+      - key: COMPADRE_NATIVE_T3_URL
+        value: https://compadre-api.comprehensive.io/hosted/t3/chat
+      - key: COMPADRE_CONTROLLER_URL
+        value: https://compadre-api.comprehensive.io
+      - key: COMPADRE_AUTH_COOKIE_DOMAIN
+        value: .compadre.comprehensive.io
+      - key: COMPADRE_PREVIEW_HOST_SUFFIX
+        value: dev.compadre.comprehensive.io
+      - key: VITE_COMPADRE_AUTH_ENABLED
+        value: "true"
+      - key: T3CODE_INSTALL_GH_CLI
+        value: "true"
+      - key: T3CODE_OTLP_SERVICE_NAME
+        value: compadre-web
+      - key: DD_ENV
+        value: production
+      - key: DD_LLMOBS_ML_APP
+        value: compadre
+    disk:
+      name: compadre-state
+      mountPath: /var/data
+      sizeGB: 1
     previews:
       generation: off

@@ -98,7 +98,7 @@ export function projectedProviderEnvironment(
   if (tracesUrl) {
     result.T3CODE_OTLP_TRACES_URL = tracesUrl;
     result.T3CODE_OTLP_SERVICE_NAME =
-      environment.T3CODE_OTLP_SERVICE_NAME?.trim() || "compadre-t3-worker";
+      environment.T3CODE_OTLP_SERVICE_NAME?.trim() || "compadre-worker";
   }
   // The central T3 environment owns the single logical LLM Observability
   // trace after it receives the worker's full native event stream. Modal still
@@ -299,7 +299,7 @@ export async function launchManagedT3ModalEnvironment(
   const workerEnvironment: NodeJS.ProcessEnv = {
     ...environment,
     COMPADRE_MODAL_APP:
-      environment.COMPADRE_T3_MODAL_APP?.trim() || "compadre-t3-experiment",
+      environment.COMPADRE_T3_MODAL_APP?.trim() || "compadre",
   };
   const forkArchivePath = await resolveT3ForkArchive(workerEnvironment);
   const devArtifactEnvironment =

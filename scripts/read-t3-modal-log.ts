@@ -8,7 +8,7 @@ if (!sandboxId) throw new Error("Usage: read-t3-modal-log.ts <sandbox-id>");
 const environment = {
   ...process.env,
   COMPADRE_MODAL_APP:
-    process.env.COMPADRE_T3_MODAL_APP?.trim() || "compadre-t3-experiment",
+    process.env.COMPADRE_T3_MODAL_APP?.trim() || "compadre",
 };
 const provider = modalSandboxProvider({ environment, encryptedPorts: [3773] });
 const handle = await provider.resume({ id: sandboxId });
