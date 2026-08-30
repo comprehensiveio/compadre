@@ -81,6 +81,20 @@ different bucket, or a Tolt-owned resource. Production-derived mode preserves
 Hen's current anonymization contract; avoid printing or screenshotting broad
 customer datasets even after anonymization.
 
+### Deferred cache optimization
+
+- [ ] If production-derived restores become frequent, build and validate a
+      periodically refreshed Hen-anonymized artifact so thread sandboxes skip the
+      anonymization work. Keep the current lazy path as the correctness fallback.
+      Prefer producing the cache inside Comprehensive's AWS account, near the S3
+      source, rather than downloading the raw multi-gigabyte backup to Modal every
+      hour. Record source object version, anonymizer revision, schema revision,
+      creation time, checksum, and validation results with the artifact. Start with
+      a several-hour freshness target or demand-aware refresh, measure real usage,
+      and move to hourly only if the product benefit justifies the recurring data
+      transfer and compute cost. Never persist or publish the raw source dump as a
+      Compadre cache.
+
 Refresh a dependency artifact whenever the Comp lockfile, Prisma schema, Node
 ABI, CPU architecture, or libc compatibility changes. Refresh the seed through
 the isolated seed builder, verify that it contains no credentials or customer
