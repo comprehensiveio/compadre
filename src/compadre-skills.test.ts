@@ -21,3 +21,14 @@ test("builds sandbox-local skill paths", () => {
     "/opt/compadre-skills/query-database/SKILL.md",
   );
 });
+
+test("pins dev-environment browser validation to the image Chromium", () => {
+  const skill = compadreSkillUploads().find((upload) =>
+    upload.path.endsWith("/dev-environment/SKILL.md"),
+  );
+  assert.ok(skill);
+  assert.match(
+    Buffer.from(skill.data).toString("utf8"),
+    /AGENT_BROWSER_EXECUTABLE_PATH=\/usr\/bin\/chromium/,
+  );
+});

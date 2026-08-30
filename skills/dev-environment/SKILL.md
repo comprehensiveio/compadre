@@ -40,8 +40,13 @@ artifact URLs supplied to this sandbox are short-lived and read-only.
 Before the first browser command in a turn, load the CLI workflow:
 
 ```bash
+export AGENT_BROWSER_EXECUTABLE_PATH=/usr/bin/chromium
 agent-browser skills get core
 ```
+
+Keep `AGENT_BROWSER_EXECUTABLE_PATH` set for every agent-browser command. The
+development image installs Debian's system Chromium at that exact path; do not
+fall back to a Playwright cache path or download another browser at runtime.
 
 Modal does not support reaching a sandbox's public tunnel from that same
 sandbox. Use localhost for agent-browser self-validation, and use the URL
@@ -49,6 +54,7 @@ printed by `scripts/compadre-dev-up.sh url` only when handing the environment to
 the user. Log in through the sandbox-only route rather than typing credentials:
 
 ```bash
+export AGENT_BROWSER_EXECUTABLE_PATH=/usr/bin/chromium
 BASE_URL=http://127.0.0.1:${COMPADRE_DEV_PORT:-3000}
 agent-browser open "$BASE_URL/api/v1/auth/dev/login/admin?company=Compadre%20Demo&redirect=/company/employees"
 agent-browser wait --load domcontentloaded
