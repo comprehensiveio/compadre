@@ -585,7 +585,7 @@ it.layer(Layer.merge(NodeServices.layer, FetchHttpClient.layer))("CompadreAdapte
           png,
         );
         assert.deepStrictEqual(
-          yield* fileSystem.readFile(path.join(attachmentsDir, `${csvAttachmentId}.bin`)),
+          yield* fileSystem.readFile(path.join(attachmentsDir, `${csvAttachmentId}.csv`)),
           csv,
         );
         const output = events.findLast(

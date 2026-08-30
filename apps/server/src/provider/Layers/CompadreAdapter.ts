@@ -337,7 +337,7 @@ export function makeCompadreAdapter(options: CompadreAdapterOptions) {
         const attachments = input.attachments ?? [];
         const text =
           input.input?.trim() ||
-          (attachments.length > 0 ? "Please inspect the attached image(s)." : undefined);
+          (attachments.length > 0 ? "Please inspect the attached file(s)." : undefined);
         if (!text) {
           return yield* new ProviderAdapterValidationError({
             provider: runtimeProvider,
@@ -352,15 +352,6 @@ export function makeCompadreAdapter(options: CompadreAdapterOptions) {
                 provider: runtimeProvider,
                 operation: "sendTurn",
                 issue: "The Compadre attachment directory is not configured.",
-              });
-            }
-            if (
-              !["image/gif", "image/jpeg", "image/png", "image/webp"].includes(attachment.mimeType)
-            ) {
-              return yield* new ProviderAdapterValidationError({
-                provider: runtimeProvider,
-                operation: "sendTurn",
-                issue: `Unsupported Compadre image attachment type '${attachment.mimeType}'.`,
               });
             }
             const attachmentPath = resolveAttachmentPath({

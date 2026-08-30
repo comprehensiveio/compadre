@@ -73,6 +73,41 @@ describe("normalizeDispatchCommand attachments", () => {
     }).pipe(Effect.provide(testLayer)),
   );
 
+  it.effect("persists inline generic files from authenticated headless clients", () =>
+    Effect.gen(function* () {
+      const config = yield* ServerConfig.ServerConfig;
+      const command = turnStartCommand({ attachments: [] });
+      if (command.type !== "thread.turn.start") {
+        throw new Error("Expected a thread.turn.start command.");
+      }
+      const normalized = yield* normalizeDispatchCommand({
+        ...command,
+        message: {
+          ...command.message,
+          attachments: [
+            {
+              type: "file",
+              name: "notes.txt",
+              mimeType: "text/plain",
+              sizeBytes: 5,
+              dataUrl: "data:text/plain;base64,bm90ZXM=",
+            },
+          ],
+        },
+      });
+      if (normalized.type !== "thread.turn.start") {
+        throw new Error("Expected a thread.turn.start command.");
+      }
+
+      const attachment = normalized.message.attachments[0]!;
+      expect(attachment.type).toBe("file");
+      expect(attachment.id).toMatch(/^thread-1-.*-txt$/);
+      expect(
+        NodeFS.readFileSync(NodePath.join(config.attachmentsDir, `${attachment.id}.txt`)),
+      ).toEqual(Buffer.from("notes"));
+    }).pipe(Effect.provide(testLayer)),
+  );
+
   it.effect("claims uploaded attachments while retaining a retryable pending copy", () =>
     Effect.gen(function* () {
       const config = yield* ServerConfig.ServerConfig;
