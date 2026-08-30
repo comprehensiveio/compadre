@@ -10,6 +10,7 @@ services:
     startCommand: npm start
     healthCheckPath: /health
     autoDeployTrigger: commit
+    maxShutdownDelaySeconds: 300
     envVars:
       - fromGroup: compadre-production-shared
       - fromGroup: compadre-production-api
