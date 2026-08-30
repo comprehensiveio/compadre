@@ -51,6 +51,27 @@ test("does not silently reassign a provider conversation", async () => {
   );
 });
 
+test("persists and does not reassign the protected Slack destination", async () => {
+  const persistence = memoryPersistence();
+  const store = new T3ThreadBindingStore(persistence.stores.metadata);
+  const protectedBinding = {
+    ...binding,
+    blockedSlackDestination: { channelId: "C1", threadTs: "1.0" },
+  };
+  await store.bind(protectedBinding);
+  assert.deepEqual(
+    (await store.get(binding.canonicalThreadId))?.blockedSlackDestination,
+    protectedBinding.blockedSlackDestination,
+  );
+  await assert.rejects(
+    store.bind({
+      ...protectedBinding,
+      blockedSlackDestination: { channelId: "C1", threadTs: "2.0" },
+    }),
+    /cannot change its protected Slack destination/,
+  );
+});
+
 test("lists the credential-free thread directory in most-recent order", async () => {
   const persistence = memoryPersistence();
   const store = new T3ThreadBindingStore(persistence.stores.metadata);

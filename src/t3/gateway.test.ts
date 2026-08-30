@@ -90,6 +90,7 @@ test("routes model changes through the same provider-native T3 thread", async ()
   const persistence = memoryPersistence();
   const bindings = new T3ThreadBindingStore(persistence.stores.metadata);
   const starts: string[] = [];
+  const provisions: unknown[] = [];
   const client: T3CommandClient = {
     baseUrl: "https://t3.example",
     async startNewThread(input) {
@@ -126,7 +127,8 @@ test("routes model changes through the same provider-native T3 thread", async ()
     },
   };
   const environments: T3EnvironmentConnectionManager = {
-    async provision() {
+    async provision(input) {
+      provisions.push(input.blockedSlackDestination);
       return { sandboxId: "sandbox-1", projectId: "project-1", client };
     },
     async reconnect() {
@@ -146,6 +148,7 @@ test("routes model changes through the same provider-native T3 thread", async ()
     title: "Slack request",
     text: "first",
     modelSelection: selection,
+    blockedSlackDestination: { channelId: "C1", threadTs: "1.0" },
   });
   const second = await gateway.send({
     canonicalThreadId: "slack-thread",
@@ -157,10 +160,29 @@ test("routes model changes through the same provider-native T3 thread", async ()
   assert.equal(first.binding.t3ThreadId, "t3-thread-1");
   assert.equal(second.binding.t3ThreadId, "t3-thread-1");
   assert.equal(second.binding.providerInstanceId, "codex");
+  assert.deepEqual(first.binding.blockedSlackDestination, {
+    channelId: "C1",
+    threadTs: "1.0",
+  });
+  assert.deepEqual(second.binding.blockedSlackDestination, {
+    channelId: "C1",
+    threadTs: "1.0",
+  });
+  assert.deepEqual(provisions, [{ channelId: "C1", threadTs: "1.0" }]);
   assert.deepEqual(starts, [
     "new:t3-thread-1:first",
     "existing:t3-thread-1:second",
   ]);
+  await assert.rejects(
+    gateway.send({
+      canonicalThreadId: "slack-thread",
+      title: "Slack request",
+      text: "wrong destination",
+      modelSelection: selection,
+      blockedSlackDestination: { channelId: "C1", threadTs: "2.0" },
+    }),
+    /different Slack destination/,
+  );
 });
 
 test("resolves a preview from the bound sandbox without provisioning", async () => {

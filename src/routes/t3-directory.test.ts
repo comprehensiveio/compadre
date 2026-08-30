@@ -447,6 +447,11 @@ test("streams a native Modal T3 turn through the central provider endpoint", asy
   let selection: unknown;
   let inputFiles: unknown;
   let sends = 0;
+  const blockedSlackDestinations: unknown[] = [];
+  let linkedSlackBinding: {
+    channelId: string;
+    threadTs: string;
+  } | null = null;
   const turnSnapshot: T3ThreadSnapshot = {
     ...snapshot,
     snapshotSequence: 9,
@@ -494,10 +499,15 @@ test("streams a native Modal T3 turn through the central provider endpoint", asy
   };
   const gateway = {
     async list() { return []; },
-    async send(input: { modelSelection: unknown; inputFiles?: unknown }): Promise<T3GatewayTurn> {
+    async send(input: {
+      modelSelection: unknown;
+      inputFiles?: unknown;
+      blockedSlackDestination?: unknown;
+    }): Promise<T3GatewayTurn> {
       sends += 1;
       selection = input.modelSelection;
       inputFiles = input.inputFiles;
+      blockedSlackDestinations.push(input.blockedSlackDestination);
       return {
         binding: { ...binding, status: "working" as const },
         dispatch: {
@@ -535,7 +545,7 @@ test("streams a native Modal T3 turn through the central provider endpoint", asy
     watchTurn() {},
     async getSlackBinding(threadId) {
       slackBindingLookups.push(threadId);
-      return null;
+      return linkedSlackBinding;
     },
   }));
   const response = await app.request("/hosted/t3/chat", authorized({
@@ -620,14 +630,47 @@ test("streams a native Modal T3 turn through the central provider endpoint", asy
     state: {},
     forwardedProps: { provider: "claude-code", model: "claude-sonnet-5" },
   }));
-  assert.equal(slackResponse.status, 200, await slackResponse.clone().text());
-  await slackResponse.text();
+  assert.equal(slackResponse.status, 409, await slackResponse.clone().text());
+  assert.deepEqual(await slackResponse.json(), {
+    error: "Slack-originated turns require a durable thread binding",
+  });
   assert.deepEqual(slackBindingLookups, [
     "central-thread",
     "central-thread",
     "central-thread",
   ]);
+  assert.equal(sends, 1);
+
+  linkedSlackBinding = { channelId: "C1", threadTs: "1.0" };
+  const boundSlackResponse = await app.request(
+    "/hosted/t3/chat",
+    authorized({
+      threadId: "central-thread",
+      runId: "run-from-bound-slack",
+      messages: [
+        {
+          id: "slack-entrypoint:message-3",
+          role: "user",
+          content: "continue from bound Slack",
+        },
+      ],
+      tools: [],
+      context: [],
+      state: {},
+      forwardedProps: { provider: "claude-code", model: "claude-sonnet-5" },
+    }),
+  );
+  assert.equal(
+    boundSlackResponse.status,
+    200,
+    await boundSlackResponse.clone().text(),
+  );
+  await boundSlackResponse.text();
   assert.equal(sends, 2);
+  assert.deepEqual(blockedSlackDestinations, [
+    undefined,
+    { channelId: "C1", threadTs: "1.0" },
+  ]);
 });
 
 test("rejects an unsupported native T3 protocol version before starting work", async (t) => {

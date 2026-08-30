@@ -105,6 +105,14 @@ export class T3ModalEnvironmentManager
     if (!handle) {
       throw new Error(`T3 Modal sandbox ${binding.sandboxId} is unavailable`);
     }
+    if (binding.blockedSlackDestination) {
+      await handle.env.set({
+        COMPADRE_BLOCKED_SLACK_CHANNEL_ID:
+          binding.blockedSlackDestination.channelId,
+        COMPADRE_BLOCKED_SLACK_THREAD_TS:
+          binding.blockedSlackDestination.threadTs,
+      });
+    }
     const accessToken = (await handle.fs.read(T3_GATEWAY_CREDENTIAL_PATH)).trim();
     if (!accessToken) {
       throw new Error(

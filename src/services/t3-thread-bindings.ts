@@ -24,6 +24,10 @@ export interface T3ThreadBinding {
   sandboxId: string;
   baseUrl: string;
   modelSelection: T3ModelSelection;
+  blockedSlackDestination?: {
+    channelId: string;
+    threadTs: string;
+  };
   title?: string;
   status?: T3ThreadDirectoryStatus;
   createdAt: string;
@@ -50,6 +54,19 @@ function isModelSelection(value: unknown): value is T3ModelSelection {
   );
 }
 
+function isBlockedSlackDestination(
+  value: unknown,
+): value is NonNullable<T3ThreadBinding["blockedSlackDestination"]> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const record = value as Record<string, unknown>;
+  return (
+    typeof record.channelId === "string" &&
+    record.channelId.length > 0 &&
+    typeof record.threadTs === "string" &&
+    record.threadTs.length > 0
+  );
+}
+
 function isBinding(value: unknown): value is T3ThreadBinding {
   if (!value || typeof value !== "object") return false;
   const record = value as Record<string, unknown>;
@@ -67,6 +84,8 @@ function isBinding(value: unknown): value is T3ThreadBinding {
     typeof record.baseUrl === "string" &&
     record.baseUrl.length > 0 &&
     isModelSelection(record.modelSelection) &&
+    (record.blockedSlackDestination === undefined ||
+      isBlockedSlackDestination(record.blockedSlackDestination)) &&
     (record.title === undefined || typeof record.title === "string") &&
     (record.status === undefined ||
       ["working", "ready", "interrupted", "error", "unavailable"].includes(
@@ -152,6 +171,17 @@ export class T3ThreadBindingStore {
     ) {
       throw new Error(
         `T3 thread binding is already assigned to provider ${existing.providerInstanceId}`,
+      );
+    }
+    if (
+      existing &&
+      (existing.blockedSlackDestination?.channelId !==
+        binding.blockedSlackDestination?.channelId ||
+        existing.blockedSlackDestination?.threadTs !==
+          binding.blockedSlackDestination?.threadTs)
+    ) {
+      throw new Error(
+        "T3 thread binding cannot change its protected Slack destination",
       );
     }
     await this.metadata.set(NAMESPACE, bindingKey, binding);

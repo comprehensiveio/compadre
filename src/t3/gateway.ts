@@ -237,6 +237,26 @@ export class T3Gateway {
           `This T3 thread is already using ${existing.providerInstanceId}; start a new thread to use ${providerInstanceId}.`,
         );
       }
+      if (
+        input.blockedSlackDestination &&
+        !existing.blockedSlackDestination
+      ) {
+        throw new Error(
+          "This existing T3 environment was not provisioned with a protected Slack destination; start a new thread.",
+        );
+      }
+      if (
+        input.blockedSlackDestination &&
+        existing.blockedSlackDestination &&
+        (input.blockedSlackDestination.channelId !==
+          existing.blockedSlackDestination.channelId ||
+          input.blockedSlackDestination.threadTs !==
+            existing.blockedSlackDestination.threadTs)
+      ) {
+        throw new Error(
+          "This T3 environment is already assigned to a different Slack destination.",
+        );
+      }
       const environment = await this.environments.reconnect(existing);
       const dispatch = await environment.client.startTurn({
         threadId: existing.t3ThreadId,
@@ -283,6 +303,7 @@ export class T3Gateway {
         sandboxId: environment.sandboxId,
         baseUrl: environment.client.baseUrl,
         modelSelection: input.modelSelection,
+        blockedSlackDestination: input.blockedSlackDestination,
         title: input.title,
         status: "working",
         createdAt: timestamp,
