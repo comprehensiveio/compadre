@@ -110,7 +110,8 @@ test("delivers a recovered final answer with stable Slack idempotency keys", asy
     delivery: job,
     store: {
       async markDelivered(id) {
-        marked.push(id);
+        marked.push(id.id);
+        return true;
       },
       async markFailed() {
         assert.fail("delivery should not fail");
@@ -183,5 +184,48 @@ test("keeps a transient T3 read failure pending instead of posting failure", asy
   });
   assert.equal(completed, false);
   assert.equal(failures.length, 1);
+  assert.deepEqual(calls, []);
+});
+
+test("does not post when a newer worker owns the delivery claim", async () => {
+  const job = delivery();
+  const { slack, calls } = slackRecorder();
+  let markedFailed = false;
+  const completed = await deliverClaimedSlackTurn({
+    delivery: job,
+    store: {
+      async renewClaim() {
+        return false;
+      },
+      async markDelivered() {
+        assert.fail("a stale claim must not complete");
+      },
+      async markFailed() {
+        markedFailed = true;
+      },
+    },
+    t3: {
+      baseUrl: "https://t3.example",
+      async environmentDescriptor() {
+        throw new Error("not used");
+      },
+      async snapshot() {
+        throw new Error("not used");
+      },
+      async startNewThread() {
+        throw new Error("not used");
+      },
+      async startTurn() {
+        throw new Error("not used");
+      },
+      async waitForTurnTerminal() {
+        assert.fail("a stale claim must not wait for the agent");
+      },
+    },
+    slack,
+    logger: { info() {}, warn() {}, error() {} },
+  });
+  assert.equal(completed, false);
+  assert.equal(markedFailed, false);
   assert.deepEqual(calls, []);
 });

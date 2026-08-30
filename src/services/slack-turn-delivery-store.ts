@@ -23,6 +23,26 @@ export interface EnqueueSlackTurnDelivery {
   detailsUrl: string;
 }
 
+function deliveryInsertValues(
+  input: EnqueueSlackTurnDelivery,
+): typeof slackTurnDeliveries.$inferInsert {
+  return {
+    id: input.id,
+    messageId: input.dispatch.messageId,
+    canonicalThreadId: input.canonicalThreadId,
+    t3ThreadId: input.t3ThreadId,
+    environmentId: input.environmentId,
+    dispatchSequence: input.dispatch.sequence,
+    dispatchCreatedAt: new Date(input.dispatch.createdAt),
+    slackTeamId: input.slackTeamId,
+    slackChannelId: input.slackChannelId,
+    slackThreadTs: input.slackThreadTs,
+    triggerMessageTs: input.triggerMessageTs,
+    recipientUserId: input.recipientUserId,
+    detailsUrl: input.detailsUrl,
+  };
+}
+
 /** Postgres-backed, restart-safe queue for native-T3 Slack completions. */
 export class SlackTurnDeliveryStore {
   constructor(
@@ -36,21 +56,7 @@ export class SlackTurnDeliveryStore {
   async enqueue(input: EnqueueSlackTurnDelivery): Promise<SlackTurnDelivery> {
     await this.db
       .insert(slackTurnDeliveries)
-      .values({
-        id: input.id,
-        messageId: input.dispatch.messageId,
-        canonicalThreadId: input.canonicalThreadId,
-        t3ThreadId: input.t3ThreadId,
-        environmentId: input.environmentId,
-        dispatchSequence: input.dispatch.sequence,
-        dispatchCreatedAt: new Date(input.dispatch.createdAt),
-        slackTeamId: input.slackTeamId,
-        slackChannelId: input.slackChannelId,
-        slackThreadTs: input.slackThreadTs,
-        triggerMessageTs: input.triggerMessageTs,
-        recipientUserId: input.recipientUserId,
-        detailsUrl: input.detailsUrl,
-      })
+      .values(deliveryInsertValues(input))
       .onConflictDoNothing({ target: slackTurnDeliveries.messageId });
     const row = await this.byMessageId(input.dispatch.messageId);
     if (!row) {
@@ -59,6 +65,28 @@ export class SlackTurnDeliveryStore {
       );
     }
     return row;
+  }
+
+  /**
+   * Atomically enqueue and reserve a foreground delivery. Returning null means
+   * an existing request or recovery worker already owns this message ID.
+   */
+  async enqueueClaimed(
+    input: EnqueueSlackTurnDelivery,
+    now = new Date(),
+  ): Promise<SlackTurnDelivery | null> {
+    const [inserted] = await this.db
+      .insert(slackTurnDeliveries)
+      .values({
+        ...deliveryInsertValues(input),
+        status: "delivering",
+        attempts: 1,
+        claimedAt: now,
+        updatedAt: now,
+      })
+      .onConflictDoNothing({ target: slackTurnDeliveries.messageId })
+      .returning();
+    return inserted ?? null;
   }
 
   async byMessageId(messageId: string): Promise<SlackTurnDelivery | null> {
@@ -135,8 +163,11 @@ export class SlackTurnDeliveryStore {
     return claimed ?? null;
   }
 
-  async markDelivered(id: string, now = new Date()): Promise<void> {
-    await this.db
+  async markDelivered(
+    delivery: Pick<SlackTurnDelivery, "id" | "attempts">,
+    now = new Date(),
+  ): Promise<boolean> {
+    const [updated] = await this.db
       .update(slackTurnDeliveries)
       .set({
         status: "delivered",
@@ -145,19 +176,33 @@ export class SlackTurnDeliveryStore {
         lastError: null,
         updatedAt: now,
       })
-      .where(eq(slackTurnDeliveries.id, id));
+      .where(
+        and(
+          eq(slackTurnDeliveries.id, delivery.id),
+          eq(slackTurnDeliveries.status, "delivering"),
+          eq(slackTurnDeliveries.attempts, delivery.attempts),
+        ),
+      )
+      .returning({ id: slackTurnDeliveries.id });
+    return updated !== undefined;
   }
 
-  async renewClaim(id: string, now = new Date()): Promise<void> {
-    await this.db
+  async renewClaim(
+    delivery: Pick<SlackTurnDelivery, "id" | "attempts">,
+    now = new Date(),
+  ): Promise<boolean> {
+    const [updated] = await this.db
       .update(slackTurnDeliveries)
       .set({ claimedAt: now, updatedAt: now })
       .where(
         and(
-          eq(slackTurnDeliveries.id, id),
+          eq(slackTurnDeliveries.id, delivery.id),
           eq(slackTurnDeliveries.status, "delivering"),
+          eq(slackTurnDeliveries.attempts, delivery.attempts),
         ),
-      );
+      )
+      .returning({ id: slackTurnDeliveries.id });
+    return updated !== undefined;
   }
 
   async markFailed(
@@ -180,7 +225,13 @@ export class SlackTurnDeliveryStore {
         lastError: error instanceof Error ? error.message : String(error),
         updatedAt: now,
       })
-      .where(eq(slackTurnDeliveries.id, delivery.id));
+      .where(
+        and(
+          eq(slackTurnDeliveries.id, delivery.id),
+          eq(slackTurnDeliveries.status, "delivering"),
+          eq(slackTurnDeliveries.attempts, delivery.attempts),
+        ),
+      );
   }
 }
 
