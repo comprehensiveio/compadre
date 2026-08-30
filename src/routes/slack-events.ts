@@ -10,7 +10,11 @@ import {
 } from "../prompts/index.js";
 import { resolveSlackChannelName } from "../services/slack-context.js";
 import { parseAgentRouteDirective } from "../services/agent-routing.js";
-import { buildSlackAgentInput } from "../services/slack-prompt.js";
+import {
+  buildSlackAgentInput,
+  buildSlackThreadUrl,
+  slackThreadContextPrompt,
+} from "../services/slack-prompt.js";
 import { SlackStream } from "../services/slack-stream.js";
 import { configuredConversationRunner } from "../services/conversation-runner.js";
 import { providerForAgentProfile } from "../tanstack/protocol.js";
@@ -19,13 +23,33 @@ import { slackFailureNotice } from "../services/terminal-response.js";
 import { runSlackConversation } from "../services/slack-conversation.js";
 import { SlackRunStateStore } from "../services/slack-run-state.js";
 import { getRequiredThreadPersistence } from "../persistence/runtime.js";
+import { HostedThreadBindingStore } from "../services/hosted-thread-bindings.js";
 import { verifySlackSignature } from "../services/slack-verify.js";
 import {
+  canonicalSlackThreadId,
+  nativeT3SlackEnabled,
+  t3ModelSelectionForProfile,
+  t3SlackDetailsMarkdown,
+} from "../services/t3-slack-conversation.js";
+import {
+  configuredCentralT3Client,
+  runCentralT3Conversation,
+} from "../t3/central-conversation.js";
+import {
+  downloadSlackInputFiles,
   mergeSlackFileReferences,
   slackFileReferences,
   type SlackEventFile,
   type SlackFileReference,
 } from "../services/slack-files.js";
+import { getConfiguredUserDirectory } from "../services/user-directory-runtime.js";
+import {
+  resolveSlackMessageAttribution,
+  resolveSlackThreadParticipants,
+} from "../services/slack-user-attribution.js";
+import { SlackTurnDeliveryStore } from "../services/slack-turn-delivery-store.js";
+import { deliverClaimedSlackTurn } from "../services/slack-turn-delivery.js";
+import { isAllowedSlackApp } from "../services/slack-installation.js";
 
 export const slackEventsRoutes = new Hono();
 
@@ -45,8 +69,12 @@ function isDuplicate(ts: string): boolean {
 }
 
 const APP_LINK_REGEX = /https:\/\/(?:www\.)?app\.comprehensive\.io\/\S+/i;
-const SLACKBOT_USER_ID = "U073509NYP7";
 const PRODUCTION_SUPPORT_CHANNEL_ID = "C04D24LB4J1";
+
+interface SlackAuthorization {
+  user_id?: string;
+  is_bot?: boolean;
+}
 
 export interface SlackEvent {
   type: string;
@@ -64,8 +92,60 @@ export interface SlackEvent {
 
 /** Accept ordinary user messages, including messages with attached files. */
 export function isSupportedUserMessage(event: SlackEvent): boolean {
-  if (event.type !== "message" || event.bot_id) return false;
+  if (event.bot_id) return false;
+  if (event.type === "app_mention") return event.subtype === undefined;
+  if (event.type !== "message") return false;
   return event.subtype === undefined || event.subtype === "file_share";
+}
+
+/** Resolve this installation's bot identity without coupling ingress to one Slack app. */
+export function resolveSlackBotUserId(input: {
+  configured?: string;
+  authorizations?: SlackAuthorization[];
+  event?: SlackEvent;
+}): string | undefined {
+  const configured = input.configured?.trim();
+  if (configured) return configured;
+  const authorized = input.authorizations?.find(
+    (authorization) => authorization.is_bot && authorization.user_id,
+  )?.user_id;
+  if (authorized) return authorized;
+  if (input.event?.type === "app_mention") {
+    return /<@([A-Z0-9]+)>/.exec(input.event.text || "")?.[1];
+  }
+  return undefined;
+}
+
+export function stripSlackBotMention(text: string, botUserId?: string): string {
+  return botUserId
+    ? text.replaceAll(`<@${botUserId}>`, "").trim()
+    : text.trim();
+}
+
+export const MENTION_ONLY_THREAD_PROMPT =
+  "Respond to the preceding Slack message.";
+
+export function slackMessageTextForAgent(input: {
+  messageText: string;
+  isThreadReply: boolean;
+  mentionsBot: boolean;
+}): string {
+  if (input.messageText.trim()) return input.messageText.trim();
+  return input.isThreadReply && input.mentionsBot
+    ? MENTION_ONLY_THREAD_PROMPT
+    : "";
+}
+
+export function isAllowedSlackWorkspace(input: {
+  configuredWorkspaceId?: string;
+  eventWorkspaceId?: string;
+}): boolean {
+  const configuredWorkspaceId = input.configuredWorkspaceId?.trim();
+  return Boolean(
+    configuredWorkspaceId &&
+      input.eventWorkspaceId &&
+      input.eventWorkspaceId === configuredWorkspaceId,
+  );
 }
 
 slackEventsRoutes.post("/slack/events", async (c) => {
@@ -102,11 +182,50 @@ slackEventsRoutes.post("/slack/events", async (c) => {
   }
 
   if (payload.type === "event_callback") {
+    const teamId =
+      typeof payload.team_id === "string" ? payload.team_id : undefined;
+    const configuredWorkspaceId = process.env.COMPADRE_SLACK_WORKSPACE_ID;
+    const eventAppId =
+      typeof payload.api_app_id === "string" ? payload.api_app_id : undefined;
+    if (
+      !isAllowedSlackApp({
+        configuredAppId: process.env.COMPADRE_SLACK_APP_ID,
+        eventAppId,
+      })
+    ) {
+      console.warn("[slack-events] rejected event from unauthorized app", {
+        eventAppId,
+      });
+      return c.json({ error: "app not allowed" }, 403);
+    }
+    if (!configuredWorkspaceId?.trim()) {
+      console.error(
+        "[slack-events] COMPADRE_SLACK_WORKSPACE_ID not configured",
+      );
+      return c.json({ error: "server misconfigured" }, 500);
+    }
+    if (
+      !isAllowedSlackWorkspace({
+        configuredWorkspaceId,
+        eventWorkspaceId: teamId,
+      })
+    ) {
+      console.warn("[slack-events] rejected event from unauthorized workspace", {
+        teamId,
+      });
+      return c.json({ error: "workspace not allowed" }, 403);
+    }
+
     const event = payload.event;
     if (event && typeof event === "object") {
-      const teamId =
-        typeof payload.team_id === "string" ? payload.team_id : undefined;
-      handleEvent(event as SlackEvent, teamId).catch((err) =>
+      const botUserId = resolveSlackBotUserId({
+        configured: process.env.SLACK_BOT_USER_ID,
+        authorizations: Array.isArray(payload.authorizations)
+          ? (payload.authorizations as SlackAuthorization[])
+          : undefined,
+        event: event as SlackEvent,
+      });
+      handleEvent(event as SlackEvent, teamId, botUserId).catch((err) =>
         console.error("[slack-events] unhandled error in handleEvent:", err),
       );
     }
@@ -115,12 +234,18 @@ slackEventsRoutes.post("/slack/events", async (c) => {
   return c.json({ ok: true });
 });
 
-async function handleEvent(event: SlackEvent, teamId?: string) {
+async function handleEvent(
+  event: SlackEvent,
+  teamId?: string,
+  botUserId?: string,
+) {
   if (!isSupportedUserMessage(event)) return;
   if (isDuplicate(event.ts)) return;
 
   const isDM = event.channel.startsWith("D");
-  const isMention = event.text?.includes(`<@${SLACKBOT_USER_ID}>`);
+  const isMention =
+    event.type === "app_mention" ||
+    Boolean(botUserId && event.text?.includes(`<@${botUserId}>`));
 
   // Check for prod-support links before routing to AI, so @mentions in
   // #production-support that contain app links still get debug-link treatment.
@@ -132,7 +257,7 @@ async function handleEvent(event: SlackEvent, teamId?: string) {
   }
 
   if (isDM || isMention) {
-    handleAIMessage(event, isDM, teamId).catch((err) =>
+    handleAIMessage(event, isDM, teamId, botUserId).catch((err) =>
       console.error("[slack-events] unhandled error in handleAIMessage:", err),
     );
   }
@@ -142,13 +267,12 @@ async function handleAIMessage(
   event: SlackEvent,
   isDM: boolean,
   teamId?: string,
+  botUserId?: string,
 ) {
   const botToken = process.env.SLACK_BOT_TOKEN;
   const threadTs = event.thread_ts || event.ts;
 
-  const rawMessageText = (event.text || "")
-    .replaceAll(`<@${SLACKBOT_USER_ID}>`, "")
-    .trim();
+  const rawMessageText = stripSlackBotMention(event.text || "", botUserId);
   const route = parseAgentRouteDirective(rawMessageText);
   if (!route.ok) {
     const errorStream = createSlackStream(event, threadTs, botToken, teamId);
@@ -161,11 +285,24 @@ async function handleAIMessage(
     return;
   }
 
-  const { messageText, profile } = route;
+  const { messageText: routedMessageText, profile } = route;
+  const mentionsBot =
+    event.type === "app_mention" ||
+    Boolean(botUserId && event.text?.includes(`<@${botUserId}>`));
+  const isThreadReply = Boolean(event.thread_ts && event.thread_ts !== event.ts);
+  const isMentionOnlyThreadReply =
+    isThreadReply && !routedMessageText.trim() && mentionsBot;
+  const messageText = slackMessageTextForAgent({
+    messageText: routedMessageText,
+    isThreadReply,
+    mentionsBot,
+  });
+  if (!messageText) return;
 
   const threadKey = threadTs;
+  const workspaceId = event.user_team || event.team || teamId;
 
-  const [thread, channelName] = await Promise.all([
+  const [thread, channelName, directory] = await Promise.all([
     event.thread_ts && botToken
       ? fetchThreadContext(event.channel, event.thread_ts, event.ts, botToken)
       : null,
@@ -176,21 +313,76 @@ async function handleAIMessage(
           botToken,
         })
       : null,
+    getConfiguredUserDirectory().catch((error) => {
+      console.warn("[slack-events] user directory unavailable", { error });
+      return null;
+    }),
   ]);
+  const slackParticipantIds = [
+    event.user,
+    ...(thread?.participantUserIds ?? []),
+  ].filter(
+    (userId): userId is string => Boolean(userId) && userId !== botUserId,
+  );
+  const participants = await resolveSlackThreadParticipants({
+    directory,
+    botToken,
+    workspaceId,
+    slackUserIds: slackParticipantIds,
+  }).catch((error) => {
+    console.warn("[slack-events] could not persist Slack thread participants", {
+      workspaceId,
+      channelId: event.channel,
+      threadTs,
+      error,
+    });
+    return [];
+  });
+  const attribution = await resolveSlackMessageAttribution({
+    directory,
+    botToken,
+    workspaceId,
+    slackUserId: event.user,
+    channelId: event.channel,
+    messageTs: event.ts,
+    threadTs,
+    threadUrl: buildSlackThreadUrl(event.channel, threadTs),
+    ...(participants.length > 0 ? { participants } : {}),
+  }).catch((error) => {
+    console.warn("[slack-events] could not persist Slack user attribution", {
+      workspaceId,
+      slackUserId: event.user,
+      error,
+    });
+    return undefined;
+  });
   const threadContext = thread?.text ?? null;
+  const currentSlackFiles = slackFileReferences(event.files);
   const slackFiles = mergeSlackFileReferences(
-    slackFileReferences(event.files),
+    currentSlackFiles,
     thread?.files,
   );
+  const nativeSlackInputFiles = nativeT3SlackEnabled()
+    ? await downloadSlackInputFiles(currentSlackFiles)
+    : { files: [], warnings: [] };
+  let contextualSlackInputFiles: ReturnType<typeof downloadSlackInputFiles> | undefined;
+  const loadContextualSlackInputFiles = async () => {
+    contextualSlackInputFiles ??= downloadSlackInputFiles(slackFiles);
+    return (await contextualSlackInputFiles).files;
+  };
 
+  const useNativeT3 = nativeT3SlackEnabled();
   const { prompt, transcriptUserMessage } = buildSlackAgentInput({
     messageText,
-    threadContext,
+    threadContext: useNativeT3 ? null : threadContext,
     channel: event.channel,
     channelName,
     threadTs,
     userId: event.user,
   });
+  const nativePrompt = nativeSlackInputFiles.warnings.length > 0
+    ? `${prompt}\n\nSlack attachment warnings:\n${nativeSlackInputFiles.warnings.map((warning) => `- ${warning}`).join("\n")}`
+    : prompt;
 
   const slackStream = createSlackStream(event, threadTs, botToken, teamId);
 
@@ -200,6 +392,20 @@ async function handleAIMessage(
     runtime.persistence.stores.metadata,
     runtime.persistence.stores.runs,
   );
+  const hostedBindings = new HostedThreadBindingStore(
+    runtime.persistence.stores.metadata,
+  );
+  const slackDeliveries = runtime.database
+    ? new SlackTurnDeliveryStore(runtime.database)
+    : null;
+  const slackBinding = {
+    channelId: event.channel,
+    threadTs,
+    ...(event.user ? { recipientUserId: event.user } : {}),
+    ...(event.user_team || event.team || teamId
+      ? { recipientTeamId: event.user_team || event.team || teamId }
+      : {}),
+  };
 
   // In non-DM contexts, use a reaction to indicate processing
   if (!isDM && slackStream) {
@@ -209,9 +415,164 @@ async function handleAIMessage(
     await slackStream.setStatus("is thinking...");
   }
 
+  const routedProvider = useNativeT3
+    ? t3ModelSelectionForProfile(profile).instanceId
+    : profile
+      ? providerForAgentProfile(profile)
+      : configuredAgentProvider();
   console.log(
-    `[slack-events] routing user=${event.user ?? "unknown"} provider=${profile ? providerForAgentProfile(profile) : configuredAgentProvider()} profile=${profile ?? "default"}`,
+    `[slack-events] routing user=${event.user ?? "unknown"} provider=${routedProvider} profile=${profile ?? "default"}`,
   );
+
+  if (useNativeT3) {
+    const canonicalThreadId = canonicalSlackThreadId({
+      teamId: event.user_team || event.team || teamId,
+      channel: event.channel,
+      threadTs,
+    });
+    let centralClient: ReturnType<typeof configuredCentralT3Client> = null;
+    let dispatchedMessageId: string | undefined;
+    const nativeConversation = Promise.resolve().then(async () => {
+      const client = configuredCentralT3Client();
+      if (!client) {
+        throw new Error(
+          "Native T3 Slack requires COMPADRE_T3_CENTRAL_URL and COMPADRE_T3_CENTRAL_TOKEN.",
+        );
+      }
+      centralClient = client;
+      return runCentralT3Conversation({
+        client,
+        canonicalThreadId,
+        title: transcriptUserMessage.slice(0, 200) || "Slack request",
+        prompt: nativePrompt,
+        displayText: transcriptUserMessage,
+        attribution,
+        inputFiles: nativeSlackInputFiles.files,
+        profile,
+        ...(isThreadReply
+          ? isMentionOnlyThreadReply
+            ? {
+                loadTurnContext: async () =>
+                  slackThreadContextPrompt(threadContext),
+                loadTurnInputFiles: loadContextualSlackInputFiles,
+              }
+            : {
+                loadInitialContext: async () =>
+                  slackThreadContextPrompt(threadContext),
+                loadInitialInputFiles: loadContextualSlackInputFiles,
+              }
+          : {}),
+        async onPrepared(prepared) {
+          await hostedBindings.bindAlias(
+            canonicalThreadId,
+            prepared.t3ThreadId,
+          );
+          await hostedBindings.bindSlack(prepared.t3ThreadId, {
+            ...slackBinding,
+            t3EnvironmentId: prepared.environmentId,
+            t3ThreadId: prepared.t3ThreadId,
+          });
+        },
+        async onDispatched(prepared, dispatch) {
+          dispatchedMessageId = dispatch.messageId;
+          if (!slackDeliveries || !slackStream) return;
+          const slackTeamId = workspaceId?.trim();
+          if (!slackTeamId) {
+            throw new Error(
+              "Cannot enqueue Slack completion without a workspace id.",
+            );
+          }
+          await slackDeliveries.enqueue({
+            id: crypto.randomUUID(),
+            canonicalThreadId,
+            t3ThreadId: prepared.t3ThreadId,
+            environmentId: prepared.environmentId,
+            dispatch,
+            slackTeamId,
+            slackChannelId: event.channel,
+            slackThreadTs: threadTs,
+            triggerMessageTs: event.ts,
+            ...(event.user ? { recipientUserId: event.user } : {}),
+            detailsUrl: prepared.detailsUrl,
+          });
+        },
+        onToolStart: slackStream
+          ? async (name) => {
+              const status = `is ${humanizeToolName(name).toLowerCase()}...`;
+              console.log("[slack-events] updating native T3 tool status", {
+                channelId: event.channel,
+                threadTs,
+                tool: name,
+                status,
+              });
+              await slackStream.setStatus(status);
+            }
+          : undefined,
+      });
+    });
+
+    nativeConversation
+      .then(async (result) => {
+        if (slackDeliveries && slackStream && centralClient) {
+          const delivery = await slackDeliveries.claimByMessageId(
+            result.dispatch.messageId,
+          );
+          if (delivery) {
+            await deliverClaimedSlackTurn({
+              delivery,
+              store: slackDeliveries,
+              t3: centralClient,
+              slack: slackStream,
+            });
+          }
+        } else if (slackStream) {
+          await slackStream.postThreadMessage(result.output);
+          await slackStream.postThreadContext(
+            t3SlackDetailsMarkdown(result.detailsUrl),
+          );
+          await slackStream.clearStatus();
+        }
+        if (!slackDeliveries && !isDM && slackStream) {
+          await slackStream.markRunSucceeded(event.ts);
+        }
+        await slackRuns.forget(event.channel, event.ts);
+        console.log(
+          `[slack-events] central T3 completed user=${event.user ?? "unknown"} thread=${result.t3ThreadId} provider=${result.modelSelection.instanceId} model=${result.modelSelection.model} resumed=${result.resumed}`,
+        );
+      })
+      .catch(async (err) => {
+        console.error(`[slack-events] native T3 error for ${event.user}:`, err);
+        if (
+          slackDeliveries &&
+          slackStream &&
+          centralClient &&
+          dispatchedMessageId
+        ) {
+          const delivery = await slackDeliveries.claimByMessageId(
+            dispatchedMessageId,
+          );
+          if (delivery) {
+            await deliverClaimedSlackTurn({
+              delivery,
+              store: slackDeliveries,
+              t3: centralClient,
+              slack: slackStream,
+            });
+          }
+          return;
+        }
+        if (slackStream) {
+          await slackStream.clearStatus();
+          await slackStream.postThreadMessage(slackFailureNotice(err));
+        }
+        if (!isDM && slackStream) {
+          await slackStream.markRunFailed(event.ts);
+        }
+      });
+    return;
+  }
+
+  await hostedBindings.bindSlack(threadKey, slackBinding);
 
   const runner = configuredConversationRunner();
   const conversationOptions: Omit<ConversationOptions, "stream"> = {
@@ -314,7 +675,11 @@ async function fetchThreadContext(
   threadTs: string,
   triggeringTs: string,
   botToken: string,
-): Promise<{ text: string | null; files: SlackFileReference[] }> {
+): Promise<{
+  text: string | null;
+  files: SlackFileReference[];
+  participantUserIds: string[];
+}> {
   try {
     const res = await fetch(
       `https://slack.com/api/conversations.replies?${new URLSearchParams({
@@ -338,7 +703,7 @@ async function fetchThreadContext(
     };
     if (!data.ok || !data.messages) {
       console.error("[slack-events] conversations.replies failed:", data.error);
-      return { text: null, files: [] };
+      return { text: null, files: [], participantUserIds: [] };
     }
     const messages = data.messages
       .filter((message) => message.ts !== triggeringTs)
@@ -351,10 +716,13 @@ async function fetchThreadContext(
       files: mergeSlackFileReferences(
         ...messages.map((message) => slackFileReferences(message.files)),
       ),
+      participantUserIds: messages.flatMap((message) =>
+        message.user ? [message.user] : [],
+      ),
     };
   } catch (err) {
     console.error("[slack-events] fetchThreadContext error:", err);
-    return { text: null, files: [] };
+    return { text: null, files: [], participantUserIds: [] };
   }
 }
 
@@ -367,10 +735,11 @@ async function forwardProdSupportLinks(event: SlackEvent) {
     return;
   }
 
-  const compadreApiKey = process.env.COMPADRE_API_KEY;
+  const compadreApiKey =
+    process.env.COMP_APP_API_KEY ?? process.env.COMPADRE_API_KEY;
   if (!compadreApiKey) {
     console.error(
-      "[slack-events] COMPADRE_API_KEY not set, cannot forward prod-support links",
+      "[slack-events] COMP_APP_API_KEY/COMPADRE_API_KEY not set, cannot forward prod-support links",
     );
     return;
   }

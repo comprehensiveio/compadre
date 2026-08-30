@@ -6,6 +6,7 @@ import type {
 } from "../conversation.js";
 import { configuredAgentProvider } from "../conversation.js";
 import {
+  ACTIVE_RUN_FIRST_CHUNK_DEADLINE_MS,
   failOpenDurableRun,
   getConfiguredAgentRunDurability,
 } from "../durability/runtime.js";
@@ -52,7 +53,9 @@ export async function runWorkflowConversation(
     ? providerForAgentProfile(options.profile)
     : options.provider ?? configuredAgentProvider();
   const startedAt = dependencies.now();
-  const stream = durability.stream(runId);
+  const stream = durability.stream(runId, {
+    firstChunkDeadlineMs: ACTIVE_RUN_FIRST_CHUNK_DEADLINE_MS,
+  });
   const launcher = dependencies.getLauncher();
   await durability.runs.createOrResume({
     runId,
@@ -72,6 +75,7 @@ export async function runWorkflowConversation(
       responseMode: options.stream ? "slack-streaming" : "default",
       persistThread: options.persistThread ?? options.threadId !== undefined,
       slackFiles: options.slackFiles,
+      inputFiles: options.inputFiles,
     });
   } catch (error) {
     try {

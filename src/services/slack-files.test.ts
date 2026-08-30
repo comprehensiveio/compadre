@@ -4,10 +4,53 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import {
+  downloadSlackInputFiles,
   materializeSlackFiles,
   mergeSlackFileReferences,
   slackFileReferences,
 } from "./slack-files.js";
+
+test("downloads Slack images and documents for native T3 turns", async () => {
+  const result = await downloadSlackInputFiles(
+    [
+      { id: "F1", name: "screen.png" },
+      { id: "F2", name: "notes.txt" },
+    ],
+    {
+      downloader: {
+        async downloadFile(fileId) {
+          return fileId === "F1"
+            ? {
+                data: new Uint8Array([1, 2, 3]),
+                name: "screen.png",
+                mimetype: "image/png",
+              }
+            : {
+                data: new TextEncoder().encode("notes"),
+                name: "notes.txt",
+                mimetype: "text/plain",
+              };
+        },
+      },
+    },
+  );
+
+  assert.deepEqual(result.files, [
+    {
+      name: "screen.png",
+      mimetype: "image/png",
+      sizeBytes: 3,
+      dataBase64: "AQID",
+    },
+    {
+      name: "notes.txt",
+      mimetype: "text/plain",
+      sizeBytes: 5,
+      dataBase64: "bm90ZXM=",
+    },
+  ]);
+  assert.deepEqual(result.warnings, []);
+});
 
 test("normalizes and deduplicates Slack event files", () => {
   assert.deepEqual(

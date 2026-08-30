@@ -1,0 +1,195 @@
+# Per-thread development environment operations
+
+This runbook covers the dark-launched Comp development environment attached to
+each hosted T3 thread. The safety and ownership rules in
+`docs/dev-environment-guardrails.md` apply to every operation here.
+
+## Architecture and lifecycle
+
+- The Render controller hosts the durable thread/run APIs and the shared T3
+  directory.
+- Each thread owns one Modal sandbox containing its T3 server, native Codex or
+  Claude Code harness, Comp checkout, PostgreSQL 16 cluster, Redis, Vite, and
+  Chromium.
+- Creating or chatting in a thread starts only T3 and the harness. PostgreSQL,
+  Redis, dependency restoration, and Vite remain stopped until the agent runs
+  `scripts/compadre-dev-up.sh up`.
+- The idempotent `up`, `status`, `url`, and `down` commands are the supported
+  lifecycle interface. The stable review URL remains attached to the thread
+  while its sandbox exists.
+- Review traffic enters through the hosted T3 service at
+  `https://<canonical-thread-id>.dev.compadre.comprehensive.io`. The service
+  requires a Comprehensive Slack-backed browser session, resolves the existing
+  sandbox through a service-authenticated controller endpoint, and proxies HTTP
+  and WebSocket traffic without exposing the raw Modal URL.
+- Preview resolution never provisions a sandbox. A missing or expired thread
+  sandbox returns an unavailable response instead of silently creating a new
+  environment.
+- The outer T3 session controls access to the preview. Comp's independent
+  `connect.sid` cookie stays scoped to the thread host, so developers can still
+  use Comp's dev-login routes to impersonate any sandbox-local user inside
+  the isolated environment.
+
+## Comprehensive-owned artifacts
+
+Before reading or replacing artifacts, verify AWS identity is account
+`629591269808`. The only approved location is:
+
+```text
+s3://compadre/dev-environments/comp/
+```
+
+Current inputs are synthetic or derived build artifacts:
+
+- `seed-latest.tar`: PostgreSQL 16-compatible synthetic Compadre Demo data.
+- `deps-prebuilt-amd64-latest.tar.zst`: dependencies generated from the Comp
+  lockfile and Prisma schema for the Modal x86 runtime.
+- `pgdata-latest.tar.zst` and `vite-cache-latest.tar.zst`: optional caches. A
+  missing object must degrade to the seed/dependency path rather than fail.
+
+The controller signs read-only object URLs for no more than seven days and
+projects those URLs only when the feature flag is enabled. Never upload a
+production database dump or use a Tolt-owned bucket, account, or artifact.
+
+## Optional production-derived data
+
+Synthetic data is always the initial and default mode. When a user explicitly
+needs representative current data, run this inside that thread's sandbox:
+
+```bash
+scripts/compadre-dev-data.sh production-latest
+```
+
+The sandbox exchanges its expiring, canonical-thread-scoped bearer token for a
+fresh presigned GET URL to the newest object under the Comprehensive-owned
+`s3://comp-prod-db-backups/hourly/` prefix. It downloads and validates the
+object while Vite remains available, pauses only Vite for the database restore,
+then invokes the existing Hen CLI to restore, anonymize, and migrate the local
+database. It selects a valid company for the dev-login readiness check,
+deletes the raw SQL dump, and restarts the same stable preview URL. Neither AWS
+credentials nor the controller's token-signing secret cross into Modal.
+
+Inspect the current mode without changing data:
+
+```bash
+scripts/compadre-dev-data.sh status
+scripts/compadre-dev-up.sh status
+```
+
+Do not use Hen's direct production connection, `HEN_SKIP_ANONYMIZE=true`, a
+different bucket, or a Tolt-owned resource. Production-derived mode preserves
+Hen's current anonymization contract; avoid printing or screenshotting broad
+customer datasets even after anonymization.
+
+### Deferred cache optimization
+
+- [ ] If production-derived restores become frequent, build and validate a
+      periodically refreshed Hen-anonymized artifact so thread sandboxes skip the
+      anonymization work. Keep the current lazy path as the correctness fallback.
+      Prefer producing the cache inside Comprehensive's AWS account, near the S3
+      source, rather than downloading the raw multi-gigabyte backup to Modal every
+      hour. Record source object version, anonymizer revision, schema revision,
+      creation time, checksum, and validation results with the artifact. Start with
+      a several-hour freshness target or demand-aware refresh, measure real usage,
+      and move to hourly only if the product benefit justifies the recurring data
+      transfer and compute cost. Never persist or publish the raw source dump as a
+      Compadre cache.
+
+Refresh a dependency artifact whenever the Comp lockfile, Prisma schema, Node
+ABI, CPU architecture, or libc compatibility changes. Refresh the seed through
+the isolated seed builder, verify that it contains no credentials or customer
+data, and restore it into a disposable sandbox before publishing it as latest.
+
+## Required validation
+
+For an implementation or artifact change, validate this vertical slice against
+the deployed Comprehensive canary:
+
+1. Submit an authenticated asynchronous `/prompt` request that explicitly asks
+   the agent to use the dev-environment skill.
+2. Follow `/workflow-runs/:runId` until terminal and inspect the centralized T3
+   snapshot; do not depend on Modal for transcript rendering.
+3. Require a reported `DEV_ENV_READY`, review URL, and measured startup time
+   under ten minutes.
+4. From inside the sandbox, use system Chromium at `/usr/bin/chromium` with
+   agent-browser against localhost and verify a page-specific signal after the
+   synthetic dev login.
+5. From outside the sandbox, verify the public URL, its login redirect, the
+   synthetic dev-login 302, its session cookie, and the authenticated page.
+6. Confirm the review URL remains reachable after the agent turn completes.
+7. Run Compadre tests, typecheck, build, and `git diff --check` before a canary
+   deploy.
+
+The first deployed end-to-end validation on 2026-08-30 completed successfully:
+
+- full API-to-terminal run: 480.748 seconds, including an uncached Modal image
+  resolution and MCP startup;
+- Comp environment startup: 160.761 seconds;
+- synthetic login: HTTP 302 with a session cookie;
+- authenticated `/company/employees`: HTTP 200 with the expected page title;
+- public review URL: still reachable after the run completed.
+
+After adding the complete synthetic exchange-rate set, the replacement seed was
+restored into a disposable PostgreSQL 16 sandbox before publication. The gate
+found 1,346 users, 158 exchange rates including USD to MXN, and zero partner or
+integration credentials. S3 bucket versioning retained the prior artifact; the
+validated replacement is version `3EWJAqE1h46DgzpkdQUgQCq4m0RDvUHG` with SHA-256
+`3017c168ed1687e25a192c7dd6f6acfb6d918c1adfe41dea8eb25ae4211a4871`.
+
+A fresh post-publication deployed run also completed successfully:
+
+- run `dev-env-live-e042da88-03f1-466e-a88f-debd59bff39b` completed in
+  361.468 seconds API-to-terminal;
+- Comp environment startup: 154.131 seconds;
+- system Chromium loaded the authenticated Employees grid and reported
+  `Rows: 1346`, with no application error boundary;
+- independent host-side checks observed root HTTP 307, dev-login HTTP 302 with
+  a session cookie, and authenticated `/company/employees` HTTP 200 with title
+  `Comprehensive - Employees`;
+- the public review URL remained reachable after the provider turn completed.
+
+The authenticated-gateway validation on 2026-08-30 used a newly provisioned
+thread rather than a historical sandbox:
+
+- canonical thread `ac93ef79-5f64-4072-9b38-d70cf1f23381` completed in 380
+  seconds API-to-terminal;
+- the agent started the lazy Comp environment, used system Chromium, logged in
+  as the synthetic admin, and observed 1,346 employee rows;
+- the stable preview host redirected unauthenticated GET requests to the
+  restricted Slack login and rejected unauthenticated POST requests with HTTP
+  401;
+- the controller resolved the exact existing sandbox, while an expired earlier
+  sandbox returned unavailable and did not cause replacement provisioning;
+- the Render wildcard domain and TLS certificate were verified, and the main
+  UI, session endpoint, and controller health endpoint all returned HTTP 200.
+
+The first production-derived data validation on 2026-08-30 also used a newly
+provisioned sandbox, canonical thread
+`33c9dd25-617d-48b4-bfdc-5191d49f781c`:
+
+- the sandbox received the thread-scoped manifest URL and token but no AWS
+  credentials or controller signing secret;
+- the controller selected
+  `hourly/db-backup-2026-08-30_12-00-51-no-audit-logs.sql.gz`, which was the
+  newest hourly Comprehensive backup at invocation time;
+- Hen restored, anonymized, and migrated the local database; 458,397 email
+  rows had zero values outside Hen's wrapping convention, apart from the one
+  documented synthetic Klaar admin exception, and customer Slack installations
+  were empty;
+- no raw SQL, gzip partial, or SQL partial file remained after completion;
+- Vite, PostgreSQL, and Redis returned healthy, dev-login returned HTTP 302,
+  and system Chromium loaded `Comprehensive - Employees`;
+- the terminal proof was durable in the central snapshot, an invalid manifest
+  token returned HTTP 401, and the stable preview still required Slack auth;
+- total thread time was 15m58s. Baseline synthetic startup completed first;
+  the optional current-data upgrade accounted for roughly 13 minutes. This is
+  correct and usable for explicit opt-in, but a pre-anonymized cached artifact
+  is the likely next optimization if the workflow becomes frequent.
+
+## Security boundary
+
+The raw random Modal URL remains a bearer-style routing capability and must stay
+inside the controller-to-UI trust boundary. Users receive only the stable
+authenticated thread URL. The gateway strips its own T3 session cookie before
+forwarding, keeps Comp's synthetic-user session separate, and accepts only UUID
+thread subdomains under the configured preview suffix.

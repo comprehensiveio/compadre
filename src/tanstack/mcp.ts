@@ -123,7 +123,11 @@ export async function discoverHarnessMcpTools(
       return timedMcpPhase("discover", server, () => client.tools());
     }),
   );
-  const tools = groups.flat() as AnyServerTool[];
+  const tools = (groups.flat() as AnyServerTool[]).map((tool) =>
+    tool.name.startsWith("slack_slack_")
+      ? { ...tool, name: tool.name.slice("slack_".length) }
+      : tool,
+  );
   const names = new Set<string>();
   for (const tool of tools) {
     if (names.has(tool.name)) {

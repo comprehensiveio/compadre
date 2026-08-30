@@ -15,13 +15,6 @@ export interface DownloadedSlackFile {
   mimetype: string;
 }
 
-const SUPPORTED_IMAGE_MIME_TYPES = new Set([
-  "image/gif",
-  "image/jpeg",
-  "image/png",
-  "image/webp",
-]);
-
 export interface SlackClientOptions {
   botToken: string;
   teamId: string;
@@ -130,6 +123,10 @@ export class SlackClient {
     });
   }
 
+  async getUserInfo(userId: string): Promise<SlackResponse> {
+    return this.get("users.info", { user: userId });
+  }
+
   async getUserProfile(userId: string): Promise<SlackResponse> {
     return this.get("users.profile.get", {
       user: userId,
@@ -160,14 +157,12 @@ export class SlackClient {
           ? file.url_private
           : undefined;
 
-    if (!SUPPORTED_IMAGE_MIME_TYPES.has(mimetype)) {
-      throw new Error(
-        `Slack file ${fileId} is not a supported image (${mimetype || "unknown type"})`,
-      );
+    if (!/^[\w.+-]+\/[\w.+-]+$/u.test(mimetype)) {
+      throw new Error(`Slack file ${fileId} has an invalid content type`);
     }
     if (size !== undefined && size > maxBytes) {
       throw new Error(
-        `Slack file ${fileId} exceeds the ${maxBytes}-byte image limit`,
+        `Slack file ${fileId} exceeds the ${maxBytes}-byte file limit`,
       );
     }
     if (!rawUrl) throw new Error(`Slack file ${fileId} has no download URL`);
@@ -188,12 +183,12 @@ export class SlackClient {
     const contentLength = Number(response.headers.get("content-length"));
     if (Number.isFinite(contentLength) && contentLength > maxBytes) {
       throw new Error(
-        `Slack file ${fileId} exceeds the ${maxBytes}-byte image limit`,
+        `Slack file ${fileId} exceeds the ${maxBytes}-byte file limit`,
       );
     }
     const data = new Uint8Array(await response.arrayBuffer());
     if (data.byteLength > maxBytes) {
-      throw new Error(`Slack file ${fileId} exceeds the ${maxBytes}-byte image limit`);
+      throw new Error(`Slack file ${fileId} exceeds the ${maxBytes}-byte file limit`);
     }
     return { data, name, mimetype };
   }
@@ -211,9 +206,31 @@ export class SlackClient {
   }): Promise<SlackResponse> {
     const file = await fs.readFile(filePath);
     const filename = path.basename(filePath);
+    return this.uploadBytes({
+      channel,
+      data: file,
+      filename,
+      threadTs,
+      title,
+    });
+  }
+
+  async uploadBytes({
+    channel,
+    data,
+    filename,
+    threadTs,
+    title,
+  }: {
+    channel: string;
+    data: Uint8Array;
+    filename: string;
+    threadTs?: string;
+    title?: string;
+  }): Promise<SlackResponse> {
     const upload = await this.postForm("files.getUploadURLExternal", {
       filename,
-      length: String(file.byteLength),
+      length: String(data.byteLength),
     });
     const uploadUrl = upload.upload_url;
     const fileId = upload.file_id;
@@ -224,7 +241,7 @@ export class SlackClient {
     const uploadResponse = await this.fetchImpl(uploadUrl, {
       method: "POST",
       headers: { "Content-Type": "application/octet-stream" },
-      body: file,
+      body: Buffer.from(data),
     });
     if (!uploadResponse.ok) {
       throw new Error(

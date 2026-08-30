@@ -1,195 +1,281 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { EventType } from "@tanstack/ai";
 import { Hono } from "hono";
 import { createAgentRunDurability } from "../durability/runtime.js";
+import type {
+  T3ModelSelection,
+  T3OrchestrationSnapshot,
+  T3ThreadSnapshot,
+  T3TurnDispatch,
+} from "../t3/client.js";
+import type { CentralT3ConversationClient } from "../t3/central-conversation.js";
+import { NativeT3RunCoordinator } from "../t3/run-coordinator.js";
 import { createWorkflowRunRoutes } from "./workflow-runs.js";
 
-test("starts a local durable run and serves resumable AG-UI events", async (t) => {
-  const previousApiKey = process.env.COMPADRE_API_KEY;
-  process.env.COMPADRE_API_KEY = "test-key";
-  t.after(() => {
-    if (previousApiKey === undefined) delete process.env.COMPADRE_API_KEY;
-    else process.env.COMPADRE_API_KEY = previousApiKey;
-  });
+const modelSelection: T3ModelSelection = {
+  instanceId: "codex",
+  model: "gpt-5.6-sol",
+};
 
-  const durability = await createAgentRunDurability({
-    COMPADRE_DURABILITY_BACKEND: "memory",
-  });
-  assert.ok(durability);
-  const app = new Hono();
-  app.route(
-    "/",
-    createWorkflowRunRoutes({
-      enabled: () => true,
-      getDurability: async () => durability,
-      createId: () => "route-run",
-      getLauncher: () => ({
-        async start(input) {
-          assert.equal(input.runId, "route-run");
-          await durability.runs.createOrResume({
-            runId: "route-run",
-            threadId: "workflow-route-run",
-            startedAt: 1,
-          });
-          await durability.stream("route-run").append([
-            {
-              type: EventType.RUN_STARTED,
-              runId: "route-run",
-              threadId: "workflow-route-run",
-              timestamp: 1,
-            },
-            {
-              type: EventType.TEXT_MESSAGE_CONTENT,
-              messageId: "message",
-              delta: "hello",
-              timestamp: 2,
-            },
-            {
-              type: EventType.RUN_FINISHED,
-              runId: "route-run",
-              threadId: "workflow-route-run",
-              timestamp: 3,
-            },
-          ]);
-          await durability.runs.update("route-run", {
-            status: "completed",
-            finishedAt: 3,
-          });
-          await durability.stream("route-run").close();
-          return { taskRunId: "local-task" };
-        },
-      }),
-    }),
-  );
-
-  const started = await app.request("/workflow-runs", {
-    method: "POST",
-    headers: {
-      Authorization: "Bearer test-key",
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({ prompt: "hello" }),
-  });
-  assert.equal(started.status, 202);
-  const body = (await started.json()) as {
-    runId: string;
-    eventsUrl: string;
+function centralClient(options: {
+  hold?: boolean;
+  onInterrupt?(): void;
+} = {}): CentralT3ConversationClient & {
+  interruptTurn(input: { threadId: string }): Promise<number>;
+} {
+  let dispatch: T3TurnDispatch | undefined;
+  const orchestration: T3OrchestrationSnapshot = {
+    snapshotSequence: 1,
+    projects: [
+      {
+        id: "project-central",
+        title: "Compadre",
+        workspaceRoot: "/workspace",
+        defaultModelSelection: modelSelection,
+      },
+    ],
+    threads: [],
+    updatedAt: "2026-08-27T12:00:00.000Z",
   };
-  assert.equal(body.runId, "route-run");
+  return {
+    baseUrl: "https://central.example",
+    async environmentDescriptor() {
+      return {
+        environmentId: "environment-central",
+        label: "Central",
+        serverVersion: "test",
+      };
+    },
+    async snapshot() {
+      return orchestration;
+    },
+    async startNewThread(request) {
+      dispatch = {
+        sequence: 2,
+        commandId: "command-1",
+        messageId: request.messageId!,
+        threadId: request.threadId!,
+        createdAt: "2026-08-27T12:00:00.000Z",
+      };
+      return dispatch;
+    },
+    async startTurn() {
+      throw new Error("unexpected continuation");
+    },
+    async waitForTurnTerminal(request) {
+      assert.ok(dispatch);
+      if (options.hold) {
+        await new Promise<void>((resolve) => {
+          request.signal?.addEventListener("abort", () => resolve(), {
+            once: true,
+          });
+        });
+        throw request.signal?.reason ?? new Error("aborted");
+      }
+      const snapshot: T3ThreadSnapshot = {
+        snapshotSequence: 3,
+        thread: {
+          id: dispatch.threadId,
+          projectId: "project-central",
+          title: "Workflow request",
+          modelSelection,
+          latestTurn: {
+            turnId: "turn-1",
+            state: "completed",
+            requestedAt: dispatch.createdAt,
+            startedAt: dispatch.createdAt,
+            completedAt: "2026-08-27T12:00:01.000Z",
+            assistantMessageId: "assistant-1",
+          },
+          messages: [
+            {
+              id: dispatch.messageId,
+              role: "user",
+              text: "hello",
+              turnId: "turn-1",
+              streaming: false,
+              createdAt: dispatch.createdAt,
+              updatedAt: dispatch.createdAt,
+            },
+            {
+              id: "assistant-1",
+              role: "assistant",
+              text: "central answer",
+              turnId: "turn-1",
+              streaming: false,
+              createdAt: dispatch.createdAt,
+              updatedAt: "2026-08-27T12:00:01.000Z",
+            },
+          ],
+          session: { status: "ready", activeTurnId: null, lastError: null },
+          activities: [],
+        },
+      };
+      await request.onSnapshot?.(snapshot);
+      return snapshot;
+    },
+    async interruptTurn() {
+      options.onInterrupt?.();
+      return 1;
+    },
+  };
+}
 
-  const stream = await app.request(body.eventsUrl, {
-    headers: { Authorization: "Bearer test-key" },
+async function withApiKey<T>(run: () => Promise<T>): Promise<T> {
+  const previous = process.env.COMPADRE_API_KEY;
+  process.env.COMPADRE_API_KEY = "test-key";
+  try {
+    return await run();
+  } finally {
+    if (previous === undefined) delete process.env.COMPADRE_API_KEY;
+    else process.env.COMPADRE_API_KEY = previous;
+  }
+}
+
+test("starts a central T3 run and serves resumable compatibility events", async (t) => {
+  await withApiKey(async () => {
+    const durability = await createAgentRunDurability({
+      COMPADRE_DURABILITY_BACKEND: "memory",
+    });
+    assert.ok(durability);
+    t.after(() => durability.close());
+    const coordinator = new NativeT3RunCoordinator(durability);
+    const app = new Hono();
+    app.route(
+      "/",
+      createWorkflowRunRoutes({
+        enabled: () => true,
+        getClient: () => centralClient(),
+        getRunCoordinator: async () => coordinator,
+        createId: () => "route-run",
+      }),
+    );
+
+    const started = await app.request("/workflow-runs", {
+      method: "POST",
+      headers: {
+        Authorization: "Bearer test-key",
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ prompt: "hello" }),
+    });
+    assert.equal(started.status, 202);
+    const body = (await started.json()) as Record<string, unknown>;
+    assert.deepEqual(body, {
+      runId: "route-run",
+      threadId: "workflow-route-run",
+      taskRunId: "central-t3:route-run",
+      started: true,
+      statusUrl: "/workflow-runs/route-run",
+      eventsUrl: "/workflow-runs/route-run/events?offset=-1",
+    });
+
+    const stream = await app.request(String(body.eventsUrl), {
+      headers: { Authorization: "Bearer test-key" },
+    });
+    assert.equal(stream.status, 200);
+    assert.equal(stream.headers.get("content-type"), "text/event-stream");
+    const text = await stream.text();
+    assert.match(text, /"type":"RUN_STARTED"/);
+    assert.match(text, /"type":"TEXT_MESSAGE_CONTENT"/);
+    assert.match(text, /"delta":"central answer"/);
+    assert.match(text, /"type":"RUN_FINISHED"/);
+
+    const status = await app.request("/workflow-runs/route-run", {
+      headers: { Authorization: "Bearer test-key" },
+    });
+    assert.equal(status.status, 200);
+    assert.equal((await status.json()).status, "completed");
   });
-  assert.equal(stream.status, 200);
-  assert.equal(stream.headers.get("content-type"), "text/event-stream");
-  assert.equal(stream.headers.get("x-accel-buffering"), "no");
-  const text = await stream.text();
-  assert.match(text, /id: memory:v1:route-run:1/);
-  assert.match(text, /"type":"TEXT_MESSAGE_CONTENT"/);
-  assert.match(text, /"delta":"hello"/);
-
-  const firstOffset = "memory:v1:route-run:1";
-  const resumed = await app.request(
-    `/workflow-runs/route-run/events?offset=${encodeURIComponent(firstOffset)}`,
-    { headers: { Authorization: "Bearer test-key" } },
-  );
-  assert.equal(resumed.status, 200);
-  const resumedText = await resumed.text();
-  assert.doesNotMatch(resumedText, /"type":"RUN_STARTED"/);
-  assert.match(resumedText, /"delta":"hello"/);
 });
 
-test("terminalizes fire-and-tail runs when the Workflow task fails", async (t) => {
-  const previousApiKey = process.env.COMPADRE_API_KEY;
-  process.env.COMPADRE_API_KEY = "test-key";
-  t.after(() => {
-    if (previousApiKey === undefined) delete process.env.COMPADRE_API_KEY;
-    else process.env.COMPADRE_API_KEY = previousApiKey;
-  });
-
-  const durability = await createAgentRunDurability({
-    COMPADRE_DURABILITY_BACKEND: "memory",
-  });
-  assert.ok(durability);
-  const app = new Hono();
-  app.route(
-    "/",
-    createWorkflowRunRoutes({
-      enabled: () => true,
-      getDurability: async () => durability,
-      createId: () => "failed-route-run",
-      getLauncher: () => ({
-        async start() {
-          return { taskRunId: "failed-task" };
-        },
-        async wait() {
-          throw new Error("Render task was killed");
-        },
+test("rejects legacy workflow attachments instead of silently dropping them", async () => {
+  await withApiKey(async () => {
+    const app = new Hono();
+    app.route(
+      "/",
+      createWorkflowRunRoutes({
+        enabled: () => true,
+        getClient: () => centralClient(),
+        getRunCoordinator: async () => null,
+        createId: () => "unused",
       }),
-    }),
-  );
-
-  const started = await app.request("/workflow-runs", {
-    method: "POST",
-    headers: {
-      Authorization: "Bearer test-key",
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({ prompt: "hello" }),
+    );
+    const response = await app.request("/workflow-runs", {
+      method: "POST",
+      headers: {
+        Authorization: "Bearer test-key",
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        prompt: "inspect this",
+        inputFiles: [
+          {
+            name: "input.png",
+            mimetype: "image/png",
+            sizeBytes: 4,
+            dataBase64: "iVBORw==",
+          },
+        ],
+      }),
+    });
+    assert.equal(response.status, 409);
+    assert.match(await response.text(), /attachments are not supported/);
   });
-  assert.equal(started.status, 202);
-  await new Promise<void>((resolve) => setImmediate(resolve));
-
-  assert.equal(
-    (await durability.runs.get("failed-route-run"))?.status,
-    "failed",
-  );
-  const snapshot = await durability.stream("failed-route-run").snapshot();
-  assert.equal(snapshot.at(-1)?.chunk.type, EventType.RUN_ERROR);
 });
 
-test("preserves route launcher failure when durability finalization also fails", async (t) => {
-  const previousApiKey = process.env.COMPADRE_API_KEY;
-  process.env.COMPADRE_API_KEY = "test-key";
-  t.after(() => {
-    if (previousApiKey === undefined) delete process.env.COMPADRE_API_KEY;
-    else process.env.COMPADRE_API_KEY = previousApiKey;
-  });
-
-  const durability = await createAgentRunDurability({
-    COMPADRE_DURABILITY_BACKEND: "memory",
-  });
-  assert.ok(durability);
-  durability.runs.get = async () => {
-    throw new Error("finalization failed");
-  };
-  t.mock.method(console, "error", () => undefined);
-  const app = new Hono();
-  app.onError((error, c) => c.text(error.message, 500));
-  app.route(
-    "/",
-    createWorkflowRunRoutes({
-      enabled: () => true,
-      getDurability: async () => durability,
-      createId: () => "route-startup-failure",
-      getLauncher: () => ({
-        async start() {
-          throw new Error("launcher startup failed");
-        },
+test("preserves the legacy cancelling response while interrupting central T3", async (t) => {
+  await withApiKey(async () => {
+    const durability = await createAgentRunDurability({
+      COMPADRE_DURABILITY_BACKEND: "memory",
+    });
+    assert.ok(durability);
+    t.after(() => durability.close());
+    const coordinator = new NativeT3RunCoordinator(durability);
+    let interrupts = 0;
+    const app = new Hono();
+    app.route(
+      "/",
+      createWorkflowRunRoutes({
+        enabled: () => true,
+        getClient: () =>
+          centralClient({
+            hold: true,
+            onInterrupt() {
+              interrupts += 1;
+            },
+          }),
+        getRunCoordinator: async () => coordinator,
+        createId: () => "cancel-route-run",
       }),
-    }),
-  );
+    );
+    const started = await app.request("/workflow-runs", {
+      method: "POST",
+      headers: {
+        Authorization: "Bearer test-key",
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ prompt: "wait" }),
+    });
+    assert.equal(started.status, 202);
+    await new Promise<void>((resolve) => setImmediate(resolve));
 
-  const response = await app.request("/workflow-runs", {
-    method: "POST",
-    headers: {
-      Authorization: "Bearer test-key",
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({ prompt: "hello" }),
+    const cancelled = await app.request(
+      "/workflow-runs/cancel-route-run/cancel",
+      {
+        method: "POST",
+        headers: { Authorization: "Bearer test-key" },
+      },
+    );
+    assert.equal(cancelled.status, 202);
+    assert.deepEqual(await cancelled.json(), {
+      ok: true,
+      found: true,
+      requested: true,
+      local: true,
+      cancelled: true,
+      status: "cancelling",
+    });
+    assert.equal(interrupts, 1);
   });
-
-  assert.equal(response.status, 500);
-  assert.equal(await response.text(), "launcher startup failed");
 });

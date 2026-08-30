@@ -139,7 +139,7 @@ export function getConfiguredAgentRunDurability(): Promise<AgentRunDurability | 
  * unknown-run fail-fast. The producer path knows the run is live, so it may
  * wait out startup; external joiners keep the backend default.
  */
-const PRODUCER_FIRST_CHUNK_DEADLINE_MS = 60_000;
+export const ACTIVE_RUN_FIRST_CHUNK_DEADLINE_MS = 60_000;
 
 /**
  * A provider may report a final outcome and then exit non-zero to describe that
@@ -190,7 +190,7 @@ export function captureDurableRun(
     runs: options.durability.runs,
     durability: (runId) =>
       options.durability.stream(runId, {
-        firstChunkDeadlineMs: PRODUCER_FIRST_CHUNK_DEADLINE_MS,
+        firstChunkDeadlineMs: ACTIVE_RUN_FIRST_CHUNK_DEADLINE_MS,
       }),
   });
   const handle = controller.start({

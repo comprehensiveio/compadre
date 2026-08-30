@@ -131,6 +131,172 @@ export const aiMetadata = pgTable(
   ],
 );
 
+export type CompadreUserStatus = "active" | "disabled";
+
+/** Canonical people known to Compadre, independent of any login provider. */
+export const users = pgTable(
+  "compadre_users",
+  {
+    id: uuid("id").primaryKey(),
+    displayName: text("display_name").notNull(),
+    realName: text("real_name"),
+    avatarUrl: text("avatar_url"),
+    email: text("email"),
+    status: text("status")
+      .$type<CompadreUserStatus>()
+      .notNull()
+      .default("active"),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    lastSeenAt: timestamp("last_seen_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    check(
+      "compadre_users_status_check",
+      sql`${table.status} in ('active', 'disabled')`,
+    ),
+  ],
+);
+
+export interface SlackIdentityProfile {
+  displayName?: string;
+  realName?: string;
+  avatarUrl?: string;
+  email?: string;
+}
+
+/** External identities that resolve to one canonical Compadre user. */
+export const userIdentities = pgTable(
+  "compadre_user_identities",
+  {
+    id: uuid("id").primaryKey(),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    provider: text("provider").$type<"slack">().notNull(),
+    providerWorkspaceId: text("provider_workspace_id").notNull(),
+    providerUserId: text("provider_user_id").notNull(),
+    profile: jsonb("profile").$type<SlackIdentityProfile>().notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    unique("compadre_user_identities_provider_subject_key").on(
+      table.provider,
+      table.providerWorkspaceId,
+      table.providerUserId,
+    ),
+    index("compadre_user_identities_user_idx").on(table.userId),
+  ],
+);
+
+/** Short-lived server-side Slack OIDC state; no browser token is persisted. */
+export const authLoginFlows = pgTable(
+  "compadre_auth_login_flows",
+  {
+    stateHash: text("state_hash").primaryKey(),
+    nonce: text("nonce").notNull(),
+    returnTo: text("return_to").notNull(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    consumedAt: timestamp("consumed_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [index("compadre_auth_login_flows_expires_idx").on(table.expiresAt)],
+);
+
+/** One-time handoff from the controller to the hosted T3 session issuer. */
+export const authLoginGrants = pgTable(
+  "compadre_auth_login_grants",
+  {
+    codeHash: text("code_hash").primaryKey(),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    returnTo: text("return_to").notNull(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    consumedAt: timestamp("consumed_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [index("compadre_auth_login_grants_expires_idx").on(table.expiresAt)],
+);
+
+export type SlackTurnDeliveryStatus =
+  | "pending"
+  | "delivering"
+  | "delivered"
+  | "dead";
+
+/**
+ * Durable outbox for the final Slack response of a native T3 turn. The T3
+ * orchestration log remains the source of response text; this row records
+ * enough of the dispatch to recover delivery after a controller rollout.
+ */
+export const slackTurnDeliveries = pgTable(
+  "compadre_slack_turn_deliveries",
+  {
+    id: uuid("id").primaryKey(),
+    messageId: text("message_id").notNull(),
+    canonicalThreadId: text("canonical_thread_id").notNull(),
+    t3ThreadId: text("t3_thread_id").notNull(),
+    environmentId: text("environment_id").notNull(),
+    dispatchSequence: bigint("dispatch_sequence", { mode: "number" }).notNull(),
+    dispatchCreatedAt: timestamp("dispatch_created_at", {
+      withTimezone: true,
+    }).notNull(),
+    slackTeamId: text("slack_team_id").notNull(),
+    slackChannelId: text("slack_channel_id").notNull(),
+    slackThreadTs: text("slack_thread_ts").notNull(),
+    triggerMessageTs: text("trigger_message_ts").notNull(),
+    recipientUserId: text("recipient_user_id"),
+    detailsUrl: text("details_url").notNull(),
+    status: text("status")
+      .$type<SlackTurnDeliveryStatus>()
+      .notNull()
+      .default("pending"),
+    attempts: integer("attempts").notNull().default(0),
+    nextAttemptAt: timestamp("next_attempt_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    claimedAt: timestamp("claimed_at", { withTimezone: true }),
+    deliveredAt: timestamp("delivered_at", { withTimezone: true }),
+    lastError: text("last_error"),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    unique("compadre_slack_turn_deliveries_message_id_key").on(table.messageId),
+    check(
+      "compadre_slack_turn_deliveries_status_check",
+      sql`${table.status} in ('pending', 'delivering', 'delivered', 'dead')`,
+    ),
+    check(
+      "compadre_slack_turn_deliveries_attempts_check",
+      sql`${table.attempts} >= 0`,
+    ),
+    index("compadre_slack_turn_deliveries_ready_idx")
+      .on(table.nextAttemptAt, table.createdAt)
+      .where(sql`${table.status} in ('pending', 'delivering')`),
+  ],
+);
+
 export type PullRequestWatchStatus =
   | "waiting"
   | "delivering"

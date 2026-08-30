@@ -1,25 +1,71 @@
+import crypto from "node:crypto";
 import { Hono } from "hono";
-import { runConversation } from "../conversation.js";
+import {
+  configuredCentralT3Client,
+  type CentralT3ConversationClient,
+} from "../t3/central-conversation.js";
+import type { T3Client } from "../t3/client.js";
+import { getConfiguredNativeT3RunCoordinator } from "../t3/runtime.js";
+import type { NativeT3RunCoordinator } from "../t3/run-coordinator.js";
+import {
+  apiMessageAttribution,
+  startCentralT3DurableRun,
+} from "../services/central-t3-run.js";
 import { requireCompadreApiKey } from "./auth.js";
 
-export const webhookRoutes = new Hono();
+export interface WebhookRouteDependencies {
+  getClient():
+    | (CentralT3ConversationClient & Pick<T3Client, "interruptTurn">)
+    | null;
+  getRunCoordinator(): Promise<NativeT3RunCoordinator | null>;
+  createId(): string;
+}
 
-webhookRoutes.post("/webhook/:source", async (c) => {
-  const authError = requireCompadreApiKey(c);
-  if (authError) return authError;
+const defaultDependencies: WebhookRouteDependencies = {
+  getClient: configuredCentralT3Client,
+  getRunCoordinator: getConfiguredNativeT3RunCoordinator,
+  createId: crypto.randomUUID,
+};
 
-  const source = c.req.param("source");
+export function createWebhookRoutes(
+  dependencies: WebhookRouteDependencies = defaultDependencies,
+): Hono {
+  const routes = new Hono();
 
-  let body: Record<string, unknown>;
-  try {
-    body = await c.req.json();
-  } catch {
-    return c.json({ error: "invalid JSON body" }, 400);
-  }
+  routes.post("/webhook/:source", async (c) => {
+    const authError = requireCompadreApiKey(c);
+    if (authError) return authError;
+    const source = c.req.param("source");
 
-  console.log(`[webhook] received from ${source}`);
+    let body: Record<string, unknown>;
+    try {
+      body = await c.req.json();
+    } catch {
+      return c.json({ error: "invalid JSON body" }, 400);
+    }
 
-  const prompt = `You received a webhook event from ${source}. Analyze it and take appropriate action.
+    const client = dependencies.getClient();
+    if (!client) {
+      return c.json({ error: "central T3 API is not configured" }, 503);
+    }
+    const coordinator = await dependencies.getRunCoordinator();
+    if (!coordinator) {
+      return c.json(
+        { error: "native T3 run durability is not configured" },
+        503,
+      );
+    }
+
+    const idempotencyKey = c.req.header("Idempotency-Key")?.trim();
+    const runId = idempotencyKey
+      ? `webhook-${crypto
+          .createHash("sha256")
+          .update(`${source}:${idempotencyKey}`)
+          .digest("hex")
+          .slice(0, 32)}`
+      : dependencies.createId();
+    const threadId = `webhook:${source}:${runId}`;
+    const prompt = `You received a webhook event from ${source}. Analyze it and take appropriate action.
 
 Source: ${source}
 Payload:
@@ -30,13 +76,36 @@ Based on the source and payload, determine what action to take. For example:
 - GitHub PR: review the changes, post feedback
 - Linear update: check if any follow-up is needed`;
 
-  runConversation({
-    prompt,
-    capacityPriority: "background",
-    retryOnBackgroundPreemption: true,
-  }).catch((err) =>
-    console.error(`[webhook] ${source} task failed:`, err)
-  );
+    const started = await startCentralT3DurableRun({
+      coordinator,
+      client,
+      runId,
+      threadId,
+      title: `${source} webhook`,
+      prompt,
+      displayText: `Webhook received from ${source}`,
+      attribution: apiMessageAttribution({
+        userId: `webhook:${source}`,
+        displayName: `${source} webhook`,
+      }),
+      profile: "codex",
+    });
+    console.log(`[webhook] accepted source=${source} run=${runId}`);
+    return c.json(
+      {
+        ok: true,
+        source,
+        runId,
+        threadId,
+        message: started.started ? "accepted" : "already accepted",
+        statusUrl: `/workflow-runs/${encodeURIComponent(runId)}`,
+        eventsUrl: `/workflow-runs/${encodeURIComponent(runId)}/events?offset=-1`,
+      },
+      202,
+    );
+  });
 
-  return c.json({ ok: true, source });
-});
+  return routes;
+}
+
+export const webhookRoutes = createWebhookRoutes();

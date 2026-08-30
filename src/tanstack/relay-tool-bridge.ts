@@ -9,8 +9,18 @@ import {
   type ToolBridgeCore,
   type ToolBridgeProvisioner,
 } from "@tanstack/ai-sandbox";
+import { buildTanStackMcpClients, discoverHarnessMcpTools } from "./mcp.js";
 
 export const MAX_BRIDGE_REQUEST_BYTES = 1024 * 1024;
+
+export function configuredEnvironmentBridgeToken(
+  environment: NodeJS.ProcessEnv,
+): string | undefined {
+  return (
+    environment.COMPADRE_T3_MCP_BEARER_TOKEN?.trim() ||
+    environment.COMPADRE_API_KEY?.trim()
+  );
+}
 
 interface ActiveRelayToolBridge {
   core: ToolBridgeCore;
@@ -18,6 +28,34 @@ interface ActiveRelayToolBridge {
 }
 
 const activeBridges = new Map<string, ActiveRelayToolBridge>();
+let environmentBridgeCore: Promise<ToolBridgeCore> | undefined;
+
+async function buildEnvironmentBridgeCore(): Promise<ToolBridgeCore> {
+  const clients = await buildTanStackMcpClients();
+  try {
+    const tools = await discoverHarnessMcpTools(clients);
+    console.log("[tool-bridge] environment bridge ready", {
+      toolCount: tools.length,
+    });
+    // The clients deliberately remain open for the gateway process lifetime.
+    // HTTP MCP requests are stateless, while stdio MCP tools need their child
+    // processes to remain available between native T3 turns.
+    return createToolBridgeCore(tools);
+  } catch (error) {
+    await Promise.allSettled(clients.map((client) => client.close()));
+    throw error;
+  }
+}
+
+export function getEnvironmentToolBridgeCore(): Promise<ToolBridgeCore> {
+  if (environmentBridgeCore) return environmentBridgeCore;
+  const pending = buildEnvironmentBridgeCore();
+  environmentBridgeCore = pending;
+  void pending.catch(() => {
+    if (environmentBridgeCore === pending) environmentBridgeCore = undefined;
+  });
+  return pending;
+}
 
 function configuredPublicUrl(environment: NodeJS.ProcessEnv): URL {
   const raw = environment.COMPADRE_PUBLIC_URL?.trim();
@@ -109,5 +147,39 @@ export async function dispatchRelayToolBridgeRequest(input: {
   return {
     status: 200,
     body: await handleBridgeJsonRpc(bridge.core, input.body),
+  };
+}
+
+export async function dispatchEnvironmentToolBridgeRequest(input: {
+  authorization?: string;
+  contentLength?: string;
+  body: unknown;
+  environment?: NodeJS.ProcessEnv;
+  core?: ToolBridgeCore;
+}): Promise<
+  | { status: 200; body: unknown | null }
+  | { status: 400 | 401 | 404 | 413; body: { error: string } }
+> {
+  const token = configuredEnvironmentBridgeToken(
+    input.environment ?? process.env,
+  );
+  if (!token) return { status: 404, body: { error: "not found" } };
+  if (!timingSafeBearerEqual(input.authorization, token)) {
+    console.warn("[tool-bridge] environment request rejected", {
+      status: 401,
+    });
+    return { status: 401, body: { error: "unauthorized" } };
+  }
+  const contentLength = Number(input.contentLength);
+  if (Number.isFinite(contentLength) && contentLength > MAX_BRIDGE_REQUEST_BYTES) {
+    return { status: 413, body: { error: "request too large" } };
+  }
+  if (input.body === undefined) {
+    return { status: 400, body: { error: "invalid JSON body" } };
+  }
+  const core = input.core ?? (await getEnvironmentToolBridgeCore());
+  return {
+    status: 200,
+    body: await handleBridgeJsonRpc(core, input.body),
   };
 }

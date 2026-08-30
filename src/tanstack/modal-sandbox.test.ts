@@ -8,6 +8,7 @@ import {
   modalImageCommands,
   modalResourceSettings,
   modalSandboxProvider,
+  modalSecretNames,
   parseModalProcessTable,
 } from "./modal-sandbox.js";
 
@@ -145,7 +146,89 @@ test("bakes pinned harness CLIs into the default Modal image", () => {
   const commands = modalImageCommands({});
   assert.match(commands.join("\n"), /claude-code@2\.1\.222/);
   assert.match(commands.join("\n"), /codex@0\.146\.0/);
+  assert.match(commands.join("\n"), /t3@0\.0\.33/);
   assert.match(commands.join("\n"), /--prefix '\/opt\/compadre-runtime'/);
+  assert.match(
+    commands.join("\n"),
+    /\/opt\/compadre-runtime\/node_modules\/\.bin\/claude' \/usr\/local\/bin\/claude/,
+  );
+  assert.match(
+    commands.join("\n"),
+    /\/opt\/compadre-runtime\/node_modules\/\.bin\/codex' \/usr\/local\/bin\/codex/,
+  );
+  assert.match(
+    commands.join("\n"),
+    /\/opt\/compadre-runtime\/node_modules\/\.bin\/t3' \/usr\/local\/bin\/t3/,
+  );
+});
+
+test("exposes only explicitly configured Modal tunnels", async () => {
+  const handle = new ModalHandle(
+    sandboxStub({
+      tunnels: async () => ({ 3773: { url: "https://t3.modal.run" } }),
+    }),
+    "/workspace",
+    123_000,
+    [3773],
+  );
+
+  assert.equal(handle.capabilities.ports, true);
+  assert.deepEqual(await handle.ports.connect(3773), {
+    url: "https://t3.modal.run",
+  });
+  await assert.rejects(handle.ports.connect(3000), /port 3000/);
+});
+
+test("advertises ports only for tunnel-enabled Modal providers", () => {
+  const environment = {
+    MODAL_TOKEN_ID: "test-id",
+    MODAL_TOKEN_SECRET: "test-secret",
+  };
+  assert.equal(modalSandboxProvider({ environment }).capabilities().ports, false);
+  assert.equal(
+    modalSandboxProvider({ environment, encryptedPorts: [3773] }).capabilities()
+      .ports,
+    true,
+  );
+  assert.throws(
+    () => modalSandboxProvider({ environment, encryptedPorts: [70_000] }),
+    /1 to 65535/,
+  );
+});
+
+test("normalizes named Modal secrets without exposing their values", () => {
+  assert.deepEqual(
+    modalSecretNames({
+      COMPADRE_MODAL_SECRET_NAMES:
+        "compadre-t3-auth, shared-tools,compadre-t3-auth, ,",
+    }),
+    ["compadre-t3-auth", "shared-tools"],
+  );
+  assert.deepEqual(modalSecretNames({}), []);
+});
+
+test("bakes the app repository's required command-line tools", () => {
+  const commands = modalImageCommands({}).join("\n");
+  for (const command of ["gh", "jq", "postgresql-client", "ripgrep"]) {
+    assert.match(commands, new RegExp(`\\b${command}\\b`));
+  }
+  assert.match(commands, /corepack prepare pnpm@10\.34\.2 --activate/);
+});
+
+test("adds stopped development services only when thread dev environments are enabled", () => {
+  const ordinary = modalImageCommands({}).join("\n");
+  const development = modalImageCommands({
+    COMPADRE_DEV_ENVIRONMENT_ENABLED: "true",
+  }).join("\n");
+
+  assert.doesNotMatch(ordinary, /agent-browser@/);
+  assert.doesNotMatch(ordinary, /postgresql-16/);
+  assert.match(development, /agent-browser@0\.35\.1/);
+  assert.match(development, /postgresql-16/);
+  assert.match(development, /redis-server/);
+  assert.doesNotMatch(development, /sudo/);
+  assert.match(development, /AGENT_BROWSER_EXECUTABLE_PATH=\/usr\/bin\/chromium/);
+  assert.match(development, /port = 5433/);
 });
 
 test("allows a custom Modal image to supply its own harness CLIs", () => {

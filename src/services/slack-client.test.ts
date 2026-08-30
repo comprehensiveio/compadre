@@ -95,6 +95,23 @@ test("preserves the existing Slack read API contract", async () => {
   assert.equal(url.searchParams.get("limit"), "25");
 });
 
+test("reads a Slack user through the bot-compatible users.info API", async () => {
+  const { calls, fetchImpl } = createSlackFetch([
+    { body: { ok: true, user: { id: "U123" } } },
+  ]);
+  const client = new SlackClient({
+    botToken: "xoxb-test",
+    teamId: "T123",
+    fetchImpl,
+  });
+
+  await client.getUserInfo("U123");
+
+  const url = new URL(calls[0]!.url);
+  assert.equal(url.pathname, "/api/users.info");
+  assert.equal(url.searchParams.get("user"), "U123");
+});
+
 test("downloads a private Slack image with bot authentication", async () => {
   const calls: SlackCall[] = [];
   const image = new Uint8Array([137, 80, 78, 71]);
@@ -208,6 +225,43 @@ test("uploads a local file directly to the requested Slack thread", async (t) =>
   assert.equal(String(calls[1]!.init?.body), "service,status\napi,healthy\n");
   assert.deepEqual(jsonBody(calls[2]!), {
     files: [{ id: "F123", title: "On-call report" }],
+    channel_id: "C123",
+    thread_ts: "99.001",
+  });
+});
+
+test("uploads in-memory artifact bytes directly to a Slack thread", async () => {
+  const { calls, fetchImpl } = createSlackFetch([
+    {
+      body: {
+        ok: true,
+        upload_url: "https://uploads.slack.test/artifact",
+        file_id: "F456",
+      },
+    },
+    { body: { ok: true } },
+    { body: { ok: true, files: [{ id: "F456" }] } },
+  ]);
+  const client = new SlackClient({
+    botToken: "xoxb-test",
+    teamId: "T123",
+    fetchImpl,
+  });
+
+  await client.uploadBytes({
+    channel: "C123",
+    threadTs: "99.001",
+    data: Uint8Array.from([1, 2, 3]),
+    filename: "proof.png",
+    title: "Proof",
+  });
+
+  const uploadRequest = new URLSearchParams(String(calls[0]!.init?.body));
+  assert.equal(uploadRequest.get("filename"), "proof.png");
+  assert.equal(uploadRequest.get("length"), "3");
+  assert.deepEqual(Buffer.from(calls[1]!.init?.body as Uint8Array), Buffer.from([1, 2, 3]));
+  assert.deepEqual(jsonBody(calls[2]!), {
+    files: [{ id: "F456", title: "Proof" }],
     channel_id: "C123",
     thread_ts: "99.001",
   });

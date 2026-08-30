@@ -14,3 +14,26 @@ test("lets a concurrent local waiter observe task completion", async () => {
   const started = await launcher.start({ prompt: "hi" });
   await launcher.wait?.(started.taskRunId);
 });
+
+test("cancels an active workflow by durable run ID", async () => {
+  let observedSignal: AbortSignal | undefined;
+  const launcher = createLocalWorkflowRunLauncher(
+    async (_input, _dependencies, signal) => {
+      observedSignal = signal;
+      if (signal?.aborted) throw signal.reason;
+      await new Promise<never>((_resolve, reject) => {
+        signal?.addEventListener("abort", () => reject(signal.reason), {
+          once: true,
+        });
+      });
+      throw new Error("unreachable");
+    },
+  );
+  const started = await launcher.start({ prompt: "hi", runId: "run-1" });
+
+  assert.equal(await launcher.cancelRun?.("run-1"), true);
+  assert.ok(launcher.wait);
+  await assert.rejects(launcher.wait(started.taskRunId));
+  assert.equal(observedSignal?.aborted, true);
+  assert.equal(await launcher.cancelRun?.("run-1"), false);
+});

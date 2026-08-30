@@ -5,6 +5,7 @@ import {
   type ModelMessage,
   type StreamChunk,
 } from "@tanstack/ai";
+import type { SandboxHandle } from "@tanstack/ai-sandbox";
 import { getBaseSystemPrompt } from "../prompts/index.js";
 import { createChannelConversationPersistence } from "../persistence/conversation.js";
 import {
@@ -15,6 +16,10 @@ import {
   materializeSlackFiles,
   type SlackFileReference,
 } from "../services/slack-files.js";
+import {
+  materializeInputFiles,
+  type InputFile,
+} from "../services/input-files.js";
 import {
   createHarnessStream,
   resolveHarnessSelection,
@@ -55,6 +60,7 @@ export interface AguiRuntimeOptions {
   /** False only for generated one-off threads; true requires durability. */
   persistThread?: boolean;
   slackFiles?: SlackFileReference[];
+  inputFiles?: InputFile[];
 }
 
 export function shouldReuseThreadSandbox(
@@ -264,9 +270,20 @@ async function prepareAguiChat(
   });
   const { thread, worktreeId, worktreePath } = allocation;
   const remoteAttachmentDirectory = `${harnessWorkspacePath(worktreePath)}/.compadre-attachments-${worktreeId}`;
-  const attachments = await materializeSlackFiles(options.slackFiles ?? [], {
+  const slackAttachments = await materializeSlackFiles(options.slackFiles ?? [], {
     promptDirectory: remoteAttachmentDirectory,
   });
+  const inputAttachments = materializeInputFiles(
+    options.inputFiles ?? [],
+    remoteAttachmentDirectory,
+  );
+  const attachments = {
+    prompt: [slackAttachments.prompt, inputAttachments.prompt]
+      .filter(Boolean)
+      .join("\n\n"),
+    uploads: [...slackAttachments.uploads, ...inputAttachments.uploads],
+    cleanup: slackAttachments.cleanup,
+  };
   const inputParams = attachments.prompt
     ? {
         ...params,
@@ -339,11 +356,15 @@ async function prepareAguiChat(
   }
 
   const harnessWorktreePath = harnessWorkspacePath(worktreePath);
+  let activeSandbox: SandboxHandle | undefined;
   const sandbox = createHarnessSandbox({
     worktreeId,
     localWorktreePath: worktreePath,
     uploads: attachments.uploads,
     reuseThread: shouldReuseThreadSandbox(threadPersistence),
+    onReady: (handle) => {
+      activeSandbox = handle;
+    },
   });
 
   let stream: AsyncIterable<StreamChunk>;
@@ -364,6 +385,12 @@ async function prepareAguiChat(
         persistence,
         locks: threadPersistence?.locks,
         sandboxInstances: threadPersistence?.sandboxInstances,
+        readSandboxFile: async (filePath) => {
+          if (!activeSandbox) {
+            throw new Error("The Modal sandbox is not ready for file transfer");
+          }
+          return activeSandbox.fs.readBytes(filePath);
+        },
       }),
     );
   } catch (error) {

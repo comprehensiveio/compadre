@@ -13,8 +13,12 @@ MCP access to our infrastructure.
 | **Linear**           | HTTP                                            | Issue tracking, project management                                                             |
 | **GitHub**           | HTTP (Copilot MCP)                              | Repos, PRs, issues                                                                             |
 | **Render**           | HTTP (`mcp.render.com`)                         | Service management, deploys, logs                                                              |
+| **Jam**              | HTTP                                            | Jam recordings, diagnostics, and debugging context                                             |
 | **Postgres**         | stdio (`@modelcontextprotocol/server-postgres`) | Read-only database access                                                                      |
+| **S3**               | stdio (built in)                                | Read and inspect configured object storage                                                     |
 | **Google Workspace** | stdio (`workspace-mcp`)                         | Google Docs, Drive, Sheets, Slides, Forms, Tasks, and Calendar access as the Compadre bot user |
+| **Vitally**          | stdio (built in)                                | Read customer-success accounts, organizations, and related context                             |
+| **Comp app**         | stdio (built in)                                | Read Comprehensive application data through its authenticated API                              |
 
 Each harness gets its native coding tools plus the shared MCP tools above, with
 the comp repo cloned into a thread-scoped worktree.
@@ -27,8 +31,13 @@ POST /prompt                 # Ad-hoc prompt (Bearer COMPADRE_API_KEY)
 POST /slack/events           # Primary signed Slack Events ingress
 POST /ag-ui                  # Optional authenticated AG-UI stream
 GET  /ag-ui?threadId=...     # Optional authenticated thread hydration
+POST /hosted/t3/chat          # Native T3 remote-provider stream
+GET  /hosted/t3/runs/:id/events # Resume a native provider stream by SSE cursor
+POST /hosted/t3/runs/:id/cancel # Cancel an active native T3 provider run
 POST /workflow-runs          # Optional durable Workflow launcher (Bearer COMPADRE_API_KEY)
+GET  /workflow-runs/:id      # Durable run lifecycle status (Bearer COMPADRE_API_KEY)
 GET  /workflow-runs/:id/events # Resumable AG-UI event stream (Bearer COMPADRE_API_KEY; any authenticated caller may replay a known run ID)
+POST /workflow-runs/:id/cancel # Cancel an active durable run (Bearer COMPADRE_API_KEY)
 POST /webhook/:source        # Generic webhook (Bearer COMPADRE_API_KEY)
 ```
 
@@ -68,6 +77,7 @@ See `.env.example` for the full list. Key notes:
 - **GOOGLE_WORKSPACE_USER_EMAIL / GOOGLE_OAUTH_CLIENT_ID / GOOGLE_OAUTH_CLIENT_SECRET / GOOGLE_OAUTH_REFRESH_TOKEN**: OAuth credentials for the Compadre Google Workspace bot user. When set, Compadre enables Google Workspace tools through `workspace-mcp`.
 - **REPO_PATH**: Local checkout used by development and the optional PR deployment watcher. Coding-agent checkouts live in Modal and are not allocated on the Render request path.
 - **COMPADRE_API_KEY**: Auth token for the API. Generate with `openssl rand -hex 32`.
+- **COMP_APP_API_KEY**: Optional credential for the Comp app MCP and debug-link API when it differs from the relay's own `COMPADRE_API_KEY`.
 - **CODEX_API_KEY**: API key for the Codex CLI harness; a persisted Codex login is also supported for local development.
 - **COMPADRE_AGENT_PROVIDER**: Select the default Claude Code or Codex harness. `/prompt` and AG-UI callers may override it per request.
 - **MODAL_TOKEN_ID / MODAL_TOKEN_SECRET**: Modal is the coding-harness runtime. Compadre bakes its pinned Claude Code and Codex CLIs into the cached Modal image, keeping per-request setup to the repository clone. After each successful persisted turn, Compadre snapshots the filesystem, stores its image ID with the thread, and terminates the billed sandbox. The next turn restores that snapshot.
@@ -77,17 +87,29 @@ See `.env.example` for the full list. Key notes:
 - Runs for the same thread serialize behind its distributed lock. Different threads use independent Modal sandboxes and may execute concurrently.
 - Modal isolates harness resource usage from the persistent Render relay and
   applies its own sandbox lifecycle limits.
-- **COMPADRE_TANSTACK_AI_ENABLED**: Expose the authenticated AG-UI endpoint without changing Slack routing.
+- **COMPADRE_TANSTACK_AI_ENABLED**: Retained as a compatibility flag for the authenticated AG-UI endpoint. AG-UI request parsing and SSE framing remain compatible, but execution is delegated to the central hosted T3 thread and its native Codex or Claude harness rather than TanStack's model adapters.
+- **COMPADRE_T3_DIRECTORY_ENABLED**: Enable the native-T3 controller routes. Render stores credential-free routing metadata; every external conversation owns one Modal sandbox and one native T3 thread.
+- **COMPADRE_T3_SLACK_ENABLED**: Route Slack and `npm run slack:simulate` through the central hosted T3 environment and then T3's native Codex/Claude harnesses in Modal. Slack receives assistant text plus a central “View details in T3” link; the same conversation can be continued from Slack or the T3 UI without copying history between stores.
+- **COMPADRE_T3_API_ENABLED**: Expose the central-T3 compatibility API. `/prompt`, `/ag-ui`, and `/workflow-runs` all resolve to the same authoritative hosted T3 thread; PostgreSQL run/event records provide idempotency, replay, status, and cancellation without becoming a second transcript store. Synchronous `/prompt` responses also include `threadId` and `detailsUrl`.
+- **COMPADRE_T3_HOSTED_APP_URL**: Hosted T3 web origin used for deep links, for example `https://compadre.comprehensive.io`.
+- **COMPADRE_T3_CENTRAL_URL / COMPADRE_T3_CENTRAL_TOKEN**: Central T3 environment and its scoped service-account bearer. Slack dispatches through T3's authenticated orchestration API so its turns are committed to the same event log the browser reads. Issue the bearer with T3's native `auth session issue` command.
+- **COMPADRE_T3_CENTRAL_PROJECT_ID**: Optional project for new Slack-originated threads when the central T3 environment contains multiple projects. The first active project is used when omitted.
+- **COMPADRE_T3_PACKAGE_PATH**: Local-only archive used to install the pinned T3 fork into a new Modal environment. Deployed environments use the verified release URL and digest instead of a host path.
+- **COMPADRE_T3_ARTIFACT_BUCKET**: Optional private S3 bucket for durable files generated by isolated T3 workers. Postgres retains only content-addressed metadata; authenticated controller reads feed the central web transcript and linked Slack thread.
+- **COMPADRE_T3_PACKAGE_URL / COMPADRE_T3_PACKAGE_SHA256**: HTTPS release archive and required digest for reproducible Render-to-Modal fork installation. The controller caches the verified artifact locally before copying it into a new sandbox.
+- **COMPADRE_HOSTED_SLACK_DELIVERY_ENABLED**: Set to `false` to suppress browser-to-Slack mirroring during synthetic hosted probes without removing the Slack token used by agent tools. Defaults to enabled.
 - **FABLE_MODEL**: Optional model ID used by Slack's `--fable` routing profile. Defaults to `claude-fable-5`; normal Claude Code prompts use `DEFAULT_MODEL` or the built-in default.
 
 Run `npm run modal:prepare-image` to build or resolve the same cached Modal
 image ahead of a local benchmark or deployment. It creates no sandbox and
 prints only the image ID and elapsed time.
 
-Slack messages can override the default for one turn with `--sol` or `--codex`
+Slack messages choose the native T3 provider on a thread's first turn with `--sol` or `--codex`
 for Codex, `--fable` for Fable through Claude Code, and `--claude-code` or `--cc`
-for the normal Claude Code model. Routing directives are removed before the
-agent prompt and conversation transcript are created.
+for the normal Claude Code model. T3 fixes the provider harness after a thread
+starts; use a new Slack thread to switch between Codex and Claude. Models within
+the chosen provider remain selectable in T3. Routing directives are removed
+before the agent prompt and conversation transcript are created.
 
 ## Database schema and migrations
 
@@ -111,14 +133,13 @@ migrations.
 
 Native Node.js service. Build: `npm ci --include=dev && npm run build`, Start: `npm start`.
 
-The active `compadre-relay` Web Service is declared in [`render.yaml`](render.yaml).
-Render runs `npm run db:migrate` as its pre-deploy command, so migrations finish
-before a newly built version can receive traffic. Secret environment variables
-are either omitted from the Blueprint or declared with `sync: false`; Render
-preserves their existing dashboard values during Blueprint updates without
-putting those values in Git. Linking the repository to the Blueprint is a one-time
-Render setup; subsequent service configuration changes and deploys sync from
-`main`.
+The production `compadre-api` controller and `compadre-web` T3 fork are declared
+in [`render.yaml`](render.yaml). Each service auto-deploys from `main` in its own
+repository; a Compadre merge does not restart the web UI unless the T3 fork also
+changed. Render runs `npm run db:migrate` before a new controller version can
+receive traffic. Secret values live in linked Render environment groups and are
+never committed. See [production secrets](docs/production-secrets.md) for the
+configuration boundary and rotation procedure.
 
 Google Workspace support uses `uvx` because `workspace-mcp` runs as a Python MCP server. `npm start` installs `uvx` at startup when Google Workspace env vars are present and `uvx` is not already available.
 
@@ -153,13 +174,13 @@ before the existing Compadre consumer observes it, and can be replayed later by
 the Slack delivery gateway.
 
 For database-free local controller testing, set
-`COMPADRE_DURABILITY_BACKEND=memory` and
-`COMPADRE_WORKFLOW_RELAY_ENABLED=true`. `POST /workflow-runs` starts an
-in-process run and `GET /workflow-runs/:runId/events?offset=-1` serves its
-resumable AG-UI stream. A deployed relay uses the PostgreSQL durability
-backend; the HTTP and event contracts stay the same. Slack consumes that
-durable log through the existing `SlackStream`; it does not depend on the
-Modal process staying connected to Slack.
+`COMPADRE_DURABILITY_BACKEND=memory` and either
+`COMPADRE_T3_API_ENABLED=true` or `COMPADRE_WORKFLOW_RELAY_ENABLED=true`.
+`POST /workflow-runs` dispatches to the central hosted T3 thread and
+`GET /workflow-runs/:runId/events?offset=-1` serves a resumable compatibility
+projection of that run. A deployed relay uses the PostgreSQL durability
+backend; the HTTP and event contracts stay the same. The central T3 event log
+remains the authoritative conversation transcript.
 See [the Modal harness cutover runbook](docs/modal-harness-cutover.md) for
 the remote execution boundary and deployment checks.
 

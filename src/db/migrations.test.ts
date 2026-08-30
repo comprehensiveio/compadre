@@ -60,7 +60,12 @@ test(
           "compadre_ai_stream_events",
           "compadre_ai_streams",
           "compadre_ai_threads",
+          "compadre_auth_login_flows",
+          "compadre_auth_login_grants",
           "compadre_pr_watches",
+          "compadre_slack_turn_deliveries",
+          "compadre_user_identities",
+          "compadre_users",
         ],
       );
     } finally {

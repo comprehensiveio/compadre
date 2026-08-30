@@ -1,20 +1,19 @@
 import crypto from "node:crypto";
-import {
-  resumeServerSentEventsResponse,
-  type StreamDurability,
-} from "@tanstack/ai";
 import { Hono } from "hono";
 import { z } from "zod";
+import { durableRunEventsResponse } from "../durability/http.js";
+import {
+  apiMessageAttribution,
+  startCentralT3DurableRun,
+} from "../services/central-t3-run.js";
+import {
+  configuredCentralT3Client,
+  type CentralT3ConversationClient,
+} from "../t3/central-conversation.js";
+import type { T3Client } from "../t3/client.js";
+import { getConfiguredNativeT3RunCoordinator } from "../t3/runtime.js";
+import type { NativeT3RunCoordinator } from "../t3/run-coordinator.js";
 import { agentWorkflowInputSchema } from "../workflows/agent-run.js";
-import {
-  failOpenDurableRun,
-  getConfiguredAgentRunDurability,
-  type AgentRunDurability,
-} from "../durability/runtime.js";
-import {
-  createConfiguredWorkflowRunLauncher,
-  type WorkflowRunLauncher,
-} from "../services/workflow-run-launcher.js";
 import { requireCompadreApiKey } from "./auth.js";
 
 const workflowRunInputSchema = agentWorkflowInputSchema.omit({
@@ -24,35 +23,21 @@ const workflowRunInputSchema = agentWorkflowInputSchema.omit({
 
 export interface WorkflowRunRouteDependencies {
   enabled(): boolean;
-  getDurability(): Promise<AgentRunDurability | null>;
-  getLauncher(): WorkflowRunLauncher;
+  getClient():
+    | (CentralT3ConversationClient & Pick<T3Client, "interruptTurn">)
+    | null;
+  getRunCoordinator(): Promise<NativeT3RunCoordinator | null>;
   createId(): string;
 }
 
-let configuredLauncher: WorkflowRunLauncher | undefined;
 const defaultDependencies: WorkflowRunRouteDependencies = {
-  enabled: () => process.env.COMPADRE_WORKFLOW_RELAY_ENABLED === "true",
-  getDurability: getConfiguredAgentRunDurability,
-  getLauncher: () =>
-    (configuredLauncher ??= createConfiguredWorkflowRunLauncher()),
-  createId: () => crypto.randomUUID(),
+  enabled: () =>
+    process.env.COMPADRE_T3_API_ENABLED === "true" ||
+    process.env.COMPADRE_WORKFLOW_RELAY_ENABLED === "true",
+  getClient: configuredCentralT3Client,
+  getRunCoordinator: getConfiguredNativeT3RunCoordinator,
+  createId: crypto.randomUUID,
 };
-
-function resumableAdapter(
-  stream: StreamDurability<string>,
-  request: Request,
-): StreamDurability<string> {
-  const offset =
-    request.headers.get("Last-Event-ID") ||
-    new URL(request.url).searchParams.get("offset");
-  return {
-    resumeFrom: () => offset,
-    append: (chunks) => stream.append(chunks),
-    read: (streamOffset, signal) => stream.read(streamOffset, signal),
-    close: () => stream.close(),
-    snapshot: () => stream.snapshot(),
-  };
-}
 
 export function createWorkflowRunRoutes(
   dependencies: WorkflowRunRouteDependencies = defaultDependencies,
@@ -76,57 +61,42 @@ export function createWorkflowRunRoutes(
         400,
       );
     }
+    if (input.inputFiles && input.inputFiles.length > 0) {
+      return c.json(
+        {
+          error:
+            "native T3 workflow attachments are not supported yet; submit a text-only run",
+        },
+        409,
+      );
+    }
 
-    const durability = await dependencies.getDurability();
-    if (!durability) {
-      return c.json({ error: "agent run durability is not configured" }, 503);
+    const client = dependencies.getClient();
+    const coordinator = await dependencies.getRunCoordinator();
+    if (!client || !coordinator) {
+      return c.json({ error: "central T3 durability is not configured" }, 503);
     }
     const runId = input.runId ?? dependencies.createId();
     const threadId = input.threadId ?? `workflow-${runId}`;
-    // Resolve the stream before launching so a local in-process producer and
-    // relay are guaranteed to share the same memory adapter instance.
-    durability.stream(runId);
-    await durability.runs.createOrResume({
+    const profile = input.profile ?? input.provider;
+    const started = await startCentralT3DurableRun({
+      coordinator,
+      client,
       runId,
       threadId,
-      startedAt: Date.now(),
+      title: (input.transcriptUserMessage ?? input.prompt).slice(0, 200),
+      prompt: input.prompt,
+      displayText: input.transcriptUserMessage ?? input.prompt,
+      attribution: apiMessageAttribution(),
+      profile,
     });
-    const launcher = dependencies.getLauncher();
-    let started: Awaited<ReturnType<WorkflowRunLauncher["start"]>>;
-    try {
-      started = await launcher.start({
-        ...input,
-        runId,
-        threadId,
-      });
-    } catch (error) {
-      try {
-        await failOpenDurableRun(durability, runId, error);
-      } catch (finalizationError) {
-        console.error("[workflow-route] failure finalization failed", {
-          runId,
-          error: finalizationError,
-        });
-      }
-      throw error;
-    }
-    if (launcher.wait) {
-      void launcher.wait(started.taskRunId).catch(async (error) => {
-        try {
-          await failOpenDurableRun(durability, runId, error);
-        } catch (finalizationError) {
-          console.error("[workflow-route] failure finalization failed", {
-            runId,
-            error: finalizationError,
-          });
-        }
-      });
-    }
     return c.json(
       {
         runId,
         threadId,
-        taskRunId: started.taskRunId,
+        taskRunId: `central-t3:${runId}`,
+        started: started.started,
+        statusUrl: `/workflow-runs/${encodeURIComponent(runId)}`,
         eventsUrl: `/workflow-runs/${encodeURIComponent(runId)}/events?offset=-1`,
       },
       202,
@@ -137,22 +107,51 @@ export function createWorkflowRunRoutes(
     if (!dependencies.enabled()) return c.notFound();
     const authError = requireCompadreApiKey(c);
     if (authError) return authError;
-    const durability = await dependencies.getDurability();
-    if (!durability) {
-      return c.json({ error: "agent run durability is not configured" }, 503);
+    const coordinator = await dependencies.getRunCoordinator();
+    if (!coordinator) {
+      return c.json({ error: "central T3 durability is not configured" }, 503);
     }
-    const adapter = resumableAdapter(
-      durability.stream(c.req.param("runId")),
+    const runId = c.req.param("runId");
+    if (!(await coordinator.run(runId))) {
+      return c.json({ error: "run not found" }, 404);
+    }
+    return durableRunEventsResponse(
+      coordinator.stream(runId),
       c.req.raw,
     );
-    return resumeServerSentEventsResponse({
-      adapter,
-      headers: {
-        "Cache-Control": "no-cache, no-transform",
-        "X-Accel-Buffering": "no",
-        "X-Content-Type-Options": "nosniff",
+  });
+
+  routes.get("/workflow-runs/:runId", async (c) => {
+    if (!dependencies.enabled()) return c.notFound();
+    const authError = requireCompadreApiKey(c);
+    if (authError) return authError;
+    const coordinator = await dependencies.getRunCoordinator();
+    if (!coordinator) {
+      return c.json({ error: "central T3 durability is not configured" }, 503);
+    }
+    const run = await coordinator.run(c.req.param("runId"));
+    return run ? c.json(run) : c.json({ error: "run not found" }, 404);
+  });
+
+  routes.post("/workflow-runs/:runId/cancel", async (c) => {
+    if (!dependencies.enabled()) return c.notFound();
+    const authError = requireCompadreApiKey(c);
+    if (authError) return authError;
+    const coordinator = await dependencies.getRunCoordinator();
+    if (!coordinator) {
+      return c.json({ error: "central T3 durability is not configured" }, 503);
+    }
+    const result = await coordinator.cancel(c.req.param("runId"));
+    if (!result.found) return c.json({ error: "run not found" }, 404);
+    return c.json(
+      {
+        ok: true,
+        ...result,
+        cancelled: result.requested,
+        status: result.requested ? "cancelling" : result.status,
       },
-    });
+      result.requested ? 202 : 200,
+    );
   });
 
   return routes;

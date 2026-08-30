@@ -14,6 +14,7 @@ import {
   MAX_SLACK_INPUT_FILES,
   slackFileReferenceSchema,
 } from "../services/slack-files.js";
+import { inputFileSchema, MAX_INPUT_FILES } from "../services/input-files.js";
 import { workflowErrorDetails } from "./diagnostics.js";
 
 export const agentWorkflowInputSchema = z.object({
@@ -29,6 +30,7 @@ export const agentWorkflowInputSchema = z.object({
     .array(slackFileReferenceSchema)
     .max(MAX_SLACK_INPUT_FILES)
     .optional(),
+  inputFiles: z.array(inputFileSchema).max(MAX_INPUT_FILES).optional(),
 });
 
 export type AgentWorkflowInput = z.infer<typeof agentWorkflowInputSchema>;
@@ -102,6 +104,7 @@ export async function executeRepositoryProbe(
 export async function executeAgentWorkflow(
   rawInput: unknown,
   dependencies: AgentWorkflowDependencies = defaultDependencies,
+  signal?: AbortSignal,
 ): Promise<AgentWorkflowResult> {
   const input = agentWorkflowInputSchema.parse(rawInput);
   const startedAt = dependencies.now();
@@ -125,8 +128,10 @@ export async function executeAgentWorkflow(
       threadId,
       provider: input.provider,
       profile: input.profile,
+      signal,
       persistThread: input.persistThread ?? input.threadId !== undefined,
       slackFiles: input.slackFiles,
+      inputFiles: input.inputFiles,
       systemPrompt:
         input.responseMode === "slack-streaming"
           ? (worktreePath) => getSlackStreamingSystemPrompt(worktreePath)

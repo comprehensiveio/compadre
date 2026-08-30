@@ -33,6 +33,7 @@ import { harnessLockStore } from "./thread-lock.js";
 import { deferTerminalHooks } from "./middleware-order.js";
 import { withRelayToolBridge } from "./relay-tool-bridge.js";
 import { discoverHarnessMcpTools } from "./mcp.js";
+import { withSandboxFileToolCompatibility } from "./sandbox-tool-compat.js";
 
 /** Trusted Compadre harnesses run non-interactively with no approval gates. */
 export const CODEX_DANGEROUS_PERMISSIONS = {
@@ -65,6 +66,7 @@ export interface CreateHarnessStreamOptions {
   persistence?: ChatPersistence;
   locks?: LockStore;
   sandboxInstances?: SandboxInstanceStore;
+  readSandboxFile?: (filePath: string) => Promise<Uint8Array>;
 }
 
 export function resolveHarnessSelection(
@@ -142,6 +144,7 @@ export async function createHarnessStream({
   persistence,
   locks = harnessLockStore,
   sandboxInstances,
+  readSandboxFile,
 }: CreateHarnessStreamOptions): Promise<AsyncIterable<StreamChunk>> {
   if (!process.env.COMPADRE_PUBLIC_URL?.trim()) {
     throw new Error(
@@ -165,8 +168,11 @@ export async function createHarnessStream({
             : {}),
         })
       : undefined;
+  const discoveredTools = await discoverHarnessMcpTools(clients);
   const tools = mergeAgentTools(
-    await discoverHarnessMcpTools(clients),
+    readSandboxFile
+      ? withSandboxFileToolCompatibility(discoveredTools, readSandboxFile)
+      : discoveredTools,
     params.tools,
   );
   const shared = {

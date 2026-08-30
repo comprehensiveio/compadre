@@ -4,6 +4,7 @@ import {
   defineSandbox,
   defineWorkspace,
   type SandboxDefinition,
+  type SandboxHandle,
 } from "@tanstack/ai-sandbox";
 import { compadreSkillUploads } from "../compadre-skills.js";
 import { configuredRepositoryUrl } from "../repo.js";
@@ -22,8 +23,8 @@ function modalSetupCommands(environment: NodeJS.ProcessEnv): string[] {
   const quote = (value: string): string =>
     `'${value.replaceAll("'", `'\\''`)}'`;
   const clone = environment.GITHUB_PERSONAL_ACCESS_TOKEN
-    ? `git -c credential.helper='!f() { echo "username=$GIT_ASKPASS_USER"; echo "password=$GIT_ASKPASS_TOKEN"; }; f' clone --depth 1 --single-branch --branch ${quote(branch)} -- ${quote(repositoryUrl)} .`
-    : `git clone --depth 1 --single-branch --branch ${quote(branch)} -- ${quote(repositoryUrl)} .`;
+    ? `git -c credential.helper='!f() { echo "username=$GIT_ASKPASS_USER"; echo "password=$GIT_ASKPASS_TOKEN"; }; f' clone --depth 1 --single-branch --branch ${quote(branch)} -- ${quote(repositoryUrl)} . 2>&1`
+    : `git clone --depth 1 --single-branch --branch ${quote(branch)} -- ${quote(repositoryUrl)} . 2>&1`;
   return [clone];
 }
 
@@ -33,6 +34,8 @@ export interface CreateHarnessSandboxOptions {
   reuseThread?: boolean;
   environment?: NodeJS.ProcessEnv;
   uploads?: Array<{ path: string; data: Uint8Array }>;
+  encryptedPorts?: number[];
+  onReady?: (handle: SandboxHandle) => void | Promise<void>;
 }
 
 /** Build the provider-neutral harness boundary used by Claude Code and Codex. */
@@ -42,6 +45,8 @@ export function createHarnessSandbox({
   reuseThread = true,
   environment = process.env,
   uploads = [],
+  encryptedPorts = [],
+  onReady,
 }: CreateHarnessSandboxOptions): SandboxDefinition {
   const workdir = harnessWorkspacePath(localWorktreePath, environment);
   const skillUploads = compadreSkillUploads();
@@ -56,7 +61,7 @@ export function createHarnessSandbox({
     });
   return defineSandbox({
       id: `compadre-agui-${worktreeId}`,
-      provider: modalSandboxProvider({ environment }),
+      provider: modalSandboxProvider({ environment, encryptedPorts }),
       workspace: defineWorkspace({
         root: workdir,
         // Clone in setup so a non-zero Git exit is surfaced directly.
@@ -78,6 +83,7 @@ export function createHarnessSandbox({
           for (const upload of uploads) {
             await handle.fs.write(upload.path, upload.data);
           }
+          await onReady?.(handle);
         },
       },
       fileEvents: false,

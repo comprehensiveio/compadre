@@ -33,10 +33,26 @@ export type DatadogTelemetryMode = "agent" | "agentless";
 export function datadogOtlpTracesEndpoint(
   environment: NodeJS.ProcessEnv = process.env,
 ): string {
-  const override = environment.DD_OTLP_TRACES_ENDPOINT?.trim();
+  const override =
+    environment.OTEL_EXPORTER_OTLP_TRACES_ENDPOINT?.trim() ||
+    environment.DD_OTLP_TRACES_ENDPOINT?.trim();
   if (override) return override;
   const site = environment.DD_SITE?.trim() || "datadoghq.com";
   return `https://otlp.${site}/v1/traces`;
+}
+
+export function datadogTelemetryMode(
+  options: DatadogOpenTelemetryOptions = {},
+): DatadogTelemetryMode {
+  const environment = options.environment ?? process.env;
+  const requested = environment.COMPADRE_OTEL_EXPORT_MODE?.trim().toLowerCase();
+  if (requested === "agentless" && environment.DD_API_KEY?.trim()) {
+    return "agentless";
+  }
+  if (requested === "agent") return "agent";
+  return options.ephemeral && environment.DD_API_KEY?.trim()
+    ? "agentless"
+    : "agent";
 }
 
 function createAgentlessWorkflowProvider(
@@ -84,8 +100,7 @@ export async function registerDatadogOpenTelemetry(
   }
   const environment = options.environment ?? process.env;
   const apiKey = environment.DD_API_KEY?.trim();
-  const mode: DatadogTelemetryMode =
-    options.ephemeral && apiKey ? "agentless" : "agent";
+  const mode = datadogTelemetryMode(options);
   let provider:
     | NodeTracerProvider
     | {
