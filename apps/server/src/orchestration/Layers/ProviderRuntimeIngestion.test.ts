@@ -47,7 +47,10 @@ import { OrchestrationProjectionPipelineLive } from "./ProjectionPipeline.ts";
 import { OrchestrationProjectionSnapshotQueryLive } from "./ProjectionSnapshotQuery.ts";
 import * as ThreadBackgroundLiveness from "../ThreadBackgroundLiveness.ts";
 import * as ThreadPlanProgress from "../ThreadPlanProgress.ts";
-import { ProviderRuntimeIngestionLive } from "./ProviderRuntimeIngestion.ts";
+import {
+  ProviderRuntimeIngestionLive,
+  runtimeEventToActivities,
+} from "./ProviderRuntimeIngestion.ts";
 import { DEFAULT_THREAD_TITLE } from "../threadTitles.ts";
 import { OrchestrationEngineService } from "../Services/OrchestrationEngine.ts";
 import { ProviderRuntimeIngestionService } from "../Services/ProviderRuntimeIngestion.ts";
@@ -66,6 +69,25 @@ const asEventId = (value: string): EventId => EventId.make(value);
 const asMessageId = (value: string): MessageId => MessageId.make(value);
 const asThreadId = (value: string): ThreadId => ThreadId.make(value);
 const asTurnId = (value: string): TurnId => TurnId.make(value);
+
+it("persists provider stop reasons as non-visible completion metadata", () => {
+  const activities = runtimeEventToActivities({
+    type: "turn.completed",
+    eventId: asEventId("evt-turn-limited"),
+    provider: ProviderDriverKind.make("codex"),
+    threadId: asThreadId("thread-1"),
+    turnId: asTurnId("turn-1"),
+    createdAt: "2026-08-29T12:00:00.000Z",
+    payload: { state: "completed", stopReason: "max_tokens" },
+  });
+
+  expect(activities).toHaveLength(1);
+  expect(activities[0]?.kind).toBe("provider.turn.completed");
+  expect(activities[0]?.payload).toEqual({
+    state: "completed",
+    stopReason: "max_tokens",
+  });
+});
 
 type LegacyProviderRuntimeEvent = {
   readonly type: string;

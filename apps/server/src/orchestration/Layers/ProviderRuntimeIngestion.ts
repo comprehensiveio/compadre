@@ -373,6 +373,30 @@ export function runtimeEventToActivities(
       : {};
   })();
   switch (event.type) {
+    case "turn.completed": {
+      // Persist the provider's terminal reason even though it is not part of
+      // the visible transcript. Hosted coordinators use this to distinguish a
+      // genuine end turn from a token/request limit and must not present a
+      // truncated answer as a successful completion.
+      return event.payload.stopReason
+        ? [
+            {
+              id: event.eventId,
+              createdAt: event.createdAt,
+              tone: event.payload.state === "failed" ? "error" : "info",
+              kind: "provider.turn.completed",
+              summary: "Provider turn completed",
+              payload: {
+                state: event.payload.state,
+                stopReason: event.payload.stopReason,
+              },
+              turnId: toTurnId(event.turnId) ?? null,
+              ...maybeSequence,
+            },
+          ]
+        : [];
+    }
+
     case "request.opened": {
       if (event.payload.requestType === "tool_user_input") {
         return [];
