@@ -14,9 +14,35 @@ export function hashAuthSecret(value: string): string {
   return crypto.createHash("sha256").update(value).digest("base64url");
 }
 
-export function normalizeAuthReturnTo(value: string | undefined): string {
+export function normalizeAuthReturnTo(
+  value: string | undefined,
+  previewHostSuffix = process.env.COMPADRE_PREVIEW_HOST_SUFFIX?.trim(),
+): string {
   if (!value) return "/";
   const decoded = value.trim();
+  if (previewHostSuffix) {
+    try {
+      const url = new URL(decoded);
+      const suffix = previewHostSuffix.replace(/^\.+|\.+$/g, "").toLowerCase();
+      const threadLabel = url.hostname
+        .toLowerCase()
+        .endsWith(`.${suffix}`)
+        ? url.hostname.slice(0, -(suffix.length + 1))
+        : "";
+      if (
+        url.protocol === "https:" &&
+        !url.username &&
+        !url.password &&
+        /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+          threadLabel,
+        )
+      ) {
+        return url.toString();
+      }
+    } catch {
+      // Continue to the same-origin relative-path validation below.
+    }
+  }
   if (
     !decoded.startsWith("/") ||
     decoded.startsWith("//") ||

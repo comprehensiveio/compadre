@@ -4,6 +4,7 @@ import { memoryPersistence } from "@tanstack/ai-persistence";
 import { T3ThreadBindingStore } from "../services/t3-thread-bindings.js";
 import { T3ThreadSnapshotStore } from "../services/t3-thread-snapshots.js";
 import type { LockStore } from "./storage.js";
+import type { SandboxHandle } from "@tanstack/ai-sandbox";
 import {
   buildT3HostedThreadUrl,
   T3Gateway,
@@ -160,6 +161,59 @@ test("routes model changes through the same provider-native T3 thread", async ()
     "new:t3-thread-1:first",
     "existing:t3-thread-1:second",
   ]);
+});
+
+test("resolves a preview from the bound sandbox without provisioning", async () => {
+  const persistence = memoryPersistence();
+  const bindings = new T3ThreadBindingStore(persistence.stores.metadata);
+  const client = {
+    baseUrl: "https://t3.example",
+  } as T3CommandClient;
+  let provisions = 0;
+  const connectedPorts: number[] = [];
+  const sandbox = {
+    id: "sandbox-1",
+    ports: {
+      connect: async (port: number) => {
+        connectedPorts.push(port);
+        return { url: `https://sandbox-${port}.modal.host` };
+      },
+    },
+  } as unknown as SandboxHandle;
+  const gateway = new T3Gateway(bindings, {
+    async provision() {
+      provisions += 1;
+      return { sandboxId: "unused", projectId: "unused", client };
+    },
+    async reconnect() {
+      return { sandboxId: "sandbox-1", projectId: "project-1", client, sandbox };
+    },
+  });
+  await bindings.bindRecord({
+    canonicalThreadId: "canonical-thread",
+    providerInstanceId: "codex",
+    sandboxId: "sandbox-1",
+    projectId: "project-1",
+    t3ThreadId: "t3-thread-1",
+    baseUrl: "https://t3.example",
+    modelSelection: { instanceId: "codex", model: "gpt-5.6-sol" },
+    status: "ready",
+    createdAt: "2026-08-30T12:00:00.000Z",
+    updatedAt: "2026-08-30T12:00:00.000Z",
+  });
+
+  const target = await gateway.previewTarget({
+    canonicalThreadId: "canonical-thread",
+  });
+
+  assert.equal(provisions, 0);
+  assert.deepEqual(connectedPorts, [3000]);
+  assert.equal(target?.url, "https://sandbox-3000.modal.host");
+  assert.equal(target?.binding.sandboxId, "sandbox-1");
+  assert.equal(
+    await gateway.previewTarget({ canonicalThreadId: "missing-thread" }),
+    null,
+  );
 });
 
 test("does not nest directory-index locks inside first-turn environment locks", async () => {

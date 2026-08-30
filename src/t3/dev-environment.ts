@@ -24,6 +24,26 @@ export function t3EncryptedPorts(
     : [T3_SERVER_PORT];
 }
 
+export function authenticatedDevPreviewUrl(
+  environment: NodeJS.ProcessEnv = process.env,
+): string | null {
+  const canonicalThreadId = environment.COMPADRE_CANONICAL_THREAD_ID?.trim();
+  const hostSuffix = environment.COMPADRE_PREVIEW_HOST_SUFFIX
+    ?.trim()
+    .replace(/^\.+|\.+$/g, "")
+    .toLowerCase();
+  if (
+    !canonicalThreadId ||
+    !hostSuffix ||
+    !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+      canonicalThreadId,
+    )
+  ) {
+    return null;
+  }
+  return `https://${canonicalThreadId.toLowerCase()}.${hostSuffix}`;
+}
+
 export interface DevArtifactSigner {
   (input: {
     bucket: string;

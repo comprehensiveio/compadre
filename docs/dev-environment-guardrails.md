@@ -23,8 +23,9 @@ work so they survive handoffs and context compaction.
   not useful.
 - Support the main TanStack Start application only. Ignore Temporal, PIE, and
   auxiliary Toltagent services.
-- The agent can start the app, expose it through a random TLS preview URL, validate
-  it with agent-browser, and use an isolated database behind it.
+- The agent can start the app, expose it through a stable per-thread Compadre
+  preview hostname, validate it with agent-browser, and use an isolated database
+  behind it.
 - Learn from Toltagent's current production flow, including its Modal microVM
   and database choices where those fit Compadre's architecture. Do not assume
   older Claude-tag development-environment relics in Comp are good prior art.
@@ -49,7 +50,8 @@ work so they survive handoffs and context compaction.
   account `629591269808`, bucket `compadre`, prefix
   `dev-environments/comp/`. Never substitute a Tolt resource or production
   database dump.
-- The Modal preview is a random TLS tunnel, not an authenticated perimeter.
-  Treat review URLs as internal bearer links and do not publish them outside
-  the originating Compadre conversation. Add an authenticated preview gateway
-  before any external or broadly multi-tenant use.
+- The raw Modal preview is an internal routing target, never a user-facing URL.
+  Browser traffic enters through a UUID-scoped Compadre hostname, requires the
+  existing Slack-backed Compadre session, and is then proxied to the bound
+  sandbox. Comp's own dev-login remains a separate inner authentication layer
+  so reviewers can impersonate any user in the synthetic database.

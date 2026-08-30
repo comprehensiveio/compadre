@@ -8,6 +8,7 @@ import { configuredEnvironmentBridgeToken } from "../tanstack/relay-tool-bridge.
 import { createHarnessSandbox } from "../tanstack/sandbox-runtime.js";
 import { exchangeT3PairingToken, type T3Client } from "../t3/client.js";
 import {
+  authenticatedDevPreviewUrl,
   COMP_DEV_SERVER_PORT,
   devEnvironmentArtifactProjection,
   devEnvironmentEnabled,
@@ -317,9 +318,9 @@ export async function launchManagedT3ModalEnvironment(
       const devPreviewEnvironment: Record<string, string> =
         devEnvironmentEnabled(workerEnvironment)
           ? {
-              COMPADRE_DEV_PREVIEW_URL: (
-                await handle.ports.connect(COMP_DEV_SERVER_PORT)
-              ).url.replace(/\/$/, ""),
+              COMPADRE_DEV_PREVIEW_URL:
+                authenticatedDevPreviewUrl(workerEnvironment) ??
+                (await handle.ports.connect(COMP_DEV_SERVER_PORT)).url.replace(/\/$/, ""),
               COMPADRE_DEV_PORT: String(COMP_DEV_SERVER_PORT),
               AGENT_BROWSER_EXECUTABLE_PATH: "/usr/bin/chromium",
             }

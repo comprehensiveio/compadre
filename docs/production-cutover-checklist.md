@@ -92,6 +92,8 @@ Controller secrets and configuration:
 - [ ] `COMPADRE_T3_CENTRAL_TOKEN`
 - [ ] `COMPADRE_BACKUP_TOKEN` matching the hosted T3 service
 - [ ] `COMPADRE_AUTH_EXCHANGE_SECRET`
+- [ ] `COMPADRE_PREVIEW_HOST_SUFFIX=dev.compadre.comprehensive.io`
+- [ ] `COMPADRE_PREVIEW_GATEWAY_SECRET` matching the hosted T3 service
 - [ ] `COMPADRE_SLACK_WORKSPACE_ID`
 - [ ] `SLACK_CLIENT_ID`
 - [ ] `SLACK_CLIENT_SECRET`
@@ -111,12 +113,17 @@ Central T3 secrets and configuration:
 - [ ] `COMPADRE_NATIVE_T3_URL`
 - [ ] `COMPADRE_CONTROLLER_URL`
 - [ ] `COMPADRE_AUTH_EXCHANGE_SECRET` matching the controller
+- [ ] `COMPADRE_PREVIEW_HOST_SUFFIX=dev.compadre.comprehensive.io`
+- [ ] `COMPADRE_PREVIEW_GATEWAY_SECRET` matching the controller
+- [ ] `COMPADRE_AUTH_COOKIE_DOMAIN=.compadre.comprehensive.io`
 - [ ] `COMPADRE_BACKUP_TOKEN` matching the controller
 - [ ] `VITE_COMPADRE_AUTH_ENABLED=true`
 - [ ] Persistent SQLite path and disk mount
 - [ ] `T3CODE_INSTALL_GH_CLI=true`
 - [ ] `GH_TOKEN` scoped for the repository operations exposed by the T3 UI
 - [ ] Ensure the retired `COMPADRE_PROVIDER_URL` is unset
+- [ ] Wildcard DNS and Render custom domain for
+  `*.dev.compadre.comprehensive.io` resolve only to the hosted T3 gateway
 
 For every secret, record its owner, scope, storage location, rotation procedure,
 and last-rotated timestamp. Verify that no credential reaches the browser,

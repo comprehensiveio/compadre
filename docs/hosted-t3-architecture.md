@@ -183,6 +183,8 @@ SLACK_CLIENT_ID=<Sign in with Slack client ID>
 SLACK_CLIENT_SECRET=<Sign in with Slack client secret>
 SLACK_OIDC_REDIRECT_URI=https://compadre-api.comprehensive.io/auth/slack/callback
 COMPADRE_AUTH_EXCHANGE_SECRET=<random shared controller/T3 credential>
+COMPADRE_PREVIEW_HOST_SUFFIX=dev.compadre.comprehensive.io
+COMPADRE_PREVIEW_GATEWAY_SECRET=<random preview resolver credential>
 COMPADRE_T3_PACKAGE_URL=<pinned fork release>
 COMPADRE_T3_PACKAGE_SHA256=<required digest>
 COMPADRE_T3_ARTIFACT_BUCKET=compadre
@@ -209,12 +211,23 @@ Central T3:
 COMPADRE_NATIVE_T3_URL=https://compadre-api.comprehensive.io/hosted/t3/chat
 COMPADRE_CONTROLLER_URL=https://compadre-api.comprehensive.io
 COMPADRE_AUTH_EXCHANGE_SECRET=<same random controller/T3 credential>
+COMPADRE_PREVIEW_HOST_SUFFIX=dev.compadre.comprehensive.io
+COMPADRE_PREVIEW_GATEWAY_SECRET=<same preview resolver credential>
+COMPADRE_AUTH_COOKIE_DOMAIN=.compadre.comprehensive.io
 COMPADRE_BACKUP_TOKEN=<same random controller/T3 backup credential>
 VITE_COMPADRE_AUTH_ENABLED=true
 T3CODE_INSTALL_GH_CLI=true
 GH_TOKEN=<repository-scoped token for T3 source-control UI>
 COMPADRE_PROVIDER_URL=
 ```
+
+Development previews use
+`https://<canonical-thread-id>.dev.compadre.comprehensive.io`. The central T3
+service validates its Slack-backed browser session before resolving the
+thread's already-bound Modal sandbox through the controller. The controller
+returns the raw port-3000 tunnel only to the central service. Comp's own
+host-scoped session cookie is forwarded independently, preserving the dev-login
+routes that select any user from the synthetic database.
 
 `COMPADRE_PROVIDER_URL` belongs to the removed first-generation Compadre provider
 and must stay unset. The supported architecture exposes native `codex` and

@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   COMP_DEV_SERVER_PORT,
+  authenticatedDevPreviewUrl,
   devEnvironmentArtifactProjection,
   t3EncryptedPorts,
   T3_SERVER_PORT,
@@ -10,6 +11,23 @@ import {
 test("keeps development resources disabled for ordinary thread sandboxes", async () => {
   assert.deepEqual(t3EncryptedPorts({}), [T3_SERVER_PORT]);
   assert.deepEqual(await devEnvironmentArtifactProjection({}), {});
+});
+
+test("builds the authenticated preview URL only for canonical thread UUIDs", () => {
+  assert.equal(
+    authenticatedDevPreviewUrl({
+      COMPADRE_CANONICAL_THREAD_ID: "E160A306-B842-57BA-A8F2-04DE157E5366",
+      COMPADRE_PREVIEW_HOST_SUFFIX: ".dev.compadre.comprehensive.io",
+    }),
+    "https://e160a306-b842-57ba-a8f2-04de157e5366.dev.compadre.comprehensive.io",
+  );
+  assert.equal(
+    authenticatedDevPreviewUrl({
+      COMPADRE_CANONICAL_THREAD_ID: "not-a-thread",
+      COMPADRE_PREVIEW_HOST_SUFFIX: "dev.compadre.comprehensive.io",
+    }),
+    null,
+  );
 });
 
 test("projects scoped, expiring Comprehensive artifact URLs for enabled threads", async () => {

@@ -89,6 +89,11 @@ export interface T3GatewayTextGeneration {
   snapshot: T3ThreadSnapshot;
 }
 
+export interface T3PreviewTarget {
+  binding: T3ThreadBinding;
+  url: string;
+}
+
 const DEFAULT_T3_HOSTED_APP_URL = "https://app.t3.codes";
 
 export function buildT3HostedThreadUrl(input: {
@@ -366,6 +371,27 @@ export class T3Gateway {
         label: binding.title ?? `Compadre thread ${binding.canonicalThreadId}`,
       }),
     };
+  }
+
+  /**
+   * Resolves the existing thread sandbox's development server without ever
+   * provisioning a replacement environment. The returned Modal URL is an
+   * internal routing detail and must only be exposed to the authenticated
+   * preview gateway.
+   */
+  async previewTarget(input: {
+    canonicalThreadId: string;
+  }): Promise<T3PreviewTarget | null> {
+    const binding = await this.bindings.get(input.canonicalThreadId);
+    if (!binding) return null;
+    const environment = await this.environments.reconnect(binding);
+    if (!environment.sandbox) {
+      throw new Error(
+        `T3 Modal sandbox ${binding.sandboxId} does not expose a development server`,
+      );
+    }
+    const channel = await environment.sandbox.ports.connect(3000);
+    return { binding, url: channel.url };
   }
 
   async cancel(input: {
