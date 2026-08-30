@@ -28,6 +28,36 @@ const T3_FORK_ARCHIVE = "/tmp/compadre-t3-fork.tgz";
 const MAX_T3_FORK_ARCHIVE_BYTES = 50 * 1024 * 1024;
 export const T3_GATEWAY_CREDENTIAL_PATH =
   "/var/lib/t3/compadre-gateway-access-token";
+export const T3_SLACK_DESTINATION_PATH =
+  "/var/lib/t3/compadre-blocked-slack-destination.json";
+
+export interface T3BlockedSlackDestination {
+  channelId: string;
+  threadTs: string;
+}
+
+export function blockedSlackDestinationFromEnvironment(
+  environment: NodeJS.ProcessEnv,
+): T3BlockedSlackDestination | undefined {
+  const channelId = environment.COMPADRE_BLOCKED_SLACK_CHANNEL_ID?.trim();
+  const threadTs = environment.COMPADRE_BLOCKED_SLACK_THREAD_TS?.trim();
+  return channelId && threadTs ? { channelId, threadTs } : undefined;
+}
+
+export function parseT3SlackDestinationMarker(
+  value: string,
+): T3BlockedSlackDestination | undefined {
+  try {
+    const parsed = JSON.parse(value) as Record<string, unknown>;
+    const channelId =
+      typeof parsed.channelId === "string" ? parsed.channelId.trim() : "";
+    const threadTs =
+      typeof parsed.threadTs === "string" ? parsed.threadTs.trim() : "";
+    return channelId && threadTs ? { channelId, threadTs } : undefined;
+  } catch {
+    return undefined;
+  }
+}
 
 interface T3SandboxHandle {
   readonly id: string;
@@ -79,19 +109,20 @@ export function projectedProviderEnvironment(
       );
     }
     const bridgeUrl = new URL("/internal/t3-mcp", publicUrl);
-    const blockedSlackChannelId =
-      environment.COMPADRE_BLOCKED_SLACK_CHANNEL_ID?.trim();
-    const blockedSlackThreadTs =
-      environment.COMPADRE_BLOCKED_SLACK_THREAD_TS?.trim();
-    if (blockedSlackChannelId && blockedSlackThreadTs) {
-      bridgeUrl.searchParams.set("slack_channel_id", blockedSlackChannelId);
-      bridgeUrl.searchParams.set("slack_thread_ts", blockedSlackThreadTs);
+    const blockedSlackDestination =
+      blockedSlackDestinationFromEnvironment(environment);
+    if (blockedSlackDestination) {
+      bridgeUrl.searchParams.set(
+        "slack_channel_id",
+        blockedSlackDestination.channelId,
+      );
+      bridgeUrl.searchParams.set(
+        "slack_thread_ts",
+        blockedSlackDestination.threadTs,
+      );
       result.COMPADRE_MCP_BEARER_TOKEN = scopedEnvironmentBridgeToken(
         bridgeToken,
-        {
-          channelId: blockedSlackChannelId,
-          threadTs: blockedSlackThreadTs,
-        },
+        blockedSlackDestination,
       );
     } else {
       result.COMPADRE_MCP_BEARER_TOKEN = bridgeToken;
@@ -369,6 +400,14 @@ export async function launchManagedT3ModalEnvironment(
       );
       if (prepare.exitCode !== 0) {
         throw new Error(prepare.stderr || prepare.stdout);
+      }
+      const blockedSlackDestination =
+        blockedSlackDestinationFromEnvironment(workerEnvironment);
+      if (blockedSlackDestination) {
+        await handle.fs.write(
+          T3_SLACK_DESTINATION_PATH,
+          JSON.stringify(blockedSlackDestination),
+        );
       }
       await configureNativeHarnessAuthentication(handle);
       await bootstrapT3Project(handle, workspaceRoot);

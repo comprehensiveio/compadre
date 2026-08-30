@@ -1,6 +1,8 @@
 import {
   launchManagedT3ModalEnvironment,
   T3_GATEWAY_CREDENTIAL_PATH,
+  T3_SLACK_DESTINATION_PATH,
+  parseT3SlackDestinationMarker,
   type ManagedT3ModalEnvironment,
 } from "./modal-worker.js";
 import { modalSandboxProvider } from "../tanstack/modal-sandbox.js";
@@ -106,12 +108,22 @@ export class T3ModalEnvironmentManager
       throw new Error(`T3 Modal sandbox ${binding.sandboxId} is unavailable`);
     }
     if (binding.blockedSlackDestination) {
-      await handle.env.set({
-        COMPADRE_BLOCKED_SLACK_CHANNEL_ID:
-          binding.blockedSlackDestination.channelId,
-        COMPADRE_BLOCKED_SLACK_THREAD_TS:
-          binding.blockedSlackDestination.threadTs,
-      });
+      let marker: ReturnType<typeof parseT3SlackDestinationMarker>;
+      try {
+        marker = parseT3SlackDestinationMarker(
+          await handle.fs.read(T3_SLACK_DESTINATION_PATH),
+        );
+      } catch {
+        marker = undefined;
+      }
+      if (
+        marker?.channelId !== binding.blockedSlackDestination.channelId ||
+        marker.threadTs !== binding.blockedSlackDestination.threadTs
+      ) {
+        throw new Error(
+          `T3 Modal sandbox ${binding.sandboxId} does not have its protected Slack destination`,
+        );
+      }
     }
     const accessToken = (await handle.fs.read(T3_GATEWAY_CREDENTIAL_PATH)).trim();
     if (!accessToken) {

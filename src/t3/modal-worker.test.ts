@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  blockedSlackDestinationFromEnvironment,
   parseT3StartupToken,
+  parseT3SlackDestinationMarker,
   projectedProviderEnvironment,
 } from "./modal-worker.js";
 import { scopedEnvironmentBridgeToken } from "../tanstack/relay-tool-bridge.js";
@@ -15,6 +17,29 @@ test("extracts T3's one-time startup token without accepting lookalikes", () => 
   );
   assert.equal(parseT3StartupToken("Token: ABCDEFGHIJKL"), undefined);
   assert.equal(parseT3StartupToken("Token: 23456789ABCDextra"), undefined);
+});
+
+test("records only a complete protected Slack destination", () => {
+  assert.deepEqual(
+    blockedSlackDestinationFromEnvironment({
+      COMPADRE_BLOCKED_SLACK_CHANNEL_ID: " C1 ",
+      COMPADRE_BLOCKED_SLACK_THREAD_TS: " 1.0 ",
+    }),
+    { channelId: "C1", threadTs: "1.0" },
+  );
+  assert.equal(
+    blockedSlackDestinationFromEnvironment({
+      COMPADRE_BLOCKED_SLACK_CHANNEL_ID: "C1",
+    }),
+    undefined,
+  );
+  assert.deepEqual(
+    parseT3SlackDestinationMarker(
+      JSON.stringify({ channelId: "C1", threadTs: "1.0" }),
+    ),
+    { channelId: "C1", threadTs: "1.0" },
+  );
+  assert.equal(parseT3SlackDestinationMarker("invalid"), undefined);
 });
 
 test("projects one Compadre MCP bridge into T3's native provider environment", () => {
