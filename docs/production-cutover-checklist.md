@@ -45,10 +45,13 @@ isolated deployment, not that the equivalent production change has been made.
 
 ## Release and infrastructure
 
-- [ ] Decide the final production service names and hostnames for central T3,
+- [x] Decide the final production service names and hostnames for central T3,
   the controller, Postgres, and the persistent T3 disk.
-- [ ] Create production resources independently of the existing Compadre
+- [x] Create production resources independently of the existing Compadre
   service so traffic can be switched gradually and rolled back.
+- [x] Deploy `compadre-api` and `compadre-web` automatically from their fork's
+  `main` branch. A production API deploy from Compadre PR #126 was observed
+  from commit discovery through live health on 2026-08-30.
 - [ ] Pin the Compadre and T3 fork revisions. Publish a versioned T3 fork
   artifact and verify its SHA-256 before worker startup.
 - [ ] Preserve a documented upstream T3 remote and rehearse one upstream merge
@@ -137,8 +140,9 @@ Canonical endpoints:
 - Slack Events/API: `https://compadre-api.comprehensive.io/slack/events`
 - Slack OIDC callback: `https://compadre-api.comprehensive.io/auth/slack/callback`
 
-- [ ] Decide whether to update the current Compadre Slack app or create a new
-  production app and migrate installations.
+- [x] Update the current Compadre Slack app in place so existing channel
+  membership and user expectations are preserved. Keep the isolated app until
+  the production credential and endpoint switch is verified.
 - [ ] Set the production event request URL to `/slack/events` and pass Slack's
   verification challenge.
 - [ ] Add the exact production `/auth/slack/callback` redirect URL.
@@ -161,11 +165,12 @@ Canonical endpoints:
   success, failure, cancellation, and resumed runs.
 - [ ] Forward Slack file attachments into native T3 turns and verify that both
   Codex and Claude can read them from their isolated workers.
-- [ ] Give Slack answer delivery a single architectural owner. Verify that an
+- [x] Give Slack answer delivery a single architectural owner. Verify that an
   agent cannot produce a second final answer by calling a same-thread Slack
-  tool after automatic final delivery. The automatic path now posts only T3's
-  designated final assistant message, and the Slack-only hidden prompt forbids
-  duplicate self-delivery, but the destination still needs a structural guard.
+  tool after automatic final delivery. The controller now owns Slack-originated
+  final delivery through a durable Postgres outbox with atomic reservation,
+  lease recovery, attempt fencing, and stable Slack idempotency keys. A live
+  2026-08-30 canary produced exactly one answer and one web link.
 - [x] Correct the isolated app credential mismatch and verify a fresh deployed
   instance posts progress, final output, and the Open in web link as
   `Secret dre experiment` rather than the legacy Compadre bot.
@@ -200,8 +205,8 @@ Canonical endpoints:
   and Datadog.
 - [ ] Make central T3 the authoritative transcript and reduce Postgres worker
   snapshots to narrow execution/recovery records.
-- [ ] Define whether existing Compadre conversations are imported, linked
-  read-only, or left in the legacy deployment during a retention window.
+- [x] Leave existing Compadre conversations in the frozen legacy deployment
+  during the rollback window; no transcript migration is required for cutover.
 - [ ] Add encrypted continuous backup for T3 SQLite and Postgres.
 - [x] Add authenticated, integrity-checked online SQLite snapshots to the
   private Comprehensive S3 bucket and document the single-writer restore
@@ -217,8 +222,8 @@ Canonical endpoints:
   grant the Render `compadre` identity `s3:GetBucketLocation`/`s3:ListBucket`
   plus `s3:GetObject`/`s3:PutObject` on `attachments/v1/*` only.
 - [x] Set `COMPADRE_T3_ARTIFACT_BUCKET=compadre` and
-  `COMPADRE_T3_ARTIFACT_REGION=us-west-2` on the Comprehensive Render
-  experiment service.
+  `COMPADRE_T3_ARTIFACT_REGION=us-west-2` on the Comprehensive production API
+  service.
 - [ ] After deploying the attachment implementation, verify byte-for-byte web
   download plus Slack upload from one generated artifact.
 - [ ] Define deletion propagation across T3, Postgres, Modal/provider
@@ -257,13 +262,14 @@ Canonical endpoints:
   isolated repository edited by the agent.
 - [ ] Verify a conversation can start and resume from Slack, browser, or API
   without duplicate runs or divergent history.
-- [ ] Implement or explicitly defer controller-restart takeover with persisted
-  dispatch metadata, heartbeats, leases, and epoch fencing.
-- [ ] Make Slack completion delivery durable across controller rollouts. A live
+- [x] Implement controller-restart takeover with persisted dispatch metadata,
+  heartbeats, leases, attempt fencing, and idempotent delivery.
+- [x] Make Slack completion delivery durable across controller rollouts. A live
   2026-08-27 probe entered through a retiring controller while its central T3
   turn continued on the replacement instance; the old in-memory completion
-  callback did not survive to post the result. Persist the delivery job and let
-  the replacement controller claim it idempotently.
+  callback did not survive to post the result. The replacement implementation
+  persists the delivery before waiting and lets a replacement controller claim
+  it idempotently after the lease expires.
 - [ ] Decide whether cancelled compatibility streams require an explicit
   terminal AG-UI chunk; durable status currently reaches `aborted`, while the
   event log closes after the last already-persisted event.
