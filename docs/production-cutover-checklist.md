@@ -1,9 +1,10 @@
 # Production cutover checklist
 
-This is the running checklist for replacing the current Compadre deployment
-with the hosted T3 architecture. Keep it current as the internal deployment
-reveals new requirements. A checked item means it was demonstrated in the
-isolated deployment, not that the equivalent production change has been made.
+This is the running checklist for operating Compadre on the hosted T3
+architecture. Keep it current as production reveals new requirements. A
+checked item means the behavior was demonstrated against the deployed
+Comprehensive services; dated notes distinguish pre-cutover proofs from the
+official Slack application cutover.
 
 ## Proven in the isolated deployment
 
@@ -107,12 +108,15 @@ Controller secrets and configuration:
 - [ ] `COMPADRE_AUTH_EXCHANGE_SECRET`
 - [ ] `COMPADRE_PREVIEW_HOST_SUFFIX=dev.compadre.comprehensive.io`
 - [ ] `COMPADRE_PREVIEW_GATEWAY_SECRET` matching the hosted T3 service
-- [ ] `COMPADRE_SLACK_WORKSPACE_ID`
-- [ ] `SLACK_CLIENT_ID`
-- [ ] `SLACK_CLIENT_SECRET`
-- [ ] `SLACK_SIGNING_SECRET`
-- [ ] `SLACK_BOT_TOKEN`
-- [ ] `SLACK_OIDC_REDIRECT_URI`
+- [x] `COMPADRE_SLACK_WORKSPACE_ID`
+- [x] `SLACK_CLIENT_ID`
+- [x] `SLACK_CLIENT_SECRET`
+- [x] `SLACK_SIGNING_SECRET`
+- [x] `SLACK_BOT_TOKEN`
+- [x] `SLACK_OIDC_REDIRECT_URI` is intentionally unset in production; the
+  controller derives the callback from the public API request origin as
+  `https://compadre-api.comprehensive.io/auth/slack/callback`. The same exact
+  URL is allowlisted in the Slack app manifest and was verified by live login.
 - [ ] Modal credentials and environment name
 - [ ] GitHub App/token credentials and allowed repository configuration
 - [ ] Codex/OpenAI and Claude/Anthropic harness credentials
@@ -150,29 +154,35 @@ Canonical endpoints:
 - Slack Events/API: `https://compadre-api.comprehensive.io/slack/events`
 - Slack OIDC callback: `https://compadre-api.comprehensive.io/auth/slack/callback`
 
-- [x] Decide to update the current Compadre Slack app in place so existing
-  channel membership and user expectations are preserved. Keep the isolated
-  app until the production credential and endpoint switch is verified.
-- [ ] Set the production event request URL to `/slack/events` and pass Slack's
+- [x] Update the current Compadre Slack app in place so existing channel
+  membership and user expectations are preserved. The official app now owns
+  production Slack ingress; keep the old Render relay only as a rollback target
+  until the post-cutover soak is complete.
+- [x] Set the production event request URL to `/slack/events` and pass Slack's
   verification challenge.
-- [ ] Add the exact production `/auth/slack/callback` redirect URL.
-- [ ] Configure Sign in with Slack scopes: `openid`, `profile`, and `email`.
-- [ ] Reconcile bot scopes and events with the checked-in manifest, including
-  mentions, DMs, channel history, message writing, reactions, and user lookup.
-  The isolated app currently logs `conversations.info` `missing_scope` and
-  falls back without channel metadata, even though message execution succeeds.
-- [ ] Grant the bot `files:read` for image inputs and `files:write` for generated
-  artifact delivery, then reinstall the app so the expanded scopes take effect.
+- [x] Add the exact production `/auth/slack/callback` redirect URL and complete
+  a real OpenID Connect login through it.
+- [x] Configure and authorize Sign in with Slack scopes: `openid`, `profile`,
+  and `email`.
+- [x] Reconcile bot scopes and events with the checked-in manifest, including
+  mentions, DMs, channel history, message writing, reactions, user lookup, and
+  file access. The official app subscribes to `app_mention` and `message.im`.
+- [x] Grant and verify `files:read` for image inputs and `files:write` for
+  generated artifact delivery on the official app installation.
 - [x] Prove those file scopes plus conversation metadata scopes on the isolated
   Comprehensive app and reinstall it before production cutover.
-- [ ] Reinstall/reauthorize the app after scope changes and confirm the bot is in
-  every required channel.
-- [ ] Verify signing-secret validation, replay-window enforcement, event
+- [x] Reauthorize the official app for OpenID Connect and confirm the bot is
+  active in `#slack-bot-test`; expand the channel-membership check as Compadre
+  is used elsewhere.
+- [x] Verify signing-secret validation, replay-window enforcement, event
   idempotency, Slack retry handling, and installation-specific bot identity.
-- [ ] Verify that every Slack thread link uses the canonical central T3 project
-  and thread IDs and opens the correct transcript after login.
-- [ ] Verify Slack progress/status updates for native tools and MCP tools, final
-  success, failure, cancellation, and resumed runs.
+  The clean 2026-08-30 redeploy authenticated as workspace `T01N1PDFS5V` and
+  official bot user `U073509NYP7` using only the canonical Render env group.
+- [x] Verify that a Slack thread link uses the canonical central T3 project and
+  thread IDs, returns HTTP 200, and renders a completed central snapshot.
+- [x] Verify Slack progress/status updates for native tools and MCP tools and
+  exact final success delivery. Failure, cancellation, and resumed-run status
+  remain part of the ongoing soak matrix.
 - [ ] Forward Slack file attachments into native T3 turns and verify that both
   Codex and Claude can read them from their isolated workers.
 - [x] Give Slack answer delivery a single architectural owner. Verify that an
@@ -187,8 +197,16 @@ Canonical endpoints:
 - [x] Correct the isolated app credential mismatch and verify a fresh deployed
   instance posts progress, final output, and the Open in web link as
   `Secret dre experiment` rather than the legacy Compadre bot.
-- [ ] Decide the production app name, icon, description, privacy/terms links,
-  support owner, and incident contact.
+- [x] Cut the official `Compadre` app over to
+  `https://compadre-api.comprehensive.io/slack/events`. Two live canaries on
+  2026-08-30 each produced exactly one final answer and one canonical web link;
+  the final env-group canary persisted a completed central snapshot while the
+  legacy relay received zero `/slack/events` requests.
+- [ ] Finalize the production app description, privacy/terms links, support
+  owner, and incident contact.
+- [ ] After the rollback soak, disable or remove the temporary `Secret dre
+  experiment` app and retire the legacy relay deliberately. Do not delete
+  either while it is still part of the rollback plan.
 
 ## Identity, authorization, and audit
 
