@@ -55,7 +55,7 @@ test("leaves Slack-originated final delivery to the controller outbox", () => {
   );
   assert.equal(
     shouldMirrorNativeT3RunToSlack({
-      messageId: "web-message",
+      messageId: "slack-entrypoint:stale-adapter-message",
       attribution: {
         userId: "slack:T1:U1",
         displayName: "Isaac Sherrill",
@@ -63,7 +63,7 @@ test("leaves Slack-originated final delivery to the controller outbox", () => {
       },
     }),
     true,
-    "web turns continue mirroring into a linked Slack thread",
+    "trusted web attribution takes precedence over a stale legacy message prefix",
   );
 });
 

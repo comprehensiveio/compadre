@@ -311,10 +311,8 @@ export function shouldMirrorNativeT3RunToSlack(input: {
   attribution?: unknown;
 }): boolean {
   const requester = trustedRequesterContext(input.attribution);
-  return (
-    requester?.origin !== "slack" &&
-    !isSlackEntrypointMessageId(input.messageId)
-  );
+  if (requester) return requester.origin !== "slack";
+  return !isSlackEntrypointMessageId(input.messageId);
 }
 
 /** Inject trusted identity for the harness without changing visible T3 text. */
