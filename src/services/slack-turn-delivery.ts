@@ -138,7 +138,7 @@ export async function deliverClaimedSlackTurn(input: {
     span.setAttribute("compadre.slack_answer_ms", Date.now() - startedAt);
     span.addEvent("slack.answer.posted");
     await slack.postThreadContext(
-      `<${delivery.detailsUrl}|Open in web>`,
+      `<${delivery.detailsUrl}|open session in Compadre web>`,
       relatedUuid(delivery.id, "details"),
     );
     await slack.clearStatus();

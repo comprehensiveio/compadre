@@ -116,7 +116,9 @@ ${input.userMessage}`);
         );
       }
       if (input.detailsUrl) {
-        await slack.postThreadContext(`<${input.detailsUrl}|Open in web>`);
+        await slack.postThreadContext(
+          `<${input.detailsUrl}|open session in Compadre web>`,
+        );
       }
     }
     await slack.clearStatus().catch(() => undefined);

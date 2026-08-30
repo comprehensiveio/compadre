@@ -114,7 +114,7 @@ test("a native web turn is mirrored into the bound Slack thread without changing
     "status:is thinking...",
     "status:is github.get_repo...",
     "post:Hello from the web",
-    "context:<https://central.example/project/thread|Open in web>",
+    "context:<https://central.example/project/thread|open session in Compadre web>",
     "clear",
   ]);
 });

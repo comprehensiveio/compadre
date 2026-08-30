@@ -35,8 +35,9 @@ official Slack application cutover.
 - [x] The isolated Slack app authenticates as `Secret dre experiment`, shows
   tool-specific progress, withholds intermediate assistant narration, posts
   exactly the final T3 assistant message, and follows it with the canonical
-  Open in web link from the same app identity. Live proof on 2026-08-27 used a
-  shell-tool turn and returned only `FINAL_ONLY_SLACK_VERIFIED` plus the link.
+  open session in Compadre web link from the same app identity. Live proof on
+  2026-08-27 used a shell-tool turn and returned only
+  `FINAL_ONLY_SLACK_VERIFIED` plus the link.
 - [x] The legacy `/prompt`, `/webhook/:source`, `/ag-ui`, and `/workflow-runs`
   contracts dispatch through central T3 and complete with durable status and
   replay on the isolated deployment.
@@ -195,8 +196,8 @@ Canonical endpoints:
   `slack_reply_to_thread` for its own thread and cannot be replayed without the
   destination or against another thread.
 - [x] Correct the isolated app credential mismatch and verify a fresh deployed
-  instance posts progress, final output, and the Open in web link as
-  `Secret dre experiment` rather than the legacy Compadre bot.
+  instance posts progress, final output, and the open session in Compadre web
+  link as `Secret dre experiment` rather than the legacy Compadre bot.
 - [x] Cut the official `Compadre` app over to
   `https://compadre-api.comprehensive.io/slack/events`. Two live canaries on
   2026-08-30 each produced exactly one final answer and one canonical web link;

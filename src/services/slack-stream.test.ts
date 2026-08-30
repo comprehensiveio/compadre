@@ -164,7 +164,9 @@ test("posts secondary links as compact Slack context", async () => {
     logger: silentLogger,
   });
 
-  await stream.postThreadContext("<https://example.test/thread|Open in web>");
+  await stream.postThreadContext(
+    "<https://example.test/thread|open session in Compadre web>",
+  );
 
   assert.deepEqual(calls, [
     {
@@ -172,14 +174,14 @@ test("posts secondary links as compact Slack context", async () => {
       body: {
         channel: "C123",
         thread_ts: "100.001",
-        text: "<https://example.test/thread|Open in web>",
+        text: "<https://example.test/thread|open session in Compadre web>",
         blocks: [
           {
             type: "context",
             elements: [
               {
                 type: "mrkdwn",
-                text: "<https://example.test/thread|Open in web>",
+                text: "<https://example.test/thread|open session in Compadre web>",
               },
             ],
           },

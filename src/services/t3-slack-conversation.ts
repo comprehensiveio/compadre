@@ -184,5 +184,5 @@ export async function runT3SlackConversation(input: {
 }
 
 export function t3SlackDetailsMarkdown(detailsUrl: string): string {
-  return `<${detailsUrl}|Open in web>`;
+  return `<${detailsUrl}|open session in Compadre web>`;
 }

@@ -111,7 +111,7 @@ test("delivers only terminal assistant text and returns a native T3 deep link", 
   assert.equal(result.detailsUrl, "https://ui.example/pair#token=once");
   assert.equal(
     result.detailsUrl && t3SlackDetailsMarkdown(result.detailsUrl),
-    "<https://ui.example/pair#token=once|Open in web>",
+    "<https://ui.example/pair#token=once|open session in Compadre web>",
   );
 });
 
