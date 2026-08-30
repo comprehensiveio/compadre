@@ -2,6 +2,7 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   previewGatewayConfiguration,
   previewThreadIdFromHost,
+  rewritePreviewRequestHeaders,
   rewritePreviewResponse,
   withoutCookie,
 } from "./CompadrePreviewGateway.ts";
@@ -29,6 +30,27 @@ describe("CompadrePreviewGateway", () => {
       withoutCookie("t3_session=secret; connect.sid=comp-user; theme=grove", "t3_session"),
     ).toBe("connect.sid=comp-user; theme=grove");
     expect(withoutCookie("connect.sid=comp-user", "t3_session")).toBe("connect.sid=comp-user");
+  });
+
+  it("rewrites browser security headers to the private Modal origin", () => {
+    const preview = `https://${threadId}.${suffix}`;
+    const target = "https://sandbox-3000.modal.host";
+    const headers = rewritePreviewRequestHeaders(
+      {
+        host: `${threadId}.${suffix}`,
+        origin: preview,
+        referer: `${preview}/company/employees?tab=active`,
+        cookie: "t3_session=secret; connect.sid=comp-user",
+      },
+      "t3_session",
+      preview,
+      target,
+    );
+    expect(headers.get("host")).toBeNull();
+    expect(headers.get("origin")).toBe(target);
+    expect(headers.get("referer")).toBe(`${target}/company/employees?tab=active`);
+    expect(headers.get("cookie")).toBe("connect.sid=comp-user");
+    expect(headers.get("x-forwarded-host")).toBe(`${threadId}.${suffix}`);
   });
 
   it("keeps Comp redirects and cookies on the authenticated preview host", () => {

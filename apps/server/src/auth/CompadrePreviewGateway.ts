@@ -68,8 +68,44 @@ export function withoutCookie(cookieHeader: string | undefined, cookieName: stri
   const retained = cookieHeader
     .split(";")
     .map((part) => part.trim())
-    .filter((part) => part && part.slice(0, part.indexOf("=")).trim() !== cookieName);
+    .filter((part) => {
+      if (!part) return false;
+      const separator = part.indexOf("=");
+      return separator < 0 || part.slice(0, separator).trim() !== cookieName;
+    });
   return retained.length > 0 ? retained.join("; ") : null;
+}
+
+export function rewritePreviewRequestHeaders(
+  source: ConstructorParameters<typeof Headers>[0],
+  sessionCookieName: string,
+  previewOrigin: string,
+  targetOrigin: string,
+): Headers {
+  const headers = new Headers(source);
+  headers.delete("host");
+  headers.delete("connection");
+  headers.delete("upgrade");
+  headers.delete("content-length");
+  const cookie = withoutCookie(headers.get("cookie") ?? undefined, sessionCookieName);
+  if (cookie) headers.set("cookie", cookie);
+  else headers.delete("cookie");
+
+  if (headers.get("origin") === previewOrigin) headers.set("origin", targetOrigin);
+  const referer = headers.get("referer");
+  if (referer) {
+    try {
+      const url = new URL(referer);
+      if (url.origin === previewOrigin) {
+        headers.set("referer", `${targetOrigin}${url.pathname}${url.search}${url.hash}`);
+      }
+    } catch {
+      // Preserve malformed or non-HTTP referers rather than guessing.
+    }
+  }
+  headers.set("x-forwarded-host", new URL(previewOrigin).host);
+  headers.set("x-forwarded-proto", "https");
+  return headers;
 }
 
 export function rewritePreviewResponse(
@@ -159,20 +195,14 @@ function proxyHeaders(
   request: HttpServerRequest.HttpServerRequest,
   sessionCookieName: string,
   previewOrigin: string,
+  targetOrigin: string,
 ): Headers {
-  const headers = new Headers(request.headers as Record<string, string>);
-  headers.delete("host");
-  headers.delete("connection");
-  headers.delete("upgrade");
-  headers.delete("content-length");
-  const cookie = withoutCookie(headers.get("cookie") ?? undefined, sessionCookieName);
-  if (cookie) headers.set("cookie", cookie);
-  else headers.delete("cookie");
-  const origin = headers.get("origin");
-  if (origin === previewOrigin) headers.set("origin", previewOrigin);
-  headers.set("x-forwarded-host", new URL(previewOrigin).host);
-  headers.set("x-forwarded-proto", "https");
-  return headers;
+  return rewritePreviewRequestHeaders(
+    request.headers as Record<string, string>,
+    sessionCookieName,
+    previewOrigin,
+    targetOrigin,
+  );
 }
 
 function proxyHttpRequest(input: {
@@ -192,7 +222,12 @@ function proxyHttpRequest(input: {
     }
     const targetUrl = new URL(input.request.originalUrl || input.request.url, input.targetOrigin);
     const upstreamRequest = HttpClientRequest.make(input.request.method)(targetUrl, {
-      headers: proxyHeaders(input.request, input.sessionCookieName, input.previewOrigin),
+      headers: proxyHeaders(
+        input.request,
+        input.sessionCookieName,
+        input.previewOrigin,
+        input.targetOrigin,
+      ),
       ...(body
         ? {
             body: HttpBody.uint8Array(
