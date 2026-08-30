@@ -83,6 +83,8 @@ services:
         value: compadre-web
       - key: DD_ENV
         value: production
+      - key: DD_SERVICE
+        value: compadre-web
       - key: DD_LLMOBS_ML_APP
         value: compadre
     disk:
