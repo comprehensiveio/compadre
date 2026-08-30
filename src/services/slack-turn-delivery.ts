@@ -27,6 +27,15 @@ export interface SlackTurnDeliveryClient {
   markRunFailed(messageTs: string): Promise<void>;
 }
 
+class SlackDeliveryClaimLostError extends Error {
+  constructor(delivery: Pick<SlackTurnDelivery, "id" | "attempts">) {
+    super(
+      `Slack delivery ${delivery.id} attempt ${delivery.attempts} no longer owns its claim.`,
+    );
+    this.name = "SlackDeliveryClaimLostError";
+  }
+}
+
 function relatedUuid(id: string, purpose: string): string {
   const bytes = crypto
     .createHash("sha256")
@@ -75,7 +84,7 @@ export async function deliverClaimedSlackTurn(input: {
   const startedAt = Date.now();
   const heartbeat = setInterval(() => {
     if (!store.renewClaim) return;
-    void store.renewClaim(delivery.id).catch((error) =>
+    void store.renewClaim(delivery).catch((error) =>
       logger.warn("[slack-delivery] failed to renew delivery claim", {
         deliveryId: delivery.id,
         error,
@@ -84,6 +93,9 @@ export async function deliverClaimedSlackTurn(input: {
   }, DELIVERY_CLAIM_HEARTBEAT_MS);
   heartbeat.unref();
   try {
+    if (store.renewClaim && !(await store.renewClaim(delivery))) {
+      throw new SlackDeliveryClaimLostError(delivery);
+    }
     const dispatch = dispatchFor(delivery);
     const snapshot = await t3.waitForTurnTerminal({
       threadId: delivery.t3ThreadId,
@@ -118,6 +130,10 @@ export async function deliverClaimedSlackTurn(input: {
         )
       : finalText;
 
+    if (store.renewClaim && !(await store.renewClaim(delivery))) {
+      throw new SlackDeliveryClaimLostError(delivery);
+    }
+
     await slack.postThreadMessage(response, delivery.id);
     span.setAttribute("compadre.slack_answer_ms", Date.now() - startedAt);
     span.addEvent("slack.answer.posted");
@@ -131,7 +147,9 @@ export async function deliverClaimedSlackTurn(input: {
     } else {
       await slack.markRunSucceeded(delivery.triggerMessageTs);
     }
-    await store.markDelivered(delivery.id);
+    if (!(await store.markDelivered(delivery))) {
+      throw new SlackDeliveryClaimLostError(delivery);
+    }
     span.setAttribute("compadre.delivery.failed_run", failed);
     logger.info("[slack-delivery] delivered native T3 completion", {
       deliveryId: delivery.id,
@@ -146,6 +164,14 @@ export async function deliverClaimedSlackTurn(input: {
       code: SpanStatusCode.ERROR,
       message: error instanceof Error ? error.message : String(error),
     });
+    if (error instanceof SlackDeliveryClaimLostError) {
+      logger.info("[slack-delivery] relinquished stale delivery claim", {
+        deliveryId: delivery.id,
+        messageId: delivery.messageId,
+        attempts: delivery.attempts,
+      });
+      return false;
+    }
     await store.markFailed(delivery, error);
     logger.warn("[slack-delivery] native T3 completion will retry", {
       deliveryId: delivery.id,

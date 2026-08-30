@@ -509,7 +509,7 @@ async function handleAIMessage(
           if (reservedSlackDelivery) {
             reservationHeartbeat = setInterval(() => {
               void slackDeliveries
-                .renewClaim(reservedSlackDelivery!.id)
+                .renewClaim(reservedSlackDelivery!)
                 .catch((error) =>
                   console.warn(
                     "[slack-delivery] failed to renew foreground reservation",

@@ -163,8 +163,11 @@ export class SlackTurnDeliveryStore {
     return claimed ?? null;
   }
 
-  async markDelivered(id: string, now = new Date()): Promise<void> {
-    await this.db
+  async markDelivered(
+    delivery: Pick<SlackTurnDelivery, "id" | "attempts">,
+    now = new Date(),
+  ): Promise<boolean> {
+    const [updated] = await this.db
       .update(slackTurnDeliveries)
       .set({
         status: "delivered",
@@ -173,19 +176,33 @@ export class SlackTurnDeliveryStore {
         lastError: null,
         updatedAt: now,
       })
-      .where(eq(slackTurnDeliveries.id, id));
+      .where(
+        and(
+          eq(slackTurnDeliveries.id, delivery.id),
+          eq(slackTurnDeliveries.status, "delivering"),
+          eq(slackTurnDeliveries.attempts, delivery.attempts),
+        ),
+      )
+      .returning({ id: slackTurnDeliveries.id });
+    return updated !== undefined;
   }
 
-  async renewClaim(id: string, now = new Date()): Promise<void> {
-    await this.db
+  async renewClaim(
+    delivery: Pick<SlackTurnDelivery, "id" | "attempts">,
+    now = new Date(),
+  ): Promise<boolean> {
+    const [updated] = await this.db
       .update(slackTurnDeliveries)
       .set({ claimedAt: now, updatedAt: now })
       .where(
         and(
-          eq(slackTurnDeliveries.id, id),
+          eq(slackTurnDeliveries.id, delivery.id),
           eq(slackTurnDeliveries.status, "delivering"),
+          eq(slackTurnDeliveries.attempts, delivery.attempts),
         ),
-      );
+      )
+      .returning({ id: slackTurnDeliveries.id });
+    return updated !== undefined;
   }
 
   async markFailed(
@@ -208,7 +225,13 @@ export class SlackTurnDeliveryStore {
         lastError: error instanceof Error ? error.message : String(error),
         updatedAt: now,
       })
-      .where(eq(slackTurnDeliveries.id, delivery.id));
+      .where(
+        and(
+          eq(slackTurnDeliveries.id, delivery.id),
+          eq(slackTurnDeliveries.status, "delivering"),
+          eq(slackTurnDeliveries.attempts, delivery.attempts),
+        ),
+      );
   }
 }
 
