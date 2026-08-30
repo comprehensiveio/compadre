@@ -46,12 +46,19 @@ work so they survive handoffs and context compaction.
   so dropping to an internal user and later using sudo is not viable.
 - Root is scoped to that disposable sandbox. Each thread has a separate
   checkout, process tree, database, tunnel, and filesystem snapshot.
-- Bootstrap inputs are synthetic or sanitized, read-only S3 objects in AWS
+- Default bootstrap inputs are synthetic or sanitized, read-only S3 objects in AWS
   account `629591269808`, bucket `compadre`, prefix
-  `dev-environments/comp/`. Never substitute a Tolt resource or production
-  database dump.
+  `dev-environments/comp/`.
+- A user may explicitly request the latest production-derived data. The only
+  supported path is a thread-scoped controller manifest for the Comprehensive
+  hourly backup in `s3://comp-prod-db-backups/hourly/`, followed by Hen's
+  existing local restore, anonymization, and migration workflow. The sandbox
+  never receives AWS credentials or the controller signing secret, and the raw
+  SQL dump is deleted immediately after successful anonymization.
+- Never use a direct production database connection, disable Hen anonymization,
+  select a different bucket or prefix, or substitute any Tolt resource.
 - The raw Modal preview is an internal routing target, never a user-facing URL.
   Browser traffic enters through a UUID-scoped Compadre hostname, requires the
   existing Slack-backed Compadre session, and is then proxied to the bound
   sandbox. Comp's own dev-login remains a separate inner authentication layer
-  so reviewers can impersonate any user in the synthetic database.
+  so reviewers can impersonate any user in the sandbox-local database.

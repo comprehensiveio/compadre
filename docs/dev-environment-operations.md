@@ -27,7 +27,7 @@ each hosted T3 thread. The safety and ownership rules in
   environment.
 - The outer T3 session controls access to the preview. Comp's independent
   `connect.sid` cookie stays scoped to the thread host, so developers can still
-  use Comp's synthetic dev-login routes to impersonate any seeded user inside
+  use Comp's dev-login routes to impersonate any sandbox-local user inside
   the isolated environment.
 
 ## Comprehensive-owned artifacts
@@ -50,6 +50,36 @@ Current inputs are synthetic or derived build artifacts:
 The controller signs read-only object URLs for no more than seven days and
 projects those URLs only when the feature flag is enabled. Never upload a
 production database dump or use a Tolt-owned bucket, account, or artifact.
+
+## Optional production-derived data
+
+Synthetic data is always the initial and default mode. When a user explicitly
+needs representative current data, run this inside that thread's sandbox:
+
+```bash
+scripts/compadre-dev-data.sh production-latest
+```
+
+The sandbox exchanges its expiring, canonical-thread-scoped bearer token for a
+fresh presigned GET URL to the newest object under the Comprehensive-owned
+`s3://comp-prod-db-backups/hourly/` prefix. It downloads and validates the
+object while Vite remains available, pauses only Vite for the database restore,
+then invokes the existing Hen CLI to restore, anonymize, and migrate the local
+database. It selects a valid company for the dev-login readiness check,
+deletes the raw SQL dump, and restarts the same stable preview URL. Neither AWS
+credentials nor the controller's token-signing secret cross into Modal.
+
+Inspect the current mode without changing data:
+
+```bash
+scripts/compadre-dev-data.sh status
+scripts/compadre-dev-up.sh status
+```
+
+Do not use Hen's direct production connection, `HEN_SKIP_ANONYMIZE=true`, a
+different bucket, or a Tolt-owned resource. Production-derived mode preserves
+Hen's current anonymization contract; avoid printing or screenshotting broad
+customer datasets even after anonymization.
 
 Refresh a dependency artifact whenever the Comp lockfile, Prisma schema, Node
 ABI, CPU architecture, or libc compatibility changes. Refresh the seed through

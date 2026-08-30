@@ -14,6 +14,7 @@ import {
   devEnvironmentEnabled,
   t3EncryptedPorts,
 } from "./dev-environment.js";
+import { devBackupAccessProjection } from "./dev-backups.js";
 
 const DEFAULT_T3_PORT = 3773;
 const DEFAULT_T3_BASE_DIR = "/var/lib/t3";
@@ -303,6 +304,7 @@ export async function launchManagedT3ModalEnvironment(
   const forkArchivePath = await resolveT3ForkArchive(workerEnvironment);
   const devArtifactEnvironment =
     await devEnvironmentArtifactProjection(workerEnvironment);
+  const devBackupEnvironment = devBackupAccessProjection(workerEnvironment);
   let startupToken: string | undefined;
   const sandbox = createHarnessSandbox({
     worktreeId: `t3-modal-${randomUUID()}`,
@@ -320,7 +322,10 @@ export async function launchManagedT3ModalEnvironment(
           ? {
               COMPADRE_DEV_PREVIEW_URL:
                 authenticatedDevPreviewUrl(workerEnvironment) ??
-                (await handle.ports.connect(COMP_DEV_SERVER_PORT)).url.replace(/\/$/, ""),
+                (await handle.ports.connect(COMP_DEV_SERVER_PORT)).url.replace(
+                  /\/$/,
+                  "",
+                ),
               COMPADRE_DEV_PORT: String(COMP_DEV_SERVER_PORT),
               AGENT_BROWSER_EXECUTABLE_PATH: "/usr/bin/chromium",
             }
@@ -328,6 +333,7 @@ export async function launchManagedT3ModalEnvironment(
       await handle.env.set({
         ...providerEnvironment,
         ...devArtifactEnvironment,
+        ...devBackupEnvironment,
         ...devPreviewEnvironment,
         HOME: "/home/node",
       });

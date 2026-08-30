@@ -32,8 +32,21 @@ scripts/compadre-dev-up.sh url
 scripts/compadre-dev-up.sh down
 ```
 
-Never substitute a production database or run a production dump command. The
-artifact URLs supplied to this sandbox are short-lived and read-only.
+Synthetic data is the default. Only when the user explicitly asks for current,
+production-derived data, run:
+
+```bash
+scripts/compadre-dev-data.sh production-latest
+```
+
+That supported path requests the newest Comprehensive hourly backup through a
+thread-scoped controller manifest, then reuses Hen to restore, anonymize, and
+migrate the sandbox-local database. It deletes the raw dump and restarts the
+same stable preview URL. Check the active mode with
+`scripts/compadre-dev-data.sh status`. Never connect Hen directly to production,
+set `HEN_SKIP_ANONYMIZE=true`, select another bucket, or use any Tolt resource.
+The artifact and download URLs supplied to this sandbox are short-lived and
+read-only.
 
 ## Validate with agent-browser
 
@@ -56,7 +69,8 @@ the user. Log in through the sandbox-only route rather than typing credentials:
 ```bash
 export AGENT_BROWSER_EXECUTABLE_PATH=/usr/bin/chromium
 BASE_URL=http://127.0.0.1:${COMPADRE_DEV_PORT:-3000}
-agent-browser open "$BASE_URL/api/v1/auth/dev/login/admin?company=Compadre%20Demo&redirect=/company/employees"
+LOGIN_COMPANY=$(cat /var/tmp/compadre-dev-login-company 2>/dev/null || printf 'Compadre Demo')
+agent-browser open "$BASE_URL/api/v1/auth/dev/login/admin?company=$LOGIN_COMPANY&redirect=/company/employees"
 agent-browser wait --load domcontentloaded
 ```
 

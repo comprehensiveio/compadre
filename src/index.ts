@@ -18,6 +18,7 @@ import { toolBridgeRoutes } from "./routes/tool-bridge.js";
 import { t3DirectoryRoutes } from "./routes/t3-directory.js";
 import { slackAuthRoutes } from "./routes/slack-auth.js";
 import { previewGatewayRoutes } from "./routes/preview-gateway.js";
+import { devBackupRoutes } from "./routes/dev-backups.js";
 import { validateConversationConfiguration } from "./conversation.js";
 import {
   createSingleFlightSlackRecovery,
@@ -69,6 +70,7 @@ app.route("/", toolBridgeRoutes);
 app.route("/", t3DirectoryRoutes);
 app.route("/", slackAuthRoutes);
 app.route("/", previewGatewayRoutes);
+app.route("/", devBackupRoutes);
 
 const SLACK_RECOVERY_DELAY_MS = 15_000;
 
