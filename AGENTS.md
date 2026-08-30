@@ -2,6 +2,21 @@
 
 T3 Code is a minimal GUI for coding agents. A Node WebSocket server wraps provider CLIs (Codex, Claude Code, Cursor, Grok, OpenCode) and serves web, desktop, and mobile clients.
 
+## Comprehensive's Compadre fork
+
+This repository is also the hosted UI/server half of Comprehensive's Compadre
+product. Before changing Compadre-specific UI, authentication, persistence,
+provider transport, MCP integration, deployment, or cross-service contracts:
+
+1. Read `docs/internals/compadre-fork.md`.
+2. In the companion `comprehensiveio/compadre` checkout, load
+   `.agents/skills/change-compadre-stack/SKILL.md` and the references it routes
+   to. That skill is the canonical guide to ownership, migrations, rollout,
+   and deployed verification across both repositories.
+3. If this change makes that skill verifiably inaccurate, update the skill in
+   a paired Compadre change before calling the work complete. Do not maintain a
+   second copy of the stack guide here.
+
 You can think of T3 Code as an open source "bring-your-own-subscription" alternative to apps like Claude Desktop, Codex App, Cursor Glass and Conductor.
 
 ## What makes T3 Code special?
