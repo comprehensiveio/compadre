@@ -140,6 +140,8 @@ Canonical endpoints:
   falls back without channel metadata, even though message execution succeeds.
 - [ ] Grant the bot `files:read` for image inputs and `files:write` for generated
   artifact delivery, then reinstall the app so the expanded scopes take effect.
+- [x] Prove those file scopes plus conversation metadata scopes on the isolated
+  Comprehensive app and reinstall it before production cutover.
 - [ ] Reinstall/reauthorize the app after scope changes and confirm the bot is in
   every required channel.
 - [ ] Verify signing-secret validation, replay-window enforcement, event

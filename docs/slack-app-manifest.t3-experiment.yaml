@@ -19,12 +19,16 @@ oauth_config:
       - app_mentions:read
       - assistant:write
       - channels:history
+      - channels:read
       - chat:write
       - files:read
       - files:write
       - groups:history
+      - groups:read
       - im:history
+      - im:read
       - mpim:history
+      - mpim:read
       - reactions:read
       - reactions:write
       - users:read

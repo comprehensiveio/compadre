@@ -247,6 +247,7 @@ export class T3Gateway {
         title: input.title,
         text: input.text,
         displayText: input.displayText,
+        inputFiles: input.inputFiles,
         modelSelection: input.modelSelection,
         signal: input.signal,
       });

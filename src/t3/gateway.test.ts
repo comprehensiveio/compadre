@@ -107,6 +107,76 @@ test("routes model changes through the same provider-native T3 thread", async ()
   ]);
 });
 
+test("forwards image inputs on both new and resumed native T3 threads", async () => {
+  const persistence = memoryPersistence();
+  const bindings = new T3ThreadBindingStore(persistence.stores.metadata);
+  const received: Array<{ kind: "new" | "resumed"; names: string[] }> = [];
+  const client: T3CommandClient = {
+    baseUrl: "https://t3.example",
+    async startNewThread(input) {
+      received.push({
+        kind: "new",
+        names: (input.inputFiles ?? []).map((file) => file.name),
+      });
+      return {
+        sequence: 1,
+        commandId: "command-1",
+        messageId: "message-1",
+        threadId: input.threadId!,
+        createdAt: "2026-08-26T15:00:00.000Z",
+      };
+    },
+    async startTurn(input) {
+      received.push({
+        kind: "resumed",
+        names: (input.inputFiles ?? []).map((file) => file.name),
+      });
+      return {
+        sequence: 2,
+        commandId: "command-2",
+        messageId: "message-2",
+        threadId: input.threadId,
+        createdAt: "2026-08-26T15:00:01.000Z",
+      };
+    },
+    async interruptTurn() { return 3; },
+    async waitForTurnTerminal() { throw new Error("unused"); },
+    async threadSnapshot() { throw new Error("unused"); },
+    async mintPairingCredential() { throw new Error("unused"); },
+  };
+  const gateway = new T3Gateway(
+    bindings,
+    {
+      async provision() {
+        return { sandboxId: "sandbox-1", projectId: "project-1", client };
+      },
+      async reconnect() {
+        return { sandboxId: "sandbox-1", projectId: "project-1", client };
+      },
+    },
+    () => "t3-thread-1",
+  );
+  const inputFile = {
+    name: "diagram.png",
+    mimetype: "image/png" as const,
+    sizeBytes: 4,
+    dataBase64: "iVBORw==",
+  };
+  const request = {
+    canonicalThreadId: "slack-thread-with-image",
+    title: "Slack image",
+    modelSelection: { instanceId: "codex", model: "gpt-5.6-sol" },
+  };
+
+  await gateway.send({ ...request, text: "first", inputFiles: [inputFile] });
+  await gateway.send({ ...request, text: "second", inputFiles: [inputFile] });
+
+  assert.deepEqual(received, [
+    { kind: "new", names: ["diagram.png"] },
+    { kind: "resumed", names: ["diagram.png"] },
+  ]);
+});
+
 test("requires a new native T3 thread when switching provider harnesses", async () => {
   const persistence = memoryPersistence();
   const bindings = new T3ThreadBindingStore(persistence.stores.metadata);
