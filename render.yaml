@@ -2,8 +2,6 @@ services:
   # Slack, API, auth, durable routing, and per-thread Modal fanout.
   - type: web
     name: compadre-api
-    repo: https://github.com/comprehensiveio/compadre
-    branch: main
     runtime: node
     region: oregon
     plan: standard
