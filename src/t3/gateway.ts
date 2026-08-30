@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { metrics } from "@opentelemetry/api";
 import { InMemoryLockStore, type LockStore } from "./storage.js";
 import type {
   T3Client,
@@ -80,7 +81,26 @@ export interface T3EnvironmentConnectionManager {
     };
   }): Promise<T3EnvironmentConnection>;
   reconnect(binding: T3ThreadBinding): Promise<T3EnvironmentConnection>;
+  restore?(binding: T3ThreadBinding): Promise<T3EnvironmentConnection>;
+  hibernate?(
+    binding: T3ThreadBinding,
+    connection?: T3EnvironmentConnection,
+  ): Promise<{ snapshotId: string }>;
   discard?(connection: T3EnvironmentConnection): Promise<void>;
+}
+
+export class T3EnvironmentUnavailableError extends Error {
+  constructor(readonly sandboxId: string) {
+    super(`T3 Modal sandbox ${sandboxId} is unavailable`);
+    this.name = "T3EnvironmentUnavailableError";
+  }
+}
+
+export interface T3WorkerLifecycleOptions {
+  warmLeaseMs?: number;
+  maxLiveMs?: number;
+  hibernationSafetyMs?: number;
+  schedule?(task: () => void, delayMs: number): void;
 }
 
 export interface T3GatewayTurn {
@@ -99,6 +119,23 @@ export interface T3PreviewTarget {
 }
 
 const DEFAULT_T3_HOSTED_APP_URL = "https://app.t3.codes";
+const DEFAULT_WORKER_WARM_LEASE_MS = 30 * 60 * 1000;
+const DEFAULT_WORKER_MAX_LIVE_MS = 2 * 60 * 60 * 1000;
+const DEFAULT_HIBERNATION_SAFETY_MS = 5 * 60 * 1000;
+const HIBERNATION_RETRY_MS = 60 * 1000;
+const STALE_HIBERNATION_MS = 10 * 60 * 1000;
+const HIBERNATION_SWEEP_CONCURRENCY = 4;
+const workerLifecycleTransitions = metrics
+  .getMeter("compadre.runtime")
+  .createCounter("compadre.t3.worker.lifecycle.transitions", {
+    description: "Native T3 worker lifecycle transitions",
+  });
+const workerLiveDuration = metrics
+  .getMeter("compadre.runtime")
+  .createHistogram("compadre.t3.worker.live.duration", {
+    unit: "ms",
+    description: "Elapsed live time before a native T3 worker is hibernated",
+  });
 
 export function buildT3HostedThreadUrl(input: {
   hostedAppUrl: string;
@@ -111,7 +148,9 @@ export function buildT3HostedThreadUrl(input: {
   url.searchParams.set("host", input.environmentUrl);
   url.searchParams.set("label", input.label);
   url.searchParams.set("threadId", input.threadId);
-  url.hash = new URLSearchParams([["token", input.pairingCredential]]).toString();
+  url.hash = new URLSearchParams([
+    ["token", input.pairingCredential],
+  ]).toString();
   return url.toString();
 }
 
@@ -121,20 +160,317 @@ export function buildT3HostedThreadUrl(input: {
  * projection; this class owns only external-thread routing.
  */
 export class T3Gateway {
+  private readonly warmLeaseMs: number;
+  private readonly maxLiveMs: number;
+  private readonly hibernationSafetyMs: number;
+  private readonly schedule: (task: () => void, delayMs: number) => void;
+
   constructor(
     private readonly bindings: T3ThreadBindingStore,
     private readonly environments: T3EnvironmentConnectionManager,
     private readonly idFactory: () => string = randomUUID,
     private readonly now: () => Date = () => new Date(),
     private readonly locks: LockStore = new InMemoryLockStore(),
-    private readonly hostedAppUrl: string =
-      process.env.COMPADRE_T3_HOSTED_APP_URL?.trim() ||
+    private readonly hostedAppUrl: string = process.env.COMPADRE_T3_HOSTED_APP_URL?.trim() ||
       DEFAULT_T3_HOSTED_APP_URL,
     private readonly snapshots?: T3ThreadSnapshotStore,
-  ) {}
+    workerLifecycle: T3WorkerLifecycleOptions = {},
+  ) {
+    this.warmLeaseMs =
+      workerLifecycle.warmLeaseMs ?? DEFAULT_WORKER_WARM_LEASE_MS;
+    this.maxLiveMs = workerLifecycle.maxLiveMs ?? DEFAULT_WORKER_MAX_LIVE_MS;
+    this.hibernationSafetyMs =
+      workerLifecycle.hibernationSafetyMs ?? DEFAULT_HIBERNATION_SAFETY_MS;
+    if (!Number.isFinite(this.warmLeaseMs) || this.warmLeaseMs <= 0) {
+      throw new Error("T3 worker warm lease must be a positive number");
+    }
+    if (!Number.isFinite(this.maxLiveMs) || this.maxLiveMs <= 0) {
+      throw new Error("T3 worker maximum live time must be a positive number");
+    }
+    if (
+      !Number.isFinite(this.hibernationSafetyMs) ||
+      this.hibernationSafetyMs < 0 ||
+      this.hibernationSafetyMs >= this.maxLiveMs
+    ) {
+      throw new Error(
+        "T3 worker hibernation safety margin must be non-negative and below the maximum live time",
+      );
+    }
+    this.schedule =
+      workerLifecycle.schedule ??
+      ((task, delayMs) => {
+        const timer = setTimeout(task, delayMs);
+        timer.unref();
+      });
+  }
 
   private lockKey(canonicalThreadId: string) {
     return `compadre:t3-environment:${canonicalThreadId}`;
+  }
+
+  private recordWorkerTransition(
+    event: string,
+    binding: T3ThreadBinding,
+    attributes: Record<string, unknown> = {},
+  ): void {
+    workerLifecycleTransitions.add(1, {
+      event,
+      provider: binding.providerInstanceId,
+      generation: binding.workerGeneration ?? 1,
+    });
+    console.log("[t3-worker-lifecycle]", {
+      event,
+      canonicalThreadId: binding.canonicalThreadId,
+      sandboxId: binding.sandboxId,
+      provider: binding.providerInstanceId,
+      generation: binding.workerGeneration ?? 1,
+      ...attributes,
+    });
+  }
+
+  private scheduleHibernation(binding: T3ThreadBinding): void {
+    if (!this.environments.hibernate || !binding.warmUntil) return;
+    const delayMs = Math.max(
+      0,
+      Date.parse(binding.warmUntil) - this.now().getTime(),
+    );
+    this.schedule(() => {
+      void this.hibernateIfWarm(binding.canonicalThreadId).catch((error) => {
+        console.error("[t3-worker-lifecycle] hibernation failed", {
+          canonicalThreadId: binding.canonicalThreadId,
+          sandboxId: binding.sandboxId,
+          generation: binding.workerGeneration ?? 1,
+          errorName: error instanceof Error ? error.name : typeof error,
+          errorMessage: error instanceof Error ? error.message : String(error),
+        });
+      });
+    }, delayMs);
+  }
+
+  private async connectForTurn(initialBinding: T3ThreadBinding): Promise<{
+    binding: T3ThreadBinding;
+    environment: T3EnvironmentConnection;
+  }> {
+    let binding = initialBinding;
+    if (binding.workerState !== "suspended") {
+      try {
+        return {
+          binding,
+          environment: await this.environments.reconnect(binding),
+        };
+      } catch (error) {
+        if (!(error instanceof T3EnvironmentUnavailableError)) throw error;
+        if (binding.workerState === "hibernating") {
+          if (!this.environments.hibernate) throw error;
+          const checkpoint = await this.environments.hibernate(binding);
+          const timestamp = this.now().toISOString();
+          binding = {
+            ...binding,
+            workerState: "suspended",
+            workerSnapshotId: checkpoint.snapshotId,
+            warmUntil: undefined,
+            lastActiveAt: timestamp,
+            updatedAt: timestamp,
+          };
+          await this.bindings.bindRecord(binding);
+          this.recordWorkerTransition("hibernate.completed", binding, {
+            snapshotId: checkpoint.snapshotId,
+            recoveredForTurn: true,
+          });
+        }
+      }
+    }
+    if (!binding.workerSnapshotId || !this.environments.restore) {
+      throw new T3EnvironmentUnavailableError(binding.sandboxId);
+    }
+
+    const restoring: T3ThreadBinding = {
+      ...binding,
+      workerState: "restoring",
+      updatedAt: this.now().toISOString(),
+    };
+    await this.bindings.bindRecord(restoring);
+    this.recordWorkerTransition("restore.started", restoring, {
+      snapshotId: restoring.workerSnapshotId,
+    });
+    try {
+      const environment = await this.environments.restore(restoring);
+      const timestamp = this.now().toISOString();
+      const restored: T3ThreadBinding = {
+        ...restoring,
+        sandboxId: environment.sandboxId,
+        baseUrl: environment.client.baseUrl,
+        workerState: "running",
+        workerGeneration: (binding.workerGeneration ?? 1) + 1,
+        sandboxStartedAt: timestamp,
+        lastActiveAt: timestamp,
+        warmUntil: undefined,
+        status: "ready",
+        updatedAt: timestamp,
+      };
+      await this.bindings.bindRecord(restored);
+      this.recordWorkerTransition("restore.completed", restored, {
+        previousSandboxId: binding.sandboxId,
+      });
+      return { binding: restored, environment };
+    } catch (error) {
+      await this.bindings
+        .bindRecord({
+          ...binding,
+          workerState: "suspended",
+          status: "unavailable",
+          updatedAt: this.now().toISOString(),
+        })
+        .catch(() => undefined);
+      this.recordWorkerTransition("restore.failed", binding, {
+        errorName: error instanceof Error ? error.name : typeof error,
+      });
+      throw error;
+    }
+  }
+
+  private async hibernateIfWarm(canonicalThreadId: string): Promise<void> {
+    if (!this.environments.hibernate) return;
+    await this.locks.withLock(
+      this.lockKey(canonicalThreadId),
+      async (signal) => {
+        if (signal.aborted) throw signal.reason;
+        const binding = await this.bindings.get(canonicalThreadId);
+        const nowMs = this.now().getTime();
+        const updatedAtMs = binding
+          ? Date.parse(binding.updatedAt)
+          : Number.NaN;
+        const expiredWarm =
+          binding?.workerState === "warm" &&
+          Boolean(binding.warmUntil) &&
+          Date.parse(binding.warmUntil!) <= nowMs;
+        const staleHibernation =
+          binding?.workerState === "hibernating" &&
+          Number.isFinite(updatedAtMs) &&
+          updatedAtMs <= nowMs - STALE_HIBERNATION_MS;
+        if (!binding || (!expiredWarm && !staleHibernation)) {
+          return;
+        }
+
+        const hibernating: T3ThreadBinding = {
+          ...binding,
+          workerState: "hibernating",
+          updatedAt: this.now().toISOString(),
+        };
+        await this.bindings.bindRecord(hibernating);
+        this.recordWorkerTransition(
+          staleHibernation ? "hibernate.recovered" : "hibernate.started",
+          hibernating,
+        );
+        try {
+          const environment = staleHibernation
+            ? undefined
+            : await this.environments.reconnect(hibernating);
+          const checkpoint = await this.environments.hibernate!(
+            hibernating,
+            environment,
+          );
+          const timestamp = this.now().toISOString();
+          const suspended: T3ThreadBinding = {
+            ...hibernating,
+            workerState: "suspended",
+            workerSnapshotId: checkpoint.snapshotId,
+            warmUntil: undefined,
+            lastActiveAt: timestamp,
+            updatedAt: timestamp,
+          };
+          await this.bindings.bindRecord(suspended);
+          const startedAt = Date.parse(
+            suspended.sandboxStartedAt ?? suspended.createdAt,
+          );
+          if (Number.isFinite(startedAt)) {
+            workerLiveDuration.record(
+              Math.max(0, this.now().getTime() - startedAt),
+              {
+                provider: suspended.providerInstanceId,
+                generation: suspended.workerGeneration ?? 1,
+              },
+            );
+          }
+          this.recordWorkerTransition("hibernate.completed", suspended, {
+            snapshotId: checkpoint.snapshotId,
+          });
+        } catch (error) {
+          const retry: T3ThreadBinding = {
+            ...binding,
+            workerState: "warm",
+            warmUntil: new Date(
+              this.now().getTime() + HIBERNATION_RETRY_MS,
+            ).toISOString(),
+            updatedAt: this.now().toISOString(),
+          };
+          await this.bindings.bindRecord(retry).catch(() => undefined);
+          this.scheduleHibernation(retry);
+          this.recordWorkerTransition("hibernate.failed", retry, {
+            errorName: error instanceof Error ? error.name : typeof error,
+          });
+          throw error;
+        }
+      },
+    );
+  }
+
+  async sweepExpiredWarmWorkers(): Promise<void> {
+    const nowMs = this.now().getTime();
+    const candidates = (await this.bindings.list()).filter((binding) => {
+      if (binding.workerState === "warm" && binding.warmUntil) {
+        return Date.parse(binding.warmUntil) <= nowMs;
+      }
+      return (
+        binding.workerState === "hibernating" &&
+        Date.parse(binding.updatedAt) <= nowMs - STALE_HIBERNATION_MS
+      );
+    });
+    let nextIndex = 0;
+    const worker = async () => {
+      while (nextIndex < candidates.length) {
+        const binding = candidates[nextIndex++];
+        if (!binding) return;
+        await this.hibernateIfWarm(binding.canonicalThreadId).catch(
+          () => undefined,
+        );
+      }
+    };
+    await Promise.all(
+      Array.from(
+        { length: Math.min(HIBERNATION_SWEEP_CONCURRENCY, candidates.length) },
+        worker,
+      ),
+    );
+  }
+
+  /**
+   * Rebuilds lost in-process timers after a controller restart and bounds how
+   * long an overdue warm worker can continue accruing compute charges.
+   */
+  startWorkerLifecycleSweeper(intervalMs = 60_000): () => void {
+    if (!Number.isFinite(intervalMs) || intervalMs <= 0) {
+      throw new Error("T3 worker sweep interval must be a positive number");
+    }
+    let inFlight: Promise<void> | undefined;
+    const sweep = () => {
+      if (inFlight) return;
+      inFlight = this.sweepExpiredWarmWorkers()
+        .catch((error) => {
+          console.error("[t3-worker-lifecycle] sweep failed", {
+            errorName: error instanceof Error ? error.name : typeof error,
+            errorMessage:
+              error instanceof Error ? error.message : String(error),
+          });
+        })
+        .finally(() => {
+          inFlight = undefined;
+        });
+    };
+    sweep();
+    const timer = setInterval(sweep, intervalMs);
+    timer.unref();
+    return () => clearInterval(timer);
   }
 
   /**
@@ -237,10 +573,7 @@ export class T3Gateway {
           `This T3 thread is already using ${existing.providerInstanceId}; start a new thread to use ${providerInstanceId}.`,
         );
       }
-      if (
-        input.blockedSlackDestination &&
-        !existing.blockedSlackDestination
-      ) {
+      if (input.blockedSlackDestination && !existing.blockedSlackDestination) {
         throw new Error(
           "This existing T3 environment was not provisioned with a protected Slack destination; start a new thread.",
         );
@@ -257,9 +590,10 @@ export class T3Gateway {
           "This T3 environment is already assigned to a different Slack destination.",
         );
       }
-      const environment = await this.environments.reconnect(existing);
+      const connected = await this.connectForTurn(existing);
+      const environment = connected.environment;
       const dispatch = await environment.client.startTurn({
-        threadId: existing.t3ThreadId,
+        threadId: connected.binding.t3ThreadId,
         text: input.text,
         displayText: input.displayText,
         modelSelection: input.modelSelection,
@@ -267,9 +601,12 @@ export class T3Gateway {
         signal: input.signal,
       });
       const updated: T3ThreadBinding = {
-        ...existing,
-        title: existing.title ?? input.title,
+        ...connected.binding,
+        title: connected.binding.title ?? input.title,
         status: "working",
+        workerState: "running",
+        lastActiveAt: this.now().toISOString(),
+        warmUntil: undefined,
         modelSelection: input.modelSelection,
         updatedAt: this.now().toISOString(),
       };
@@ -302,6 +639,10 @@ export class T3Gateway {
         projectId: environment.projectId,
         sandboxId: environment.sandboxId,
         baseUrl: environment.client.baseUrl,
+        workerState: "running",
+        workerGeneration: 1,
+        sandboxStartedAt: timestamp,
+        lastActiveAt: timestamp,
         modelSelection: input.modelSelection,
         blockedSlackDestination: input.blockedSlackDestination,
         title: input.title,
@@ -310,6 +651,7 @@ export class T3Gateway {
         updatedAt: timestamp,
       };
       await this.bindings.bindRecord(binding);
+      this.recordWorkerTransition("provision.completed", binding);
       return { binding, dispatch };
     } catch (error) {
       await this.environments.discard?.(environment).catch(() => undefined);
@@ -465,7 +807,15 @@ export class T3Gateway {
     });
     await this.snapshots?.save(input.turn.binding, snapshot);
     const latestState = snapshot.thread.latestTurn?.state;
-    await this.bindings.bind({
+    const timestamp = this.now().toISOString();
+    const desiredWarmUntil = this.now().getTime() + this.warmLeaseMs;
+    const sandboxStartedAt = Date.parse(
+      input.turn.binding.sandboxStartedAt ?? input.turn.binding.createdAt,
+    );
+    const latestSafeWarmUntil = Number.isFinite(sandboxStartedAt)
+      ? sandboxStartedAt + this.maxLiveMs - this.hibernationSafetyMs
+      : desiredWarmUntil;
+    const updated: T3ThreadBinding = {
       ...input.turn.binding,
       title: snapshot.thread.title || input.turn.binding.title,
       modelSelection: snapshot.thread.modelSelection,
@@ -475,18 +825,40 @@ export class T3Gateway {
           : latestState === "interrupted"
             ? "interrupted"
             : "ready",
-      updatedAt: this.now().toISOString(),
-    });
+      ...(this.environments.hibernate
+        ? {
+            workerState: "warm" as const,
+            lastActiveAt: timestamp,
+            warmUntil: new Date(
+              Math.min(desiredWarmUntil, latestSafeWarmUntil),
+            ).toISOString(),
+          }
+        : {}),
+      updatedAt: timestamp,
+    };
+    await this.bindings.bind(updated);
+    this.scheduleHibernation(updated);
+    if (updated.workerState === "warm") {
+      this.recordWorkerTransition("warm.started", updated, {
+        warmUntil: updated.warmUntil,
+      });
+    }
     return snapshot;
   }
 
   async collectOutputArtifacts(
     turn: T3GatewayTurn,
     publish: (artifact: T3OutputArtifact) => Promise<void>,
-  ): Promise<{ published: Array<{ path: string; digest: string }>; failures: string[] }> {
+  ): Promise<{
+    published: Array<{ path: string; digest: string }>;
+    failures: string[];
+  }> {
     const environment = await this.environments.reconnect(turn.binding);
     if (!environment.sandbox) {
-      return { published: [], failures: ["The T3 sandbox filesystem is unavailable."] };
+      return {
+        published: [],
+        failures: ["The T3 sandbox filesystem is unavailable."],
+      };
     }
     return collectT3OutputArtifacts(environment.sandbox, publish);
   }

@@ -18,6 +18,24 @@ const binding: T3ThreadBinding = {
   updatedAt: "2026-08-26T15:00:00.000Z",
 };
 
+test("persists credential-free Modal worker lifecycle state", async () => {
+  const persistence = memoryPersistence();
+  const store = new T3ThreadBindingStore(persistence.stores.metadata);
+  const lifecycleBinding: T3ThreadBinding = {
+    ...binding,
+    workerState: "suspended",
+    workerGeneration: 3,
+    workerSnapshotId: "im-worker-3",
+    sandboxStartedAt: "2026-08-26T14:00:00.000Z",
+    lastActiveAt: "2026-08-26T15:00:00.000Z",
+    warmUntil: "2026-08-26T15:30:00.000Z",
+  };
+
+  await store.bind(lifecycleBinding);
+
+  assert.deepEqual(await store.get(binding.canonicalThreadId), lifecycleBinding);
+});
+
 test("does not reassign a native T3 thread to another provider", async () => {
   const persistence = memoryPersistence();
   const store = new T3ThreadBindingStore(persistence.stores.metadata);

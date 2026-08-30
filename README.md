@@ -80,7 +80,8 @@ See `.env.example` for the full list. Key notes:
 - **COMP_APP_API_KEY**: Optional credential for the Comp app MCP and debug-link API when it differs from the relay's own `COMPADRE_API_KEY`.
 - **CODEX_API_KEY**: API key for the Codex CLI harness; a persisted Codex login is also supported for local development.
 - **COMPADRE_AGENT_PROVIDER**: Select the default Claude Code or Codex harness. `/prompt` and AG-UI callers may override it per request.
-- **MODAL_TOKEN_ID / MODAL_TOKEN_SECRET**: Modal is the coding-harness runtime. Compadre bakes its pinned Claude Code and Codex CLIs into the cached Modal image, keeping per-request setup to the repository clone. After each successful persisted turn, Compadre snapshots the filesystem, stores its image ID with the thread, and terminates the billed sandbox. The next turn restores that snapshot.
+- **MODAL_TOKEN_ID / MODAL_TOKEN_SECRET**: Modal is the coding-harness runtime. Compadre bakes its pinned Claude Code and Codex CLIs into the cached Modal image, keeping per-request setup to the repository clone. A hosted-T3 worker stays warm for a bounded post-turn lease, then Compadre snapshots its stopped filesystem and terminates billed compute. The next message restores a new sandbox from that snapshot. The legacy TanStack path snapshots immediately after a persisted turn.
+- **COMPADRE_T3_WORKER_WARM_TTL_MS / COMPADRE_T3_WORKER_SWEEP_INTERVAL_MS**: Control the native worker's post-turn warm lease (30 minutes by default) and the restart-safe overdue-worker sweep (one minute by default). The warm deadline is also capped before `COMPADRE_MODAL_TIMEOUT_MS`.
 - **GITHUB_PERSONAL_ACCESS_TOKEN**: Required in production so Modal can clone
   the private repository and the relay can operate configured PR watches.
 - **COMPADRE_PUBLIC_URL**: Public HTTPS origin of the relay. TanStack exposes each run's bearer-authenticated host-tool bridge at this origin so Modal can invoke tools that still execute on the relay. Individual tool definitions do not contain Modal-specific code.
@@ -147,7 +148,8 @@ On Render:
 
 - The relay accepts requests, persists conversations, and serves authenticated host tools.
 - Coding-agent repositories and shell processes live in Modal, not Render `/tmp`.
-- Persisted threads restore their latest Modal filesystem snapshot; independent threads can run concurrently.
+- Persisted threads restore their latest Modal filesystem snapshot after their
+  warm worker has been terminated; independent threads can run concurrently.
 - `REPO_PATH` is only needed for local development and the optional PR deployment watcher.
 
 ### Modal agent execution

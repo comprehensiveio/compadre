@@ -15,16 +15,19 @@ each hosted T3 thread. The safety and ownership rules in
   Redis, dependency restoration, and Vite remain stopped until the agent runs
   `scripts/compadre-dev-up.sh up`.
 - The idempotent `up`, `status`, `url`, and `down` commands are the supported
-  lifecycle interface. The stable review URL remains attached to the thread
-  while its sandbox exists.
+  lifecycle interface. After a turn, the sandbox stays warm for 30 minutes by
+  default. Compadre then runs `down`, snapshots the stopped filesystem, and
+  terminates billed compute.
 - Review traffic enters through the hosted T3 service at
   `https://<canonical-thread-id>.dev.compadre.comprehensive.io`. The service
   requires a Comprehensive Slack-backed browser session, resolves the existing
   sandbox through a service-authenticated controller endpoint, and proxies HTTP
   and WebSocket traffic without exposing the raw Modal URL.
-- Preview resolution never provisions a sandbox. A missing or expired thread
-  sandbox returns an unavailable response instead of silently creating a new
-  environment.
+- Preview resolution never provisions or restores a sandbox. A suspended or
+  expired thread returns an unavailable response. Sending a new message
+  restores a new sandbox from the thread's snapshot; the dev server remains
+  stopped until the agent runs `scripts/compadre-dev-up.sh up` again, while its
+  checkout and local database files resume from the snapshot.
 - The outer T3 session controls access to the preview. Comp's independent
   `connect.sid` cookie stays scoped to the thread host, so developers can still
   use Comp's dev-login routes to impersonate any sandbox-local user inside

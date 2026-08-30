@@ -16,6 +16,13 @@ export type T3ThreadDirectoryStatus =
   | "error"
   | "unavailable";
 
+export type T3WorkerState =
+  | "running"
+  | "warm"
+  | "hibernating"
+  | "suspended"
+  | "restoring";
+
 export interface T3ThreadBinding {
   canonicalThreadId: string;
   providerInstanceId: string;
@@ -23,6 +30,12 @@ export interface T3ThreadBinding {
   projectId: string;
   sandboxId: string;
   baseUrl: string;
+  workerState?: T3WorkerState;
+  workerGeneration?: number;
+  workerSnapshotId?: string;
+  sandboxStartedAt?: string;
+  lastActiveAt?: string;
+  warmUntil?: string;
   modelSelection: T3ModelSelection;
   blockedSlackDestination?: {
     channelId: string;
@@ -83,6 +96,21 @@ function isBinding(value: unknown): value is T3ThreadBinding {
     record.sandboxId.length > 0 &&
     typeof record.baseUrl === "string" &&
     record.baseUrl.length > 0 &&
+    (record.workerState === undefined ||
+      ["running", "warm", "hibernating", "suspended", "restoring"].includes(
+        record.workerState as string,
+      )) &&
+    (record.workerGeneration === undefined ||
+      (Number.isInteger(record.workerGeneration) &&
+        (record.workerGeneration as number) >= 1)) &&
+    (record.workerSnapshotId === undefined ||
+      (typeof record.workerSnapshotId === "string" &&
+        record.workerSnapshotId.length > 0)) &&
+    (record.sandboxStartedAt === undefined ||
+      typeof record.sandboxStartedAt === "string") &&
+    (record.lastActiveAt === undefined ||
+      typeof record.lastActiveAt === "string") &&
+    (record.warmUntil === undefined || typeof record.warmUntil === "string") &&
     isModelSelection(record.modelSelection) &&
     (record.blockedSlackDestination === undefined ||
       isBlockedSlackDestination(record.blockedSlackDestination)) &&

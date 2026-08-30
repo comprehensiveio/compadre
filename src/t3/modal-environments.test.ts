@@ -2,7 +2,11 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import type { T3ThreadBinding } from "../services/t3-thread-bindings.js";
 import type { T3OrchestrationSnapshot, T3Thread } from "./client.js";
-import { assertIsolatedT3Environment } from "./modal-environments.js";
+import {
+  assertIsolatedT3Environment,
+  T3ModalEnvironmentManager,
+} from "./modal-environments.js";
+import type { SandboxHandle } from "@tanstack/ai-sandbox";
 
 const binding: T3ThreadBinding = {
   canonicalThreadId: "thread-1",
@@ -63,4 +67,79 @@ test("rejects a missing or additional T3 thread", () => {
       ),
     /violates one-thread isolation/,
   );
+});
+
+test("quiesces development services before snapshotting and terminating a worker", async () => {
+  const events: Array<{ command: string; cwd?: string } | string> = [];
+  const sandbox = {
+    workspaceRoot: "/workspace/repository",
+    capabilities: { snapshots: true },
+    process: {
+      async exec(command: string, options?: { cwd?: string }) {
+        events.push({ command, cwd: options?.cwd });
+        return { exitCode: 0, stdout: "", stderr: "" };
+      },
+    },
+    async snapshot(label: string) {
+      events.push(`snapshot:${label}`);
+      return { id: "im-worker-1", label };
+    },
+  } as unknown as SandboxHandle;
+  const manager = new T3ModalEnvironmentManager({});
+
+  assert.deepEqual(
+    await manager.hibernate(binding, {
+      sandboxId: binding.sandboxId,
+      projectId: binding.projectId,
+      client: {} as never,
+      sandbox,
+    }),
+    { snapshotId: "im-worker-1" },
+  );
+  assert.match(
+    (events[0] as { command: string }).command,
+    /compadre-dev-up\.sh down/,
+  );
+  assert.match((events[0] as { command: string }).command, /kill \"\$pid\"/);
+  assert.equal((events[0] as { cwd?: string }).cwd, "/workspace/repository");
+  assert.equal(events[1], "snapshot:t3-worker-generation-1");
+});
+
+test("restarts T3 after snapshot capture fails", async () => {
+  let restarted = false;
+  const snapshotError = new Error("snapshot capture failed");
+  const sandbox = {
+    workspaceRoot: "/workspace",
+    capabilities: { snapshots: true },
+    process: {
+      async exec() {
+        return { exitCode: 0, stdout: "", stderr: "" };
+      },
+    },
+    async snapshot() {
+      throw snapshotError;
+    },
+  } as unknown as SandboxHandle;
+  const manager = new T3ModalEnvironmentManager({}, undefined, {
+    async restart(handle, identity) {
+      restarted = true;
+      assert.equal(handle, sandbox);
+      assert.deepEqual(identity, {
+        projectId: binding.projectId,
+        t3ThreadId: binding.t3ThreadId,
+      });
+      return {} as never;
+    },
+  });
+
+  await assert.rejects(
+    manager.hibernate(binding, {
+      sandboxId: binding.sandboxId,
+      projectId: binding.projectId,
+      client: {} as never,
+      sandbox,
+    }),
+    snapshotError,
+  );
+  assert.equal(restarted, true);
 });

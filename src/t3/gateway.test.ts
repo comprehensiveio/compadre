@@ -7,10 +7,31 @@ import type { LockStore } from "./storage.js";
 import type { SandboxHandle } from "@tanstack/ai-sandbox";
 import {
   buildT3HostedThreadUrl,
+  T3EnvironmentUnavailableError,
   T3Gateway,
   type T3CommandClient,
   type T3EnvironmentConnectionManager,
 } from "./gateway.js";
+
+const completedSnapshot = {
+  snapshotSequence: 2,
+  thread: {
+    id: "t3-thread-1",
+    projectId: "project-1",
+    title: "Restorable thread",
+    modelSelection: { instanceId: "codex", model: "gpt-5.6-sol" },
+    latestTurn: {
+      turnId: "turn-1",
+      state: "completed" as const,
+      requestedAt: "2026-08-30T12:00:00.000Z",
+      startedAt: "2026-08-30T12:00:00.000Z",
+      completedAt: "2026-08-30T12:00:05.000Z",
+      assistantMessageId: "assistant-1",
+    },
+    messages: [],
+    session: { status: "ready" as const, activeTurnId: null, lastError: null },
+  },
+};
 
 class CapacityLockStore implements LockStore {
   private held = 0;
@@ -185,6 +206,533 @@ test("routes model changes through the same provider-native T3 thread", async ()
   );
 });
 
+test("restores a suspended Modal worker before continuing the same T3 thread", async () => {
+  const persistence = memoryPersistence();
+  const bindings = new T3ThreadBindingStore(persistence.stores.metadata);
+  await bindings.bind({
+    canonicalThreadId: "canonical-thread",
+    providerInstanceId: "codex",
+    t3ThreadId: "t3-thread-1",
+    projectId: "project-1",
+    sandboxId: "sandbox-1",
+    baseUrl: "https://old-worker.example",
+    modelSelection: { instanceId: "codex", model: "gpt-5.6-sol" },
+    status: "ready",
+    workerState: "suspended",
+    workerGeneration: 1,
+    workerSnapshotId: "im-checkpoint-1",
+    sandboxStartedAt: "2026-08-30T10:00:00.000Z",
+    lastActiveAt: "2026-08-30T10:05:00.000Z",
+    createdAt: "2026-08-30T10:00:00.000Z",
+    updatedAt: "2026-08-30T10:05:00.000Z",
+  });
+  const starts: string[] = [];
+  const restored: string[] = [];
+  const client = {
+    baseUrl: "https://restored-worker.example",
+    async startNewThread() {
+      throw new Error("unused");
+    },
+    async startTurn(input: { threadId: string }) {
+      starts.push(input.threadId);
+      return {
+        sequence: 3,
+        commandId: "command-2",
+        messageId: "message-2",
+        threadId: input.threadId,
+        createdAt: "2026-08-30T13:00:00.000Z",
+      };
+    },
+    async interruptTurn() {
+      return 4;
+    },
+    async waitForTurnTerminal() {
+      return completedSnapshot;
+    },
+    async threadSnapshot() {
+      return completedSnapshot;
+    },
+    async mintPairingCredential() {
+      throw new Error("unused");
+    },
+  } satisfies T3CommandClient;
+  const gateway = new T3Gateway(
+    bindings,
+    {
+      async provision() {
+        throw new Error("unused");
+      },
+      async reconnect() {
+        throw new T3EnvironmentUnavailableError("sandbox-1");
+      },
+      async restore(binding) {
+        restored.push(binding.workerSnapshotId!);
+        return {
+          sandboxId: "sandbox-2",
+          projectId: binding.projectId,
+          client,
+        };
+      },
+    },
+    () => "unused",
+    () => new Date("2026-08-30T13:00:00.000Z"),
+    undefined,
+    undefined,
+    undefined,
+    { schedule: () => undefined },
+  );
+
+  const turn = await gateway.send({
+    canonicalThreadId: "canonical-thread",
+    title: "Restorable thread",
+    text: "continue",
+    modelSelection: { instanceId: "codex", model: "gpt-5.6-sol" },
+  });
+
+  assert.deepEqual(restored, ["im-checkpoint-1"]);
+  assert.deepEqual(starts, ["t3-thread-1"]);
+  assert.equal(turn.binding.sandboxId, "sandbox-2");
+  assert.equal(turn.binding.baseUrl, "https://restored-worker.example");
+  assert.equal(turn.binding.workerGeneration, 2);
+  assert.equal(turn.binding.workerState, "running");
+});
+
+test("hibernates a terminal worker after its warm lease", async () => {
+  const persistence = memoryPersistence();
+  const bindings = new T3ThreadBindingStore(persistence.stores.metadata);
+  let currentTime = new Date("2026-08-30T12:00:00.000Z");
+  const hibernated: string[] = [];
+  const client = {
+    baseUrl: "https://worker.example",
+    async startNewThread(input: { threadId?: string }) {
+      return {
+        sequence: 1,
+        commandId: "command-1",
+        messageId: "message-1",
+        threadId: input.threadId!,
+        createdAt: currentTime.toISOString(),
+      };
+    },
+    async startTurn() {
+      throw new Error("unused");
+    },
+    async interruptTurn() {
+      return 2;
+    },
+    async waitForTurnTerminal() {
+      return completedSnapshot;
+    },
+    async threadSnapshot() {
+      return completedSnapshot;
+    },
+    async mintPairingCredential() {
+      throw new Error("unused");
+    },
+  } satisfies T3CommandClient;
+  const environment = {
+    sandboxId: "sandbox-1",
+    projectId: "project-1",
+    client,
+  };
+  const gateway = new T3Gateway(
+    bindings,
+    {
+      async provision() {
+        return environment;
+      },
+      async reconnect() {
+        return environment;
+      },
+      async hibernate(binding) {
+        hibernated.push(binding.canonicalThreadId);
+        return { snapshotId: "im-checkpoint-1" };
+      },
+    },
+    () => "t3-thread-1",
+    () => currentTime,
+    undefined,
+    undefined,
+    undefined,
+    { warmLeaseMs: 30 * 60 * 1000, schedule: () => undefined },
+  );
+  const turn = await gateway.send({
+    canonicalThreadId: "canonical-thread",
+    title: "Restorable thread",
+    text: "work",
+    modelSelection: { instanceId: "codex", model: "gpt-5.6-sol" },
+  });
+  await gateway.waitForTerminal({ turn });
+
+  const warm = await bindings.get("canonical-thread");
+  assert.equal(warm?.workerState, "warm");
+  assert.equal(warm?.warmUntil, "2026-08-30T12:30:00.000Z");
+
+  currentTime = new Date("2026-08-30T12:31:00.000Z");
+  await gateway.sweepExpiredWarmWorkers();
+
+  const suspended = await bindings.get("canonical-thread");
+  assert.deepEqual(hibernated, ["canonical-thread"]);
+  assert.equal(suspended?.workerState, "suspended");
+  assert.equal(suspended?.workerSnapshotId, "im-checkpoint-1");
+  assert.equal(suspended?.warmUntil, undefined);
+});
+
+test("recovers a stale hibernation left by a controller crash", async () => {
+  const persistence = memoryPersistence();
+  const bindings = new T3ThreadBindingStore(persistence.stores.metadata);
+  await bindings.bind({
+    canonicalThreadId: "canonical-thread",
+    providerInstanceId: "codex",
+    t3ThreadId: "t3-thread-1",
+    projectId: "project-1",
+    sandboxId: "sandbox-1",
+    baseUrl: "https://worker.example",
+    modelSelection: { instanceId: "codex", model: "gpt-5.6-sol" },
+    status: "ready",
+    workerState: "hibernating",
+    workerGeneration: 1,
+    sandboxStartedAt: "2026-08-30T11:00:00.000Z",
+    lastActiveAt: "2026-08-30T11:30:00.000Z",
+    warmUntil: "2026-08-30T12:00:00.000Z",
+    createdAt: "2026-08-30T11:00:00.000Z",
+    updatedAt: "2026-08-30T12:00:00.000Z",
+  });
+  let connectionPassed = true;
+  const gateway = new T3Gateway(
+    bindings,
+    {
+      async provision() {
+        throw new Error("unused");
+      },
+      async reconnect() {
+        throw new Error("must not require a live T3 server");
+      },
+      async hibernate(_binding, connection) {
+        connectionPassed = connection !== undefined;
+        return { snapshotId: "im-recovered-checkpoint" };
+      },
+    },
+    () => "unused",
+    () => new Date("2026-08-30T12:11:00.000Z"),
+    undefined,
+    undefined,
+    undefined,
+    { schedule: () => undefined },
+  );
+
+  await gateway.sweepExpiredWarmWorkers();
+
+  const recovered = await bindings.get("canonical-thread");
+  assert.equal(connectionPassed, false);
+  assert.equal(recovered?.workerState, "suspended");
+  assert.equal(recovered?.workerSnapshotId, "im-recovered-checkpoint");
+});
+
+test("finishes an interrupted hibernation before resuming a user turn", async () => {
+  const persistence = memoryPersistence();
+  const bindings = new T3ThreadBindingStore(persistence.stores.metadata);
+  await bindings.bindRecord({
+    canonicalThreadId: "canonical-thread",
+    providerInstanceId: "codex",
+    t3ThreadId: "t3-thread-1",
+    projectId: "project-1",
+    sandboxId: "sandbox-1",
+    baseUrl: "https://old-worker.example",
+    modelSelection: { instanceId: "codex", model: "gpt-5.6-sol" },
+    status: "ready",
+    workerState: "hibernating",
+    workerGeneration: 1,
+    sandboxStartedAt: "2026-08-30T11:00:00.000Z",
+    lastActiveAt: "2026-08-30T11:30:00.000Z",
+    warmUntil: "2026-08-30T12:00:00.000Z",
+    createdAt: "2026-08-30T11:00:00.000Z",
+    updatedAt: "2026-08-30T12:00:00.000Z",
+  });
+  const starts: string[] = [];
+  const restoredClient = {
+    baseUrl: "https://restored-worker.example",
+    async startNewThread() {
+      throw new Error("unused");
+    },
+    async startTurn(input: { threadId: string }) {
+      starts.push(input.threadId);
+      return {
+        sequence: 3,
+        commandId: "command-2",
+        messageId: "message-2",
+        threadId: input.threadId,
+        createdAt: "2026-08-30T12:01:00.000Z",
+      };
+    },
+    async interruptTurn() {
+      return 4;
+    },
+    async waitForTurnTerminal() {
+      return completedSnapshot;
+    },
+    async threadSnapshot() {
+      return completedSnapshot;
+    },
+    async mintPairingCredential() {
+      throw new Error("unused");
+    },
+  } satisfies T3CommandClient;
+  const gateway = new T3Gateway(
+    bindings,
+    {
+      async provision() {
+        throw new Error("unused");
+      },
+      async reconnect(binding) {
+        throw new T3EnvironmentUnavailableError(binding.sandboxId);
+      },
+      async hibernate(_binding, connection) {
+        assert.equal(connection, undefined);
+        return { snapshotId: "im-recovered-checkpoint" };
+      },
+      async restore(binding) {
+        assert.equal(binding.workerSnapshotId, "im-recovered-checkpoint");
+        return {
+          sandboxId: "sandbox-2",
+          projectId: binding.projectId,
+          client: restoredClient,
+        };
+      },
+    },
+    () => "unused",
+    () => new Date("2026-08-30T12:01:00.000Z"),
+    undefined,
+    undefined,
+    undefined,
+    { schedule: () => undefined },
+  );
+
+  const turn = await gateway.send({
+    canonicalThreadId: "canonical-thread",
+    title: "Recovered thread",
+    text: "continue",
+    modelSelection: { instanceId: "codex", model: "gpt-5.6-sol" },
+  });
+
+  assert.deepEqual(starts, ["t3-thread-1"]);
+  assert.equal(turn.binding.sandboxId, "sandbox-2");
+  assert.equal(turn.binding.workerGeneration, 2);
+  assert.equal(turn.binding.workerState, "running");
+});
+
+test("continues the same native thread after controller restart, hibernation, and restore", async () => {
+  const persistence = memoryPersistence();
+  const bindings = new T3ThreadBindingStore(persistence.stores.metadata);
+  let currentTime = new Date("2026-08-30T12:00:00.000Z");
+  let liveSandboxId: string | null = "sandbox-1";
+  const starts: string[] = [];
+  const client = (baseUrl: string): T3CommandClient => ({
+    baseUrl,
+    async startNewThread(input) {
+      starts.push(`new:${input.threadId}`);
+      return {
+        sequence: 1,
+        commandId: "command-1",
+        messageId: "message-1",
+        threadId: input.threadId!,
+        createdAt: currentTime.toISOString(),
+      };
+    },
+    async startTurn(input) {
+      starts.push(`continue:${input.threadId}`);
+      return {
+        sequence: 3,
+        commandId: "command-2",
+        messageId: "message-2",
+        threadId: input.threadId,
+        createdAt: currentTime.toISOString(),
+      };
+    },
+    async interruptTurn() {
+      return 4;
+    },
+    async waitForTurnTerminal() {
+      return completedSnapshot;
+    },
+    async threadSnapshot() {
+      return completedSnapshot;
+    },
+    async mintPairingCredential() {
+      throw new Error("unused");
+    },
+  });
+  let activeClient = client("https://worker-1.example");
+  const environments: T3EnvironmentConnectionManager = {
+    async provision() {
+      return {
+        sandboxId: liveSandboxId!,
+        projectId: "project-1",
+        client: activeClient,
+      };
+    },
+    async reconnect(binding) {
+      if (binding.sandboxId !== liveSandboxId) {
+        throw new T3EnvironmentUnavailableError(binding.sandboxId);
+      }
+      return {
+        sandboxId: binding.sandboxId,
+        projectId: binding.projectId,
+        client: activeClient,
+      };
+    },
+    async hibernate() {
+      liveSandboxId = null;
+      return { snapshotId: "im-worker-checkpoint" };
+    },
+    async restore(binding) {
+      assert.equal(binding.workerSnapshotId, "im-worker-checkpoint");
+      liveSandboxId = "sandbox-2";
+      activeClient = client("https://worker-2.example");
+      return {
+        sandboxId: liveSandboxId,
+        projectId: binding.projectId,
+        client: activeClient,
+      };
+    },
+  };
+  const lifecycle = {
+    warmLeaseMs: 30 * 60 * 1000,
+    schedule: () => undefined,
+  };
+  const firstController = new T3Gateway(
+    bindings,
+    environments,
+    () => "t3-thread-1",
+    () => currentTime,
+    undefined,
+    undefined,
+    undefined,
+    lifecycle,
+  );
+  const firstTurn = await firstController.send({
+    canonicalThreadId: "canonical-thread",
+    title: "Restartable thread",
+    text: "first",
+    modelSelection: { instanceId: "codex", model: "gpt-5.6-sol" },
+  });
+  await firstController.waitForTerminal({ turn: firstTurn });
+
+  // Model a fresh Render process: only Postgres-backed binding state survives.
+  currentTime = new Date("2026-08-30T12:31:00.000Z");
+  const restartedController = new T3Gateway(
+    bindings,
+    environments,
+    () => "must-not-create-another-thread",
+    () => currentTime,
+    undefined,
+    undefined,
+    undefined,
+    lifecycle,
+  );
+  await restartedController.sweepExpiredWarmWorkers();
+  assert.equal(
+    (await bindings.get("canonical-thread"))?.workerState,
+    "suspended",
+  );
+
+  currentTime = new Date("2026-08-30T15:00:00.000Z");
+  const resumedTurn = await restartedController.send({
+    canonicalThreadId: "canonical-thread",
+    title: "Restartable thread",
+    text: "three hours later",
+    modelSelection: { instanceId: "codex", model: "gpt-5.6-sol" },
+  });
+
+  assert.deepEqual(starts, ["new:t3-thread-1", "continue:t3-thread-1"]);
+  assert.equal(resumedTurn.binding.t3ThreadId, "t3-thread-1");
+  assert.equal(resumedTurn.binding.sandboxId, "sandbox-2");
+  assert.equal(resumedTurn.binding.workerGeneration, 2);
+  assert.equal(resumedTurn.binding.workerState, "running");
+});
+
+test("caps the warm lease before Modal's hard sandbox deadline", async () => {
+  const persistence = memoryPersistence();
+  const bindings = new T3ThreadBindingStore(persistence.stores.metadata);
+  const now = new Date("2026-08-30T13:50:00.000Z");
+  const client = {
+    baseUrl: "https://worker.example",
+    async startNewThread(input: { threadId?: string }) {
+      return {
+        sequence: 1,
+        commandId: "command-1",
+        messageId: "message-1",
+        threadId: input.threadId!,
+        createdAt: now.toISOString(),
+      };
+    },
+    async startTurn() {
+      throw new Error("unused");
+    },
+    async interruptTurn() {
+      return 2;
+    },
+    async waitForTurnTerminal() {
+      return completedSnapshot;
+    },
+    async threadSnapshot() {
+      return completedSnapshot;
+    },
+    async mintPairingCredential() {
+      throw new Error("unused");
+    },
+  } satisfies T3CommandClient;
+  const environment = {
+    sandboxId: "sandbox-1",
+    projectId: "project-1",
+    client,
+  };
+  const gateway = new T3Gateway(
+    bindings,
+    {
+      async provision() {
+        return environment;
+      },
+      async reconnect() {
+        return environment;
+      },
+      async hibernate() {
+        return { snapshotId: "unused" };
+      },
+    },
+    () => "t3-thread-1",
+    () => now,
+    undefined,
+    undefined,
+    undefined,
+    {
+      warmLeaseMs: 30 * 60 * 1000,
+      maxLiveMs: 2 * 60 * 60 * 1000,
+      hibernationSafetyMs: 5 * 60 * 1000,
+      schedule: () => undefined,
+    },
+  );
+  const turn = await gateway.send({
+    canonicalThreadId: "canonical-thread",
+    title: "Near timeout",
+    text: "work",
+    modelSelection: { instanceId: "codex", model: "gpt-5.6-sol" },
+  });
+  await gateway.waitForTerminal({
+    turn: {
+      ...turn,
+      binding: {
+        ...turn.binding,
+        sandboxStartedAt: "2026-08-30T12:00:00.000Z",
+      },
+    },
+  });
+
+  assert.equal(
+    (await bindings.get("canonical-thread"))?.warmUntil,
+    "2026-08-30T13:55:00.000Z",
+  );
+});
+
 test("resolves a preview from the bound sandbox without provisioning", async () => {
   const persistence = memoryPersistence();
   const bindings = new T3ThreadBindingStore(persistence.stores.metadata);
@@ -208,7 +756,12 @@ test("resolves a preview from the bound sandbox without provisioning", async () 
       return { sandboxId: "unused", projectId: "unused", client };
     },
     async reconnect() {
-      return { sandboxId: "sandbox-1", projectId: "project-1", client, sandbox };
+      return {
+        sandboxId: "sandbox-1",
+        projectId: "project-1",
+        client,
+        sandbox,
+      };
     },
   });
   await bindings.bindRecord({
@@ -241,10 +794,7 @@ test("resolves a preview from the bound sandbox without provisioning", async () 
 test("does not nest directory-index locks inside first-turn environment locks", async () => {
   const persistence = memoryPersistence();
   const locks = new CapacityLockStore(4, 100);
-  const bindings = new T3ThreadBindingStore(
-    persistence.stores.metadata,
-    locks,
-  );
+  const bindings = new T3ThreadBindingStore(persistence.stores.metadata, locks);
   let nextId = 0;
   const client: T3CommandClient = {
     baseUrl: "https://t3.example",
@@ -257,11 +807,21 @@ test("does not nest directory-index locks inside first-turn environment locks", 
         createdAt: "2026-08-26T15:00:00.000Z",
       };
     },
-    async startTurn() { throw new Error("unused"); },
-    async interruptTurn() { throw new Error("unused"); },
-    async waitForTurnTerminal() { throw new Error("unused"); },
-    async threadSnapshot() { throw new Error("unused"); },
-    async mintPairingCredential() { throw new Error("unused"); },
+    async startTurn() {
+      throw new Error("unused");
+    },
+    async interruptTurn() {
+      throw new Error("unused");
+    },
+    async waitForTurnTerminal() {
+      throw new Error("unused");
+    },
+    async threadSnapshot() {
+      throw new Error("unused");
+    },
+    async mintPairingCredential() {
+      throw new Error("unused");
+    },
   };
   const gateway = new T3Gateway(
     bindings,
@@ -269,20 +829,25 @@ test("does not nest directory-index locks inside first-turn environment locks", 
       async provision() {
         return { sandboxId: "sandbox", projectId: "project", client };
       },
-      async reconnect() { throw new Error("unused"); },
+      async reconnect() {
+        throw new Error("unused");
+      },
     },
     () => `t3-thread-${nextId++}`,
     () => new Date("2026-08-26T15:00:00.000Z"),
     locks,
   );
 
-  const turns = await Promise.all(Array.from({ length: 4 }, (_, index) =>
-    gateway.send({
-      canonicalThreadId: `canonical-${index}`,
-      title: `Concurrent ${index}`,
-      text: `Message ${index}`,
-      modelSelection: { instanceId: "codex", model: "gpt-5.6-sol" },
-    })));
+  const turns = await Promise.all(
+    Array.from({ length: 4 }, (_, index) =>
+      gateway.send({
+        canonicalThreadId: `canonical-${index}`,
+        title: `Concurrent ${index}`,
+        text: `Message ${index}`,
+        modelSelection: { instanceId: "codex", model: "gpt-5.6-sol" },
+      }),
+    ),
+  );
 
   assert.equal(turns.length, 4);
   assert.ok(turns.every((turn) => turn.binding.status === "working"));
@@ -320,10 +885,18 @@ test("forwards image inputs on both new and resumed native T3 threads", async ()
         createdAt: "2026-08-26T15:00:01.000Z",
       };
     },
-    async interruptTurn() { return 3; },
-    async waitForTurnTerminal() { throw new Error("unused"); },
-    async threadSnapshot() { throw new Error("unused"); },
-    async mintPairingCredential() { throw new Error("unused"); },
+    async interruptTurn() {
+      return 3;
+    },
+    async waitForTurnTerminal() {
+      throw new Error("unused");
+    },
+    async threadSnapshot() {
+      throw new Error("unused");
+    },
+    async mintPairingCredential() {
+      throw new Error("unused");
+    },
   };
   const gateway = new T3Gateway(
     bindings,
@@ -372,11 +945,21 @@ test("requires a new native T3 thread when switching provider harnesses", async 
         createdAt: "2026-08-26T15:00:00.000Z",
       };
     },
-    async startTurn() { throw new Error("unused"); },
-    async interruptTurn() { throw new Error("unused"); },
-    async waitForTurnTerminal() { throw new Error("unused"); },
-    async threadSnapshot() { throw new Error("unused"); },
-    async mintPairingCredential() { throw new Error("unused"); },
+    async startTurn() {
+      throw new Error("unused");
+    },
+    async interruptTurn() {
+      throw new Error("unused");
+    },
+    async waitForTurnTerminal() {
+      throw new Error("unused");
+    },
+    async threadSnapshot() {
+      throw new Error("unused");
+    },
+    async mintPairingCredential() {
+      throw new Error("unused");
+    },
   } satisfies T3CommandClient;
   const gateway = new T3Gateway(
     bindings,
@@ -484,7 +1067,11 @@ test("runs internal text generation in a disposable unbound T3 environment", asy
   const discarded: string[] = [];
   const client = {
     baseUrl: "https://t3.example",
-    async startNewThread(input: { threadId?: string; title: string; text: string }) {
+    async startNewThread(input: {
+      threadId?: string;
+      title: string;
+      text: string;
+    }) {
       assert.equal(input.title, "Internal text generation");
       assert.equal(input.text, "Return JSON with a concise title");
       return {
@@ -495,8 +1082,12 @@ test("runs internal text generation in a disposable unbound T3 environment", asy
         createdAt: "2026-08-27T15:00:00.000Z",
       };
     },
-    async startTurn() { throw new Error("unused"); },
-    async interruptTurn() { throw new Error("unused"); },
+    async startTurn() {
+      throw new Error("unused");
+    },
+    async interruptTurn() {
+      throw new Error("unused");
+    },
     async waitForTurnTerminal() {
       return {
         snapshotSequence: 12,
@@ -524,19 +1115,33 @@ test("runs internal text generation in a disposable unbound T3 environment", asy
               updatedAt: "2026-08-27T15:00:01.000Z",
             },
           ],
-          session: { status: "ready" as const, activeTurnId: null, lastError: null },
+          session: {
+            status: "ready" as const,
+            activeTurnId: null,
+            lastError: null,
+          },
         },
       };
     },
-    async threadSnapshot() { throw new Error("unused"); },
-    async mintPairingCredential() { throw new Error("unused"); },
+    async threadSnapshot() {
+      throw new Error("unused");
+    },
+    async mintPairingCredential() {
+      throw new Error("unused");
+    },
   } satisfies T3CommandClient;
   const environments: T3EnvironmentConnectionManager = {
     async provision(input) {
       provisioned.push(input.canonicalThreadId);
-      return { sandboxId: "sandbox-generation", projectId: "project-1", client };
+      return {
+        sandboxId: "sandbox-generation",
+        projectId: "project-1",
+        client,
+      };
     },
-    async reconnect() { throw new Error("unused"); },
+    async reconnect() {
+      throw new Error("unused");
+    },
     async discard(connection) {
       discarded.push(connection.sandboxId);
     },
@@ -550,7 +1155,10 @@ test("runs internal text generation in a disposable unbound T3 environment", asy
     timeoutMs: 30_000,
   });
 
-  assert.equal(generated.snapshot.thread.messages[0]?.text, '{"title":"Concise title"}');
+  assert.equal(
+    generated.snapshot.thread.messages[0]?.text,
+    '{"title":"Concise title"}',
+  );
   assert.deepEqual(provisioned, ["internal-text-generation:generation-1"]);
   assert.deepEqual(discarded, ["sandbox-generation"]);
   assert.deepEqual(await bindings.list(), []);
@@ -577,8 +1185,14 @@ test("serves a completed thread from central storage without reconnecting Modal"
         assistantMessageId: "assistant-1",
       },
       messages: [],
-      session: { status: "ready" as const, activeTurnId: null, lastError: null },
-      activities: [{ id: "activity-1", type: "command.completed", title: "pwd" }],
+      session: {
+        status: "ready" as const,
+        activeTurnId: null,
+        lastError: null,
+      },
+      activities: [
+        { id: "activity-1", type: "command.completed", title: "pwd" },
+      ],
     },
   };
   const client = {
@@ -592,16 +1206,24 @@ test("serves a completed thread from central storage without reconnecting Modal"
         createdAt: "2026-08-26T15:00:00.000Z",
       };
     },
-    async startTurn() { throw new Error("unused"); },
-    async interruptTurn() { throw new Error("unused"); },
+    async startTurn() {
+      throw new Error("unused");
+    },
+    async interruptTurn() {
+      throw new Error("unused");
+    },
     async waitForTurnTerminal(input: {
       onSnapshot?(snapshot: typeof terminalSnapshot): void | Promise<void>;
     }) {
       await input.onSnapshot?.(terminalSnapshot);
       return terminalSnapshot;
     },
-    async threadSnapshot() { throw new Error("Modal should not be read after completion"); },
-    async mintPairingCredential() { throw new Error("unused"); },
+    async threadSnapshot() {
+      throw new Error("Modal should not be read after completion");
+    },
+    async mintPairingCredential() {
+      throw new Error("unused");
+    },
   } satisfies T3CommandClient;
   const gateway = new T3Gateway(
     bindings,

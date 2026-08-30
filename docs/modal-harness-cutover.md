@@ -1,5 +1,10 @@
 # Modal harness cutover
 
+> This runbook describes the legacy TanStack harness lifecycle. Production
+> hosted-T3 threads use the warm-lease lifecycle documented in
+> `docs/hosted-t3-architecture.md`: one worker stays warm briefly, then is
+> snapshotted and restored on a later message.
+
 ## Boundary
 
 ```text
@@ -31,7 +36,7 @@ their own Modal transport or authentication.
 
 ## Lifecycle
 
-Compadre uses one Modal sandbox per active turn. A successful persisted turn
+The legacy TanStack path uses one Modal sandbox per active turn. A successful persisted turn
 captures a seven-day filesystem snapshot, stores the image ID through the
 Postgres-backed `SandboxInstanceStore`, and terminates the sandbox. The next
 turn restores from that image. One-shot runs terminate without snapshotting.

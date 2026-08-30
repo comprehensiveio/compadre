@@ -8,6 +8,7 @@ import {
   modalImageCommands,
   modalResourceSettings,
   modalSandboxProvider,
+  modalSandboxTags,
   modalSecretNames,
   parseModalProcessTable,
 } from "./modal-sandbox.js";
@@ -205,6 +206,27 @@ test("normalizes named Modal secrets without exposing their values", () => {
     ["compadre-t3-auth", "shared-tools"],
   );
   assert.deepEqual(modalSecretNames({}), []);
+});
+
+test("tags Modal workers for cost attribution without exposing thread ids", () => {
+  const tags = modalSandboxTags({
+    DD_ENV: "production",
+    COMPADRE_CANONICAL_THREAD_ID: "slack:T01:C01:123.456",
+    COMPADRE_PROVIDER_INSTANCE_ID: "codex",
+    COMPADRE_WORKER_GENERATION: "4",
+    COMPADRE_DEV_ENVIRONMENT_ENABLED: "true",
+  });
+
+  assert.deepEqual(tags, {
+    managedBy: "compadre",
+    environment: "production",
+    purpose: "t3-worker",
+    provider: "codex",
+    devEnvironment: "true",
+    workerGeneration: "4",
+    threadKey: "b4f3971a8efaca24",
+  });
+  assert.doesNotMatch(JSON.stringify(tags), /slack:T01/);
 });
 
 test("bakes the app repository's required command-line tools", () => {

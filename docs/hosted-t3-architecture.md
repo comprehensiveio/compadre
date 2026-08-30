@@ -54,6 +54,43 @@ against Render's bootstrap workspace is not an authoritative substitute.
 | Attachments and large artifacts | Central object storage |
 | Logs, traces, model usage and cost telemetry | Datadog |
 
+## Worker lifecycle and idle cost
+
+Native T3 workers use a durable lifecycle recorded with the thread binding in
+Postgres:
+
+```text
+running -> warm -> hibernating -> suspended -> restoring -> running
+```
+
+After a terminal turn, the worker remains warm for 30 minutes by default. The
+controller then stops the optional dev stack, stops the worker-local T3 server,
+captures a Modal filesystem snapshot, records the image ID, and terminates the
+sandbox. The snapshot includes `/workspace`, worker-local T3 state under
+`/var/lib/t3`, and stopped local database files. It does not preserve running
+processes.
+
+A later message creates a new Modal sandbox from that image, reprojects current
+credentials and signed artifact URLs, restarts T3, verifies the assigned
+project/thread and protected Slack destination, and continues the same native
+T3 thread. With the default seven-day snapshot TTL, a message after three hours
+resumes from the saved filesystem and transcript. This is restoration into a
+new sandbox ID, not revival of the terminated sandbox.
+
+The warm deadline is capped five minutes before Modal's configured hard sandbox
+timeout. An in-process timer handles the normal path and a Postgres-backed
+sweeper reconstructs overdue work after a controller restart. Preview lookup
+does not wake a suspended worker; sending a new message does. After the snapshot
+TTL expires, the central transcript remains readable, but the worker filesystem
+can no longer be restored from that image.
+
+Modal sandboxes receive credential-free cost tags for environment, purpose,
+provider, dev-environment status, worker generation, and a hashed thread key.
+Lifecycle transitions and live duration are emitted as
+`compadre.t3.worker.lifecycle.transitions` and
+`compadre.t3.worker.live.duration`. Use those with Modal billing exports to
+track worker-hours and detect warm workers that outlive their lease.
+
 ## Identity and browser access
 
 Slack is the identity provider for the internal hosted UI. Compadre Postgres
@@ -190,6 +227,10 @@ COMPADRE_T3_PACKAGE_URL=<pinned fork release>
 COMPADRE_T3_PACKAGE_SHA256=<required digest>
 COMPADRE_T3_ARTIFACT_BUCKET=compadre
 COMPADRE_T3_ARTIFACT_REGION=us-west-2
+COMPADRE_T3_WORKER_WARM_TTL_MS=1800000
+COMPADRE_T3_WORKER_SWEEP_INTERVAL_MS=60000
+COMPADRE_MODAL_TIMEOUT_MS=7200000
+COMPADRE_MODAL_SNAPSHOT_TTL_MS=604800000
 ```
 
 Slack thread history from before the bot mention is supplied as hidden context

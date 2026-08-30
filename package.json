@@ -15,6 +15,7 @@
     "t3:launch-worker": "tsx scripts/launch-t3-modal.ts",
     "t3:gateway-probe": "tsx scripts/probe-t3-gateway.ts",
     "t3:reconnect-probe": "tsx scripts/probe-t3-reconnect.ts",
+    "t3:hibernation-probe": "tsx scripts/probe-t3-hibernation.ts",
     "db:check": "drizzle-kit check",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",

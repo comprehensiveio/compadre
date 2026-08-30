@@ -35,6 +35,14 @@ authenticated tool request fails.
    the completed `compadre.agent.modal.harness.run` span records peak RSS and
    the process exit code. The equivalent bounded relay evidence is emitted as
    `[mcp-timing]` and `[modal-timing]` logs.
+   Native T3 workers additionally emit `[t3-worker-lifecycle]` events for
+   `provision.completed`, `warm.started`, `hibernate.started`,
+   `hibernate.recovered`, `hibernate.completed`, `hibernate.failed`,
+   `restore.started`, `restore.completed`, and `restore.failed`. Correlate the
+   generation and old versus new sandbox IDs; a restore intentionally creates a
+   new sandbox. One `hibernate.failed` schedules a one-minute retry. Repeated
+   failures leave the worker warm and billed, so alert on them rather than
+   treating the retry as eventual success.
 3. Inspect the matching Modal sandbox and audit log using its sandbox ID.
    Distinguish provisioning failure, setup failure, harness exit, controller
    cancellation, and destroy failure.
@@ -120,6 +128,11 @@ Prefer exact identifiers and narrow time windows. Render service instance suffix
 - Compadre does not impose a wall-clock agent deadline. Compare observed
   duration with explicit caller cancellation and the configured Modal sandbox
   lifetime before calling a failure a timeout.
+- A native worker that disappears after a completed turn may be intentionally
+  suspended, not expired. Check the binding's `workerState`, `warmUntil`, and
+  `workerSnapshotId`. A later message should transition `suspended ->
+restoring -> running`; preview resolution alone intentionally does not wake
+  it. Snapshot expiry is distinct from the two-hour live sandbox timeout.
 - `message_not_in_streaming_state` means Slack closed that native delivery
   stream; it does not establish whether the agent succeeded, failed, or is
   still running. Correlate the harness and workflow terminal evidence.

@@ -15,6 +15,23 @@ let configuredGateway: Promise<T3Gateway | null> | undefined;
 let configuredRunCoordinator: Promise<NativeT3RunCoordinator | null> | undefined;
 let configuredArtifactStore: Promise<T3ArtifactStore | null> | undefined;
 
+const DEFAULT_T3_WORKER_WARM_TTL_MS = 30 * 60 * 1000;
+const DEFAULT_T3_WORKER_SWEEP_INTERVAL_MS = 60 * 1000;
+const DEFAULT_MODAL_TIMEOUT_MS = 2 * 60 * 60 * 1000;
+
+function positiveDurationSetting(
+  name: string,
+  raw: string | undefined,
+  fallback: number,
+): number {
+  if (!raw?.trim()) return fallback;
+  const value = Number(raw);
+  if (!Number.isFinite(value) || value <= 0) {
+    throw new Error(`${name} must be a positive number`);
+  }
+  return value;
+}
+
 export async function getConfiguredT3ArtifactStore(): Promise<T3ArtifactStore | null> {
   if (!configuredArtifactStore) {
     const initialization = getConfiguredThreadPersistence().then(async (runtime) => {
@@ -53,7 +70,7 @@ export async function getConfiguredT3Gateway(): Promise<T3Gateway | null> {
           runtime.persistence.stores.metadata,
           runtime.locks,
         );
-        return new T3Gateway(
+        const gateway = new T3Gateway(
           bindings,
           new T3ModalEnvironmentManager(),
           crypto.randomUUID,
@@ -61,7 +78,27 @@ export async function getConfiguredT3Gateway(): Promise<T3Gateway | null> {
           runtime.locks,
           undefined,
           snapshots,
+          {
+            warmLeaseMs: positiveDurationSetting(
+              "COMPADRE_T3_WORKER_WARM_TTL_MS",
+              process.env.COMPADRE_T3_WORKER_WARM_TTL_MS,
+              DEFAULT_T3_WORKER_WARM_TTL_MS,
+            ),
+            maxLiveMs: positiveDurationSetting(
+              "COMPADRE_MODAL_TIMEOUT_MS",
+              process.env.COMPADRE_MODAL_TIMEOUT_MS,
+              DEFAULT_MODAL_TIMEOUT_MS,
+            ),
+          },
         );
+        gateway.startWorkerLifecycleSweeper(
+          positiveDurationSetting(
+            "COMPADRE_T3_WORKER_SWEEP_INTERVAL_MS",
+            process.env.COMPADRE_T3_WORKER_SWEEP_INTERVAL_MS,
+            DEFAULT_T3_WORKER_SWEEP_INTERVAL_MS,
+          ),
+        );
+        return gateway;
       })
       .catch((error) => {
         if (configuredGateway === initialization) configuredGateway = undefined;

@@ -2,9 +2,11 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   blockedSlackDestinationFromEnvironment,
+  nativeHarnessAuthenticationCommand,
   parseT3StartupToken,
   parseT3SlackDestinationMarker,
   projectedProviderEnvironment,
+  t3ServerLaunchCommands,
 } from "./modal-worker.js";
 import { scopedEnvironmentBridgeToken } from "../tanstack/relay-tool-bridge.js";
 
@@ -42,6 +44,28 @@ test("records only a complete protected Slack destination", () => {
   assert.equal(parseT3SlackDestinationMarker("invalid"), undefined);
 });
 
+test("repairs Codex config ownership before authenticating a restored worker", () => {
+  const command = nativeHarnessAuthenticationCommand();
+  const ownershipRepair = command.indexOf(
+    "chown -R node:node /home/node/.codex",
+  );
+  const login = command.indexOf("codex login --with-api-key");
+
+  assert.ok(ownershipRepair >= 0);
+  assert.ok(login > ownershipRepair);
+  assert.match(command, /install -d -m 700 -o node -g node/);
+});
+
+test("cleans stale T3 launch artifacts before starting and recording the new pid", () => {
+  const commands = t3ServerLaunchCommands("/workspace");
+
+  assert.match(commands.cleanup, /^rm -f /);
+  assert.doesNotMatch(commands.cleanup, /nohup|&/);
+  assert.match(commands.launch, /^nohup /);
+  assert.doesNotMatch(commands.launch, /rm -f/);
+  assert.match(commands.launch, /& echo \$! > \/var\/run\/t3\.pid$/);
+});
+
 test("projects one Compadre MCP bridge into T3's native provider environment", () => {
   assert.deepEqual(
     projectedProviderEnvironment({
@@ -70,10 +94,10 @@ test("projects one Compadre MCP bridge into T3's native provider environment", (
     {
       COMPADRE_MCP_URL:
         "https://compadre.example/internal/t3-mcp?slack_channel_id=C123&slack_thread_ts=123.456",
-      COMPADRE_MCP_BEARER_TOKEN: scopedEnvironmentBridgeToken(
-        "bridge-token",
-        { channelId: "C123", threadTs: "123.456" },
-      ),
+      COMPADRE_MCP_BEARER_TOKEN: scopedEnvironmentBridgeToken("bridge-token", {
+        channelId: "C123",
+        threadTs: "123.456",
+      }),
     },
   );
   assert.deepEqual(

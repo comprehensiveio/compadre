@@ -1,4 +1,5 @@
 import path from "node:path";
+import { createHash } from "node:crypto";
 import {
   ModalClient,
   NotFoundError,
@@ -562,6 +563,35 @@ export function modalSecretNames(environment: NodeJS.ProcessEnv): string[] {
   ];
 }
 
+/** Bounded, credential-free tags used by Modal billing and lifecycle reports. */
+export function modalSandboxTags(
+  environment: NodeJS.ProcessEnv,
+): Record<string, string> {
+  const canonicalThreadId =
+    environment.COMPADRE_CANONICAL_THREAD_ID?.trim();
+  return {
+    managedBy: "compadre",
+    environment:
+      environment.DD_ENV?.trim() ||
+      environment.MODAL_ENVIRONMENT?.trim() ||
+      "development",
+    purpose: canonicalThreadId ? "t3-worker" : "agent-harness",
+    provider:
+      environment.COMPADRE_PROVIDER_INSTANCE_ID?.trim() || "unknown",
+    devEnvironment: String(devEnvironmentEnabled(environment)),
+    workerGeneration:
+      environment.COMPADRE_WORKER_GENERATION?.trim() || "1",
+    ...(canonicalThreadId
+      ? {
+          threadKey: createHash("sha256")
+            .update(canonicalThreadId)
+            .digest("hex")
+            .slice(0, 16),
+        }
+      : {}),
+  };
+}
+
 function normalizePorts(ports: readonly number[] | undefined): number[] {
   const normalized = [...new Set(ports ?? [])];
   for (const port of normalized) {
@@ -710,7 +740,7 @@ export function modalSandboxProvider(
         ...(encryptedPorts.length > 0 ? { encryptedPorts } : {}),
         ...(secrets.length > 0 ? { secrets } : {}),
         ...(env ? { env } : {}),
-        tags: { managedBy: "compadre" },
+        tags: modalSandboxTags(environment),
       }),
     );
     return new ModalHandle(sandbox, workdir, snapshotTtlMs, encryptedPorts);

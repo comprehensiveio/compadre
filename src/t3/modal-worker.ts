@@ -2,7 +2,10 @@ import { createHash, randomUUID } from "node:crypto";
 import fs from "node:fs/promises";
 import { COMPADRE_SKILL_NAMES } from "../compadre-skills.js";
 import { gitAuthenticationEnvironment } from "../repo.js";
-import { ModalHandle } from "../tanstack/modal-sandbox.js";
+import {
+  ModalHandle,
+  modalSandboxProvider,
+} from "../tanstack/modal-sandbox.js";
 import type { SandboxHandle } from "@tanstack/ai-sandbox";
 import {
   configuredEnvironmentBridgeToken,
@@ -137,6 +140,7 @@ export function projectedProviderEnvironment(
     "OTEL_EXPORTER_OTLP_TRACES_HEADERS",
     "COMPADRE_CANONICAL_THREAD_ID",
     "COMPADRE_PROVIDER_INSTANCE_ID",
+    "COMPADRE_WORKER_GENERATION",
   ]) {
     const value = environment[name]?.trim();
     if (value) result[name] = value;
@@ -161,21 +165,29 @@ export function projectedProviderEnvironment(
   return result;
 }
 
+export function nativeHarnessAuthenticationCommand(): string {
+  return [
+    "set -e",
+    "install -d -m 700 -o node -g node /home/node/.codex",
+    // T3 runs provider harnesses as sandbox root so Codex can rewrite its
+    // config as root during a turn. A filesystem snapshot preserves that
+    // ownership; normalize it before the node-user login on every restore.
+    "chown -R node:node /home/node/.codex",
+    "chmod 700 /home/node/.codex",
+    'if [ -n "${CODEX_AUTH_JSON_BASE64:-}" ]; then',
+    "printf '%s' \"$CODEX_AUTH_JSON_BASE64\" | base64 -d > /home/node/.codex/auth.json &&",
+    "chown node:node /home/node/.codex/auth.json &&",
+    "chmod 600 /home/node/.codex/auth.json",
+    'elif [ -n "${OPENAI_API_KEY:-}" ]; then',
+    `printf '%s' "$OPENAI_API_KEY" | setpriv --reuid=node --regid=node --init-groups codex login --with-api-key >/dev/null`,
+    "fi",
+  ].join("\n");
+}
+
 async function configureNativeHarnessAuthentication(
   handle: T3SandboxHandle,
 ): Promise<void> {
-  const login = await handle.process.exec(
-    [
-      'if [ -n "${CODEX_AUTH_JSON_BASE64:-}" ]; then',
-      "install -d -m 700 -o node -g node /home/node/.codex &&",
-      "printf '%s' \"$CODEX_AUTH_JSON_BASE64\" | base64 -d > /home/node/.codex/auth.json &&",
-      "chown node:node /home/node/.codex/auth.json &&",
-      "chmod 600 /home/node/.codex/auth.json",
-      'elif [ -n "${OPENAI_API_KEY:-}" ]; then',
-      `printf '%s' "$OPENAI_API_KEY" | setpriv --reuid=node --regid=node --init-groups codex login --with-api-key >/dev/null`,
-      "fi",
-    ].join("\n"),
-  );
+  const login = await handle.process.exec(nativeHarnessAuthenticationCommand());
   if (login.exitCode !== 0) {
     throw new Error(
       `Codex CLI authentication failed: ${login.stderr || login.stdout}`,
@@ -337,6 +349,153 @@ export interface ManagedT3ModalEnvironment extends T3ModalWorker {
   handle: SandboxHandle;
 }
 
+export interface RestoredT3ModalEnvironmentIdentity {
+  snapshotId: string;
+  projectId: string;
+  t3ThreadId: string;
+}
+
+async function projectWorkerRuntimeEnvironment(
+  handle: T3SandboxHandle,
+  workerEnvironment: NodeJS.ProcessEnv,
+): Promise<void> {
+  const workspaceRoot = handle.workspaceRoot ?? "/workspace";
+  const devArtifactEnvironment =
+    await devEnvironmentArtifactProjection(workerEnvironment);
+  const devBackupEnvironment = devBackupAccessProjection(workerEnvironment);
+  const devPreviewEnvironment: Record<string, string> = devEnvironmentEnabled(
+    workerEnvironment,
+  )
+    ? {
+        COMPADRE_DEV_PREVIEW_URL:
+          authenticatedDevPreviewUrl(workerEnvironment) ??
+          (await handle.ports.connect(COMP_DEV_SERVER_PORT)).url.replace(
+            /\/$/,
+            "",
+          ),
+        COMPADRE_DEV_PORT: String(COMP_DEV_SERVER_PORT),
+        AGENT_BROWSER_EXECUTABLE_PATH: "/usr/bin/chromium",
+      }
+    : {};
+  await handle.env.set({
+    ...projectedProviderEnvironment(workerEnvironment),
+    ...devArtifactEnvironment,
+    ...devBackupEnvironment,
+    ...devPreviewEnvironment,
+    HOME: "/home/node",
+  });
+  const projected = await handle.process.exec(
+    skillProjectionCommand(workspaceRoot),
+  );
+  if (projected.exitCode !== 0) {
+    throw new Error(projected.stderr || projected.stdout);
+  }
+  const prepare = await handle.process.exec(
+    `mkdir -p ${quote(DEFAULT_T3_BASE_DIR)} ${quote("/var/log/compadre")}`,
+  );
+  if (prepare.exitCode !== 0) {
+    throw new Error(prepare.stderr || prepare.stdout);
+  }
+  await configureNativeHarnessAuthentication(handle);
+}
+
+export function t3ServerLaunchCommands(workspaceRoot: string): {
+  cleanup: string;
+  launch: string;
+} {
+  const command = [
+    "env -u CODEX_AUTH_JSON_BASE64 t3 serve",
+    "--host 0.0.0.0",
+    `--port ${DEFAULT_T3_PORT}`,
+    `--base-dir ${quote(DEFAULT_T3_BASE_DIR)}`,
+    "--auto-bootstrap-project-from-cwd",
+    "--no-browser",
+    quote(workspaceRoot),
+  ].join(" ");
+  return {
+    cleanup: `rm -f ${quote(DEFAULT_T3_LOG)} /var/run/t3.pid`,
+    launch: `nohup ${command} </dev/null >${quote(DEFAULT_T3_LOG)} 2>&1 & echo $! > /var/run/t3.pid`,
+  };
+}
+
+async function startT3Server(
+  handle: T3SandboxHandle,
+  workspaceRoot: string,
+): Promise<string> {
+  // A filesystem snapshot retains the old log and pid file, but Modal does not
+  // retain processes. Clear both before waiting for this generation's token.
+  const commands = t3ServerLaunchCommands(workspaceRoot);
+  const cleaned = await handle.process.exec(commands.cleanup);
+  if (cleaned.exitCode !== 0) {
+    throw new Error(cleaned.stderr || cleaned.stdout);
+  }
+  const started = await handle.process.exec(commands.launch);
+  if (started.exitCode !== 0) {
+    throw new Error(started.stderr || started.stdout);
+  }
+  return waitForT3Startup(handle, DEFAULT_T3_LOG);
+}
+
+async function connectManagedT3Environment(input: {
+  handle: T3SandboxHandle;
+  startupToken: string;
+  expectedProjectId?: string;
+  expectedThreadId?: string;
+}): Promise<ManagedT3ModalEnvironment> {
+  const workspaceRoot = input.handle.workspaceRoot ?? "/workspace";
+  const channel = await input.handle.ports.connect(DEFAULT_T3_PORT);
+  const baseUrl = channel.url.replace(/\/$/, "");
+  const gatewaySession = await exchangeT3PairingToken({
+    baseUrl,
+    pairingToken: input.startupToken,
+  });
+  const snapshot = await gatewaySession.client.snapshot();
+  const project = input.expectedProjectId
+    ? snapshot.projects.find(
+        (candidate) => candidate.id === input.expectedProjectId,
+      )
+    : snapshot.projects.find(
+        (candidate) => candidate.workspaceRoot === workspaceRoot,
+      );
+  if (!project) {
+    throw new Error(
+      input.expectedProjectId
+        ? "Restored T3 worker no longer contains its assigned project"
+        : "T3 project bootstrap completed without a workspace project",
+    );
+  }
+  if (
+    input.expectedThreadId &&
+    !snapshot.threads.some((thread) => thread.id === input.expectedThreadId)
+  ) {
+    throw new Error(
+      "Restored T3 worker no longer contains its assigned thread",
+    );
+  }
+  const browserPairing = await gatewaySession.client.mintPairingCredential({
+    label: "Compadre native T3 worker",
+  });
+  await input.handle.fs.write(
+    T3_GATEWAY_CREDENTIAL_PATH,
+    gatewaySession.accessToken,
+  );
+  const protectedCredential = await input.handle.process.exec(
+    `chown node:node ${quote(T3_GATEWAY_CREDENTIAL_PATH)} && chmod 600 ${quote(T3_GATEWAY_CREDENTIAL_PATH)}`,
+  );
+  if (protectedCredential.exitCode !== 0) {
+    throw new Error("Could not protect the T3 gateway credential in Modal");
+  }
+  return {
+    sandboxId: input.handle.id,
+    baseUrl,
+    pairingUrl: `${baseUrl}/pair#token=${browserPairing.credential}`,
+    workspaceRoot,
+    projectId: project.id,
+    client: gatewaySession.client,
+    handle: input.handle as SandboxHandle,
+  };
+}
+
 /**
  * Launch T3's native headless server inside an isolated Modal sandbox.
  *
@@ -346,16 +505,11 @@ export interface ManagedT3ModalEnvironment extends T3ModalWorker {
 export async function launchManagedT3ModalEnvironment(
   environment: NodeJS.ProcessEnv = process.env,
 ): Promise<ManagedT3ModalEnvironment> {
-  const port = DEFAULT_T3_PORT;
   const workerEnvironment: NodeJS.ProcessEnv = {
     ...environment,
-    COMPADRE_MODAL_APP:
-      environment.COMPADRE_T3_MODAL_APP?.trim() || "compadre",
+    COMPADRE_MODAL_APP: environment.COMPADRE_T3_MODAL_APP?.trim() || "compadre",
   };
   const forkArchivePath = await resolveT3ForkArchive(workerEnvironment);
-  const devArtifactEnvironment =
-    await devEnvironmentArtifactProjection(workerEnvironment);
-  const devBackupEnvironment = devBackupAccessProjection(workerEnvironment);
   let startupToken: string | undefined;
   const sandbox = createHarnessSandbox({
     worktreeId: `t3-modal-${randomUUID()}`,
@@ -365,42 +519,8 @@ export async function launchManagedT3ModalEnvironment(
     encryptedPorts: t3EncryptedPorts(workerEnvironment),
     onReady: async (handle) => {
       const workspaceRoot = handle.workspaceRoot ?? "/workspace";
-      const providerEnvironment =
-        projectedProviderEnvironment(workerEnvironment);
       await installLocalT3Fork(handle, forkArchivePath);
-      const devPreviewEnvironment: Record<string, string> =
-        devEnvironmentEnabled(workerEnvironment)
-          ? {
-              COMPADRE_DEV_PREVIEW_URL:
-                authenticatedDevPreviewUrl(workerEnvironment) ??
-                (await handle.ports.connect(COMP_DEV_SERVER_PORT)).url.replace(
-                  /\/$/,
-                  "",
-                ),
-              COMPADRE_DEV_PORT: String(COMP_DEV_SERVER_PORT),
-              AGENT_BROWSER_EXECUTABLE_PATH: "/usr/bin/chromium",
-            }
-          : {};
-      await handle.env.set({
-        ...providerEnvironment,
-        ...devArtifactEnvironment,
-        ...devBackupEnvironment,
-        ...devPreviewEnvironment,
-        HOME: "/home/node",
-      });
-      const projected = await handle.process.exec(
-        skillProjectionCommand(workspaceRoot),
-      );
-      if (projected.exitCode !== 0) {
-        throw new Error(projected.stderr || projected.stdout);
-      }
-
-      const prepare = await handle.process.exec(
-        `mkdir -p ${quote(DEFAULT_T3_BASE_DIR)} ${quote("/var/log/compadre")}`,
-      );
-      if (prepare.exitCode !== 0) {
-        throw new Error(prepare.stderr || prepare.stdout);
-      }
+      await projectWorkerRuntimeEnvironment(handle, workerEnvironment);
       const blockedSlackDestination =
         blockedSlackDestinationFromEnvironment(workerEnvironment);
       if (blockedSlackDestination) {
@@ -409,29 +529,13 @@ export async function launchManagedT3ModalEnvironment(
           JSON.stringify(blockedSlackDestination),
         );
       }
-      await configureNativeHarnessAuthentication(handle);
       await bootstrapT3Project(handle, workspaceRoot);
 
       // Modal enforces no_new_privs, so a process dropped to `node` cannot
       // later start the stopped Postgres/Redis services. The per-thread Modal
       // sandbox is the security boundary; keep T3 and its harnesses on the
       // sandbox root identity so lazy dev startup remains possible.
-      const command = [
-        "env -u CODEX_AUTH_JSON_BASE64 t3 serve",
-        "--host 0.0.0.0",
-        `--port ${port}`,
-        `--base-dir ${quote(DEFAULT_T3_BASE_DIR)}`,
-        "--auto-bootstrap-project-from-cwd",
-        "--no-browser",
-        quote(workspaceRoot),
-      ].join(" ");
-      const started = await handle.process.exec(
-        `nohup ${command} </dev/null >${quote(DEFAULT_T3_LOG)} 2>&1 & echo $! > /var/run/t3.pid`,
-      );
-      if (started.exitCode !== 0) {
-        throw new Error(started.stderr || started.stdout);
-      }
-      startupToken = await waitForT3Startup(handle, DEFAULT_T3_LOG);
+      startupToken = await startT3Server(handle, workspaceRoot);
     },
   });
 
@@ -453,48 +557,75 @@ export async function launchManagedT3ModalEnvironment(
     if (!pairingToken) {
       throw new Error("T3 startup completed without issuing a pairing token");
     }
-    const channel = await handle.ports.connect(port);
-    const baseUrl = channel.url.replace(/\/$/, "");
-    const gatewaySession = await exchangeT3PairingToken({
-      baseUrl,
-      pairingToken,
-    });
-    const snapshot = await gatewaySession.client.snapshot();
-    const project = snapshot.projects.find(
-      (candidate) =>
-        candidate.workspaceRoot === (handle.workspaceRoot ?? "/workspace"),
-    );
-    if (!project) {
-      throw new Error(
-        "T3 project bootstrap completed without a workspace project",
-      );
-    }
-    const browserPairing = await gatewaySession.client.mintPairingCredential({
-      label: "Compadre native T3 worker",
-    });
-    await handle.fs.write(
-      T3_GATEWAY_CREDENTIAL_PATH,
-      gatewaySession.accessToken,
-    );
-    const protectedCredential = await handle.process.exec(
-      `chown node:node ${quote(T3_GATEWAY_CREDENTIAL_PATH)} && chmod 600 ${quote(T3_GATEWAY_CREDENTIAL_PATH)}`,
-    );
-    if (protectedCredential.exitCode !== 0) {
-      throw new Error("Could not protect the T3 gateway credential in Modal");
-    }
-    return {
-      sandboxId: handle.id,
-      baseUrl,
-      pairingUrl: `${baseUrl}/pair#token=${browserPairing.credential}`,
-      workspaceRoot: handle.workspaceRoot ?? "/workspace",
-      projectId: project.id,
-      client: gatewaySession.client,
+    return await connectManagedT3Environment({
       handle,
-    };
+      startupToken: pairingToken,
+    });
   } catch (error) {
     await handle.destroy().catch(() => undefined);
     throw error;
   }
+}
+
+/**
+ * Create a new billed sandbox from a suspended worker's filesystem image.
+ * Modal snapshots retain files, not processes, so credentials are reprojected
+ * and the headless T3 server is started as a fresh process generation.
+ */
+export async function restoreManagedT3ModalEnvironment(
+  identity: RestoredT3ModalEnvironmentIdentity,
+  environment: NodeJS.ProcessEnv = process.env,
+): Promise<ManagedT3ModalEnvironment> {
+  const workerEnvironment: NodeJS.ProcessEnv = {
+    ...environment,
+    COMPADRE_MODAL_APP: environment.COMPADRE_T3_MODAL_APP?.trim() || "compadre",
+  };
+  const provider = modalSandboxProvider({
+    environment: workerEnvironment,
+    encryptedPorts: t3EncryptedPorts(workerEnvironment),
+  });
+  if (!provider.restoreSnapshot) {
+    throw new Error("The Modal sandbox provider does not support restoration");
+  }
+  const handle = (await provider.restoreSnapshot({
+    snapshotId: identity.snapshotId,
+  })) as T3SandboxHandle;
+  try {
+    await projectWorkerRuntimeEnvironment(handle, workerEnvironment);
+    const startupToken = await startT3Server(
+      handle,
+      handle.workspaceRoot ?? "/workspace",
+    );
+    return await connectManagedT3Environment({
+      handle,
+      startupToken,
+      expectedProjectId: identity.projectId,
+      expectedThreadId: identity.t3ThreadId,
+    });
+  } catch (error) {
+    await handle.destroy().catch(() => undefined);
+    throw error;
+  }
+}
+
+/** Best-effort recovery when a filesystem capture fails after T3 was stopped. */
+export async function restartManagedT3ModalEnvironment(
+  handle: SandboxHandle,
+  identity: Omit<RestoredT3ModalEnvironmentIdentity, "snapshotId">,
+  environment: NodeJS.ProcessEnv = process.env,
+): Promise<ManagedT3ModalEnvironment> {
+  const typedHandle = handle as T3SandboxHandle;
+  await projectWorkerRuntimeEnvironment(typedHandle, environment);
+  const startupToken = await startT3Server(
+    typedHandle,
+    typedHandle.workspaceRoot ?? "/workspace",
+  );
+  return connectManagedT3Environment({
+    handle: typedHandle,
+    startupToken,
+    expectedProjectId: identity.projectId,
+    expectedThreadId: identity.t3ThreadId,
+  });
 }
 
 export async function launchT3ModalWorker(
