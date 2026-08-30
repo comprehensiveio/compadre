@@ -4,6 +4,7 @@ import {
   createRelayToolBridgeProvisioner,
   dispatchEnvironmentToolBridgeRequest,
   MAX_BRIDGE_REQUEST_BYTES,
+  scopedEnvironmentBridgeToken,
 } from "../tanstack/relay-tool-bridge.js";
 import { toolBridgeRoutes } from "./tool-bridge.js";
 
@@ -111,4 +112,65 @@ test("protects the environment bridge and dispatches MCP messages", async () => 
     id: 2,
     result: { tools: core.listTools() },
   });
+});
+
+test("blocks direct final delivery to the bound Slack thread", async () => {
+  let called = false;
+  const core = {
+    listTools: () => [],
+    callTool: async () => {
+      called = true;
+      return { content: [{ type: "text" as const, text: "unexpected" }] };
+    },
+  };
+  const result = await dispatchEnvironmentToolBridgeRequest({
+    authorization: `Bearer ${scopedEnvironmentBridgeToken("environment-token", {
+      channelId: "C123",
+      threadTs: "123.456",
+    })}`,
+    environment: { COMPADRE_T3_MCP_BEARER_TOKEN: "environment-token" },
+    blockedSlackDestination: { channelId: "C123", threadTs: "123.456" },
+    body: {
+      jsonrpc: "2.0",
+      id: 7,
+      method: "tools/call",
+      params: {
+        name: "slack_reply_to_thread",
+        arguments: {
+          channel_id: "C123",
+          thread_ts: "123.456",
+          text: "duplicate",
+        },
+      },
+    },
+    core,
+  });
+  assert.equal(result.status, 200);
+  assert.equal(called, false);
+  assert.deepEqual(result.body, {
+    jsonrpc: "2.0",
+    id: 7,
+    result: {
+      content: [
+        {
+          type: "text",
+          text: "Compadre owns final delivery for this Slack thread; return the final answer normally instead of posting it with a Slack tool.",
+        },
+      ],
+      isError: true,
+    },
+  });
+
+  assert.deepEqual(
+    await dispatchEnvironmentToolBridgeRequest({
+      authorization: `Bearer ${scopedEnvironmentBridgeToken(
+        "environment-token",
+        { channelId: "C123", threadTs: "123.456" },
+      )}`,
+      environment: { COMPADRE_T3_MCP_BEARER_TOKEN: "environment-token" },
+      body: { jsonrpc: "2.0", id: 8, method: "tools/list" },
+      core,
+    }),
+    { status: 401, body: { error: "unauthorized" } },
+  );
 });

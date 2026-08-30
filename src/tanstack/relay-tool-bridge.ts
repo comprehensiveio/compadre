@@ -1,4 +1,4 @@
-import { randomBytes, randomUUID } from "node:crypto";
+import { createHmac, randomBytes, randomUUID } from "node:crypto";
 import { defineChatMiddleware } from "@tanstack/ai";
 import {
   BRIDGED_MCP_SERVER_NAME,
@@ -20,6 +20,18 @@ export function configuredEnvironmentBridgeToken(
     environment.COMPADRE_T3_MCP_BEARER_TOKEN?.trim() ||
     environment.COMPADRE_API_KEY?.trim()
   );
+}
+
+export function scopedEnvironmentBridgeToken(
+  token: string,
+  destination: { channelId: string; threadTs: string },
+): string {
+  return createHmac("sha256", token)
+    .update("compadre:t3-mcp:slack-destination:v1\0")
+    .update(destination.channelId)
+    .update("\0")
+    .update(destination.threadTs)
+    .digest("base64url");
 }
 
 interface ActiveRelayToolBridge {
@@ -156,14 +168,26 @@ export async function dispatchEnvironmentToolBridgeRequest(input: {
   body: unknown;
   environment?: NodeJS.ProcessEnv;
   core?: ToolBridgeCore;
+  blockedSlackDestination?: {
+    channelId?: string;
+    threadTs?: string;
+  };
 }): Promise<
   | { status: 200; body: unknown | null }
   | { status: 400 | 401 | 404 | 413; body: { error: string } }
 > {
-  const token = configuredEnvironmentBridgeToken(
+  const rootToken = configuredEnvironmentBridgeToken(
     input.environment ?? process.env,
   );
-  if (!token) return { status: 404, body: { error: "not found" } };
+  if (!rootToken) return { status: 404, body: { error: "not found" } };
+  const blocked = input.blockedSlackDestination;
+  const token =
+    blocked?.channelId && blocked.threadTs
+      ? scopedEnvironmentBridgeToken(rootToken, {
+          channelId: blocked.channelId,
+          threadTs: blocked.threadTs,
+        })
+      : rootToken;
   if (!timingSafeBearerEqual(input.authorization, token)) {
     console.warn("[tool-bridge] environment request rejected", {
       status: 401,
@@ -176,6 +200,47 @@ export async function dispatchEnvironmentToolBridgeRequest(input: {
   }
   if (input.body === undefined) {
     return { status: 400, body: { error: "invalid JSON body" } };
+  }
+  const request =
+    input.body && typeof input.body === "object" && !Array.isArray(input.body)
+      ? (input.body as Record<string, unknown>)
+      : undefined;
+  const params =
+    request?.params &&
+    typeof request.params === "object" &&
+    !Array.isArray(request.params)
+      ? (request.params as Record<string, unknown>)
+      : undefined;
+  const args =
+    params?.arguments &&
+    typeof params.arguments === "object" &&
+    !Array.isArray(params.arguments)
+      ? (params.arguments as Record<string, unknown>)
+      : undefined;
+  if (
+    request?.method === "tools/call" &&
+    params?.name === "slack_reply_to_thread" &&
+    blocked?.channelId &&
+    blocked.threadTs &&
+    args?.channel_id === blocked.channelId &&
+    args.thread_ts === blocked.threadTs
+  ) {
+    return {
+      status: 200,
+      body: {
+        jsonrpc: "2.0",
+        id: request.id,
+        result: {
+          content: [
+            {
+              type: "text",
+              text: "Compadre owns final delivery for this Slack thread; return the final answer normally instead of posting it with a Slack tool.",
+            },
+          ],
+          isError: true,
+        },
+      },
+    };
   }
   const core = input.core ?? (await getEnvironmentToolBridgeCore());
   return {

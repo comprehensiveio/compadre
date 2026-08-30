@@ -29,6 +29,10 @@ export interface NativeT3AguiGateway {
     text: string;
     modelSelection: T3ModelSelection;
     inputFiles?: ReadonlyArray<T3InputFile>;
+    blockedSlackDestination?: {
+      channelId: string;
+      threadTs: string;
+    };
     signal?: AbortSignal;
   }): Promise<T3GatewayTurn>;
   waitForTerminal(input: {
@@ -51,6 +55,10 @@ export interface NativeT3AguiStreamInput {
   text: string;
   modelSelection: T3ModelSelection;
   inputFiles?: ReadonlyArray<T3InputFile>;
+  blockedSlackDestination?: {
+    channelId: string;
+    threadTs: string;
+  };
   signal?: AbortSignal;
   onTurn?(turn: T3GatewayTurn): void | Promise<void>;
   onTerminal?(): void | Promise<void>;
@@ -463,6 +471,7 @@ export async function* createNativeT3AguiStream(
       text: input.text,
       modelSelection: input.modelSelection,
       inputFiles: input.inputFiles,
+      blockedSlackDestination: input.blockedSlackDestination,
       signal: input.signal,
     });
     await input.onTurn?.(turn);

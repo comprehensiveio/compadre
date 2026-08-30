@@ -85,6 +85,10 @@ toolBridgeRoutes.post("/internal/t3-mcp", async (c) => {
     authorization: c.req.header("Authorization"),
     contentLength: c.req.header("Content-Length"),
     body: parsed.body,
+    blockedSlackDestination: {
+      channelId: c.req.query("slack_channel_id"),
+      threadTs: c.req.query("slack_thread_ts"),
+    },
   });
   if (result.body === null) return c.body(null, 202);
   return c.json(result.body, result.status);

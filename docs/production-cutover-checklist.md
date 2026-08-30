@@ -49,9 +49,10 @@ isolated deployment, not that the equivalent production change has been made.
   the controller, Postgres, and the persistent T3 disk.
 - [x] Create production resources independently of the existing Compadre
   service so traffic can be switched gradually and rolled back.
-- [x] Deploy `compadre-api` and `compadre-web` automatically from their fork's
-  `main` branch. A production API deploy from Compadre PR #126 was observed
-  from commit discovery through live health on 2026-08-30.
+- [x] Deploy `compadre-api` automatically from Compadre's `main` branch. The
+  PR #126 production deploy was observed from commit discovery through live
+  health on 2026-08-30. `compadre-web` is also configured for its fork's
+  `main`, but its next commit-triggered deploy still needs to be observed.
 - [ ] Pin the Compadre and T3 fork revisions. Publish a versioned T3 fork
   artifact and verify its SHA-256 before worker startup.
 - [ ] Preserve a documented upstream T3 remote and rehearse one upstream merge
@@ -140,9 +141,9 @@ Canonical endpoints:
 - Slack Events/API: `https://compadre-api.comprehensive.io/slack/events`
 - Slack OIDC callback: `https://compadre-api.comprehensive.io/auth/slack/callback`
 
-- [x] Update the current Compadre Slack app in place so existing channel
-  membership and user expectations are preserved. Keep the isolated app until
-  the production credential and endpoint switch is verified.
+- [x] Decide to update the current Compadre Slack app in place so existing
+  channel membership and user expectations are preserved. Keep the isolated
+  app until the production credential and endpoint switch is verified.
 - [ ] Set the production event request URL to `/slack/events` and pass Slack's
   verification challenge.
 - [ ] Add the exact production `/auth/slack/callback` redirect URL.
@@ -262,14 +263,16 @@ Canonical endpoints:
   isolated repository edited by the agent.
 - [ ] Verify a conversation can start and resume from Slack, browser, or API
   without duplicate runs or divergent history.
-- [x] Implement controller-restart takeover with persisted dispatch metadata,
-  heartbeats, leases, attempt fencing, and idempotent delivery.
-- [x] Make Slack completion delivery durable across controller rollouts. A live
+- [ ] Prove controller-restart takeover after the durable-outbox fix with lease
+  expiry, replacement claiming, stale-attempt fencing, concurrent claims, and
+  exactly one idempotent delivery.
+- [ ] Make Slack completion delivery durable across controller rollouts. A live
   2026-08-27 probe entered through a retiring controller while its central T3
   turn continued on the replacement instance; the old in-memory completion
   callback did not survive to post the result. The replacement implementation
   persists the delivery before waiting and lets a replacement controller claim
-  it idempotently after the lease expires.
+  it idempotently after the lease expires, but the post-fix rollout probe above
+  remains required.
 - [ ] Decide whether cancelled compatibility streams require an explicit
   terminal AG-UI chunk; durable status currently reaches `aborted`, while the
   event log closes after the last already-persisted event.

@@ -70,11 +70,23 @@ export class T3ModalEnvironmentManager
   async provision(input: {
     canonicalThreadId: string;
     providerInstanceId: string;
+    blockedSlackDestination?: {
+      channelId: string;
+      threadTs: string;
+    };
   }): Promise<T3EnvironmentConnection> {
     const launched = await launchManagedT3ModalEnvironment({
       ...this.environment,
       COMPADRE_CANONICAL_THREAD_ID: input.canonicalThreadId,
       COMPADRE_PROVIDER_INSTANCE_ID: input.providerInstanceId,
+      ...(input.blockedSlackDestination
+        ? {
+            COMPADRE_BLOCKED_SLACK_CHANNEL_ID:
+              input.blockedSlackDestination.channelId,
+            COMPADRE_BLOCKED_SLACK_THREAD_TS:
+              input.blockedSlackDestination.threadTs,
+          }
+        : {}),
     });
     await this.onProvisioned?.({
       ...input,

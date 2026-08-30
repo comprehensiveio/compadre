@@ -74,6 +74,10 @@ export interface T3EnvironmentConnectionManager {
   provision(input: {
     canonicalThreadId: string;
     providerInstanceId: string;
+    blockedSlackDestination?: {
+      channelId: string;
+      threadTs: string;
+    };
   }): Promise<T3EnvironmentConnection>;
   reconnect(binding: T3ThreadBinding): Promise<T3EnvironmentConnection>;
   discard?(connection: T3EnvironmentConnection): Promise<void>;
@@ -192,6 +196,10 @@ export class T3Gateway {
     displayText?: string;
     modelSelection: T3ModelSelection;
     inputFiles?: ReadonlyArray<T3InputFile>;
+    blockedSlackDestination?: {
+      channelId: string;
+      threadTs: string;
+    };
     signal?: AbortSignal;
   }): Promise<T3GatewayTurn> {
     const turn = await this.locks.withLock(
@@ -215,6 +223,10 @@ export class T3Gateway {
     displayText?: string;
     modelSelection: T3ModelSelection;
     inputFiles?: ReadonlyArray<T3InputFile>;
+    blockedSlackDestination?: {
+      channelId: string;
+      threadTs: string;
+    };
     signal?: AbortSignal;
   }): Promise<T3GatewayTurn> {
     const providerInstanceId = input.modelSelection.instanceId;
@@ -248,6 +260,7 @@ export class T3Gateway {
     const environment = await this.environments.provision({
       canonicalThreadId: input.canonicalThreadId,
       providerInstanceId,
+      blockedSlackDestination: input.blockedSlackDestination,
     });
     try {
       const t3ThreadId = this.idFactory();
