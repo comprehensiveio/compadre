@@ -50,6 +50,22 @@ describe("CompadreAuth", () => {
     expect(normalizeCompadreReturnTo("/safe\\..\\unsafe")).toBe("/");
   });
 
+  it("allows only UUID-scoped HTTPS preview return URLs", () => {
+    const environment = {
+      COMPADRE_PREVIEW_HOST_SUFFIX: "dev.compadre.comprehensive.io",
+    };
+    const valid =
+      "https://e160a306-b842-57ba-a8f2-04de157e5366.dev.compadre.comprehensive.io/employees";
+    expect(normalizeCompadreReturnTo(valid, environment)).toBe(valid);
+    expect(normalizeCompadreReturnTo("https://attacker.example/employees", environment)).toBe("/");
+    expect(
+      normalizeCompadreReturnTo(
+        "https://not-a-thread.dev.compadre.comprehensive.io/employees",
+        environment,
+      ),
+    ).toBe("/");
+  });
+
   it("exchanges a one-time grant without exposing it in a URL", async () => {
     let request: Request | undefined;
     const result = await exchangeCompadreLoginGrant({

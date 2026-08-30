@@ -89,7 +89,33 @@ export function attributeCompadreWebCommand(
   };
 }
 
-export function normalizeCompadreReturnTo(value: string | null | undefined): string {
+export function normalizeCompadreReturnTo(
+  value: string | null | undefined,
+  environment: NodeJS.ProcessEnv = process.env,
+): string {
+  const previewHostSuffix = environment.COMPADRE_PREVIEW_HOST_SUFFIX?.trim()
+    .replace(/^\.+|\.+$/g, "")
+    .toLowerCase();
+  if (value && previewHostSuffix) {
+    try {
+      const url = new URL(value);
+      const threadLabel = url.hostname.toLowerCase().endsWith(`.${previewHostSuffix}`)
+        ? url.hostname.slice(0, -(previewHostSuffix.length + 1))
+        : "";
+      if (
+        url.protocol === "https:" &&
+        !url.username &&
+        !url.password &&
+        /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+          threadLabel,
+        )
+      ) {
+        return url.toString();
+      }
+    } catch {
+      // Continue to same-origin path validation.
+    }
+  }
   if (
     !value ||
     !value.startsWith("/") ||
@@ -100,6 +126,11 @@ export function normalizeCompadreReturnTo(value: string | null | undefined): str
     return "/";
   }
   return value;
+}
+
+function compadreCookieDomain(environment: NodeJS.ProcessEnv = process.env): string | undefined {
+  const value = environment.COMPADRE_AUTH_COOKIE_DOMAIN?.trim();
+  return value || undefined;
 }
 
 function configuration(): { controllerUrl: URL; serviceToken: string } | null {
@@ -182,6 +213,7 @@ const compadreSlackCallbackRouteLayer = HttpRouter.add(
     });
     const cookies = yield* Effect.fromResult(
       Cookies.set(Cookies.empty, sessions.cookieName, issued.token, {
+        domain: compadreCookieDomain(),
         expires: DateTime.toDate(issued.expiresAt),
         httpOnly: true,
         path: "/",
@@ -222,6 +254,7 @@ const compadreLogoutRouteLayer = HttpRouter.add(
     }
     const cookies = yield* Effect.fromResult(
       Cookies.expireCookie(Cookies.empty, sessions.cookieName, {
+        domain: compadreCookieDomain(),
         httpOnly: true,
         path: "/",
         sameSite: "lax",

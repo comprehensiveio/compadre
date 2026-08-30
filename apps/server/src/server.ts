@@ -90,6 +90,7 @@ import * as ServerSecretStore from "./auth/ServerSecretStore.ts";
 import * as EnvironmentAuth from "./auth/EnvironmentAuth.ts";
 import { compadreAuthRouteLayer } from "./auth/CompadreAuth.ts";
 import { compadreBackupRouteLayer } from "./auth/CompadreBackup.ts";
+import { compadrePreviewGatewayLayer } from "./auth/CompadrePreviewGateway.ts";
 import {
   connectHttpApiLayer,
   pendingServiceUpdateExists,
@@ -481,6 +482,7 @@ export const makeRoutesLayer = Layer.mergeAll(
   Layer.provide(commandReadinessLayer),
   Layer.provide(browserApiCorsLayer),
   Layer.provide(httpCompressionLayer),
+  Layer.provide(compadrePreviewGatewayLayer),
 );
 
 export const makeServerLayer = Layer.unwrap(
