@@ -73,6 +73,25 @@ The first deployed end-to-end validation on 2026-08-30 completed successfully:
 - authenticated `/company/employees`: HTTP 200 with the expected page title;
 - public review URL: still reachable after the run completed.
 
+After adding the complete synthetic exchange-rate set, the replacement seed was
+restored into a disposable PostgreSQL 16 sandbox before publication. The gate
+found 1,346 users, 158 exchange rates including USD to MXN, and zero partner or
+integration credentials. S3 bucket versioning retained the prior artifact; the
+validated replacement is version `3EWJAqE1h46DgzpkdQUgQCq4m0RDvUHG` with SHA-256
+`3017c168ed1687e25a192c7dd6f6acfb6d918c1adfe41dea8eb25ae4211a4871`.
+
+A fresh post-publication deployed run also completed successfully:
+
+- run `dev-env-live-e042da88-03f1-466e-a88f-debd59bff39b` completed in
+  361.468 seconds API-to-terminal;
+- Comp environment startup: 154.131 seconds;
+- system Chromium loaded the authenticated Employees grid and reported
+  `Rows: 1346`, with no application error boundary;
+- independent host-side checks observed root HTTP 307, dev-login HTTP 302 with
+  a session cookie, and authenticated `/company/employees` HTTP 200 with title
+  `Comprehensive - Employees`;
+- the public review URL remained reachable after the provider turn completed.
+
 ## Security boundary
 
 The random Modal URL is encrypted in transit but is still a bearer-style link,
