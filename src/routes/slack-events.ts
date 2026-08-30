@@ -47,13 +47,17 @@ import {
   resolveSlackMessageAttribution,
   resolveSlackThreadParticipants,
 } from "../services/slack-user-attribution.js";
-import { SlackTurnDeliveryStore } from "../services/slack-turn-delivery-store.js";
+import {
+  SlackTurnDeliveryStore,
+  type SlackTurnDelivery,
+} from "../services/slack-turn-delivery-store.js";
 import { deliverClaimedSlackTurn } from "../services/slack-turn-delivery.js";
 import { isAllowedSlackApp } from "../services/slack-installation.js";
 
 export const slackEventsRoutes = new Hono();
 
 const MAX_SEEN_EVENTS = 10_000;
+const SLACK_DELIVERY_RESERVATION_HEARTBEAT_MS = 60_000;
 const seenEvents = new Set<string>();
 
 /** Deduplicate Slack events by `event.ts`. Returns true if already seen. */
@@ -432,6 +436,13 @@ async function handleAIMessage(
     });
     let centralClient: ReturnType<typeof configuredCentralT3Client> = null;
     let dispatchedMessageId: string | undefined;
+    let reservedSlackDelivery: SlackTurnDelivery | null = null;
+    let reservationHeartbeat: ReturnType<typeof setInterval> | undefined;
+    const stopReservationHeartbeat = () => {
+      if (!reservationHeartbeat) return;
+      clearInterval(reservationHeartbeat);
+      reservationHeartbeat = undefined;
+    };
     const nativeConversation = Promise.resolve().then(async () => {
       const client = configuredCentralT3Client();
       if (!client) {
@@ -482,7 +493,7 @@ async function handleAIMessage(
               "Cannot enqueue Slack completion without a workspace id.",
             );
           }
-          await slackDeliveries.enqueue({
+          reservedSlackDelivery = await slackDeliveries.enqueueClaimed({
             id: crypto.randomUUID(),
             canonicalThreadId,
             t3ThreadId: prepared.t3ThreadId,
@@ -495,6 +506,19 @@ async function handleAIMessage(
             ...(event.user ? { recipientUserId: event.user } : {}),
             detailsUrl: prepared.detailsUrl,
           });
+          if (reservedSlackDelivery) {
+            reservationHeartbeat = setInterval(() => {
+              void slackDeliveries
+                .renewClaim(reservedSlackDelivery!.id)
+                .catch((error) =>
+                  console.warn(
+                    "[slack-delivery] failed to renew foreground reservation",
+                    { deliveryId: reservedSlackDelivery!.id, error },
+                  ),
+                );
+            }, SLACK_DELIVERY_RESERVATION_HEARTBEAT_MS);
+            reservationHeartbeat.unref();
+          }
         },
         onToolStart: slackStream
           ? async (name) => {
@@ -513,10 +537,13 @@ async function handleAIMessage(
 
     nativeConversation
       .then(async (result) => {
+        stopReservationHeartbeat();
         if (slackDeliveries && slackStream && centralClient) {
-          const delivery = await slackDeliveries.claimByMessageId(
-            result.dispatch.messageId,
-          );
+          const delivery =
+            reservedSlackDelivery ??
+            (await slackDeliveries.claimByMessageId(
+              result.dispatch.messageId,
+            ));
           if (delivery) {
             await deliverClaimedSlackTurn({
               delivery,
@@ -541,6 +568,7 @@ async function handleAIMessage(
         );
       })
       .catch(async (err) => {
+        stopReservationHeartbeat();
         console.error(`[slack-events] native T3 error for ${event.user}:`, err);
         if (
           slackDeliveries &&
@@ -548,9 +576,9 @@ async function handleAIMessage(
           centralClient &&
           dispatchedMessageId
         ) {
-          const delivery = await slackDeliveries.claimByMessageId(
-            dispatchedMessageId,
-          );
+          const delivery =
+            reservedSlackDelivery ??
+            (await slackDeliveries.claimByMessageId(dispatchedMessageId));
           if (delivery) {
             await deliverClaimedSlackTurn({
               delivery,

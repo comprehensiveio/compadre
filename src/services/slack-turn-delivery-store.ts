@@ -23,6 +23,26 @@ export interface EnqueueSlackTurnDelivery {
   detailsUrl: string;
 }
 
+function deliveryInsertValues(
+  input: EnqueueSlackTurnDelivery,
+): typeof slackTurnDeliveries.$inferInsert {
+  return {
+    id: input.id,
+    messageId: input.dispatch.messageId,
+    canonicalThreadId: input.canonicalThreadId,
+    t3ThreadId: input.t3ThreadId,
+    environmentId: input.environmentId,
+    dispatchSequence: input.dispatch.sequence,
+    dispatchCreatedAt: new Date(input.dispatch.createdAt),
+    slackTeamId: input.slackTeamId,
+    slackChannelId: input.slackChannelId,
+    slackThreadTs: input.slackThreadTs,
+    triggerMessageTs: input.triggerMessageTs,
+    recipientUserId: input.recipientUserId,
+    detailsUrl: input.detailsUrl,
+  };
+}
+
 /** Postgres-backed, restart-safe queue for native-T3 Slack completions. */
 export class SlackTurnDeliveryStore {
   constructor(
@@ -36,21 +56,7 @@ export class SlackTurnDeliveryStore {
   async enqueue(input: EnqueueSlackTurnDelivery): Promise<SlackTurnDelivery> {
     await this.db
       .insert(slackTurnDeliveries)
-      .values({
-        id: input.id,
-        messageId: input.dispatch.messageId,
-        canonicalThreadId: input.canonicalThreadId,
-        t3ThreadId: input.t3ThreadId,
-        environmentId: input.environmentId,
-        dispatchSequence: input.dispatch.sequence,
-        dispatchCreatedAt: new Date(input.dispatch.createdAt),
-        slackTeamId: input.slackTeamId,
-        slackChannelId: input.slackChannelId,
-        slackThreadTs: input.slackThreadTs,
-        triggerMessageTs: input.triggerMessageTs,
-        recipientUserId: input.recipientUserId,
-        detailsUrl: input.detailsUrl,
-      })
+      .values(deliveryInsertValues(input))
       .onConflictDoNothing({ target: slackTurnDeliveries.messageId });
     const row = await this.byMessageId(input.dispatch.messageId);
     if (!row) {
@@ -59,6 +65,28 @@ export class SlackTurnDeliveryStore {
       );
     }
     return row;
+  }
+
+  /**
+   * Atomically enqueue and reserve a foreground delivery. Returning null means
+   * an existing request or recovery worker already owns this message ID.
+   */
+  async enqueueClaimed(
+    input: EnqueueSlackTurnDelivery,
+    now = new Date(),
+  ): Promise<SlackTurnDelivery | null> {
+    const [inserted] = await this.db
+      .insert(slackTurnDeliveries)
+      .values({
+        ...deliveryInsertValues(input),
+        status: "delivering",
+        attempts: 1,
+        claimedAt: now,
+        updatedAt: now,
+      })
+      .onConflictDoNothing({ target: slackTurnDeliveries.messageId })
+      .returning();
+    return inserted ?? null;
   }
 
   async byMessageId(messageId: string): Promise<SlackTurnDelivery | null> {
