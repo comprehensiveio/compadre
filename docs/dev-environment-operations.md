@@ -15,8 +15,20 @@ each hosted T3 thread. The safety and ownership rules in
   Redis, dependency restoration, and Vite remain stopped until the agent runs
   `scripts/compadre-dev-up.sh up`.
 - The idempotent `up`, `status`, `url`, and `down` commands are the supported
-  lifecycle interface. The public review URL remains attached to the live
-  thread sandbox between turns.
+  lifecycle interface. The stable review URL remains attached to the thread
+  while its sandbox exists.
+- Review traffic enters through the hosted T3 service at
+  `https://<canonical-thread-id>.dev.compadre.comprehensive.io`. The service
+  requires a Comprehensive Slack-backed browser session, resolves the existing
+  sandbox through a service-authenticated controller endpoint, and proxies HTTP
+  and WebSocket traffic without exposing the raw Modal URL.
+- Preview resolution never provisions a sandbox. A missing or expired thread
+  sandbox returns an unavailable response instead of silently creating a new
+  environment.
+- The outer T3 session controls access to the preview. Comp's independent
+  `connect.sid` cookie stays scoped to the thread host, so developers can still
+  use Comp's synthetic dev-login routes to impersonate any seeded user inside
+  the isolated environment.
 
 ## Comprehensive-owned artifacts
 
@@ -92,9 +104,25 @@ A fresh post-publication deployed run also completed successfully:
   `Comprehensive - Employees`;
 - the public review URL remained reachable after the provider turn completed.
 
+The authenticated-gateway validation on 2026-08-30 used a newly provisioned
+thread rather than a historical sandbox:
+
+- canonical thread `ac93ef79-5f64-4072-9b38-d70cf1f23381` completed in 380
+  seconds API-to-terminal;
+- the agent started the lazy Comp environment, used system Chromium, logged in
+  as the synthetic admin, and observed 1,346 employee rows;
+- the stable preview host redirected unauthenticated GET requests to the
+  restricted Slack login and rejected unauthenticated POST requests with HTTP
+  401;
+- the controller resolved the exact existing sandbox, while an expired earlier
+  sandbox returned unavailable and did not cause replacement provisioning;
+- the Render wildcard domain and TLS certificate were verified, and the main
+  UI, session endpoint, and controller health endpoint all returned HTTP 200.
+
 ## Security boundary
 
-The random Modal URL is encrypted in transit but is still a bearer-style link,
-not an authenticated perimeter. Keep it inside the originating internal
-Compadre conversation. An authenticated preview gateway is a prerequisite for
-external or broad multi-tenant use.
+The raw random Modal URL remains a bearer-style routing capability and must stay
+inside the controller-to-UI trust boundary. Users receive only the stable
+authenticated thread URL. The gateway strips its own T3 session cookie before
+forwarding, keeps Comp's synthetic-user session separate, and accepts only UUID
+thread subdomains under the configured preview suffix.
