@@ -56,4 +56,34 @@ describe("CompadreTextGeneration", () => {
       });
     }).pipe(Effect.provide(clientLayer));
   });
+
+  it.effect("reports upstream HTTP failures as request failures", () => {
+    const clientLayer = Layer.succeed(
+      HttpClient.HttpClient,
+      HttpClient.make((request) =>
+        Effect.succeed(
+          HttpClientResponse.fromWeb(
+            request,
+            Response.json({ error: "worker unavailable" }, { status: 502 }),
+          ),
+        ),
+      ),
+    );
+
+    return Effect.gen(function* () {
+      const textGeneration = yield* makeCompadreTextGeneration({
+        endpoint: "https://compadre.example/hosted/chat",
+        apiKey: "secret",
+      });
+      const error = yield* Effect.flip(
+        textGeneration.generateThreadTitle({
+          cwd: "/workspace",
+          message: "Name this thread",
+          modelSelection: createModelSelection(ProviderInstanceId.make("compadre"), "gpt-5.6-sol"),
+        }),
+      );
+
+      expect(error.detail).toBe("Compadre text-generation request failed with HTTP 502.");
+    }).pipe(Effect.provide(clientLayer));
+  });
 });
