@@ -1,7 +1,7 @@
 import type {
-  ChatAttachment as ContractChatAttachment,
   ChatFileAttachment as ContractChatFileAttachment,
   ChatImageAttachment as ContractChatImageAttachment,
+  ChatUnknownAttachment as ContractChatUnknownAttachment,
   OrchestrationCheckpointFile,
   OrchestrationCheckpointSummary,
   OrchestrationLatestTurn,
@@ -39,13 +39,19 @@ export interface ChatImageAttachment extends ContractChatImageAttachment {
 
 export interface ChatFileAttachment extends ContractChatFileAttachment {
   readonly downloadUrl?: string;
+  readonly previewUrl?: string;
+  readonly downloadable?: boolean;
 }
 
-export type ChatAttachment =
-  | ChatImageAttachment
-  | ChatFileAttachment
-  | Exclude<ContractChatAttachment, ContractChatImageAttachment | ContractChatFileAttachment>;
+// Attachment types this build does not know pass through with the contract
+// shape. The UI renders them as inert rows so a newer server cannot crash an
+// older client.
+export type ChatUnknownAttachment = ContractChatUnknownAttachment;
 
+export type ChatAttachment = ChatImageAttachment | ChatFileAttachment | ChatUnknownAttachment;
+
+// The union has an open member (`type: string`), so a literal comparison does
+// not narrow. Use these guards wherever type-specific fields are read.
 export function isImageAttachment(attachment: ChatAttachment): attachment is ChatImageAttachment {
   return attachment.type === "image";
 }
