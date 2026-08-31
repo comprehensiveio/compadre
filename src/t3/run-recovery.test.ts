@@ -93,3 +93,42 @@ test("startup recovery reattaches the exact provider run without dispatching aga
   assert.equal(cleared, true);
   assert.ok(recoveredEvents.includes(EventType.RUN_FINISHED));
 });
+
+test("startup recovery preserves a completed run as a ready thread", async () => {
+  let clearedStatus: string | undefined;
+  const binding = {
+    canonicalThreadId: "thread-completed",
+    providerInstanceId: "codex",
+    t3ThreadId: "t3-thread-completed",
+    projectId: "project-1",
+    sandboxId: "sandbox-1",
+    baseUrl: "https://worker.example",
+    modelSelection: { instanceId: "codex", model: "gpt-5.6-sol" },
+    status: "working" as const,
+    activeRunId: "run-completed",
+    createdAt: "2026-08-31T13:59:00.000Z",
+    updatedAt: "2026-08-31T14:00:01.000Z",
+  };
+  const gateway = {
+    async list() { return [binding]; },
+    async clearActiveRun(_threadId: string, _runId: string, status?: string) {
+      clearedStatus = status;
+    },
+  } as unknown as T3Gateway;
+  const run = {
+    runId: "run-completed",
+    threadId: "thread-completed",
+    status: "completed" as const,
+    startedAt: Date.parse("2026-08-31T14:00:00.000Z"),
+    finishedAt: Date.parse("2026-08-31T14:00:04.000Z"),
+  };
+  const coordinator = {
+    async run() { return run; },
+    async resume() { throw new Error("terminal runs must not resume"); },
+  } as unknown as NativeT3RunCoordinator;
+
+  const summary = await recoverNativeT3Runs({ gateway, coordinator });
+
+  assert.deepEqual(summary, { scanned: 1, resumed: 0, skipped: 1 });
+  assert.equal(clearedStatus, "ready");
+});

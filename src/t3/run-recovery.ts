@@ -38,7 +38,15 @@ export async function recoverNativeT3Runs(input: {
     }
     if (isTerminalRunStatus(run.status)) {
       skipped += 1;
-      await input.gateway.clearActiveRun(binding.canonicalThreadId, runId);
+      await input.gateway.clearActiveRun(
+        binding.canonicalThreadId,
+        runId,
+        run.status === "completed"
+          ? "ready"
+          : run.status === "aborted"
+            ? "interrupted"
+            : "error",
+      );
       continue;
     }
 
@@ -69,6 +77,12 @@ export async function recoverNativeT3Runs(input: {
     });
     if (result.resumed) resumed += 1;
     else skipped += 1;
+    console.log("[native-t3-recovery] provider run reconciliation", {
+      canonicalThreadId: binding.canonicalThreadId,
+      runId,
+      resumed: result.resumed,
+      priorDriverEpoch: run.driverEpoch ?? 0,
+    });
   }
 
   return { scanned: bindings.length, resumed, skipped };

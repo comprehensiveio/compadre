@@ -926,7 +926,10 @@ export class T3Gateway {
       messageId: input.turn.dispatch.messageId,
       requestedAt: input.turn.dispatch.createdAt,
       timeoutMs: input.timeoutMs,
-      absoluteTimeoutMs: input.absoluteTimeoutMs ?? remainingWorkerLifetime,
+      absoluteTimeoutMs: Math.min(
+        input.absoluteTimeoutMs ?? remainingWorkerLifetime,
+        remainingWorkerLifetime,
+      ),
       signal: input.signal,
       onSnapshot: async (nextSnapshot) => {
         await this.snapshots?.save(input.turn.binding, nextSnapshot);
@@ -998,7 +1001,11 @@ export class T3Gateway {
     });
   }
 
-  async clearActiveRun(canonicalThreadId: string, runId: string): Promise<void> {
+  async clearActiveRun(
+    canonicalThreadId: string,
+    runId: string,
+    terminalStatus?: T3ThreadBinding["status"],
+  ): Promise<void> {
     await this.locks.withLock(this.lockKey(canonicalThreadId), async (signal) => {
       if (signal.aborted) throw signal.reason;
       const binding = await this.bindings.get(canonicalThreadId);
@@ -1006,7 +1013,9 @@ export class T3Gateway {
       const { activeRunId: _activeRunId, ...cleared } = binding;
       await this.bindings.bindRecord({
         ...cleared,
-        status: binding.status === "working" ? "error" : binding.status,
+        status:
+          terminalStatus ??
+          (binding.status === "working" ? "error" : binding.status),
         updatedAt: this.now().toISOString(),
       });
     });

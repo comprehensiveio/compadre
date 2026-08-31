@@ -394,7 +394,7 @@ test("retries a transient non-JSON gateway response while waiting for a turn", a
     threadId: "thread-1",
     minimumSequence: 10,
     pollIntervalMs: 1,
-    timeoutMs: 100,
+    timeoutMs: 1_000,
   });
 
   assert.equal(calls, 2);
@@ -574,4 +574,88 @@ test("stops a progressing turn at its absolute deadline", async () => {
     /absolute deadline of 25ms/,
   );
   assert.equal(calls, 3);
+});
+
+test("aborts a pending snapshot request at the turn deadline", async () => {
+  const client = new T3Client("https://t3.example", "secret", {
+    timeoutMs: 1_000,
+    fetch: async (_input, init) =>
+      new Promise<Response>((resolve, reject) => {
+        const timer = setTimeout(() => {
+          resolve(json({
+            snapshotSequence: 2,
+            thread: {
+              id: "thread-1",
+              projectId: "project-1",
+              title: "Thread",
+              modelSelection: { instanceId: "codex", model: "gpt-5.6-sol" },
+              latestTurn: {
+                turnId: "turn-1",
+                state: "completed",
+                requestedAt: now.toISOString(),
+                startedAt: now.toISOString(),
+                completedAt: now.toISOString(),
+                assistantMessageId: "assistant-1",
+              },
+              messages: [],
+              session: null,
+            },
+          }));
+        }, 100);
+        init?.signal?.addEventListener("abort", () => {
+          clearTimeout(timer);
+          reject(init.signal?.reason);
+        }, { once: true });
+      }),
+  });
+
+  await assert.rejects(
+    client.waitForTurnTerminal({
+      threadId: "thread-1",
+      minimumSequence: 1,
+      timeoutMs: 20,
+      absoluteTimeoutMs: 20,
+    }),
+    /absolute deadline of 20ms/,
+  );
+});
+
+test("does not let snapshot delivery overrun the turn deadline", async () => {
+  let delivered = false;
+  const client = new T3Client("https://t3.example", "secret", {
+    fetch: async () => json({
+      snapshotSequence: 2,
+      thread: {
+        id: "thread-1",
+        projectId: "project-1",
+        title: "Thread",
+        modelSelection: { instanceId: "codex", model: "gpt-5.6-sol" },
+        latestTurn: {
+          turnId: "turn-1",
+          state: "running",
+          requestedAt: now.toISOString(),
+          startedAt: now.toISOString(),
+          completedAt: null,
+          assistantMessageId: null,
+        },
+        messages: [],
+        session: null,
+      },
+    }),
+  });
+
+  await assert.rejects(
+    client.waitForTurnTerminal({
+      threadId: "thread-1",
+      minimumSequence: 1,
+      timeoutMs: 1_000,
+      absoluteTimeoutMs: 20,
+      onSnapshot: async () => {
+        delivered = true;
+        await new Promise((resolve) => setTimeout(resolve, 100));
+      },
+    }),
+    /absolute deadline of 20ms/,
+  );
+  assert.equal(delivered, true);
 });

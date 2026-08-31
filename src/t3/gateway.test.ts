@@ -224,9 +224,13 @@ test("durably records and conditionally clears the active provider run", async (
     updatedAt: createdAt,
   };
   await bindings.bind(initialBinding);
+  let receivedAbsoluteTimeoutMs: number | undefined;
   const client = {
     baseUrl: "https://t3.example",
-    async waitForTurnTerminal() { return completedSnapshot; },
+    async waitForTurnTerminal(input: { absoluteTimeoutMs?: number }) {
+      receivedAbsoluteTimeoutMs = input.absoluteTimeoutMs;
+      return completedSnapshot;
+    },
   } as unknown as T3CommandClient;
   const gateway = new T3Gateway(
     bindings,
@@ -253,7 +257,9 @@ test("durably records and conditionally clears the active provider run", async (
         createdAt,
       },
     },
+    absoluteTimeoutMs: 99 * 60 * 60 * 1_000,
   });
+  assert.equal(receivedAbsoluteTimeoutMs, 114 * 60 * 1_000);
   assert.equal((await bindings.get("thread-active-run"))?.activeRunId, "run-1");
   await gateway.clearActiveRun("thread-active-run", "older-run");
   assert.equal((await bindings.get("thread-active-run"))?.activeRunId, "run-1");

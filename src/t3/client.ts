@@ -755,12 +755,85 @@ export class T3Client {
           "T3 wait for turn was aborted",
         );
       }
-      const snapshot = await this.threadSnapshot(input.threadId, input.signal);
+      const remainingMs = Math.max(
+        1,
+        Math.min(progressDeadline, absoluteDeadline) - this.now().getTime(),
+      );
+      const deadlineSignal = AbortSignal.timeout(remainingMs);
+      const snapshotSignal = input.signal
+        ? AbortSignal.any([input.signal, deadlineSignal])
+        : deadlineSignal;
+      let snapshot: T3ThreadSnapshot;
+      try {
+        snapshot = await this.threadSnapshot(input.threadId, snapshotSignal);
+      } catch (error) {
+        if (
+          !input.signal?.aborted &&
+          (deadlineSignal.aborted ||
+            this.now().getTime() >= progressDeadline ||
+            this.now().getTime() >= absoluteDeadline)
+        ) {
+          break;
+        }
+        throw error;
+      }
+      if (
+        this.now().getTime() >= progressDeadline ||
+        this.now().getTime() >= absoluteDeadline
+      ) {
+        break;
+      }
       if (snapshot.snapshotSequence > latestSequence) {
         latestSequence = snapshot.snapshotSequence;
         progressDeadline = this.now().getTime() + timeoutMs;
       }
-      await input.onSnapshot?.(snapshot);
+      let snapshotDeliveryTimedOut = false;
+      if (input.onSnapshot) {
+        const deliveryDeadlineSignal = AbortSignal.timeout(Math.max(
+          1,
+          Math.min(progressDeadline, absoluteDeadline) - this.now().getTime(),
+        ));
+        await new Promise<void>((resolve, reject) => {
+          const cleanup = () => {
+            deliveryDeadlineSignal.removeEventListener("abort", onDeadline);
+            input.signal?.removeEventListener("abort", onAbort);
+          };
+          const onDeadline = () => {
+            snapshotDeliveryTimedOut = true;
+            cleanup();
+            resolve();
+          };
+          const onAbort = () => {
+            cleanup();
+            reject(new T3GatewayError(
+              "aborted",
+              "wait for turn",
+              "T3 wait for turn was aborted",
+            ));
+          };
+          deliveryDeadlineSignal.addEventListener("abort", onDeadline, {
+            once: true,
+          });
+          input.signal?.addEventListener("abort", onAbort, { once: true });
+          Promise.resolve(input.onSnapshot?.(snapshot)).then(
+            () => {
+              cleanup();
+              resolve();
+            },
+            (error: unknown) => {
+              cleanup();
+              reject(error);
+            },
+          );
+        });
+      }
+      if (
+        snapshotDeliveryTimedOut ||
+        this.now().getTime() >= progressDeadline ||
+        this.now().getTime() >= absoluteDeadline
+      ) {
+        break;
+      }
       const requestedMessage = input.messageId
         ? snapshot.thread.messages.find(
             (message) =>
@@ -803,17 +876,22 @@ export class T3Client {
             ),
           );
         };
+        const remainingPollMs = Math.max(
+          1,
+          Math.min(progressDeadline, absoluteDeadline) - this.now().getTime(),
+        );
         const timer = setTimeout(() => {
           input.signal?.removeEventListener("abort", onAbort);
           resolve();
-        }, pollIntervalMs);
+        }, Math.min(pollIntervalMs, remainingPollMs));
         input.signal?.addEventListener("abort", onAbort, { once: true });
       });
     }
     throw new T3GatewayError(
       "timeout",
       "wait for turn",
-      this.now().getTime() >= absoluteDeadline
+      absoluteDeadline <= progressDeadline ||
+        this.now().getTime() >= absoluteDeadline
         ? `T3 turn exceeded its absolute deadline of ${absoluteTimeoutMs}ms`
         : `T3 turn made no durable progress for ${timeoutMs}ms`,
     );

@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  centralT3AbsoluteTimeoutMs,
   centralT3DetailsUrl,
   centralT3ThreadId,
   isSlackEntrypointMessageId,
@@ -31,6 +32,14 @@ const contextualImage: T3InputFile = {
   sizeBytes: 2,
   dataBase64: "BAU=",
 };
+
+test("caps the central wait by the configured Modal worker lifetime", () => {
+  assert.equal(centralT3AbsoluteTimeoutMs({}), 115 * 60 * 1_000);
+  assert.equal(
+    centralT3AbsoluteTimeoutMs({ COMPADRE_MODAL_TIMEOUT_MS: String(30 * 60 * 1_000) }),
+    25 * 60 * 1_000,
+  );
+});
 
 function thread(input: {
   id: string;
@@ -180,6 +189,7 @@ test("a Slack turn is created centrally and delivers only its final assistant me
     },
     async waitForTurnTerminal(input) {
       assert.ok(dispatched);
+      assert.equal(input.absoluteTimeoutMs, 25 * 60 * 1_000);
       const terminal = terminalSnapshot(dispatched);
       await input.onSnapshot?.(terminal);
       return terminal;
@@ -195,6 +205,9 @@ test("a Slack turn is created centrally and delivers only its final assistant me
     displayText: "Question from Slack",
     profile: "codex",
     idFactory: () => "message-1",
+    environment: {
+      COMPADRE_MODAL_TIMEOUT_MS: String(30 * 60 * 1_000),
+    },
     attribution,
     onPrepared(prepared) {
       events.push("prepared");

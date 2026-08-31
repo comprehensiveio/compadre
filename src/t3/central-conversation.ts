@@ -17,11 +17,28 @@ import {
 
 const CENTRAL_T3_TIMEOUT_MS = 20 * 60 * 1_000;
 const CENTRAL_T3_ABSOLUTE_TIMEOUT_MS = 115 * 60 * 1_000;
+const MODAL_HIBERNATION_SAFETY_MS = 5 * 60 * 1_000;
 const MAX_PROVIDER_PROMPT_CHARS = 95_000;
 const TRUNCATED_CONTEXT_NOTICE =
   "[Earlier Slack thread context truncated to fit the agent prompt.]";
 const SLACK_MESSAGE_PREFIX = "slack-entrypoint:";
 const API_MESSAGE_PREFIX = "api-entrypoint:";
+
+export function centralT3AbsoluteTimeoutMs(
+  environment: NodeJS.ProcessEnv = process.env,
+): number {
+  const configuredWorkerLifetime = Number(environment.COMPADRE_MODAL_TIMEOUT_MS);
+  if (!Number.isFinite(configuredWorkerLifetime) || configuredWorkerLifetime <= 0) {
+    return CENTRAL_T3_ABSOLUTE_TIMEOUT_MS;
+  }
+  return Math.max(
+    1,
+    Math.min(
+      CENTRAL_T3_ABSOLUTE_TIMEOUT_MS,
+      configuredWorkerLifetime - MODAL_HIBERNATION_SAFETY_MS,
+    ),
+  );
+}
 
 export interface CentralT3ConversationClient {
   readonly baseUrl: string;
@@ -357,7 +374,7 @@ export async function runCentralT3Conversation(input: {
     messageId: dispatch.messageId,
     requestedAt: dispatch.createdAt,
     timeoutMs: CENTRAL_T3_TIMEOUT_MS,
-    absoluteTimeoutMs: CENTRAL_T3_ABSOLUTE_TIMEOUT_MS,
+    absoluteTimeoutMs: centralT3AbsoluteTimeoutMs(environment),
     signal: input.signal,
     onSnapshot: deliverSnapshot,
   });
