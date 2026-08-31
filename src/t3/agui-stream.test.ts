@@ -150,6 +150,64 @@ test("ignores a stale terminal snapshot from before the requested message", () =
   })), []);
 });
 
+test("projects provider failures that happen before a turn is assigned", () => {
+  const projector = new NativeT3SnapshotProjector(
+    "run-1",
+    "central-thread",
+    "user-1",
+  );
+  const failed: T3ThreadSnapshot = {
+    snapshotSequence: 5,
+    thread: {
+      id: "worker-thread",
+      projectId: "project",
+      title: "Central thread",
+      modelSelection: {
+        instanceId: "claudeAgent",
+        model: "claude-sonnet-5",
+      },
+      latestTurn: {
+        turnId: "prior-turn",
+        state: "completed",
+        requestedAt: "2026-08-26T15:00:00.000Z",
+        startedAt: "2026-08-26T15:00:00.000Z",
+        completedAt: "2026-08-26T15:00:01.000Z",
+        assistantMessageId: "prior-assistant",
+      },
+      messages: [{
+        id: "user-1",
+        role: "user",
+        text: "run pwd",
+        turnId: null,
+        streaming: false,
+        createdAt: "2026-08-26T16:00:00.000Z",
+        updatedAt: "2026-08-26T16:00:00.000Z",
+      }],
+      session: {
+        status: "stopped",
+        activeTurnId: null,
+        lastError: "turn/setPermissionMode failed",
+      },
+      activities: [{
+        id: "start-failed",
+        kind: "provider.turn.start.failed",
+        summary: "Provider turn start failed",
+        createdAt: "2026-08-26T16:00:00.100Z",
+      }],
+    },
+  };
+
+  const events = projector.project(failed);
+
+  assert.deepEqual(events, [{
+    type: EventType.RUN_ERROR,
+    runId: "run-1",
+    message: "turn/setPermissionMode failed",
+    timestamp: Date.parse("2026-08-26T16:00:00.100Z"),
+  }]);
+  assert.deepEqual(projector.project(failed), []);
+});
+
 test("preserves the native MCP server and tool name", () => {
   const projector = new NativeT3SnapshotProjector("run-1", "central-thread", "user-1");
   const events = projector.project(snapshot({

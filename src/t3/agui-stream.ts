@@ -14,6 +14,7 @@ import type {
   T3ThreadSnapshot,
   T3TurnDispatch,
 } from "./client.js";
+import { preTurnStartFailure } from "./client.js";
 import type { T3GatewayTurn } from "./gateway.js";
 import type { AgentProfile } from "../tanstack/protocol.js";
 import {
@@ -300,8 +301,21 @@ export class NativeT3SnapshotProjector {
       (message) => message.id === this.requestedMessageId && message.role === "user",
     );
     if (!requestedMessage) return [];
-    this.turnId = requestedMessage.turnId ?? this.turnId ?? snapshot.thread.latestTurn?.turnId;
-    if (!this.turnId) return [];
+    this.turnId = requestedMessage.turnId ?? this.turnId;
+    if (!this.turnId) {
+      const startFailure = preTurnStartFailure(
+        snapshot,
+        this.requestedMessageId,
+      );
+      if (!startFailure) return [];
+      this.terminal = true;
+      return [{
+        type: EventType.RUN_ERROR,
+        runId: this.runId,
+        message: startFailure.message,
+        timestamp: timestamp(startFailure.createdAt),
+      }];
+    }
 
     const chunks: StreamChunk[] = [];
     for (const activity of activities(snapshot)) {

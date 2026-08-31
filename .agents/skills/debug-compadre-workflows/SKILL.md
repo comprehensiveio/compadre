@@ -96,6 +96,13 @@ Prefer exact identifiers and narrow time windows. Render service instance suffix
   `compadre.t3.thread-snapshots.v1` worker snapshot before diagnosing an early
   harness exit; fewer central messages indicates a projection loss rather than
   missing provider output.
+- A native provider can fail before T3 assigns a turn. The requested user's
+  `turnId` remains null, while `latestTurn` is either null or still refers to a
+  prior turn, even though the session is stopped or errored. Treat a current
+  `provider.turn.start.failed` or `runtime.error` activity plus
+  `session.lastError` as terminal evidence; do not keep polling for a turn ID.
+  Correlate the activity timestamp to the requested message so an older stopped
+  session is not mistaken for the new request's outcome.
 - A Render cutover can briefly return a non-JSON 502 for an otherwise healthy
   central T3 thread snapshot while the provider turn finishes successfully.
   Correlate the request failure with deploy lifecycle and T3 turn completion;

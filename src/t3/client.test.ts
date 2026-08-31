@@ -401,6 +401,70 @@ test("retries a transient non-JSON gateway response while waiting for a turn", a
   assert.equal(result.thread.latestTurn?.state, "completed");
 });
 
+test("returns when a provider fails before assigning a turn", async () => {
+  let calls = 0;
+  const client = new T3Client("https://t3.example", "secret", {
+    fetch: async () => {
+      calls += 1;
+      return json({
+        snapshotSequence: 12,
+        thread: {
+          id: "thread-1",
+          projectId: "project-1",
+          title: "Thread",
+          modelSelection: {
+            instanceId: "claudeAgent",
+            model: "claude-sonnet-5",
+          },
+          latestTurn: {
+            turnId: "prior-turn",
+            state: "completed",
+            requestedAt: "2026-08-26T15:00:00.000Z",
+            startedAt: "2026-08-26T15:00:00.000Z",
+            completedAt: "2026-08-26T15:00:01.000Z",
+            assistantMessageId: "prior-assistant",
+          },
+          messages: [{
+            id: "requested-message",
+            role: "user",
+            text: "new request",
+            turnId: null,
+            streaming: false,
+            createdAt: now.toISOString(),
+            updatedAt: now.toISOString(),
+          }],
+          session: {
+            status: "stopped",
+            activeTurnId: null,
+            lastError: "turn/setPermissionMode failed",
+          },
+          activities: [{
+            id: "start-failed",
+            kind: "provider.turn.start.failed",
+            createdAt: now.toISOString(),
+          }],
+        },
+      });
+    },
+  });
+
+  const result = await client.waitForTurnTerminal({
+    threadId: "thread-1",
+    minimumSequence: 10,
+    messageId: "requested-message",
+    requestedAt: now.toISOString(),
+    pollIntervalMs: 1,
+    timeoutMs: 100,
+  });
+
+  assert.equal(calls, 1);
+  assert.equal(result.thread.latestTurn?.turnId, "prior-turn");
+  assert.equal(
+    result.thread.session?.lastError,
+    "turn/setPermissionMode failed",
+  );
+});
+
 test("does not retry a non-transient snapshot failure", async () => {
   let calls = 0;
   const client = new T3Client("https://t3.example", "secret", {

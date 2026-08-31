@@ -8,6 +8,7 @@ import type {
   T3ThreadSnapshot,
   T3TurnDispatch,
 } from "./client.js";
+import { preTurnStartFailure } from "./client.js";
 import {
   T3ThreadBindingStore,
   type T3ThreadBinding,
@@ -111,6 +112,57 @@ export interface T3GatewayTurn {
 export interface T3GatewayTextGeneration {
   dispatch: T3TurnDispatch;
   snapshot: T3ThreadSnapshot;
+}
+
+function abortReason(signal: AbortSignal): unknown {
+  return signal.reason ?? new Error("T3 text generation was aborted");
+}
+
+/**
+ * Bounds an operation that cannot itself be cancelled while still cleaning up
+ * a resource if it becomes available after the caller's deadline.
+ */
+function awaitWithAbort<T>(
+  operation: Promise<T>,
+  signal: AbortSignal,
+  onLateResult?: (result: T) => void | Promise<void>,
+): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    let settled = false;
+    const onAbort = () => {
+      if (settled) return;
+      settled = true;
+      signal.removeEventListener("abort", onAbort);
+      reject(abortReason(signal));
+    };
+    signal.addEventListener("abort", onAbort, { once: true });
+    if (signal.aborted) onAbort();
+    void operation.then(
+      (result) => {
+        if (settled) {
+          if (onLateResult) {
+            void Promise.resolve(onLateResult(result)).catch((error) => {
+              console.error("[t3-text-generation] late cleanup failed", {
+                errorName: error instanceof Error ? error.name : typeof error,
+                errorMessage:
+                  error instanceof Error ? error.message : String(error),
+              });
+            });
+          }
+          return;
+        }
+        settled = true;
+        signal.removeEventListener("abort", onAbort);
+        resolve(result);
+      },
+      (error) => {
+        if (settled) return;
+        settled = true;
+        signal.removeEventListener("abort", onAbort);
+        reject(error);
+      },
+    );
+  });
 }
 
 export interface T3PreviewTarget {
@@ -491,42 +543,95 @@ export class T3Gateway {
     if (!this.environments.discard) {
       throw new Error("T3 text generation requires disposable environments");
     }
-    const generationId = this.idFactory();
-    const environment = await this.environments.provision({
-      canonicalThreadId: `internal-text-generation:${generationId}`,
-      providerInstanceId: input.modelSelection.instanceId,
-    });
-    try {
-      const threadId = this.idFactory();
-      const dispatch = await environment.client.startNewThread({
-        threadId,
-        projectId: environment.projectId,
-        title: "Internal text generation",
-        text: input.prompt,
-        modelSelection: input.modelSelection,
-        signal: input.signal,
-      });
-      const snapshot = await environment.client.waitForTurnTerminal({
-        threadId,
-        minimumSequence: dispatch.sequence,
-        messageId: dispatch.messageId,
-        requestedAt: dispatch.createdAt,
-        timeoutMs: input.timeoutMs,
-        signal: input.signal,
-      });
-      const state = snapshot.thread.latestTurn?.state;
-      if (state === "error") {
-        throw new Error(
-          snapshot.thread.session?.lastError || "T3 text generation failed",
+    const deadline = this.now().getTime() + input.timeoutMs;
+    let lastError: unknown;
+    for (let attempt = 1; attempt <= 2; attempt += 1) {
+      if (input.signal?.aborted) throw input.signal.reason;
+      const generationId = this.idFactory();
+      let environment: T3EnvironmentConnection | undefined;
+      let phase: "provision" | "start" | "wait" = "provision";
+      try {
+        const remainingMs = Math.max(
+          1,
+          deadline - this.now().getTime(),
         );
+        const deadlineSignal = AbortSignal.timeout(remainingMs);
+        const attemptSignal = input.signal
+          ? AbortSignal.any([input.signal, deadlineSignal])
+          : deadlineSignal;
+        environment = await awaitWithAbort(
+          this.environments.provision({
+            canonicalThreadId: `internal-text-generation:${generationId}`,
+            providerInstanceId: input.modelSelection.instanceId,
+          }),
+          attemptSignal,
+          (lateEnvironment) =>
+            this.environments.discard!(lateEnvironment),
+        );
+        phase = "start";
+        const threadId = this.idFactory();
+        const dispatch = await awaitWithAbort(
+          environment.client.startNewThread({
+            threadId,
+            projectId: environment.projectId,
+            title: "Internal text generation",
+            text: input.prompt,
+            modelSelection: input.modelSelection,
+            signal: attemptSignal,
+          }),
+          attemptSignal,
+        );
+        phase = "wait";
+        const waitRemainingMs = Math.max(
+          1,
+          deadline - this.now().getTime(),
+        );
+        const snapshot = await environment.client.waitForTurnTerminal({
+          threadId,
+          minimumSequence: dispatch.sequence,
+          messageId: dispatch.messageId,
+          requestedAt: dispatch.createdAt,
+          timeoutMs: waitRemainingMs,
+          signal: attemptSignal,
+        });
+        const state = snapshot.thread.latestTurn?.state;
+        const startFailure = preTurnStartFailure(
+          snapshot,
+          dispatch.messageId,
+        );
+        if (state === "error" || startFailure) {
+          throw new Error(
+            startFailure?.message ||
+              snapshot.thread.session?.lastError ||
+              "T3 text generation failed",
+          );
+        }
+        if (state === "interrupted") {
+          throw new Error("T3 text generation was interrupted");
+        }
+        return { dispatch, snapshot };
+      } catch (error) {
+        lastError = error;
+        if (
+          phase === "wait" ||
+          attempt >= 2 ||
+          input.signal?.aborted ||
+          this.now().getTime() >= deadline
+        ) {
+          throw error;
+        }
+        console.warn("[t3-text-generation] retrying disposable environment", {
+          attempt,
+          providerInstanceId: input.modelSelection.instanceId,
+          model: input.modelSelection.model,
+          errorName: error instanceof Error ? error.name : typeof error,
+          errorMessage: error instanceof Error ? error.message : String(error),
+        });
+      } finally {
+        if (environment) await this.environments.discard(environment);
       }
-      if (state === "interrupted") {
-        throw new Error("T3 text generation was interrupted");
-      }
-      return { dispatch, snapshot };
-    } finally {
-      await this.environments.discard(environment);
     }
+    throw lastError;
   }
 
   async send(input: {
@@ -690,11 +795,14 @@ export class T3Gateway {
       );
       await this.snapshots?.save(binding, snapshot);
       const latestState = snapshot.thread.latestTurn?.state;
+      const startFailure = preTurnStartFailure(snapshot);
       const status =
         latestState === "running"
           ? "working"
           : latestState === "error"
             ? "error"
+            : startFailure
+              ? "error"
             : latestState === "interrupted"
               ? "interrupted"
               : "ready";
@@ -811,6 +919,10 @@ export class T3Gateway {
     });
     await this.snapshots?.save(input.turn.binding, snapshot);
     const latestState = snapshot.thread.latestTurn?.state;
+    const startFailure = preTurnStartFailure(
+      snapshot,
+      input.turn.dispatch.messageId,
+    );
     const timestamp = this.now().toISOString();
     const desiredWarmUntil = this.now().getTime() + this.warmLeaseMs;
     const sandboxStartedAt = Date.parse(
@@ -824,7 +936,7 @@ export class T3Gateway {
       title: snapshot.thread.title || input.turn.binding.title,
       modelSelection: snapshot.thread.modelSelection,
       status:
-        latestState === "error"
+        latestState === "error" || startFailure
           ? "error"
           : latestState === "interrupted"
             ? "interrupted"

@@ -367,6 +367,65 @@ function terminalTurn(thread: T3Thread): boolean {
   );
 }
 
+/**
+ * Finds a provider failure correlated to a user message that never received a
+ * native turn ID, including resumed threads that still retain an older turn.
+ */
+export function preTurnStartFailure(
+  snapshot: T3ThreadSnapshot,
+  requestedMessageId?: string,
+): { message: string; createdAt?: string } | undefined {
+  const session = snapshot.thread.session;
+  if (
+    !session?.lastError ||
+    (session.status !== "stopped" && session.status !== "error")
+  ) {
+    return undefined;
+  }
+  const requestedMessage = requestedMessageId
+    ? snapshot.thread.messages.find(
+        (message) =>
+          message.id === requestedMessageId && message.role === "user",
+      )
+    : [...snapshot.thread.messages]
+        .reverse()
+        .find((message) => message.role === "user");
+  if (!requestedMessage || requestedMessage.turnId !== null) return undefined;
+  const requestedAt = Date.parse(requestedMessage.createdAt);
+  const rawActivities = snapshot.thread.activities;
+  if (!Array.isArray(rawActivities)) return undefined;
+  let failure: Record<string, unknown> | undefined;
+  for (let index = rawActivities.length - 1; index >= 0; index -= 1) {
+    const raw: unknown = rawActivities[index];
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) continue;
+    const activity = raw as Record<string, unknown>;
+    if (
+      activity.kind !== "provider.turn.start.failed" &&
+      activity.kind !== "runtime.error"
+    ) {
+      continue;
+    }
+    const createdAt =
+      typeof activity.createdAt === "string"
+        ? Date.parse(activity.createdAt)
+        : Number.NaN;
+    if (
+      !Number.isFinite(requestedAt) ||
+      (Number.isFinite(createdAt) && createdAt >= requestedAt)
+    ) {
+      failure = activity;
+      break;
+    }
+  }
+  if (!failure) return undefined;
+  return {
+    message: session.lastError,
+    ...(typeof failure.createdAt === "string"
+      ? { createdAt: failure.createdAt }
+      : {}),
+  };
+}
+
 export interface T3TurnDispatch {
   sequence: number;
   commandId: string;
@@ -710,10 +769,14 @@ export class T3Client {
               Date.parse(correlationTimestamp))) &&
         (requestedMessage?.turnId == null ||
           requestedMessage.turnId === latestTurn?.turnId);
+      const startFailure = preTurnStartFailure(
+        snapshot,
+        input.messageId,
+      );
       if (
         snapshot.snapshotSequence >= input.minimumSequence &&
-        matchesRequestedTurn &&
-        terminalTurn(snapshot.thread)
+        ((matchesRequestedTurn && terminalTurn(snapshot.thread)) ||
+          startFailure !== undefined)
       ) {
         return snapshot;
       }
