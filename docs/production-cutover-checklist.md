@@ -79,6 +79,13 @@ official Slack application cutover.
   ownership, leases, fencing, and command delivery are implemented.
 - [ ] Define capacity limits and alerts for the Render services, Postgres,
   persistent disk, and concurrent Modal sandboxes.
+- [ ] Keep the public hosted-stack synthetic monitor green. The scheduled
+  `Monitor hosted Compadre` GitHub workflow probes the custom web domain, the
+  direct Render web origin, the T3 environment and file-upload contract, and
+  controller health on a best-effort five-minute GitHub Actions schedule. It
+  is intentionally alert-only: a failed probe must not automatically redeploy
+  or replace production. GitHub may delay or drop scheduled jobs, so this is
+  not a hard five-minute detection guarantee.
 - [ ] Set and enforce a Slack-to-first-progress and Slack-to-first-token latency
   budget. A cold isolated run currently spends meaningful time cloning the
   repository and connecting to and discovering every configured MCP before a

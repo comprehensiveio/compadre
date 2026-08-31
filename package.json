@@ -21,7 +21,8 @@
     "db:migrate": "drizzle-kit migrate",
     "db:studio": "drizzle-kit studio",
     "typecheck": "tsc --noEmit",
-    "test": "tsx --test src/*.test.ts src/**/*.test.ts",
+    "test": "tsx --test src/*.test.ts src/**/*.test.ts && node --test scripts/*.test.mjs",
+    "monitor:hosted": "node scripts/monitor-hosted-stack.mjs",
     "test:thread-persistence": "tsx --test src/persistence/conversation.test.ts src/persistence/conversation.integration.test.ts",
     "test:persistence": "vitest run src/persistence/postgres.conformance.spec.ts"
   },
