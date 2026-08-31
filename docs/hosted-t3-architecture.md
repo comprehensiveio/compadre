@@ -127,6 +127,20 @@ same log using opaque SSE cursors. Closing a subscriber therefore does not
 cancel the Modal run, a repeated run ID cannot start a second agent, and the T3
 fork reconnects a dropped stream from its last delivered cursor.
 
+### Cross-entrypoint steering
+
+A message sent while a turn is already generating is a steer, whether it came
+from Slack or the browser. Central T3 stops reading the older controller stream
+without cancelling its durable producer, then sends the newer message to the
+same thread-scoped Modal T3 session. The native Claude/Codex adapter folds that
+message into the running turn. The older controller run is allowed to reach a
+durable terminal state so recovery and accounting remain trustworthy.
+
+Only the newest user message in the turn owns the eventual Slack answer, thread
+status, and web link. Older Slack outbox rows and browser mirrors settle as
+superseded without posting failure warnings, duplicate answers, or clearing a
+newer turn's status.
+
 Version 2 carries text, named tool calls, normalized token usage, and initiating
 message attribution. The remaining production-hardening work is:
 

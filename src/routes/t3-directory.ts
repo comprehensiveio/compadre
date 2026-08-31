@@ -38,7 +38,10 @@ import {
   type HostedSlackBinding,
 } from "../services/hosted-thread-bindings.js";
 import { mirrorNativeT3RunToSlack } from "../services/native-t3-slack-delivery.js";
-import { finalAssistantTextForDispatch } from "../services/t3-slack-conversation.js";
+import {
+  dispatchWasSuperseded,
+  finalAssistantTextForDispatch,
+} from "../services/t3-slack-conversation.js";
 import {
   centralT3DetailsUrl,
   isSlackEntrypointMessageId,
@@ -582,6 +585,7 @@ export function createT3DirectoryRoutes(
       runId,
       threadId: canonicalThreadId,
       source(signal) {
+        let workerTurn: T3GatewayTurn | undefined;
         const nativeStream = createNativeT3AguiStream({
           gateway,
           canonicalThreadId,
@@ -663,6 +667,7 @@ export function createT3DirectoryRoutes(
               : undefined,
           signal,
           async onTurn(turn) {
+            workerTurn = turn;
             activeRuns.set(runId, { gateway, turn });
             await gateway.markActiveRun?.(canonicalThreadId, runId);
           },
@@ -683,6 +688,30 @@ export function createT3DirectoryRoutes(
               userMessage: text,
               detailsUrl,
               botToken,
+              async shouldDeliverFinal() {
+                if (!workerTurn) return true;
+                try {
+                  const latest = await gateway.snapshot({
+                    canonicalThreadId,
+                    providerInstanceId: selectedModel.instanceId,
+                  });
+                  return latest
+                    ? !dispatchWasSuperseded(
+                        latest.snapshot,
+                        workerTurn.dispatch,
+                      )
+                    : true;
+                } catch (error) {
+                  // Slack mirroring is best-effort. A snapshot read outage
+                  // must not turn a successful provider run into a failure;
+                  // the worst case here is one duplicate final answer.
+                  console.warn(
+                    "[native-t3-slack] could not determine final delivery owner",
+                    { runId, canonicalThreadId, error },
+                  );
+                  return true;
+                }
+              },
             })
           : nativeStream;
         return traceNativeT3AguiStream(mirroredStream, {

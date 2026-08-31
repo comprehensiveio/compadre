@@ -5,6 +5,7 @@ import type { T3GatewayTurn } from "../t3/gateway.js";
 import {
   assistantTextForDispatch,
   canonicalSlackThreadId,
+  dispatchWasSuperseded,
   finalAssistantTextForDispatch,
   runT3SlackConversation,
   t3ModelSelectionForProfile,
@@ -128,6 +129,31 @@ test("does not project an older assistant turn into Slack", () => {
     (message) => message.id !== "user-1",
   );
   assert.equal(assistantTextForDispatch(old, turn.dispatch), "");
+});
+
+test("recognizes when a later user message steers the same running turn", () => {
+  const steered = snapshot("answer after steering", "completed");
+  steered.thread.messages = [
+    steered.thread.messages[0]!,
+    {
+      id: "user-2",
+      role: "user",
+      text: "Focus on the API instead",
+      turnId: "turn-1",
+      streaming: false,
+      createdAt: "2026-08-26T15:00:00.500Z",
+      updatedAt: "2026-08-26T15:00:00.500Z",
+    },
+    ...steered.thread.messages.slice(1),
+  ];
+  assert.equal(dispatchWasSuperseded(steered, turn.dispatch), true);
+  assert.equal(
+    dispatchWasSuperseded(steered, {
+      ...turn.dispatch,
+      messageId: "user-2",
+    }),
+    false,
+  );
 });
 
 test("retains narration for compatibility while selecting only T3's final answer", () => {

@@ -86,6 +86,12 @@ canonical conversation consumed by the web UI. Slack live mirroring and
 central T3 are separate consumers; do not assume Slack waits for central T3
 persistence. Slack-originated final delivery remains controller/outbox-owned.
 
+Mid-generation browser and Slack messages are steers on the same visible T3
+turn. The hosted adapter detaches its older controller-stream reader (the
+durable producer continues) before opening the steering stream. At terminal,
+the newest user message owns Slack final delivery; superseded outbox/mirror
+paths must not post a failure, duplicate the answer, or clear shared status.
+
 For a protocol change:
 
 1. Identify the contract on both sides and the negotiated

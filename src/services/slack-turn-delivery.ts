@@ -6,7 +6,10 @@ import {
 } from "../t3/central-conversation.js";
 import type { T3TurnDispatch } from "../t3/client.js";
 import { incompleteProviderStopReason } from "../t3/client.js";
-import { finalAssistantTextForDispatch } from "./t3-slack-conversation.js";
+import {
+  dispatchWasSuperseded,
+  finalAssistantTextForDispatch,
+} from "./t3-slack-conversation.js";
 import { SlackStream } from "./slack-stream.js";
 import { slackFailureNotice } from "./terminal-response.js";
 import type {
@@ -107,6 +110,7 @@ export async function deliverClaimedSlackTurn(input: {
     span.setAttribute("compadre.wait_terminal_ms", Date.now() - startedAt);
     span.addEvent("t3.turn.terminal");
     const state = snapshot.thread.latestTurn?.state;
+    const superseded = dispatchWasSuperseded(snapshot, dispatch);
     const incompleteReason = incompleteProviderStopReason(
       snapshot,
       snapshot.thread.latestTurn?.turnId,
@@ -132,6 +136,24 @@ export async function deliverClaimedSlackTurn(input: {
 
     if (store.renewClaim && !(await store.renewClaim(delivery))) {
       throw new SlackDeliveryClaimLostError(delivery);
+    }
+
+    if (superseded) {
+      // A newer web or Slack steer owns the shared thread status, details link,
+      // and eventual final answer. Settle only this trigger's reaction and its
+      // outbox row; clearing thread-level UI here would make the newer turn
+      // appear idle while it is still working.
+      await slack.markRunSucceeded(delivery.triggerMessageTs);
+      if (!(await store.markDelivered(delivery))) {
+        throw new SlackDeliveryClaimLostError(delivery);
+      }
+      span.setAttribute("compadre.delivery.superseded", true);
+      logger.info("[slack-delivery] relinquished superseded completion", {
+        deliveryId: delivery.id,
+        messageId: delivery.messageId,
+        threadId: delivery.t3ThreadId,
+      });
+      return true;
     }
 
     await slack.postThreadMessage(response, delivery.id);

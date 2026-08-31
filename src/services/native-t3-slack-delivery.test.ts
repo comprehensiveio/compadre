@@ -142,3 +142,43 @@ test("a Slack delivery outage does not interrupt the central T3 stream", async (
   }
   assert.equal(mirrored.at(-1)?.type, EventType.RUN_FINISHED);
 });
+
+test("a superseded web mirror leaves final Slack delivery to the newest steer", async () => {
+  const calls: string[] = [];
+  const slack: NativeT3SlackDeliveryStream = {
+    async postThreadMessage(message) {
+      calls.push(`post:${message}`);
+    },
+    async postThreadContext(message) {
+      calls.push(`context:${message}`);
+    },
+    async setStatus(status) {
+      calls.push(`status:${status}`);
+    },
+    async clearStatus() {
+      calls.push("clear");
+    },
+  };
+  const mirrored: StreamChunk[] = [];
+  for await (const chunk of mirrorNativeT3RunToSlack(
+    chunks(),
+    {
+      binding: { channelId: "C1", threadTs: "123.4" },
+      userMessage: "First browser prompt",
+      botToken: "test-token",
+      async shouldDeliverFinal() {
+        return false;
+      },
+    },
+    slack,
+  )) {
+    mirrored.push(chunk);
+  }
+
+  assert.equal(mirrored.at(-1)?.type, EventType.RUN_FINISHED);
+  assert.deepEqual(calls, [
+    "post:*From Compadre web:*\nFirst browser prompt",
+    "status:is thinking...",
+    "status:is github.get_repo...",
+  ]);
+});

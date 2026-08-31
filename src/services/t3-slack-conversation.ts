@@ -96,6 +96,32 @@ function assistantMessagesForDispatch(
   );
 }
 
+/**
+ * A T3 steer appends another user message to the currently running turn. The
+ * final assistant response belongs to the newest such message, so any older
+ * Slack/web delivery must relinquish ownership instead of reporting the
+ * superseded request as a failure or posting the same answer twice.
+ */
+export function dispatchWasSuperseded(
+  snapshot: T3ThreadSnapshot,
+  dispatch: T3TurnDispatch,
+): boolean {
+  const requestedIndex = snapshot.thread.messages.findIndex(
+    (message) => message.id === dispatch.messageId && message.role === "user",
+  );
+  if (requestedIndex < 0) return false;
+  const requested = snapshot.thread.messages[requestedIndex];
+  return snapshot.thread.messages
+    .slice(requestedIndex + 1)
+    .some(
+      (message) =>
+        message.role === "user" &&
+        (requested?.turnId == null ||
+          message.turnId == null ||
+          message.turnId === requested.turnId),
+    );
+}
+
 /** Complete provider narration for durable streams and compatibility clients. */
 export function assistantTextForDispatch(
   snapshot: T3ThreadSnapshot,

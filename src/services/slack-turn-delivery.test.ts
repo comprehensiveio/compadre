@@ -229,3 +229,64 @@ test("does not post when a newer worker owns the delivery claim", async () => {
   assert.equal(markedFailed, false);
   assert.deepEqual(calls, []);
 });
+
+test("settles a Slack trigger quietly when a newer steer owns the final answer", async () => {
+  const job = delivery();
+  const steered = snapshot();
+  steered.thread.messages = [
+    steered.thread.messages[0]!,
+    {
+      id: "web-steer-1",
+      role: "user",
+      text: "Actually, focus on the API",
+      turnId: "turn-1",
+      streaming: false,
+      createdAt: "2026-08-29T12:00:00.500Z",
+      updatedAt: "2026-08-29T12:00:00.500Z",
+      attribution: {
+        userId: "U1",
+        displayName: "Isaac Sherrill",
+        origin: "web",
+      },
+    },
+    ...steered.thread.messages.slice(1),
+  ];
+  const { slack, calls } = slackRecorder();
+  const delivered: string[] = [];
+  const completed = await deliverClaimedSlackTurn({
+    delivery: job,
+    store: {
+      async markDelivered(row) {
+        delivered.push(row.id);
+        return true;
+      },
+      async markFailed() {
+        assert.fail("a superseded delivery is not a failure");
+      },
+    },
+    t3: {
+      baseUrl: "https://t3.example",
+      async environmentDescriptor() {
+        throw new Error("not used");
+      },
+      async snapshot() {
+        throw new Error("not used");
+      },
+      async startNewThread() {
+        throw new Error("not used");
+      },
+      async startTurn() {
+        throw new Error("not used");
+      },
+      async waitForTurnTerminal() {
+        return steered;
+      },
+    },
+    slack,
+    logger: { info() {}, warn() {}, error() {} },
+  });
+
+  assert.equal(completed, true);
+  assert.deepEqual(delivered, [job.id]);
+  assert.deepEqual(calls, [["succeeded", job.triggerMessageTs]]);
+});
