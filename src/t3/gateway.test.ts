@@ -1147,7 +1147,8 @@ test("runs internal text generation in a disposable unbound T3 environment", asy
       discarded.push(connection.sandboxId);
     },
   };
-  const ids = ["generation-1", "native-generation-thread"];
+  const generationId = "11111111-1111-4111-8111-111111111111";
+  const ids = [generationId, "native-generation-thread"];
   const gateway = new T3Gateway(bindings, environments, () => ids.shift()!);
 
   const generated = await gateway.generateText({
@@ -1160,7 +1161,7 @@ test("runs internal text generation in a disposable unbound T3 environment", asy
     generated.snapshot.thread.messages[0]?.text,
     '{"title":"Concise title"}',
   );
-  assert.deepEqual(provisioned, ["internal-text-generation:generation-1"]);
+  assert.deepEqual(provisioned, [generationId]);
   assert.deepEqual(discarded, ["sandbox-generation"]);
   assert.deepEqual(await bindings.list(), []);
 });
@@ -1247,10 +1248,12 @@ test("retries internal text generation once in a fresh disposable environment", 
       discarded.push(connection.sandboxId);
     },
   };
+  const firstGenerationId = "11111111-1111-4111-8111-111111111111";
+  const secondGenerationId = "22222222-2222-4222-8222-222222222222";
   const ids = [
-    "generation-1",
+    firstGenerationId,
     "native-generation-thread-1",
-    "generation-2",
+    secondGenerationId,
     "native-generation-thread-2",
   ];
   const gateway = new T3Gateway(
@@ -1271,8 +1274,8 @@ test("retries internal text generation once in a fresh disposable environment", 
     '{"title":"Retried title"}',
   );
   assert.deepEqual(provisioned, [
-    "internal-text-generation:generation-1",
-    "internal-text-generation:generation-2",
+    firstGenerationId,
+    secondGenerationId,
   ]);
   assert.deepEqual(discarded, ["sandbox-1", "sandbox-2"]);
 });

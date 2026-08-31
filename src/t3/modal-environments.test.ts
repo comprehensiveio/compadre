@@ -3,6 +3,7 @@ import test from "node:test";
 import type { T3ThreadBinding } from "../services/t3-thread-bindings.js";
 import type { T3OrchestrationSnapshot, T3Thread } from "./client.js";
 import {
+  assertProviderCredentialsConfigured,
   assertIsolatedT3Environment,
   T3ModalEnvironmentManager,
 } from "./modal-environments.js";
@@ -47,6 +48,59 @@ function snapshot(threads: T3Thread[]): T3OrchestrationSnapshot {
     updatedAt: "2026-08-26T15:00:00.000Z",
   };
 }
+
+test("requires a configured Claude credential before provisioning a billed worker", async () => {
+  let launched = false;
+  const manager = new T3ModalEnvironmentManager({}, undefined, {
+    async launch() {
+      launched = true;
+      return {} as never;
+    },
+  });
+
+  await assert.rejects(
+    manager.provision({
+      canonicalThreadId: "thread-claude",
+      providerInstanceId: "claudeAgent",
+    }),
+    /neither ANTHROPIC_API_KEY nor CLAUDE_CODE_OAUTH_TOKEN is configured/,
+  );
+  assert.equal(launched, false);
+});
+
+test("requires a configured Claude credential before restoring a worker", async () => {
+  let restored = false;
+  const manager = new T3ModalEnvironmentManager({}, undefined, {
+    async restore() {
+      restored = true;
+      return {} as never;
+    },
+  });
+
+  await assert.rejects(
+    manager.restore({
+      ...binding,
+      providerInstanceId: "claudeAgent",
+      workerSnapshotId: "snapshot-claude",
+    }),
+    /neither ANTHROPIC_API_KEY nor CLAUDE_CODE_OAUTH_TOKEN is configured/,
+  );
+  assert.equal(restored, false);
+});
+
+test("accepts either supported Claude credential and does not constrain Codex", () => {
+  assert.doesNotThrow(() =>
+    assertProviderCredentialsConfigured("claudeAgent", {
+      ANTHROPIC_API_KEY: "anthropic-key",
+    }),
+  );
+  assert.doesNotThrow(() =>
+    assertProviderCredentialsConfigured("claudeAgent", {
+      CLAUDE_CODE_OAUTH_TOKEN: "oauth-token",
+    }),
+  );
+  assert.doesNotThrow(() => assertProviderCredentialsConfigured("codex", {}));
+});
 
 test("accepts only the T3 thread assigned to a Modal sandbox", () => {
   assert.doesNotThrow(() =>

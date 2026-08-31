@@ -103,6 +103,12 @@ Prefer exact identifiers and narrow time windows. Render service instance suffix
   `session.lastError` as terminal evidence; do not keep polling for a turn ID.
   Correlate the activity timestamp to the requested message so an older stopped
   session is not mistaken for the new request's outcome.
+- A Claude turn that is assigned and then immediately reaches `latestTurn.state
+  = error` with `Claude runtime stream failed` has crossed the pre-turn boundary.
+  Inspect the sandbox for the presence (never the value) of
+  `ANTHROPIC_API_KEY` or `CLAUDE_CODE_OAUTH_TOKEN`, then run `claude auth
+  status`. Missing projected credentials together with `loggedIn: false` is an
+  authentication failure, not a permission-mode or central projection failure.
 - A Render cutover can briefly return a non-JSON 502 for an otherwise healthy
   central T3 thread snapshot while the provider turn finishes successfully.
   Correlate the request failure with deploy lifecycle and T3 turn completion;

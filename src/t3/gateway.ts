@@ -561,7 +561,10 @@ export class T3Gateway {
           : deadlineSignal;
         environment = await awaitWithAbort(
           this.environments.provision({
-            canonicalThreadId: `internal-text-generation:${generationId}`,
+            // idFactory defaults to randomUUID. Keep that UUID intact because
+            // worker environment projections (notably dev-backup access) use
+            // the canonical thread id as a scoped security boundary.
+            canonicalThreadId: generationId,
             providerInstanceId: input.modelSelection.instanceId,
           }),
           attemptSignal,

@@ -55,6 +55,22 @@ export interface T3ModalEnvironmentDependencies {
   restart: typeof restartManagedT3ModalEnvironment;
 }
 
+/** Reject provider launches that cannot authenticate before incurring sandbox cost. */
+export function assertProviderCredentialsConfigured(
+  providerInstanceId: string,
+  environment: NodeJS.ProcessEnv,
+): void {
+  if (
+    providerInstanceId === "claudeAgent" &&
+    !environment.ANTHROPIC_API_KEY?.trim() &&
+    !environment.CLAUDE_CODE_OAUTH_TOKEN?.trim()
+  ) {
+    throw new Error(
+      "Claude Code is unavailable because neither ANTHROPIC_API_KEY nor CLAUDE_CODE_OAUTH_TOKEN is configured",
+    );
+  }
+}
+
 /**
  * Gives every external-conversation/provider pair its own Modal-hosted T3
  * environment. The reconnect credential lives inside that sandbox, so it is
@@ -103,6 +119,7 @@ export class T3ModalEnvironmentManager implements T3EnvironmentConnectionManager
       threadTs: string;
     };
   }): Promise<T3EnvironmentConnection> {
+    assertProviderCredentialsConfigured(input.providerInstanceId, this.environment);
     const launched = await (
       this.dependencies.launch ?? launchManagedT3ModalEnvironment
     )({
@@ -163,6 +180,7 @@ export class T3ModalEnvironmentManager implements T3EnvironmentConnectionManager
   }
 
   async restore(binding: T3ThreadBinding): Promise<T3EnvironmentConnection> {
+    assertProviderCredentialsConfigured(binding.providerInstanceId, this.environment);
     if (!binding.workerSnapshotId) {
       throw new Error(
         `T3 thread ${binding.canonicalThreadId} has no worker snapshot to restore`,
