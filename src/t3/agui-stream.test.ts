@@ -172,6 +172,149 @@ test("adopts the native latest turn when its user message remains unbound", () =
   assert.equal(events.at(-1)?.type, EventType.RUN_FINISHED);
 });
 
+test("projects replacement output for a message that steers an active native turn", () => {
+  const projector = new NativeT3SnapshotProjector(
+    "run-steer",
+    "central-thread",
+    "user-steer",
+  );
+  const runningBase = snapshot({
+    sequence: 8,
+    state: "running",
+    text: "old partial answer",
+    streaming: false,
+    activities: [{
+      id: "old-tool",
+      kind: "tool.started",
+      turnId: "turn-1",
+      summary: "Old command started",
+      createdAt: "2026-08-26T16:00:00.400Z",
+      payload: { toolCallId: "old-tool", detail: "sleep 300" },
+    }],
+  });
+  const running: T3ThreadSnapshot = {
+    ...runningBase,
+    thread: {
+      ...runningBase.thread,
+      messages: [
+        ...runningBase.thread.messages,
+        {
+          id: "user-steer",
+          role: "user",
+          text: "change direction",
+          turnId: null,
+          streaming: false,
+          createdAt: "2026-08-26T16:00:01.000Z",
+          updatedAt: "2026-08-26T16:00:01.000Z",
+        },
+      ],
+    },
+  };
+
+  assert.deepEqual(projector.project(running), []);
+
+  const completed: T3ThreadSnapshot = {
+    snapshotSequence: 12,
+    thread: {
+      ...running.thread,
+      latestTurn: {
+        ...running.thread.latestTurn!,
+        state: "completed",
+        completedAt: "2026-08-26T16:00:02.000Z",
+        assistantMessageId: "assistant-steer",
+      },
+      session: {
+        status: "ready",
+        activeTurnId: null,
+        lastError: null,
+      },
+      activities: [
+        ...(Array.isArray(running.thread.activities)
+          ? running.thread.activities
+          : []),
+        {
+          id: "new-tool",
+          kind: "tool.started",
+          turnId: "turn-1",
+          summary: "Replacement command started",
+          createdAt: "2026-08-26T16:00:01.200Z",
+          payload: { toolCallId: "new-tool", detail: "pwd" },
+        },
+      ],
+      messages: [
+        ...running.thread.messages,
+        {
+          id: "assistant-steer",
+          role: "assistant",
+          text: "replacement answer",
+          turnId: "turn-1",
+          streaming: false,
+          createdAt: "2026-08-26T16:00:01.500Z",
+          updatedAt: "2026-08-26T16:00:01.500Z",
+        },
+      ],
+    },
+  };
+
+  const events = projector.project(completed);
+
+  assert.equal(
+    events.find((event) => event.type === EventType.TEXT_MESSAGE_CONTENT)?.delta,
+    "replacement answer",
+  );
+  assert.equal(events.at(-1)?.type, EventType.RUN_FINISHED);
+  assert.equal(
+    events.some(
+      (event) =>
+        event.type === EventType.TOOL_CALL_START &&
+        event.toolCallId === "old-tool",
+    ),
+    false,
+  );
+  assert.equal(
+    events.some(
+      (event) =>
+        event.type === EventType.TOOL_CALL_START &&
+        event.toolCallId === "new-tool",
+    ),
+    true,
+  );
+});
+
+test("does not project a terminal native turn completed before a new message", () => {
+  const projector = new NativeT3SnapshotProjector(
+    "run-new",
+    "central-thread",
+    "user-new",
+  );
+  const completedBase = snapshot({
+    sequence: 8,
+    state: "completed",
+    text: "old answer",
+    streaming: false,
+  });
+  const completed: T3ThreadSnapshot = {
+    ...completedBase,
+    thread: {
+      ...completedBase.thread,
+      messages: [
+        ...completedBase.thread.messages,
+        {
+          id: "user-new",
+          role: "user",
+          text: "new request",
+          turnId: null,
+          streaming: false,
+          createdAt: "2026-08-26T16:00:03.000Z",
+          updatedAt: "2026-08-26T16:00:03.000Z",
+        },
+      ],
+    },
+  };
+
+  assert.deepEqual(projector.project(completed), []);
+});
+
 test("projects provider failures that happen before a turn is assigned", () => {
   const projector = new NativeT3SnapshotProjector(
     "run-1",

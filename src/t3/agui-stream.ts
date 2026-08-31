@@ -338,16 +338,30 @@ export class NativeT3SnapshotProjector {
     if (!this.turnId) {
       // Native T3 providers currently leave the user message unbound while
       // assigning the actual turn id to `latestTurn` and assistant messages.
-      // Adopt that turn only after its request timestamp reaches this message,
-      // so an immediately preceding terminal turn cannot be projected again.
+      // A message sent while that turn is running is a native provider steer:
+      // it intentionally lands after the turn's original requestedAt. Adopt
+      // the active turn immediately so replacement output can keep streaming,
+      // or a terminal turn only when it completed after the steering message.
+      // A message appended after an older turn completed must not replay that
+      // stale turn.
       const latestTurn = snapshot.thread.latestTurn;
       const messageCreatedAt = Date.parse(requestedMessage.createdAt);
       const turnRequestedAt = Date.parse(latestTurn?.requestedAt ?? "");
+      const turnCompletedAt = Date.parse(latestTurn?.completedAt ?? "");
+      const isNormalTurn =
+        Number.isFinite(turnRequestedAt) &&
+        turnRequestedAt >= messageCreatedAt;
+      const isActiveSteer =
+        latestTurn?.state === "running" &&
+        Number.isFinite(turnRequestedAt) &&
+        turnRequestedAt < messageCreatedAt;
+      const isCompletedSteer =
+        Number.isFinite(turnCompletedAt) &&
+        turnCompletedAt >= messageCreatedAt;
       if (
         latestTurn?.turnId &&
         Number.isFinite(messageCreatedAt) &&
-        Number.isFinite(turnRequestedAt) &&
-        turnRequestedAt >= messageCreatedAt
+        (isNormalTurn || isActiveSteer || isCompletedSteer)
       ) {
         this.turnId = latestTurn.turnId;
       }
@@ -368,12 +382,16 @@ export class NativeT3SnapshotProjector {
     }
 
     const chunks: StreamChunk[] = [];
+    const requestedAt = timestamp(requestedMessage.createdAt);
+    const turnRequestedAt = timestamp(snapshot.thread.latestTurn?.requestedAt);
+    const isSteer = turnRequestedAt < requestedAt;
     for (const activity of activities(snapshot)) {
       if (this.seenActivities.has(activity.id)) continue;
+      if (isSteer && timestamp(activity.createdAt) < requestedAt) continue;
       const unboundCurrentTurnUsage =
         activity.kind === "context-window.updated" &&
         activity.turnId === undefined &&
-        timestamp(activity.createdAt) >= timestamp(requestedMessage.createdAt);
+        timestamp(activity.createdAt) >= requestedAt;
       if (activity.turnId !== this.turnId && !unboundCurrentTurnUsage) continue;
       this.seenActivities.add(activity.id);
       const usage = projectedUsage(activity, snapshot);
@@ -445,7 +463,10 @@ export class NativeT3SnapshotProjector {
     }
 
     const assistants = snapshot.thread.messages.filter(
-      (message) => message.role === "assistant" && message.turnId === this.turnId,
+      (message) =>
+        message.role === "assistant" &&
+        message.turnId === this.turnId &&
+        (!isSteer || timestamp(message.createdAt) >= requestedAt),
     );
     for (const assistant of assistants) {
       let projected = this.assistantMessages.get(assistant.id);
