@@ -160,6 +160,21 @@ identity. This closes the normal Render-rollout gap without redispatching the
 user message or confusing the outer compatibility run with the inner provider
 run.
 
+The legacy/API compatibility stream is a second durable run, because its
+external run and thread IDs intentionally differ from the central T3 provider
+run. It is marked with a recovery owner when created and uses the outer run ID
+as the deterministic central T3 message ID. Startup reconciliation first
+reattaches the provider run, then claims a new epoch for each marked outer run
+and tails that exact central message to terminal state. A running snapshot
+seeds projector state without replaying the already-persisted prefix. This
+keeps API status and replay from remaining `running` after a healthy provider
+turn survives a Render rollout.
+
+If the central turn already became terminal during the controller handoff, the
+compatibility log appends only the terminal outcome. It intentionally does not
+attempt a racy reconstruction of prose or tools that may already be in the
+Postgres prefix; the complete transcript remains available from central T3.
+
 Waiting is progress-aware. The central turn may run for up to 115 minutes, but
 must produce a newer durable T3 snapshot within 20 minutes. The worker-provider
 projection uses the same absolute ceiling derived from the Modal sandbox's
@@ -173,6 +188,9 @@ run volume or controller concurrency grows, harden it in this order:
 
 1. Have workers push append-only activity checkpoints to central storage while
    generating, rather than relying on periodic full-snapshot reads.
+   This would also let compatibility-stream takeover reproduce activity from
+   the narrow controller-handoff interval; today that detail remains canonical
+   in central T3 even if the compatibility event log omits it.
 2. Add an explicit driver lease/heartbeat and alert on `working` bindings whose
    marker has no current heartbeat or whose snapshot sequence is stale.
 3. Reconcile the narrow crash window between worker dispatch and active-run

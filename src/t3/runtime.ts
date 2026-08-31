@@ -1,9 +1,11 @@
 import crypto from "node:crypto";
 import { getConfiguredAgentRunDurability } from "../durability/runtime.js";
 import { getConfiguredThreadPersistence } from "../persistence/runtime.js";
+import { recoverCentralT3DurableRuns } from "../services/central-t3-run.js";
 import { T3ThreadBindingStore } from "../services/t3-thread-bindings.js";
 import { T3ThreadSnapshotStore } from "../services/t3-thread-snapshots.js";
 import { T3Gateway } from "./gateway.js";
+import { configuredCentralT3Client } from "./central-conversation.js";
 import { T3ModalEnvironmentManager } from "./modal-environments.js";
 import { NativeT3RunCoordinator } from "./run-coordinator.js";
 import { recoverNativeT3Runs, type NativeT3RecoverySummary } from "./run-recovery.js";
@@ -129,13 +131,38 @@ export function stopConfiguredT3WorkerLifecycle(): void {
 }
 
 /** Reclaim provider streams left behind by a previous controller process. */
-export async function recoverConfiguredNativeT3Runs(): Promise<NativeT3RecoverySummary> {
+export async function recoverConfiguredNativeT3Runs(): Promise<
+  NativeT3RecoverySummary & {
+    compatibilityScanned: number;
+    compatibilityResumed: number;
+    compatibilitySkipped: number;
+  }
+> {
   const [gateway, coordinator] = await Promise.all([
     getConfiguredT3Gateway(),
     getConfiguredNativeT3RunCoordinator(),
   ]);
-  if (!gateway || !coordinator) return { scanned: 0, resumed: 0, skipped: 0 };
-  return recoverNativeT3Runs({ gateway, coordinator });
+  if (!gateway || !coordinator) {
+    return {
+      scanned: 0,
+      resumed: 0,
+      skipped: 0,
+      compatibilityScanned: 0,
+      compatibilityResumed: 0,
+      compatibilitySkipped: 0,
+    };
+  }
+  const provider = await recoverNativeT3Runs({ gateway, coordinator });
+  const client = configuredCentralT3Client();
+  const compatibility = client
+    ? await recoverCentralT3DurableRuns({ coordinator, client })
+    : { scanned: 0, resumed: 0, skipped: 0 };
+  return {
+    ...provider,
+    compatibilityScanned: compatibility.scanned,
+    compatibilityResumed: compatibility.resumed,
+    compatibilitySkipped: compatibility.skipped,
+  };
 }
 
 /** Shared durable producer used by the native provider POST and replay routes. */

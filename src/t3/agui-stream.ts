@@ -8,6 +8,7 @@ import {
   type Tracer,
 } from "@opentelemetry/api";
 import type {
+  T3Client,
   T3MessageAttribution,
   T3InputFile,
   T3ModelSelection,
@@ -18,6 +19,10 @@ import { preTurnStartFailure } from "./client.js";
 import type { T3GatewayTurn } from "./gateway.js";
 import type { AgentProfile } from "../tanstack/protocol.js";
 import {
+  CENTRAL_T3_TIMEOUT_MS,
+  centralT3AbsoluteTimeoutMs,
+  centralT3ApiMessageId,
+  centralT3ThreadId,
   runCentralT3Conversation,
   type CentralT3ConversationClient,
   type CentralT3ConversationPrepared,
@@ -102,6 +107,14 @@ export interface CentralT3AguiStreamInput {
     prepared: CentralT3ConversationPrepared,
     dispatch: T3TurnDispatch,
   ): void | Promise<void>;
+}
+
+export interface CentralT3AguiRecoveryStreamInput {
+  client: CentralT3ConversationClient & Pick<T3Client, "threadSnapshot">;
+  canonicalThreadId: string;
+  runId: string;
+  startedAt: number;
+  signal?: AbortSignal;
 }
 
 export interface NativeT3AguiTraceOptions {
@@ -772,6 +785,7 @@ export async function* createCentralT3AguiStream(
     profile: input.profile,
     modelSelection: input.modelSelection,
     entrypoint: "api",
+    idFactory: () => input.runId,
     signal: input.signal,
     onPrepared: input.onPrepared,
     async onDispatched(prepared, dispatch) {
@@ -820,4 +834,97 @@ export async function* createCentralT3AguiStream(
       timestamp: Date.now(),
     };
   }
+}
+
+/**
+ * Reattach the durable API compatibility stream to its deterministic central
+ * T3 message. A running snapshot seeds projector state without replaying the
+ * prefix; a terminal startup snapshot emits only its terminal outcome because
+ * the complete transcript remains authoritative in central T3.
+ */
+export async function* createCentralT3AguiRecoveryStream(
+  input: CentralT3AguiRecoveryStreamInput,
+): AsyncIterable<StreamChunk> {
+  const threadId = centralT3ThreadId(input.canonicalThreadId);
+  const messageId = centralT3ApiMessageId(input.runId);
+  const initial = await input.client.threadSnapshot(threadId, input.signal);
+  const requestedMessage = initial.thread.messages.find(
+    (message) => message.id === messageId && message.role === "user",
+  );
+  if (!requestedMessage) {
+    throw new Error(
+      `Central T3 compatibility run ${input.runId} has no matching user message`,
+    );
+  }
+  const projector = new NativeT3SnapshotProjector(
+    input.runId,
+    input.canonicalThreadId,
+    messageId,
+  );
+  const initialEvents = projector.project(initial);
+  const initialTerminal = initialEvents.some(
+    (event) =>
+      event.type === EventType.RUN_FINISHED || event.type === EventType.RUN_ERROR,
+  );
+  if (initialTerminal) {
+    const terminalEvent = [...initialEvents]
+      .reverse()
+      .find(
+        (event) =>
+          event.type === EventType.RUN_FINISHED ||
+          event.type === EventType.RUN_ERROR,
+      );
+    if (terminalEvent) yield terminalEvent;
+    return;
+  }
+
+  // The durable prefix already contains everything visible before takeover.
+  // Discard the initial projection so only subsequent deltas are appended.
+  const pending: StreamChunk[] = [];
+  let wake: (() => void) | undefined;
+  let completed = false;
+  let failure: unknown;
+  const notify = () => {
+    wake?.();
+    wake = undefined;
+  };
+  const waiter = input.client.waitForTurnTerminal({
+    threadId,
+    minimumSequence: initial.snapshotSequence,
+    messageId,
+    requestedAt: requestedMessage.createdAt,
+    timeoutMs: CENTRAL_T3_TIMEOUT_MS,
+    absoluteTimeoutMs: Math.max(
+      1,
+      centralT3AbsoluteTimeoutMs() - Math.max(0, Date.now() - input.startedAt),
+    ),
+    signal: input.signal,
+    onSnapshot(snapshot) {
+      pending.push(...projector.project(snapshot));
+      notify();
+    },
+  }).then(
+    (terminal) => {
+      pending.push(...projector.project(terminal));
+      completed = true;
+      notify();
+    },
+    (error) => {
+      failure = error;
+      completed = true;
+      notify();
+    },
+  );
+  while (!completed || pending.length > 0) {
+    if (pending.length === 0) {
+      if (completed) break;
+      await new Promise<void>((resolve) => {
+        wake = resolve;
+      });
+      continue;
+    }
+    yield pending.shift()!;
+  }
+  await waiter;
+  if (failure) throw failure;
 }

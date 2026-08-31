@@ -140,6 +140,9 @@ rejected by the durable epoch fence. The replacement must log a provider-run
 reconciliation correlated to the canary's canonical thread and `activeRunId`;
 then verify the durable run's driver epoch advanced. The aggregate `resumed`
 count is not canary evidence, and a missing correlated record fails this gate.
+For a compatibility API canary, also require a correlated
+`central-t3-recovery` record, an advanced outer driver epoch, and terminal
+outer status/replay after the provider run completes.
 Do not rely only on a browser reconnect to trigger takeover.
 
 ### Database migration

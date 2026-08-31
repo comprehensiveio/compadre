@@ -15,7 +15,7 @@ import {
   type T3TurnDispatch,
 } from "./client.js";
 
-const CENTRAL_T3_TIMEOUT_MS = 20 * 60 * 1_000;
+export const CENTRAL_T3_TIMEOUT_MS = 20 * 60 * 1_000;
 const CENTRAL_T3_ABSOLUTE_TIMEOUT_MS = 115 * 60 * 1_000;
 const MODAL_HIBERNATION_SAFETY_MS = 5 * 60 * 1_000;
 const MAX_PROVIDER_PROMPT_CHARS = 95_000;
@@ -163,6 +163,11 @@ export function isSlackEntrypointMessageId(
   messageId: string | undefined,
 ): boolean {
   return messageId?.startsWith(SLACK_MESSAGE_PREFIX) === true;
+}
+
+/** Stable central-T3 message id for one durable API compatibility run. */
+export function centralT3ApiMessageId(runId: string): string {
+  return `${API_MESSAGE_PREFIX}${runId}`;
 }
 
 export function configuredCentralT3Client(

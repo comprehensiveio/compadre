@@ -95,6 +95,42 @@ test("a repeated native run id replays one execution instead of starting another
   assert.equal(executions, 1);
 });
 
+test("lists only running producers explicitly marked for startup recovery", async (t) => {
+  const { durability, coordinator } = await memoryCoordinator();
+  t.after(() => durability.close());
+  let release!: () => void;
+  const gated = new Promise<void>((resolve) => { release = resolve; });
+
+  await coordinator.start({
+    runId: "recoverable-run",
+    threadId: "thread-recoverable",
+    recoveryKey: "compatibility",
+    async *source() {
+      yield {
+        type: EventType.RUN_STARTED,
+        runId: "recoverable-run",
+        threadId: "thread-recoverable",
+      };
+      await gated;
+      yield {
+        type: EventType.RUN_FINISHED,
+        runId: "recoverable-run",
+        threadId: "thread-recoverable",
+      };
+    },
+    async cancel() {},
+  });
+
+  assert.deepEqual(
+    (await coordinator.recoverableRuns("compatibility")).map((run) => run.runId),
+    ["recoverable-run"],
+  );
+  assert.deepEqual(await coordinator.recoverableRuns("another-owner"), []);
+  release();
+  await events(coordinator, "recoverable-run");
+  assert.deepEqual(await coordinator.recoverableRuns("compatibility"), []);
+});
+
 test("releases the distributed start lock while provider runs are active", async (t) => {
   const durability = await createAgentRunDurability({
     COMPADRE_DURABILITY_BACKEND: "memory",

@@ -4,11 +4,13 @@ import { EventType, type StreamChunk } from "./agui-protocol.js";
 import { InMemorySpanExporter, SimpleSpanProcessor } from "@opentelemetry/sdk-trace-base";
 import { NodeTracerProvider } from "@opentelemetry/sdk-trace-node";
 import {
+  createCentralT3AguiRecoveryStream,
   createNativeT3AguiRecoveryStream,
   createNativeT3AguiStream,
   NativeT3SnapshotProjector,
   traceNativeT3AguiStream,
 } from "./agui-stream.js";
+import { centralT3ThreadId } from "./central-conversation.js";
 import type { T3ThreadSnapshot } from "./client.js";
 
 function snapshot(input: {
@@ -533,4 +535,91 @@ test("recovery replays narration and detailed tools from the existing worker wit
     events.find((event) => event.type === EventType.TEXT_MESSAGE_CONTENT)?.delta,
     "Done.",
   );
+});
+
+test("central compatibility recovery appends only post-takeover deltas", async () => {
+  const initial = snapshot({
+    sequence: 4,
+    state: "running",
+    text: "working",
+    streaming: true,
+  });
+  const terminal = snapshot({
+    sequence: 8,
+    state: "completed",
+    text: "working done",
+    streaming: false,
+  });
+  for (const value of [initial, terminal]) {
+    value.thread.messages[0]!.id = "api-entrypoint:run-1";
+  }
+  const events: StreamChunk[] = [];
+  for await (const event of createCentralT3AguiRecoveryStream({
+    client: {
+      baseUrl: "https://central.example",
+      async environmentDescriptor() {
+        throw new Error("not used");
+      },
+      async snapshot() {
+        throw new Error("not used");
+      },
+      async startNewThread() {
+        throw new Error("recovery must not dispatch");
+      },
+      async startTurn() {
+        throw new Error("recovery must not dispatch");
+      },
+      async threadSnapshot(threadId) {
+        assert.equal(threadId, centralT3ThreadId("api-thread"));
+        return initial;
+      },
+      async waitForTurnTerminal(input) {
+        await input.onSnapshot?.(terminal);
+        return terminal;
+      },
+    },
+    canonicalThreadId: "api-thread",
+    runId: "run-1",
+    startedAt: Date.parse("2026-08-26T15:59:59.000Z"),
+  })) {
+    events.push(event);
+  }
+
+  assert.deepEqual(events.map((event) => event.type), [
+    EventType.TEXT_MESSAGE_CONTENT,
+    EventType.TEXT_MESSAGE_END,
+    EventType.RUN_FINISHED,
+  ]);
+  assert.equal(events[0]?.delta, " done");
+});
+
+test("terminal compatibility takeover appends only the terminal outcome", async () => {
+  const completed = snapshot({
+    sequence: 8,
+    state: "completed",
+    text: "finished during rollout",
+    streaming: false,
+  });
+  completed.thread.messages[0]!.id = "api-entrypoint:run-terminal";
+  const events: StreamChunk[] = [];
+  for await (const event of createCentralT3AguiRecoveryStream({
+    client: {
+      baseUrl: "https://central.example",
+      async environmentDescriptor() { throw new Error("not used"); },
+      async snapshot() { throw new Error("not used"); },
+      async startNewThread() { throw new Error("recovery must not dispatch"); },
+      async startTurn() { throw new Error("recovery must not dispatch"); },
+      async threadSnapshot() { return completed; },
+      async waitForTurnTerminal() {
+        throw new Error("terminal takeover must not poll");
+      },
+    },
+    canonicalThreadId: "api-terminal-thread",
+    runId: "run-terminal",
+    startedAt: Date.parse("2026-08-26T15:59:59.000Z"),
+  })) {
+    events.push(event);
+  }
+
+  assert.deepEqual(events.map((event) => event.type), [EventType.RUN_FINISHED]);
 });

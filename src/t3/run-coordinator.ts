@@ -18,6 +18,8 @@ import {
 export interface NativeT3RunStart {
   runId: string;
   threadId: string;
+  /** Marks a run for deterministic startup reconciliation after host loss. */
+  recoveryKey?: string;
   source(signal: AbortSignal): AsyncIterable<StreamChunk>;
   cancel(): Promise<void>;
 }
@@ -122,6 +124,12 @@ export class NativeT3RunCoordinator {
             `Native T3 run ${input.runId} was concurrently created for thread ${run.threadId}`,
           );
         }
+        if (input.recoveryKey) {
+          await this.durability.runs.update(input.runId, {
+            sandboxKey: input.recoveryKey,
+            detachedSince: this.now(),
+          });
+        }
 
         this.beginDrive(input, lockSignal);
         return { run, started: true };
@@ -153,6 +161,17 @@ export class NativeT3RunCoordinator {
         return { run, resumed: true };
       },
     );
+  }
+
+  /** Return non-terminal runs explicitly marked for this recovery owner. */
+  async recoverableRuns(recoveryKey: string): Promise<RunRecord[]> {
+    const listReclaimable = this.durability.runs.listReclaimable;
+    if (!listReclaimable) return [];
+    const runs = await listReclaimable.call(this.durability.runs, {
+      now: this.now(),
+      ttlMs: 0,
+    });
+    return runs.filter((run) => run.sandboxKey === recoveryKey);
   }
 
   private beginDrive(input: NativeT3RunStart, claimSignal: AbortSignal): void {
