@@ -155,6 +155,7 @@ function makeHarness(config?: {
   readonly baseDir?: string;
   readonly claudeConfig?: Partial<ClaudeSettings>;
   readonly instanceId?: ProviderInstanceId;
+  readonly effectiveUserId?: number;
 }) {
   const query = new FakeClaudeQuery();
   let createInput:
@@ -166,6 +167,9 @@ function makeHarness(config?: {
 
   const adapterOptions: ClaudeAdapterLiveOptions = {
     ...(config?.instanceId ? { instanceId: config.instanceId } : {}),
+    // Keep the existing full-access assertions independent of the uid of the
+    // machine running the suite.
+    effectiveUserId: config?.effectiveUserId ?? 501,
     createQuery: (input) => {
       createInput = input;
       return query;
@@ -349,6 +353,25 @@ describe("ClaudeAdapterLive", () => {
       assert.deepEqual(createInput?.options.settingSources, ["user", "project", "local"]);
       assert.equal(createInput?.options.permissionMode, "bypassPermissions");
       assert.equal(createInput?.options.allowDangerouslySkipPermissions, true);
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("uses root-safe edit permissions for full-access sessions", () => {
+    const harness = makeHarness({ effectiveUserId: 0 });
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        runtimeMode: "full-access",
+      });
+
+      const createInput = harness.getLastCreateQueryInput();
+      assert.equal(createInput?.options.permissionMode, "acceptEdits");
+      assert.equal(createInput?.options.allowDangerouslySkipPermissions, undefined);
     }).pipe(
       Effect.provideService(Random.Random, makeDeterministicRandomService()),
       Effect.provide(harness.layer),
