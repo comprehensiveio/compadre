@@ -195,6 +195,35 @@ verification, integrity checks, disk-capacity alerts, and a documented recovery
 time objective. Do not add another Render instance until write ownership is
 explicit.
 
+### Known TODO: eliminate disk-coupled web deployment downtime
+
+`compadre-web` currently keeps the authoritative T3 SQLite database on one
+Render persistent disk. Render cannot attach that disk to the replacement
+instance while the old instance still owns it, so a deployment stops the old
+T3 server before the new server can mount the disk and become ready. This is a
+real outage, not only a dropped WebSocket: the custom domain and direct Render
+origin return 502s, existing browser sessions disconnect, and Slack links cannot
+open their central transcript during the gap. A 2026-08-31 UI deployment
+produced roughly two and a half minutes of 502 responses before the replacement
+started serving. Restarting the sole central process can also interrupt an
+active provider turn.
+
+Move the authoritative T3 persistence boundary to storage that does not require
+exclusive attachment to one request-serving instance, most likely a Postgres
+backend for T3's orchestration, projection, and browser-session repositories.
+An equivalent design is acceptable only if it preserves central T3 as the one
+canonical transcript and supports transactional ordering, idempotency, backup,
+restore, and migration from the existing SQLite data. Splitting static assets
+onto a CDN would keep the shell loadable but would not make conversations
+available, so it does not close this TODO.
+
+This TODO is complete only after `compadre-web` can run overlapping old and new
+instances with graceful connection draining, a deploy can occur while a turn
+is active without losing or duplicating it, and an automated canary observes no
+HTTP 5xx or transcript unavailability throughout the rollout. Until then,
+every T3 fork merge must be treated as a user-visible maintenance event and
+verified after the replacement instance is live.
+
 The controller is also kept at one instance today. Native T3 run events and
 cancel intent are durable, but active tool bridges and the immediate cancel path
 are still process-local. Multi-instance operation additionally requires

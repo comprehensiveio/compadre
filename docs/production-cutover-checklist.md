@@ -73,8 +73,13 @@ official Slack application cutover.
   been reproduced and must be fixed before cutover.
 - [ ] Eliminate or explicitly accommodate central-T3 deployment downtime. The
   persistent-disk Render rollout returned 502s for roughly three and a half
-  minutes between deploy start and health-check success, taking the browser UI
-  and central API offline together.
+  minutes in an earlier rollout, and a 2026-08-31 UI deployment produced about
+  two and a half minutes of 502s. The single persistent SQLite disk prevents
+  old and new instances from overlapping. Move T3's authoritative persistence
+  to Postgres or another transactionally equivalent non-exclusive store, then
+  prove a gracefully drained rollout has no HTTP 5xx, transcript outage, lost
+  active turn, or duplicate turn. Serving only the static shell separately does
+  not satisfy this item because conversations would remain unavailable.
 - [ ] Keep one central T3 writer and one controller instance until distributed
   ownership, leases, fencing, and command delivery are implemented.
 - [ ] Define capacity limits and alerts for the Render services, Postgres,
