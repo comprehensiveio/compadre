@@ -181,6 +181,23 @@ projection uses the same absolute ceiling derived from the Modal sandbox's
 remaining lifetime and a 30-minute no-progress default. A new snapshot sequence
 renews only the inactivity deadline; it never extends the absolute deadline.
 
+## Thread operations diagnostics
+
+`GET /internal/operations/threads` is the controller's authenticated,
+read-only agent debugging API. It combines the durable T3 thread binding,
+active run record, and recent Postgres stream events into one ordered snapshot.
+Rows report the current phase or tool, provider and model, expected Modal
+container state and generation, time since durable progress, and a derived
+`healthy`, `attention`, or `stuck` classification. Stuck rows are ordered first.
+
+The hidden hosted UI at `/operations/threads` reads the same snapshot through
+an authenticated same-origin T3 proxy. The browser never receives the
+controller API key. The API deliberately does not contact every Modal sandbox:
+`container.status` is the controller's durable expected lifecycle state, which
+keeps the page read-only and avoids waking suspended workers. If expected and
+actual Modal state begin to diverge in practice, add a background Modal
+inventory reconciler rather than probing sandboxes during page reads.
+
 ### Further run hardening
 
 The current recovery path is intentionally a small first production slice. If

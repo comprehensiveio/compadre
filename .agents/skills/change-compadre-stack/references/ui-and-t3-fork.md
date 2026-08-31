@@ -53,6 +53,10 @@ Common Compadre seams include:
   `apps/web/src/compadreSession.tsx`
 - controller MCP forwarding:
   `apps/server/src/mcp/CompadreMcpBridge.ts`
+- authenticated operations diagnostics:
+  `apps/server/src/auth/CompadreOperations.ts` and
+  `apps/web/src/components/operations/ThreadOperationsPage.tsx`; the source
+  snapshot is owned by the controller's `/internal/operations/threads` API
 
 Search before relying on this list; keep the fork document current when a seam
 moves.

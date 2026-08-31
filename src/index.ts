@@ -19,6 +19,7 @@ import { t3DirectoryRoutes } from "./routes/t3-directory.js";
 import { slackAuthRoutes } from "./routes/slack-auth.js";
 import { previewGatewayRoutes } from "./routes/preview-gateway.js";
 import { devBackupRoutes } from "./routes/dev-backups.js";
+import { t3OperationsRoutes } from "./routes/t3-operations.js";
 import { validateConversationConfiguration } from "./conversation.js";
 import {
   createSingleFlightSlackRecovery,
@@ -78,6 +79,7 @@ app.route("/", t3DirectoryRoutes);
 app.route("/", slackAuthRoutes);
 app.route("/", previewGatewayRoutes);
 app.route("/", devBackupRoutes);
+app.route("/", t3OperationsRoutes);
 
 const SLACK_RECOVERY_DELAY_MS = 15_000;
 
