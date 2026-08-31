@@ -91,6 +91,7 @@ import * as EnvironmentAuth from "./auth/EnvironmentAuth.ts";
 import { compadreAuthRouteLayer } from "./auth/CompadreAuth.ts";
 import { compadreBackupRouteLayer } from "./auth/CompadreBackup.ts";
 import { compadrePreviewGatewayLayer } from "./auth/CompadrePreviewGateway.ts";
+import { compadreOperationsRouteLayer } from "./auth/CompadreOperations.ts";
 import {
   connectHttpApiLayer,
   pendingServiceUpdateExists,
@@ -469,6 +470,7 @@ export const makeRoutesLayer = Layer.mergeAll(
     attachmentUploadRouteLayer,
     compadreAuthRouteLayer,
     compadreBackupRouteLayer,
+    compadreOperationsRouteLayer,
     staticAndDevRouteLayer,
     websocketRpcRouteLayer,
   ),

@@ -18,17 +18,18 @@ It is “concentrate each product difference behind a narrow seam.”
 
 ## Fork seams
 
-| Seam | Comprehensive implementation | Upstream surface changed |
-| --- | --- | --- |
-| Remote native execution | `apps/server/src/provider/RemoteNativeProvider.ts` and the `Compadre*` provider layers | Provider registry wiring only |
-| Controller text generation | `apps/server/src/textGeneration/CompadreTextGeneration.ts` | Remote provider construction only |
-| Runtime telemetry | `apps/server/src/provider/ProviderRuntimeTelemetry.ts` | Provider event observation hooks |
-| Protocol durability | Cursor-aware reconnect in `apps/server/src/provider/Layers/CompadreTransport.ts` | No UI or storage changes |
-| Hosted authentication | `apps/server/src/auth/CompadreAuth.ts` and `CompadrePreviewGateway.ts` | Server route/session composition |
-| Controller MCP bridge | `apps/server/src/mcp/CompadreMcpBridge.ts` | Codex and Claude adapter hooks |
-| Hosted backup | `apps/server/src/auth/CompadreBackup.ts` | Server route composition |
-| Message attribution | migrations `043` and `044` plus command attribution hooks | Contracts, projection, and UI |
-| Compadre product UI | branding, session, sidebar, chat, usage, and CSS hooks in `apps/web` | Narrow components and styles |
+| Seam                       | Comprehensive implementation                                                           | Upstream surface changed                  |
+| -------------------------- | -------------------------------------------------------------------------------------- | ----------------------------------------- |
+| Remote native execution    | `apps/server/src/provider/RemoteNativeProvider.ts` and the `Compadre*` provider layers | Provider registry wiring only             |
+| Controller text generation | `apps/server/src/textGeneration/CompadreTextGeneration.ts`                             | Remote provider construction only         |
+| Runtime telemetry          | `apps/server/src/provider/ProviderRuntimeTelemetry.ts`                                 | Provider event observation hooks          |
+| Protocol durability        | Cursor-aware reconnect in `apps/server/src/provider/Layers/CompadreTransport.ts`       | No UI or storage changes                  |
+| Hosted authentication      | `apps/server/src/auth/CompadreAuth.ts` and `CompadrePreviewGateway.ts`                 | Server route/session composition          |
+| Controller MCP bridge      | `apps/server/src/mcp/CompadreMcpBridge.ts`                                             | Codex and Claude adapter hooks            |
+| Hosted backup              | `apps/server/src/auth/CompadreBackup.ts`                                               | Server route composition                  |
+| Operations diagnostics     | `apps/server/src/auth/CompadreOperations.ts` and `apps/web/src/components/operations`  | One server route and one hidden web route |
+| Message attribution        | migrations `043` and `044` plus command attribution hooks                              | Contracts, projection, and UI             |
+| Compadre product UI        | branding, session, sidebar, chat, usage, and CSS hooks in `apps/web`                   | Narrow components and styles              |
 
 Codex and Claude Code remain the provider identities shown to users. Compadre is
 transport and orchestration, not a provider choice.
