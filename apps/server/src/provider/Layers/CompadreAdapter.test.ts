@@ -661,4 +661,86 @@ it.layer(Layer.merge(NodeServices.layer, FetchHttpClient.layer))("CompadreAdapte
       assert.equal(terminal?.payload.state, "cancelled");
     }),
   );
+
+  it.effect("steers a running hosted turn without cancelling or opening a second T3 turn", () =>
+    Effect.gen(function* () {
+      const threadId = ThreadId.make("compadre-steer-thread");
+      const inputs: string[] = [];
+      const cancelledRunIds: string[] = [];
+      const adapter = yield* makeCompadreAdapter({
+        endpoint: "http://compadre.test/hosted/chat",
+        instanceId: ProviderInstanceId.make("codex"),
+        runtimeProvider: ProviderDriverKind.make("codex"),
+        provider: "codex",
+        transport: (input) => {
+          inputs.push(input.input);
+          if (input.input === "initial request") return Stream.never;
+          return Stream.fromIterable([
+            {
+              type: "TEXT_MESSAGE_START",
+              messageId: "assistant-steered",
+            },
+            {
+              type: "TEXT_MESSAGE_CONTENT",
+              messageId: "assistant-steered",
+              delta: "Steered answer",
+            },
+            {
+              type: "TEXT_MESSAGE_END",
+              messageId: "assistant-steered",
+            },
+            { type: "RUN_FINISHED" },
+          ]);
+        },
+        cancelTransport: ({ runId }) =>
+          Effect.sync(() => {
+            cancelledRunIds.push(runId);
+          }),
+      });
+      const events: ProviderRuntimeEvent[] = [];
+      const completed = yield* Deferred.make<void>();
+      const eventsFiber = yield* Stream.runForEach(adapter.streamEvents, (event) =>
+        Effect.sync(() => events.push(event)).pipe(
+          Effect.andThen(
+            event.type === "turn.completed" ? Deferred.succeed(completed, undefined) : Effect.void,
+          ),
+        ),
+      ).pipe(Effect.forkChild);
+      yield* Effect.yieldNow;
+
+      yield* adapter.startSession({
+        threadId,
+        cwd: process.cwd(),
+        runtimeMode: "full-access",
+      });
+      const initial = yield* adapter.sendTurn({
+        threadId,
+        input: "initial request",
+      });
+      yield* Effect.yieldNow;
+      const steered = yield* adapter.sendTurn({
+        threadId,
+        input: "focus on the API instead",
+      });
+      yield* Deferred.await(completed);
+      yield* Fiber.interrupt(eventsFiber);
+
+      assert.equal(String(steered.turnId), String(initial.turnId));
+      assert.deepStrictEqual(inputs, ["initial request", "focus on the API instead"]);
+      assert.deepStrictEqual(cancelledRunIds, []);
+      assert.equal(events.filter((event) => event.type === "turn.started").length, 1);
+      assert.deepStrictEqual(
+        events
+          .filter((event) => event.type === "turn.completed")
+          .map((event) => event.payload.state),
+        ["completed"],
+      );
+      assert.equal(
+        events.some(
+          (event) => event.type === "content.delta" && event.payload.delta === "Steered answer",
+        ),
+        true,
+      );
+    }),
+  );
 });

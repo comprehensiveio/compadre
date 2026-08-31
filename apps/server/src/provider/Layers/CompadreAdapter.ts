@@ -63,12 +63,17 @@ export interface CompadreAdapterOptions {
   readonly reconnectBaseDelayMs?: number;
 }
 
+interface ActiveCompadreRun {
+  readonly runId: string;
+  readonly fiber: Fiber.Fiber<void, ProviderAdapterRequestError>;
+  superseded: boolean;
+}
+
 interface CompadreSessionContext {
   session: ProviderSession;
   modelOptions: ReadonlyArray<ProviderOptionSelection>;
   readonly turns: Array<{ id: TurnId; items: Array<unknown> }>;
-  activeFiber: Fiber.Fiber<void, ProviderAdapterRequestError> | undefined;
-  activeRunId: string | undefined;
+  activeRun: ActiveCompadreRun | undefined;
   stopped: boolean;
 }
 
@@ -252,15 +257,15 @@ export function makeCompadreAdapter(options: CompadreAdapterOptions) {
       Effect.gen(function* () {
         const { activeTurnId: _activeTurnId, ...session } = context.session;
         context.session = { ...session, status: "ready", updatedAt: yield* nowIso };
-        context.activeRunId = undefined;
+        context.activeRun = undefined;
       });
 
     const cancelActiveRun = (context: CompadreSessionContext) =>
-      context.activeRunId
+      context.activeRun
         ? cancelTransport({
             endpoint: options.endpoint,
             apiKey: options.apiKey,
-            runId: context.activeRunId,
+            runId: context.activeRun.runId,
           })
         : Effect.void;
 
@@ -274,7 +279,7 @@ export function makeCompadreAdapter(options: CompadreAdapterOptions) {
           });
         }
         const existing = sessions.get(input.threadId);
-        if (existing?.activeFiber) yield* Fiber.interrupt(existing.activeFiber);
+        if (existing?.activeRun) yield* Fiber.interrupt(existing.activeRun.fiber);
 
         const now = yield* nowIso;
         const session: ProviderSession = {
@@ -300,8 +305,7 @@ export function makeCompadreAdapter(options: CompadreAdapterOptions) {
               ? (input.modelSelection.options ?? [])
               : [],
           turns: [],
-          activeFiber: undefined,
-          activeRunId: undefined,
+          activeRun: undefined,
           stopped: false,
         });
         yield* publish({
@@ -384,14 +388,6 @@ export function makeCompadreAdapter(options: CompadreAdapterOptions) {
             };
           }),
         );
-        if (context.activeFiber) {
-          return yield* new ProviderAdapterValidationError({
-            provider: runtimeProvider,
-            operation: "sendTurn",
-            issue: "A Compadre turn is already running for this thread.",
-          });
-        }
-
         const selectedModel =
           input.modelSelection?.instanceId === boundInstanceId
             ? input.modelSelection.model
@@ -402,11 +398,25 @@ export function makeCompadreAdapter(options: CompadreAdapterOptions) {
             : context.modelOptions;
         const selectedProvider = options.provider;
 
-        const turnId = TurnId.make(yield* randomId);
+        const previousRun = context.activeRun;
+        const steeringTurnId =
+          previousRun && context.session.status === "running"
+            ? context.session.activeTurnId
+            : undefined;
+        if (previousRun) {
+          // The controller owns a durable producer, so disconnecting this
+          // reader does not cancel Modal work. The next request reaches the
+          // same worker T3 session and its native provider treats it as a
+          // steer. Mark the reader first so its interruption cannot close the
+          // visible T3 turn as "cancelled".
+          previousRun.superseded = true;
+          yield* Fiber.interrupt(previousRun.fiber);
+        }
+
+        const turnId = steeringTurnId ?? TurnId.make(yield* randomId);
         const runId = yield* randomId;
         const messageId = yield* randomId;
-        context.turns.push({ id: turnId, items: [] });
-        context.activeRunId = runId;
+        if (!steeringTurnId) context.turns.push({ id: turnId, items: [] });
         context.modelOptions = selectedModelOptions;
         context.session = {
           ...context.session,
@@ -415,15 +425,19 @@ export function makeCompadreAdapter(options: CompadreAdapterOptions) {
           ...(selectedModel ? { model: selectedModel } : {}),
           updatedAt: yield* nowIso,
         };
-        yield* publish({
-          type: "turn.started",
-          ...(yield* makeEventStamp()),
-          provider: runtimeProvider,
-          providerInstanceId: boundInstanceId,
-          threadId: input.threadId,
-          turnId,
-          payload: context.session.model ? { model: context.session.model } : {},
-        });
+        if (!steeringTurnId) {
+          yield* publish({
+            type: "turn.started",
+            ...(yield* makeEventStamp()),
+            provider: runtimeProvider,
+            providerInstanceId: boundInstanceId,
+            threadId: input.threadId,
+            turnId,
+            payload: context.session.model ? { model: context.session.model } : {},
+          });
+        }
+
+        let activeRun: ActiveCompadreRun | undefined;
 
         const worker = Effect.gen(function* () {
           const items = new Map<
@@ -808,14 +822,21 @@ export function makeCompadreAdapter(options: CompadreAdapterOptions) {
                 : failTurn("Compadre closed the stream before the run completed."),
             ),
             Effect.catch((cause) => failTurn(cause.message)),
-            Effect.onInterrupt(() => completeTurn("cancelled")),
+            Effect.onInterrupt(() =>
+              activeRun?.superseded ? completeOpenItems() : completeTurn("cancelled"),
+            ),
           );
         });
 
         const fiber = yield* worker.pipe(Effect.forkIn(adapterScope));
-        context.activeFiber = fiber;
+        activeRun = { runId, fiber, superseded: false };
+        context.activeRun = activeRun;
         yield* Fiber.await(fiber).pipe(
-          Effect.tap(() => Effect.sync(() => (context.activeFiber = undefined))),
+          Effect.tap(() =>
+            Effect.sync(() => {
+              if (context.activeRun === activeRun) context.activeRun = undefined;
+            }),
+          ),
           Effect.forkIn(adapterScope),
         );
         return { threadId: input.threadId, turnId, resumeCursor: { runId } };
@@ -824,9 +845,9 @@ export function makeCompadreAdapter(options: CompadreAdapterOptions) {
     const interruptTurn: ProviderAdapterShape<ProviderAdapterError>["interruptTurn"] = (threadId) =>
       Effect.gen(function* () {
         const context = yield* requireSession(threadId);
-        if (context.activeFiber) {
+        if (context.activeRun) {
           yield* cancelActiveRun(context).pipe(
-            Effect.ensuring(Fiber.interrupt(context.activeFiber)),
+            Effect.ensuring(Fiber.interrupt(context.activeRun.fiber)),
           );
         }
       });
@@ -835,9 +856,9 @@ export function makeCompadreAdapter(options: CompadreAdapterOptions) {
       Effect.gen(function* () {
         const context = yield* requireSession(threadId);
         context.stopped = true;
-        if (context.activeFiber) {
+        if (context.activeRun) {
           yield* cancelActiveRun(context).pipe(
-            Effect.ensuring(Fiber.interrupt(context.activeFiber)),
+            Effect.ensuring(Fiber.interrupt(context.activeRun.fiber)),
           );
         }
         sessions.delete(threadId);
