@@ -843,15 +843,34 @@ export class T3Client {
       const latestTurn = snapshot.thread.latestTurn;
       // T3 normalizes the persisted user-message timestamp on the server. Use
       // that value once available so a few milliseconds of host/Modal clock
-      // skew cannot keep a completed turn looking perpetually in-flight.
+      // skew cannot keep a completed turn looking perpetually in-flight. A
+      // steer is persisted after the active turn's requestedAt, so correlate
+      // it against the full terminal turn window rather than only its start.
+      // A message appended after a prior turn completed still cannot match
+      // that stale terminal turn.
       const correlationTimestamp =
         requestedMessage?.createdAt ?? input.requestedAt;
+      const correlationTime = correlationTimestamp
+        ? Date.parse(correlationTimestamp)
+        : undefined;
+      const requestedTime = latestTurn
+        ? Date.parse(latestTurn.requestedAt)
+        : undefined;
+      const completedTime = latestTurn?.completedAt
+        ? Date.parse(latestTurn.completedAt)
+        : undefined;
+      const latestTurnCoversRequest =
+        correlationTime === undefined ||
+        (requestedTime !== undefined &&
+          Number.isFinite(requestedTime) &&
+          requestedTime >= correlationTime) ||
+        (completedTime !== undefined &&
+          Number.isFinite(completedTime) &&
+          completedTime >= correlationTime);
       const matchesRequestedTurn =
         (!input.messageId || requestedMessage !== undefined) &&
-        (!correlationTimestamp ||
-          (latestTurn !== null &&
-            Date.parse(latestTurn.requestedAt) >=
-              Date.parse(correlationTimestamp))) &&
+        latestTurn !== null &&
+        latestTurnCoversRequest &&
         (requestedMessage?.turnId == null ||
           requestedMessage.turnId === latestTurn?.turnId);
       const startFailure = preTurnStartFailure(

@@ -360,6 +360,136 @@ test("waits for the dispatched message instead of accepting a stale terminal tur
   assert.equal(result.thread.latestTurn?.state, "completed");
 });
 
+test("accepts a steered message completed inside an already-running turn", async () => {
+  let calls = 0;
+  const requestedAt = "2026-08-26T14:01:00.000Z";
+  const client = new T3Client("https://t3.example", "secret", {
+    fetch: async () => {
+      calls += 1;
+      return json({
+        snapshotSequence: 12,
+        thread: {
+          id: "thread-1",
+          projectId: "project-1",
+          title: "Thread",
+          modelSelection: { instanceId: "codex", model: "gpt-5.6-sol" },
+          latestTurn: {
+            turnId: "turn-1",
+            state: "completed",
+            requestedAt: "2026-08-26T14:00:00.000Z",
+            startedAt: "2026-08-26T14:00:00.000Z",
+            completedAt: "2026-08-26T14:02:00.000Z",
+            assistantMessageId: "assistant-1",
+          },
+          messages: [
+            {
+              id: "steered-message",
+              role: "user" as const,
+              text: "change direction",
+              turnId: null,
+              streaming: false,
+              createdAt: requestedAt,
+              updatedAt: requestedAt,
+            },
+          ],
+          session: null,
+        },
+      });
+    },
+  });
+
+  const result = await client.waitForTurnTerminal({
+    threadId: "thread-1",
+    minimumSequence: 12,
+    messageId: "steered-message",
+    requestedAt,
+    pollIntervalMs: 1,
+    timeoutMs: 100,
+  });
+
+  assert.equal(calls, 1);
+  assert.equal(result.thread.latestTurn?.state, "completed");
+});
+
+test("does not assign a newly appended message to an earlier completed turn", async () => {
+  let calls = 0;
+  const requestedAt = "2026-08-26T14:01:00.000Z";
+  const snapshot = (
+    state: "completed" | "running",
+    turnId: string,
+    turnRequestedAt: string,
+    completedAt: string | null,
+  ) => ({
+    snapshotSequence: 12 + calls,
+    thread: {
+      id: "thread-1",
+      projectId: "project-1",
+      title: "Thread",
+      modelSelection: { instanceId: "codex", model: "gpt-5.6-sol" },
+      latestTurn: {
+        turnId,
+        state,
+        requestedAt: turnRequestedAt,
+        startedAt: turnRequestedAt,
+        completedAt,
+        assistantMessageId: state === "completed" ? `assistant-${turnId}` : null,
+      },
+      messages: [
+        {
+          id: "requested-message",
+          role: "user" as const,
+          text: "new request",
+          turnId: null,
+          streaming: false,
+          createdAt: requestedAt,
+          updatedAt: requestedAt,
+        },
+      ],
+      session: null,
+    },
+  });
+  const client = new T3Client("https://t3.example", "secret", {
+    fetch: async () => {
+      calls += 1;
+      if (calls === 1) {
+        return json(
+          snapshot(
+            "completed",
+            "turn-old",
+            "2026-08-26T14:00:00.000Z",
+            "2026-08-26T14:00:30.000Z",
+          ),
+        );
+      }
+      if (calls === 2) {
+        return json(
+          snapshot("running", "turn-new", requestedAt, null),
+        );
+      }
+      return json(
+        snapshot(
+          "completed",
+          "turn-new",
+          requestedAt,
+          "2026-08-26T14:02:00.000Z",
+        ),
+      );
+    },
+  });
+
+  const result = await client.waitForTurnTerminal({
+    threadId: "thread-1",
+    minimumSequence: 12,
+    messageId: "requested-message",
+    requestedAt,
+    pollIntervalMs: 1,
+    timeoutMs: 100,
+  });
+
+  assert.equal(calls, 3);
+  assert.equal(result.thread.latestTurn?.turnId, "turn-new");
+});
+
 test("retries a transient non-JSON gateway response while waiting for a turn", async () => {
   let calls = 0;
   const client = new T3Client("https://t3.example", "secret", {
