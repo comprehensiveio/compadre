@@ -52,3 +52,20 @@ test("rejects a T3 fork archive whose digest differs", async () => {
     /does not match/,
   );
 });
+
+test("bounds a T3 fork download even when fetch ignores cancellation", async () => {
+  await assert.rejects(
+    resolveT3ForkArchive(
+      {
+        COMPADRE_T3_PACKAGE_URL: "https://releases.example/t3.tgz",
+        COMPADRE_T3_PACKAGE_SHA256: "0".repeat(64),
+      },
+      {
+        cacheDirectory: await fs.mkdtemp(path.join(os.tmpdir(), "compadre-t3-archive-")),
+        downloadTimeoutMs: 5,
+        fetch: async () => new Promise<Response>(() => undefined),
+      },
+    ),
+    /timed out/,
+  );
+});

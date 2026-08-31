@@ -109,6 +109,11 @@ Prefer exact identifiers and narrow time windows. Render service instance suffix
   `ANTHROPIC_API_KEY` or `CLAUDE_CODE_OAUTH_TOKEN`, then run `claude auth
   status`. Missing projected credentials together with `loggedIn: false` is an
   authentication failure, not a permission-mode or central projection failure.
+  If credentials are present and a direct Claude CLI request succeeds,
+  reproduce the failure with T3's Agent SDK options. Claude rejects
+  `--dangerously-skip-permissions` under root; Compadre's root-hosted workers
+  must use T3's root-safe full-access mapping rather than treating that error
+  as an authentication failure.
 - A Render cutover can briefly return a non-JSON 502 for an otherwise healthy
   central T3 thread snapshot while the provider turn finishes successfully.
   Correlate the request failure with deploy lifecycle and T3 turn completion;

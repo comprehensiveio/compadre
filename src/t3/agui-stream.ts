@@ -303,6 +303,23 @@ export class NativeT3SnapshotProjector {
     if (!requestedMessage) return [];
     this.turnId = requestedMessage.turnId ?? this.turnId;
     if (!this.turnId) {
+      // Native T3 providers currently leave the user message unbound while
+      // assigning the actual turn id to `latestTurn` and assistant messages.
+      // Adopt that turn only after its request timestamp reaches this message,
+      // so an immediately preceding terminal turn cannot be projected again.
+      const latestTurn = snapshot.thread.latestTurn;
+      const messageCreatedAt = Date.parse(requestedMessage.createdAt);
+      const turnRequestedAt = Date.parse(latestTurn?.requestedAt ?? "");
+      if (
+        latestTurn?.turnId &&
+        Number.isFinite(messageCreatedAt) &&
+        Number.isFinite(turnRequestedAt) &&
+        turnRequestedAt >= messageCreatedAt
+      ) {
+        this.turnId = latestTurn.turnId;
+      }
+    }
+    if (!this.turnId) {
       const startFailure = preTurnStartFailure(
         snapshot,
         this.requestedMessageId,

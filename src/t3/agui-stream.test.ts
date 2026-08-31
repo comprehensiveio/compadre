@@ -150,6 +150,25 @@ test("ignores a stale terminal snapshot from before the requested message", () =
   })), []);
 });
 
+test("adopts the native latest turn when its user message remains unbound", () => {
+  const projector = new NativeT3SnapshotProjector("run-1", "central-thread", "user-1");
+  const completed = snapshot({
+    sequence: 8,
+    state: "completed",
+    text: "finished",
+    streaming: false,
+  });
+  completed.thread.messages[0]!.turnId = null;
+
+  const events = projector.project(completed);
+
+  assert.equal(
+    events.find((event) => event.type === EventType.TEXT_MESSAGE_CONTENT)?.delta,
+    "finished",
+  );
+  assert.equal(events.at(-1)?.type, EventType.RUN_FINISHED);
+});
+
 test("projects provider failures that happen before a turn is assigned", () => {
   const projector = new NativeT3SnapshotProjector(
     "run-1",

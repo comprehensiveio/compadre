@@ -29,6 +29,7 @@ const STARTUP_TIMEOUT_MS = 120_000;
 const T3_INSTALL_ROOT = "/opt/compadre-runtime/node_modules/t3";
 const T3_FORK_ARCHIVE = "/tmp/compadre-t3-fork.tgz";
 const MAX_T3_FORK_ARCHIVE_BYTES = 50 * 1024 * 1024;
+const T3_FORK_DOWNLOAD_TIMEOUT_MS = 30_000;
 export const T3_GATEWAY_CREDENTIAL_PATH =
   "/var/lib/t3/compadre-gateway-access-token";
 export const T3_SLACK_DESTINATION_PATH =
@@ -204,8 +205,17 @@ async function installLocalT3Fork(
     throw new Error("COMPADRE_T3_PACKAGE_PATH requires a Modal sandbox");
   }
   await handle.copyFromLocal(archivePath, T3_FORK_ARCHIVE);
+  const stagedInstallRoot = `${T3_INSTALL_ROOT}.next`;
+  const previousInstallRoot = `${T3_INSTALL_ROOT}.previous`;
   const installed = await handle.process.exec(
-    `tar -xzf ${quote(T3_FORK_ARCHIVE)} --strip-components=1 -C ${quote(T3_INSTALL_ROOT)}`,
+    [
+      `rm -rf ${quote(stagedInstallRoot)} ${quote(previousInstallRoot)}`,
+      `mkdir -p ${quote(stagedInstallRoot)}`,
+      `tar -xzf ${quote(T3_FORK_ARCHIVE)} --strip-components=1 -C ${quote(stagedInstallRoot)}`,
+      `mv ${quote(T3_INSTALL_ROOT)} ${quote(previousInstallRoot)}`,
+      `mv ${quote(stagedInstallRoot)} ${quote(T3_INSTALL_ROOT)}`,
+      `rm -rf ${quote(previousInstallRoot)}`,
+    ].join(" && "),
   );
   if (installed.exitCode !== 0) {
     throw new Error(
@@ -223,6 +233,7 @@ export async function resolveT3ForkArchive(
   options: {
     fetch?: typeof globalThis.fetch;
     cacheDirectory?: string;
+    downloadTimeoutMs?: number;
   } = {},
 ): Promise<string | undefined> {
   const localPath = environment.COMPADRE_T3_PACKAGE_PATH?.trim();
@@ -249,15 +260,38 @@ export async function resolveT3ForkArchive(
     // Cache misses and stale partial files are replaced below.
   }
 
-  const response = await (options.fetch ?? globalThis.fetch)(parsed);
-  if (!response.ok) {
-    throw new Error(`T3 fork download failed with HTTP ${response.status}`);
+  const controller = new AbortController();
+  const downloadTimeoutMs =
+    options.downloadTimeoutMs ?? T3_FORK_DOWNLOAD_TIMEOUT_MS;
+  const timeout = setTimeout(() => controller.abort(), downloadTimeoutMs);
+  const timedOut = new Promise<never>((_resolve, reject) => {
+    controller.signal.addEventListener(
+      "abort",
+      () => reject(new Error("T3 fork download timed out")),
+      { once: true },
+    );
+  });
+  let archive: Uint8Array;
+  try {
+    const response = await Promise.race([
+      (options.fetch ?? globalThis.fetch)(parsed, {
+        signal: controller.signal,
+      }),
+      timedOut,
+    ]);
+    if (!response.ok) {
+      throw new Error(`T3 fork download failed with HTTP ${response.status}`);
+    }
+    const declaredLength = Number(response.headers.get("content-length") ?? "0");
+    if (declaredLength > MAX_T3_FORK_ARCHIVE_BYTES) {
+      throw new Error("T3 fork archive exceeds the 50 MiB limit");
+    }
+    archive = new Uint8Array(
+      await Promise.race([response.arrayBuffer(), timedOut]),
+    );
+  } finally {
+    clearTimeout(timeout);
   }
-  const declaredLength = Number(response.headers.get("content-length") ?? "0");
-  if (declaredLength > MAX_T3_FORK_ARCHIVE_BYTES) {
-    throw new Error("T3 fork archive exceeds the 50 MiB limit");
-  }
-  const archive = new Uint8Array(await response.arrayBuffer());
   if (archive.byteLength > MAX_T3_FORK_ARCHIVE_BYTES) {
     throw new Error("T3 fork archive exceeds the 50 MiB limit");
   }
@@ -580,6 +614,10 @@ export async function restoreManagedT3ModalEnvironment(
     ...environment,
     COMPADRE_MODAL_APP: environment.COMPADRE_T3_MODAL_APP?.trim() || "compadre",
   };
+  // A filesystem snapshot contains the T3 package that was current when the
+  // thread hibernated. Reinstall the controller's currently pinned fork before
+  // starting it so resumed threads receive runtime fixes just like new ones.
+  const forkArchivePath = await resolveT3ForkArchive(workerEnvironment);
   const provider = modalSandboxProvider({
     environment: workerEnvironment,
     encryptedPorts: t3EncryptedPorts(workerEnvironment),
@@ -591,6 +629,7 @@ export async function restoreManagedT3ModalEnvironment(
     snapshotId: identity.snapshotId,
   })) as T3SandboxHandle;
   try {
+    await installLocalT3Fork(handle, forkArchivePath);
     await projectWorkerRuntimeEnvironment(handle, workerEnvironment);
     const startupToken = await startT3Server(
       handle,
