@@ -88,11 +88,25 @@ function assistantMessagesForDispatch(
   const requestedAt = Date.parse(
     requestedMessage.createdAt || dispatch.createdAt,
   );
-  if (Date.parse(latestTurn.requestedAt) < requestedAt) return [];
+  const turnRequestedAt = Date.parse(latestTurn.requestedAt);
+  const turnCompletedAt = Date.parse(latestTurn.completedAt ?? "");
+  const isSteer = turnRequestedAt < requestedAt;
+  if (
+    !Number.isFinite(requestedAt) ||
+    (!Number.isFinite(turnRequestedAt) &&
+      !Number.isFinite(turnCompletedAt)) ||
+    (isSteer &&
+      (!Number.isFinite(turnCompletedAt) || turnCompletedAt < requestedAt))
+  ) {
+    return [];
+  }
 
   const turnId = requestedMessage.turnId ?? latestTurn.turnId;
   return snapshot.thread.messages.filter(
-    (message) => message.role === "assistant" && message.turnId === turnId,
+    (message) =>
+      message.role === "assistant" &&
+      message.turnId === turnId &&
+      (!isSteer || Date.parse(message.createdAt) >= requestedAt),
   );
 }
 

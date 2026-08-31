@@ -156,6 +156,74 @@ test("recognizes when a later user message steers the same running turn", () => 
   );
 });
 
+test("selects the final answer produced after a later steering message", () => {
+  const steered = snapshot("old answer", "completed");
+  steered.thread.latestTurn = {
+    ...steered.thread.latestTurn!,
+    assistantMessageId: "assistant-steered",
+  };
+  steered.thread.messages = [
+    ...steered.thread.messages,
+    {
+      id: "user-steer",
+      role: "user",
+      text: "Focus on the API instead",
+      turnId: null,
+      streaming: false,
+      createdAt: "2026-08-26T15:00:00.500Z",
+      updatedAt: "2026-08-26T15:00:00.500Z",
+    },
+    {
+      id: "assistant-steered",
+      role: "assistant",
+      text: "answer after steering",
+      turnId: "turn-1",
+      streaming: false,
+      createdAt: "2026-08-26T15:00:00.800Z",
+      updatedAt: "2026-08-26T15:00:00.800Z",
+    },
+  ];
+  const steeringDispatch = {
+    ...turn.dispatch,
+    messageId: "user-steer",
+    createdAt: "2026-08-26T15:00:00.500Z",
+  };
+
+  assert.equal(
+    assistantTextForDispatch(steered, steeringDispatch),
+    "answer after steering",
+  );
+  assert.equal(
+    finalAssistantTextForDispatch(steered, steeringDispatch),
+    "answer after steering",
+  );
+});
+
+test("does not assign an earlier completed turn to a newly appended message", () => {
+  const completed = snapshot("old answer", "completed");
+  completed.thread.messages = [
+    ...completed.thread.messages,
+    {
+      id: "user-new",
+      role: "user",
+      text: "new request",
+      turnId: null,
+      streaming: false,
+      createdAt: "2026-08-26T15:00:02.000Z",
+      updatedAt: "2026-08-26T15:00:02.000Z",
+    },
+  ];
+
+  assert.equal(
+    finalAssistantTextForDispatch(completed, {
+      ...turn.dispatch,
+      messageId: "user-new",
+      createdAt: "2026-08-26T15:00:02.000Z",
+    }),
+    "",
+  );
+});
+
 test("retains narration for compatibility while selecting only T3's final answer", () => {
   const segmented = snapshot("final answer", "completed");
   segmented.thread.messages = [
