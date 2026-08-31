@@ -4,6 +4,7 @@ import { EventType, type StreamChunk } from "./agui-protocol.js";
 import { InMemorySpanExporter, SimpleSpanProcessor } from "@opentelemetry/sdk-trace-base";
 import { NodeTracerProvider } from "@opentelemetry/sdk-trace-node";
 import {
+  createNativeT3AguiRecoveryStream,
   createNativeT3AguiStream,
   NativeT3SnapshotProjector,
   traceNativeT3AguiStream,
@@ -438,4 +439,98 @@ test("publishes durable output artifacts before finishing the provider run", asy
   const finishedIndex = events.findIndex((event) => event.type === EventType.RUN_FINISHED);
   assert.ok(artifactIndex >= 0);
   assert.ok(finishedIndex > artifactIndex);
+});
+
+test("recovery replays narration and detailed tools from the existing worker without dispatching", async () => {
+  const terminal = snapshot({
+    sequence: 8,
+    state: "completed",
+    text: "Done.",
+    streaming: false,
+    activities: [
+      {
+        id: "activity-start",
+        kind: "tool.started",
+        turnId: "turn-1",
+        summary: "Ran command started",
+        createdAt: "2026-08-26T16:00:00.400Z",
+        payload: {
+          toolCallId: "tool-1",
+          itemType: "command_execution",
+          detail: "pwd && git status --short",
+          data: { item: { command: "pwd && git status --short" } },
+        },
+      },
+      {
+        id: "activity-complete",
+        kind: "tool.completed",
+        turnId: "turn-1",
+        summary: "Ran command",
+        createdAt: "2026-08-26T16:00:01.400Z",
+        payload: {
+          toolCallId: "tool-1",
+          itemType: "command_execution",
+          detail: "pwd && git status --short",
+          data: {
+            item: {
+              command: "pwd && git status --short",
+              aggregatedOutput: "/workspace",
+            },
+          },
+        },
+      },
+    ],
+  });
+  const events: StreamChunk[] = [];
+  for await (const event of createNativeT3AguiRecoveryStream({
+    gateway: {
+      async send() {
+        throw new Error("recovery must not send a second provider turn");
+      },
+      async snapshot() {
+        return {
+          binding: {
+            canonicalThreadId: "central-thread",
+            providerInstanceId: "codex",
+            t3ThreadId: "worker-thread",
+            projectId: "project",
+            sandboxId: "sandbox-1",
+            baseUrl: "https://sandbox.test",
+            modelSelection: { instanceId: "codex", model: "gpt-5.6-sol" },
+            status: "ready",
+            createdAt: "2026-08-26T16:00:00.000Z",
+            updatedAt: "2026-08-26T16:00:02.000Z",
+          },
+          snapshot: terminal,
+          source: "worker" as const,
+        };
+      },
+      async waitForTerminal() {
+        throw new Error("terminal snapshots do not need another poll");
+      },
+    },
+    canonicalThreadId: "central-thread",
+    runId: "run-1",
+    startedAt: Date.parse("2026-08-26T15:59:59.000Z"),
+  })) {
+    events.push(event);
+  }
+
+  assert.deepEqual(events.map((event) => event.type), [
+    EventType.TOOL_CALL_START,
+    EventType.TOOL_CALL_ARGS,
+    EventType.TOOL_CALL_RESULT,
+    EventType.TEXT_MESSAGE_START,
+    EventType.TEXT_MESSAGE_CONTENT,
+    EventType.TEXT_MESSAGE_END,
+    EventType.RUN_FINISHED,
+  ]);
+  assert.equal(
+    events.find((event) => event.type === EventType.TOOL_CALL_START)?.detail,
+    "pwd && git status --short",
+  );
+  assert.equal(
+    events.find((event) => event.type === EventType.TEXT_MESSAGE_CONTENT)?.delta,
+    "Done.",
+  );
 });

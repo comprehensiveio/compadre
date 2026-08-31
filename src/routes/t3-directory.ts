@@ -22,6 +22,7 @@ import {
 } from "../t3/runtime.js";
 import { requireCompadreApiKey } from "./auth.js";
 import {
+  createNativeT3AguiRecoveryStream,
   createNativeT3AguiStream,
   traceNativeT3AguiStream,
 } from "../t3/agui-stream.js";
@@ -711,6 +712,41 @@ export function createT3DirectoryRoutes(
     const runId = routeParam(c, "runId");
     const run = await runCoordinator.run(runId);
     if (!run) return c.json({ error: "native T3 run not found", runId }, 404);
+    const gateway = await dependencies.getGateway();
+    if (gateway) {
+      await runCoordinator.resume({
+        runId,
+        threadId: run.threadId,
+        source(signal) {
+          return createNativeT3AguiRecoveryStream({
+            gateway,
+            canonicalThreadId: run.threadId,
+            runId,
+            startedAt: run.startedAt,
+            signal,
+            onTurn(turn) {
+              activeRuns.set(runId, { gateway, turn });
+            },
+            onTerminal() {
+              activeRuns.delete(runId);
+            },
+          });
+        },
+        async cancel() {
+          const active = activeRuns.get(runId);
+          await gateway.cancel({
+            canonicalThreadId: run.threadId,
+            providerInstanceId: active?.turn.binding.providerInstanceId ?? "",
+          });
+        },
+      }).catch((error) => {
+        console.error("[native-t3-run] recovery could not start", {
+          runId,
+          threadId: run.threadId,
+          error,
+        });
+      });
+    }
     return durableRunEventsResponse(runCoordinator.stream(runId), c.req.raw, {
       [NATIVE_T3_PROTOCOL_HEADER]: String(NATIVE_T3_PROTOCOL_VERSION),
     });

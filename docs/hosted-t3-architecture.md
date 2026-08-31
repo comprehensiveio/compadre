@@ -132,25 +132,23 @@ message attribution. The remaining production-hardening work is:
 
 - Approvals and user-input requests.
 - Workspace diffs, checkpoints, attachments, and shell lifecycle.
-- Deferred: persisted worker dispatch metadata and controller-restart takeover.
-- Deferred with takeover: epoch fencing of both the event log and terminal run
-  record.
+- Persisted worker dispatch metadata beyond the recoverable worker snapshot.
+- Wider multi-instance command delivery for process-local tool bridges.
 
 The HTTP seam negotiates `X-Compadre-T3-Protocol-Version: 2`. Postgres assigns
-ordered event offsets and enforces one append sequence per run. A distributed
-per-run advisory lock prevents concurrent producers while the controller is
-alive. It is not yet a complete takeover implementation: after a controller
-process dies, a new process can replay the stored prefix but cannot reconstruct
-and continue the worker snapshot projection yet.
+ordered event offsets and enforces one append sequence per run. Fresh and
+resumed drivers claim a monotonically increasing durable epoch. Event-log
+appends, stream close, and terminal run-record writes are fenced against that
+epoch so a retiring controller cannot duplicate prose or tool arguments after
+a replacement claims the run.
 
-This is an accepted reliability tradeoff for the current internal deployment,
-not an immediate roadmap item. A controller restart during an active run may
-leave that run incomplete, but completed events remain durable and replayable.
-Revisit takeover when observed orphaned runs make it operationally worthwhile,
-when controller deploy frequency materially increases, or before running more
-than one controller instance. Until then, prefer clear failure recovery and a
-manual retry over the substantially more complex lease, reattachment, and
-fencing protocol.
+The provider transport reconnects with `GET /hosted/t3/runs/:runId/events`.
+When that request reaches a controller that is not already driving the run, the
+controller reconnects to the existing Modal T3 thread, identifies the already
+dispatched turn from its worker snapshot, and reprojects the full narration and
+tool history without sending another provider request. This specifically makes
+controller rollouts recoverable. The central T3 service's exclusive SQLite
+disk is a separate deployment-availability limitation described below.
 
 ## Usage
 
@@ -224,11 +222,11 @@ HTTP 5xx or transcript unavailability throughout the rollout. Until then,
 every T3 fork merge must be treated as a user-visible maintenance event and
 verified after the replacement instance is live.
 
-The controller is also kept at one instance today. Native T3 run events and
-cancel intent are durable, but active tool bridges and the immediate cancel path
-are still process-local. Multi-instance operation additionally requires
-persisted dispatch metadata, epoch fencing, heartbeat/lease expiry, and a
-durable command inbox so a deploy cannot orphan an active Modal callback.
+The controller is also kept at one instance today. Native T3 run events,
+cancel intent, snapshot reattachment, and driver-epoch fencing are durable, but
+active tool bridges and the immediate cancel path are still process-local.
+General multi-instance operation additionally requires persisted command
+delivery for those process-local capabilities.
 
 ## Configuration
 

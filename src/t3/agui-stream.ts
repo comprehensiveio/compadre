@@ -42,6 +42,15 @@ export interface NativeT3AguiGateway {
     signal?: AbortSignal;
     onSnapshot?(snapshot: T3ThreadSnapshot): void | Promise<void>;
   }): Promise<T3ThreadSnapshot>;
+  snapshot?(input: {
+    canonicalThreadId: string;
+    providerInstanceId: string;
+    signal?: AbortSignal;
+  }): Promise<{
+    binding: T3GatewayTurn["binding"];
+    snapshot: T3ThreadSnapshot;
+    source: "central" | "worker";
+  } | null>;
   collectOutputArtifacts?(
     turn: T3GatewayTurn,
     publish: (artifact: import("./output-artifacts.js").T3OutputArtifact) => Promise<void>,
@@ -64,6 +73,16 @@ export interface NativeT3AguiStreamInput {
   onTurn?(turn: T3GatewayTurn): void | Promise<void>;
   onTerminal?(): void | Promise<void>;
   outputArtifactEvents?(turn: T3GatewayTurn): Promise<StreamChunk[]>;
+}
+
+export interface NativeT3AguiRecoveryStreamInput {
+  gateway: NativeT3AguiGateway;
+  canonicalThreadId: string;
+  runId: string;
+  startedAt: number;
+  signal?: AbortSignal;
+  onTurn?(turn: T3GatewayTurn): void | Promise<void>;
+  onTerminal?(): void | Promise<void>;
 }
 
 export interface CentralT3AguiStreamInput {
@@ -565,6 +584,135 @@ export async function* createNativeT3AguiStream(
       type: EventType.RUN_ERROR,
       runId: input.runId,
       message: error instanceof Error ? error.message : "Native T3 worker failed.",
+      timestamp: Date.now(),
+    };
+  } finally {
+    await input.onTerminal?.();
+  }
+}
+
+function recoveryTurn(input: {
+  canonicalThreadId: string;
+  runId: string;
+  startedAt: number;
+  binding: T3GatewayTurn["binding"];
+  snapshot: T3ThreadSnapshot;
+}): T3GatewayTurn {
+  const latestTurn = input.snapshot.thread.latestTurn;
+  if (!latestTurn) {
+    throw new Error(`Native T3 run ${input.runId} has no worker turn to resume`);
+  }
+  const requestedAt = Date.parse(latestTurn.requestedAt);
+  const requestedMessage = [...input.snapshot.thread.messages]
+    .reverse()
+    .find((message) => {
+      if (message.role !== "user") return false;
+      const createdAt = Date.parse(message.createdAt);
+      return (
+        Number.isFinite(createdAt) &&
+        Number.isFinite(requestedAt) &&
+        createdAt <= requestedAt + 1_000 &&
+        createdAt >= input.startedAt - 5_000
+      );
+    });
+  if (!requestedMessage) {
+    throw new Error(
+      `Native T3 run ${input.runId} could not identify its requested worker message`,
+    );
+  }
+  return {
+    binding: input.binding,
+    dispatch: {
+      sequence: input.snapshot.snapshotSequence,
+      commandId: `recovery:${input.runId}`,
+      messageId: requestedMessage.id,
+      threadId: input.binding.t3ThreadId,
+      createdAt: requestedMessage.createdAt,
+    },
+  };
+}
+
+/**
+ * Re-project an already-dispatched native T3 turn after the controller that
+ * originally tailed it disappeared. The worker snapshot contains the full
+ * narration/tool transcript, so replay starts from that durable source and
+ * dispatches no new provider request.
+ */
+export async function* createNativeT3AguiRecoveryStream(
+  input: NativeT3AguiRecoveryStreamInput,
+): AsyncIterable<StreamChunk> {
+  try {
+    if (!input.gateway.snapshot) {
+      throw new Error("Native T3 gateway cannot recover worker snapshots");
+    }
+    const resolved = await input.gateway.snapshot({
+      canonicalThreadId: input.canonicalThreadId,
+      providerInstanceId: "",
+      signal: input.signal,
+    });
+    if (!resolved) {
+      throw new Error(`Native T3 thread ${input.canonicalThreadId} is unavailable`);
+    }
+    const turn = recoveryTurn({
+      canonicalThreadId: input.canonicalThreadId,
+      runId: input.runId,
+      startedAt: input.startedAt,
+      binding: resolved.binding,
+      snapshot: resolved.snapshot,
+    });
+    await input.onTurn?.(turn);
+    const projector = new NativeT3SnapshotProjector(
+      input.runId,
+      input.canonicalThreadId,
+      turn.dispatch.messageId,
+    );
+    for (const chunk of projector.project(resolved.snapshot)) yield chunk;
+    if (resolved.snapshot.thread.latestTurn?.state === "running") {
+      const pending: StreamChunk[] = [];
+      let wake: (() => void) | undefined;
+      let completed = false;
+      let failure: unknown;
+      const notify = () => {
+        wake?.();
+        wake = undefined;
+      };
+      const waiter = input.gateway.waitForTerminal({
+        turn,
+        signal: input.signal,
+        onSnapshot(snapshot) {
+          pending.push(...projector.project(snapshot));
+          notify();
+        },
+      }).then(
+        (terminal) => {
+          pending.push(...projector.project(terminal));
+          completed = true;
+          notify();
+        },
+        (error) => {
+          failure = error;
+          completed = true;
+          notify();
+        },
+      );
+      while (!completed || pending.length > 0) {
+        if (pending.length === 0) {
+          if (completed) break;
+          await new Promise<void>((resolve) => {
+            wake = resolve;
+          });
+          continue;
+        }
+        yield pending.shift()!;
+      }
+      await waiter;
+      if (failure) throw failure;
+    }
+  } catch (error) {
+    yield {
+      type: EventType.RUN_ERROR,
+      runId: input.runId,
+      message: error instanceof Error ? error.message : "Native T3 recovery failed.",
       timestamp: Date.now(),
     };
   } finally {

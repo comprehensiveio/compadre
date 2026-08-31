@@ -180,3 +180,80 @@ test("cancel records durable intent and invokes the active worker fast path", as
   await events(coordinator, "native-cancel-run");
   assert.equal((await coordinator.run("native-cancel-run"))?.status, "aborted");
 });
+
+test("a successor coordinator resumes an orphaned run and fences the old producer", async (t) => {
+  const durability = await createAgentRunDurability({
+    COMPADRE_DURABILITY_BACKEND: "memory",
+  });
+  assert.ok(durability);
+  t.after(() => durability.close());
+  const first = new NativeT3RunCoordinator(durability);
+  const successor = new NativeT3RunCoordinator(durability);
+  let releaseFirst!: () => void;
+  const gated = new Promise<void>((resolve) => { releaseFirst = resolve; });
+
+  await first.start({
+    runId: "orphaned-run",
+    threadId: "thread-1",
+    async *source() {
+      yield {
+        type: EventType.RUN_STARTED,
+        runId: "orphaned-run",
+        threadId: "thread-1",
+      };
+      await gated;
+      yield {
+        type: EventType.TEXT_MESSAGE_CONTENT,
+        messageId: "stale-message",
+        delta: "must not duplicate",
+      };
+    },
+    async cancel() {},
+  });
+  while ((await durability.stream("orphaned-run").snapshot()).length === 0) {
+    await new Promise((resolve) => setTimeout(resolve, 1));
+  }
+
+  const resumed = await successor.resume({
+    runId: "orphaned-run",
+    threadId: "thread-1",
+    async *source() {
+      yield {
+        type: EventType.TEXT_MESSAGE_START,
+        messageId: "recovered-message",
+        role: "assistant",
+      };
+      yield {
+        type: EventType.TEXT_MESSAGE_CONTENT,
+        messageId: "recovered-message",
+        delta: "full recovered narration",
+      };
+      yield {
+        type: EventType.TEXT_MESSAGE_END,
+        messageId: "recovered-message",
+      };
+      yield {
+        type: EventType.RUN_FINISHED,
+        runId: "orphaned-run",
+        threadId: "thread-1",
+      };
+    },
+    async cancel() {},
+  });
+  assert.equal(resumed.resumed, true);
+  const replayed = await events(successor, "orphaned-run");
+  releaseFirst();
+
+  assert.deepEqual(replayed.map((event) => event.type), [
+    EventType.RUN_STARTED,
+    EventType.TEXT_MESSAGE_START,
+    EventType.TEXT_MESSAGE_CONTENT,
+    EventType.TEXT_MESSAGE_END,
+    EventType.RUN_FINISHED,
+  ]);
+  assert.equal(
+    replayed.find((event) => event.type === EventType.TEXT_MESSAGE_CONTENT)?.delta,
+    "full recovered narration",
+  );
+  assert.equal((await successor.run("orphaned-run"))?.status, "completed");
+});

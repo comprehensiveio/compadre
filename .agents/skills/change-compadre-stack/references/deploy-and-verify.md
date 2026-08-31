@@ -133,8 +133,10 @@ the relevant destructive canaries from `docs/modal-harness-cutover.md`:
 - restart the controller during a run.
 
 Each canary must end in a terminal durable event and the correct final Slack
-state. Controller-restart takeover is a known expected failure until takeover
-support exists; record it as such rather than claiming recovery.
+state. Controller-restart takeover is supported for native provider turns: the
+replacement must reproject the existing worker's narration and detailed tools
+without sending a second provider request, and stale driver writes must be
+rejected by the durable epoch fence.
 
 ### Database migration
 
