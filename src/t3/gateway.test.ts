@@ -207,6 +207,60 @@ test("routes model changes through the same provider-native T3 thread", async ()
   );
 });
 
+test("durably records and conditionally clears the active provider run", async () => {
+  const persistence = memoryPersistence();
+  const bindings = new T3ThreadBindingStore(persistence.stores.metadata);
+  const createdAt = "2026-08-26T15:00:00.000Z";
+  const initialBinding = {
+    canonicalThreadId: "thread-active-run",
+    providerInstanceId: "codex",
+    t3ThreadId: "t3-thread-active-run",
+    projectId: "project-1",
+    sandboxId: "sandbox-1",
+    baseUrl: "https://t3.example",
+    modelSelection: { instanceId: "codex", model: "gpt-5.6-sol" },
+    status: "working" as const,
+    createdAt,
+    updatedAt: createdAt,
+  };
+  await bindings.bind(initialBinding);
+  const client = {
+    baseUrl: "https://t3.example",
+    async waitForTurnTerminal() { return completedSnapshot; },
+  } as unknown as T3CommandClient;
+  const gateway = new T3Gateway(
+    bindings,
+    {
+      async provision() { throw new Error("unused"); },
+      async reconnect() {
+        return { sandboxId: "sandbox-1", projectId: "project-1", client };
+      },
+    },
+    undefined,
+    () => new Date("2026-08-26T15:01:00.000Z"),
+  );
+
+  await gateway.markActiveRun("thread-active-run", "run-1");
+  assert.equal((await bindings.get("thread-active-run"))?.activeRunId, "run-1");
+  await gateway.waitForTerminal({
+    turn: {
+      binding: initialBinding,
+      dispatch: {
+        sequence: 1,
+        commandId: "command-1",
+        messageId: "message-1",
+        threadId: initialBinding.t3ThreadId,
+        createdAt,
+      },
+    },
+  });
+  assert.equal((await bindings.get("thread-active-run"))?.activeRunId, "run-1");
+  await gateway.clearActiveRun("thread-active-run", "older-run");
+  assert.equal((await bindings.get("thread-active-run"))?.activeRunId, "run-1");
+  await gateway.clearActiveRun("thread-active-run", "run-1");
+  assert.equal((await bindings.get("thread-active-run"))?.activeRunId, undefined);
+});
+
 test("restores a suspended Modal worker before continuing the same T3 thread", async () => {
   const persistence = memoryPersistence();
   const bindings = new T3ThreadBindingStore(persistence.stores.metadata);

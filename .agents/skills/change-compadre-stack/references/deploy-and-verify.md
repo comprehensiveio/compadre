@@ -136,7 +136,9 @@ Each canary must end in a terminal durable event and the correct final Slack
 state. Controller-restart takeover is supported for native provider turns: the
 replacement must reproject the existing worker's narration and detailed tools
 without sending a second provider request, and stale driver writes must be
-rejected by the durable epoch fence.
+rejected by the durable epoch fence. The replacement should log a startup
+reconciliation whose `resumed` count includes the canary; do not rely only on a
+browser reconnect to trigger takeover.
 
 ### Database migration
 

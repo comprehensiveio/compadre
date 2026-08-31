@@ -732,14 +732,22 @@ export class T3Client {
     messageId?: string;
     requestedAt?: string;
     timeoutMs?: number;
+    absoluteTimeoutMs?: number;
     pollIntervalMs?: number;
     signal?: AbortSignal;
     onSnapshot?(snapshot: T3ThreadSnapshot): void | Promise<void>;
   }): Promise<T3ThreadSnapshot> {
     const timeoutMs = input.timeoutMs ?? 30 * 60_000;
-    const deadline = Date.now() + timeoutMs;
+    const absoluteTimeoutMs = input.absoluteTimeoutMs ?? timeoutMs;
+    const startedAt = this.now().getTime();
+    const absoluteDeadline = startedAt + absoluteTimeoutMs;
+    let progressDeadline = startedAt + timeoutMs;
+    let latestSequence = -1;
     const pollIntervalMs = input.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS;
-    while (Date.now() < deadline) {
+    while (
+      this.now().getTime() < progressDeadline &&
+      this.now().getTime() < absoluteDeadline
+    ) {
       if (input.signal?.aborted) {
         throw new T3GatewayError(
           "aborted",
@@ -748,6 +756,10 @@ export class T3Client {
         );
       }
       const snapshot = await this.threadSnapshot(input.threadId, input.signal);
+      if (snapshot.snapshotSequence > latestSequence) {
+        latestSequence = snapshot.snapshotSequence;
+        progressDeadline = this.now().getTime() + timeoutMs;
+      }
       await input.onSnapshot?.(snapshot);
       const requestedMessage = input.messageId
         ? snapshot.thread.messages.find(
@@ -801,7 +813,9 @@ export class T3Client {
     throw new T3GatewayError(
       "timeout",
       "wait for turn",
-      `T3 turn did not reach a terminal state within ${timeoutMs}ms`,
+      this.now().getTime() >= absoluteDeadline
+        ? `T3 turn exceeded its absolute deadline of ${absoluteTimeoutMs}ms`
+        : `T3 turn made no durable progress for ${timeoutMs}ms`,
     );
   }
 

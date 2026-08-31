@@ -44,6 +44,7 @@ import { closeHttpServer } from "./http-shutdown.js";
 import {
   getConfiguredT3Gateway,
   nativeT3GatewayEnabled,
+  recoverConfiguredNativeT3Runs,
   stopConfiguredT3WorkerLifecycle,
 } from "./t3/runtime.js";
 
@@ -110,6 +111,15 @@ async function start() {
   // Start the server first so Render sees the port binding
   const server = serve({ fetch: app.fetch, port }, (info) => {
     console.log(`[agent] server running on port ${info.port}`);
+    if (nativeT3GatewayEnabled()) {
+      const recoveryTimer = setTimeout(() => {
+        void recoverConfiguredNativeT3Runs().then(
+          (summary) => console.log("[native-t3-recovery] startup reconciliation", summary),
+          (error) => console.error("[native-t3-recovery] startup reconciliation failed", error),
+        );
+      }, 5_000);
+      recoveryTimer.unref();
+    }
     if (isSlackRecoveryOwner()) {
       const backupCentralT3 = configuredCentralT3Backup();
       if (backupCentralT3) {

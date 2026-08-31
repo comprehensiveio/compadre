@@ -51,6 +51,7 @@ export interface T3CommandClient {
     messageId?: string;
     requestedAt?: string;
     timeoutMs?: number;
+    absoluteTimeoutMs?: number;
     signal?: AbortSignal;
     onSnapshot?(snapshot: T3ThreadSnapshot): void | Promise<void>;
   }): Promise<T3ThreadSnapshot>;
@@ -904,16 +905,28 @@ export class T3Gateway {
   async waitForTerminal(input: {
     turn: T3GatewayTurn;
     timeoutMs?: number;
+    absoluteTimeoutMs?: number;
     signal?: AbortSignal;
     onSnapshot?(snapshot: T3ThreadSnapshot): void | Promise<void>;
   }): Promise<T3ThreadSnapshot> {
     const environment = await this.environments.reconnect(input.turn.binding);
+    const workerStartedAt = Date.parse(
+      input.turn.binding.sandboxStartedAt ?? input.turn.binding.createdAt,
+    );
+    const remainingWorkerLifetime = Number.isFinite(workerStartedAt)
+      ? Math.max(
+          1,
+          workerStartedAt + this.maxLiveMs - this.hibernationSafetyMs -
+            this.now().getTime(),
+        )
+      : this.maxLiveMs - this.hibernationSafetyMs;
     const snapshot = await environment.client.waitForTurnTerminal({
       threadId: input.turn.binding.t3ThreadId,
       minimumSequence: input.turn.dispatch.sequence,
       messageId: input.turn.dispatch.messageId,
       requestedAt: input.turn.dispatch.createdAt,
       timeoutMs: input.timeoutMs,
+      absoluteTimeoutMs: input.absoluteTimeoutMs ?? remainingWorkerLifetime,
       signal: input.signal,
       onSnapshot: async (nextSnapshot) => {
         await this.snapshots?.save(input.turn.binding, nextSnapshot);
@@ -934,9 +947,15 @@ export class T3Gateway {
     const latestSafeWarmUntil = Number.isFinite(sandboxStartedAt)
       ? sandboxStartedAt + this.maxLiveMs - this.hibernationSafetyMs
       : desiredWarmUntil;
+    // The turn was dispatched before its durable activeRunId marker was
+    // written. Merge terminal state onto the latest binding so this waiter
+    // cannot erase a newer marker with its stale pre-dispatch copy.
+    const currentBinding =
+      await this.bindings.get(input.turn.binding.canonicalThreadId) ??
+      input.turn.binding;
     const updated: T3ThreadBinding = {
-      ...input.turn.binding,
-      title: snapshot.thread.title || input.turn.binding.title,
+      ...currentBinding,
+      title: snapshot.thread.title || currentBinding.title,
       modelSelection: snapshot.thread.modelSelection,
       status:
         latestState === "error" || startFailure
@@ -963,6 +982,34 @@ export class T3Gateway {
       });
     }
     return snapshot;
+  }
+
+  async markActiveRun(canonicalThreadId: string, runId: string): Promise<void> {
+    await this.locks.withLock(this.lockKey(canonicalThreadId), async (signal) => {
+      if (signal.aborted) throw signal.reason;
+      const binding = await this.bindings.get(canonicalThreadId);
+      if (!binding) throw new Error(`T3 thread ${canonicalThreadId} is not bound`);
+      await this.bindings.bindRecord({
+        ...binding,
+        activeRunId: runId,
+        status: "working",
+        updatedAt: this.now().toISOString(),
+      });
+    });
+  }
+
+  async clearActiveRun(canonicalThreadId: string, runId: string): Promise<void> {
+    await this.locks.withLock(this.lockKey(canonicalThreadId), async (signal) => {
+      if (signal.aborted) throw signal.reason;
+      const binding = await this.bindings.get(canonicalThreadId);
+      if (!binding || binding.activeRunId !== runId) return;
+      const { activeRunId: _activeRunId, ...cleared } = binding;
+      await this.bindings.bindRecord({
+        ...cleared,
+        status: binding.status === "working" ? "error" : binding.status,
+        updatedAt: this.now().toISOString(),
+      });
+    });
   }
 
   async collectOutputArtifacts(

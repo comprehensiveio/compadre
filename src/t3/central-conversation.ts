@@ -16,6 +16,7 @@ import {
 } from "./client.js";
 
 const CENTRAL_T3_TIMEOUT_MS = 20 * 60 * 1_000;
+const CENTRAL_T3_ABSOLUTE_TIMEOUT_MS = 115 * 60 * 1_000;
 const MAX_PROVIDER_PROMPT_CHARS = 95_000;
 const TRUNCATED_CONTEXT_NOTICE =
   "[Earlier Slack thread context truncated to fit the agent prompt.]";
@@ -356,6 +357,7 @@ export async function runCentralT3Conversation(input: {
     messageId: dispatch.messageId,
     requestedAt: dispatch.createdAt,
     timeoutMs: CENTRAL_T3_TIMEOUT_MS,
+    absoluteTimeoutMs: CENTRAL_T3_ABSOLUTE_TIMEOUT_MS,
     signal: input.signal,
     onSnapshot: deliverSnapshot,
   });

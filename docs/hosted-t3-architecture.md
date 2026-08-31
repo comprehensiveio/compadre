@@ -132,7 +132,8 @@ message attribution. The remaining production-hardening work is:
 
 - Approvals and user-input requests.
 - Workspace diffs, checkpoints, attachments, and shell lifecycle.
-- Persisted worker dispatch metadata beyond the recoverable worker snapshot.
+- Worker-pushed incremental checkpoints so recovery need not re-read a full
+  worker snapshot.
 - Wider multi-instance command delivery for process-local tool bridges.
 
 The HTTP seam negotiates `X-Compadre-T3-Protocol-Version: 2`. Postgres assigns
@@ -149,6 +150,39 @@ dispatched turn from its worker snapshot, and reprojects the full narration and
 tool history without sending another provider request. This specifically makes
 controller rollouts recoverable. The central T3 service's exclusive SQLite
 disk is a separate deployment-availability limitation described below.
+
+The worker binding also records the exact active native provider run ID after
+dispatch. Five seconds after controller startup, Compadre scans only bindings
+that are both `working` and carry that marker, claims a new fenced driver epoch,
+and starts the same snapshot-reprojection path. Terminal completion clears the
+marker conditionally, so a late retiring driver cannot clear a newer run's
+identity. This closes the normal Render-rollout gap without redispatching the
+user message or confusing the outer compatibility run with the inner provider
+run.
+
+Waiting is progress-aware. The central turn may run for up to 115 minutes, but
+must produce a newer durable T3 snapshot within 20 minutes. The worker-provider
+projection uses the same absolute ceiling derived from the Modal sandbox's
+remaining lifetime and a 30-minute no-progress default. A new snapshot sequence
+renews only the inactivity deadline; it never extends the absolute deadline.
+
+### Further run hardening
+
+The current recovery path is intentionally a small first production slice. If
+run volume or controller concurrency grows, harden it in this order:
+
+1. Have workers push append-only activity checkpoints to central storage while
+   generating, rather than relying on periodic full-snapshot reads.
+2. Add an explicit driver lease/heartbeat and alert on `working` bindings whose
+   marker has no current heartbeat or whose snapshot sequence is stale.
+3. Reconcile the narrow crash window between worker dispatch and active-run
+   marker persistence by storing dispatch and marker in one durable command
+   record.
+4. Before running multiple controller replicas, add one elected reconciliation
+   owner (or a distributed claim queue) so startup scans do not churn driver
+   epochs.
+5. Keep a synthetic long-run rollout canary that asserts one dispatch, retained
+   narration/tools, terminal durable status, and one final Slack delivery.
 
 ## Usage
 

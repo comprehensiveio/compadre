@@ -105,8 +105,10 @@ thread for each case:
 8. Relay restart during a run.
 
 Do not deploy until every failure produces a terminal durable event and a final
-Slack state. Relay restart recovery needs takeover support; treat that gate as
-expected to fail until it is implemented.
+Slack state. Relay restart recovery is supported for native T3 provider turns:
+the replacement controller uses the binding's durable active-run marker to
+reproject the existing worker turn under a newly fenced driver epoch. The gate
+must prove no duplicate provider dispatch and retained narration/tool history.
 
 The first cutover also assumes one relay instance. The active bridge contains
 live tool closures and is process-local, so a load balancer must not send bridge

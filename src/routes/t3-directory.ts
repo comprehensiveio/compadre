@@ -104,6 +104,8 @@ interface T3DirectoryGateway {
     signal?: AbortSignal;
     onSnapshot?(snapshot: T3ThreadSnapshot): void | Promise<void>;
   }): Promise<T3ThreadSnapshot>;
+  markActiveRun?(canonicalThreadId: string, runId: string): Promise<void>;
+  clearActiveRun?(canonicalThreadId: string, runId: string): Promise<void>;
   collectOutputArtifacts?(
     turn: T3GatewayTurn,
     publish: (artifact: T3OutputArtifact) => Promise<void>,
@@ -660,11 +662,19 @@ export function createT3DirectoryRoutes(
                 }
               : undefined,
           signal,
-          onTurn(turn) {
+          async onTurn(turn) {
             activeRuns.set(runId, { gateway, turn });
+            await gateway.markActiveRun?.(canonicalThreadId, runId);
           },
-          onTerminal() {
+          async onTerminal() {
             activeRuns.delete(runId);
+            await gateway.clearActiveRun?.(canonicalThreadId, runId).catch((error: unknown) => {
+              console.error("[native-t3-run] active run marker could not be cleared", {
+                runId,
+                canonicalThreadId,
+                error,
+              });
+            });
           },
         });
         const mirroredStream = slackBinding && botToken
@@ -724,11 +734,19 @@ export function createT3DirectoryRoutes(
             runId,
             startedAt: run.startedAt,
             signal,
-            onTurn(turn) {
+            async onTurn(turn) {
               activeRuns.set(runId, { gateway, turn });
+              await gateway.markActiveRun?.(run.threadId, runId);
             },
-            onTerminal() {
+            async onTerminal() {
               activeRuns.delete(runId);
+              await gateway.clearActiveRun?.(run.threadId, runId).catch((error: unknown) => {
+                console.error("[native-t3-run] active run marker could not be cleared", {
+                  runId,
+                  canonicalThreadId: run.threadId,
+                  error,
+                });
+              });
             },
           });
         },

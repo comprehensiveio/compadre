@@ -43,6 +43,8 @@ export interface T3ThreadBinding {
   };
   title?: string;
   status?: T3ThreadDirectoryStatus;
+  /** Durable identity of the native provider run currently owned by this worker. */
+  activeRunId?: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -119,6 +121,8 @@ function isBinding(value: unknown): value is T3ThreadBinding {
       ["working", "ready", "interrupted", "error", "unavailable"].includes(
         record.status as string,
       )) &&
+    (record.activeRunId === undefined ||
+      (typeof record.activeRunId === "string" && record.activeRunId.length > 0)) &&
     typeof record.createdAt === "string" &&
     typeof record.updatedAt === "string"
   );

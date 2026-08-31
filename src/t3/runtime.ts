@@ -6,6 +6,7 @@ import { T3ThreadSnapshotStore } from "../services/t3-thread-snapshots.js";
 import { T3Gateway } from "./gateway.js";
 import { T3ModalEnvironmentManager } from "./modal-environments.js";
 import { NativeT3RunCoordinator } from "./run-coordinator.js";
+import { recoverNativeT3Runs, type NativeT3RecoverySummary } from "./run-recovery.js";
 import {
   S3T3ArtifactObjectStore,
   T3ArtifactStore,
@@ -125,6 +126,16 @@ export async function getConfiguredT3Gateway(): Promise<T3Gateway | null> {
 export function stopConfiguredT3WorkerLifecycle(): void {
   stopConfiguredGatewaySweeper?.();
   stopConfiguredGatewaySweeper = undefined;
+}
+
+/** Reclaim provider streams left behind by a previous controller process. */
+export async function recoverConfiguredNativeT3Runs(): Promise<NativeT3RecoverySummary> {
+  const [gateway, coordinator] = await Promise.all([
+    getConfiguredT3Gateway(),
+    getConfiguredNativeT3RunCoordinator(),
+  ]);
+  if (!gateway || !coordinator) return { scanned: 0, resumed: 0, skipped: 0 };
+  return recoverNativeT3Runs({ gateway, coordinator });
 }
 
 /** Shared durable producer used by the native provider POST and replay routes. */

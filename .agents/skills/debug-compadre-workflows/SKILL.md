@@ -143,9 +143,17 @@ Prefer exact identifiers and narrow time windows. Render service instance suffix
 - Modal process-tree RSS approaching the configured memory limit immediately
   before a sandbox `WaitPID` EOF strongly supports a sandbox OOM, even when the
   terminal error is only exit 128 rather than an explicit OOM label.
-- Compadre does not impose a wall-clock agent deadline. Compare observed
-  duration with explicit caller cancellation and the configured Modal sandbox
-  lifetime before calling a failure a timeout.
+- Native T3 waits have two deadlines. A newer durable snapshot sequence renews
+  the inactivity deadline (20 minutes for the central turn and 30 minutes for
+  the worker projection by default), while an absolute deadline remains capped
+  by the worker's remaining Modal lifetime (normally about 115 minutes). A
+  timeout message distinguishes `made no durable progress` from `exceeded its
+  absolute deadline`; check snapshot sequence history before assigning cause.
+- A controller startup scans `working` T3 bindings with `activeRunId` and
+  reattaches the exact existing provider run. Check
+  `[native-t3-recovery] startup reconciliation`, the binding marker, durable
+  run status, and driver epoch. Recovery must reproject the worker snapshot and
+  must not create a second user message or provider turn.
 - A native worker that disappears after a completed turn may be intentionally
   suspended, not expired. Check the binding's `workerState`, `warmUntil`, and
   `workerSnapshotId`. A later message should transition `suspended ->

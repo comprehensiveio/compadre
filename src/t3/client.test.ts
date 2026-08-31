@@ -489,3 +489,89 @@ test("does not retry a non-transient snapshot failure", async () => {
   );
   assert.equal(calls, 1);
 });
+
+test("extends the inactivity deadline while snapshot progress continues", async () => {
+  let clock = Date.parse("2026-08-26T15:00:00.000Z");
+  let calls = 0;
+  const client = new T3Client("https://t3.example", "secret", {
+    now: () => new Date(clock),
+    fetch: async () => {
+      calls += 1;
+      clock += 8;
+      return json({
+        snapshotSequence: calls,
+        thread: {
+          id: "thread-1",
+          projectId: "project-1",
+          title: "Thread",
+          modelSelection: { instanceId: "codex", model: "gpt-5.6-sol" },
+          latestTurn: {
+            turnId: "turn-1",
+            state: calls === 4 ? "completed" : "running",
+            requestedAt: now.toISOString(),
+            startedAt: now.toISOString(),
+            completedAt: calls === 4 ? now.toISOString() : null,
+            assistantMessageId: calls === 4 ? "assistant-1" : null,
+          },
+          messages: [],
+          session: null,
+        },
+      });
+    },
+  });
+
+  const result = await client.waitForTurnTerminal({
+    threadId: "thread-1",
+    minimumSequence: 1,
+    timeoutMs: 10,
+    absoluteTimeoutMs: 100,
+    pollIntervalMs: 1,
+  });
+
+  assert.equal(calls, 4);
+  assert.equal(result.thread.latestTurn?.state, "completed");
+  assert.ok(clock - Date.parse("2026-08-26T15:00:00.000Z") > 10);
+});
+
+test("stops a progressing turn at its absolute deadline", async () => {
+  let clock = Date.parse("2026-08-26T15:00:00.000Z");
+  let calls = 0;
+  const client = new T3Client("https://t3.example", "secret", {
+    now: () => new Date(clock),
+    fetch: async () => {
+      calls += 1;
+      clock += 10;
+      return json({
+        snapshotSequence: calls,
+        thread: {
+          id: "thread-1",
+          projectId: "project-1",
+          title: "Thread",
+          modelSelection: { instanceId: "codex", model: "gpt-5.6-sol" },
+          latestTurn: {
+            turnId: "turn-1",
+            state: "running",
+            requestedAt: now.toISOString(),
+            startedAt: now.toISOString(),
+            completedAt: null,
+            assistantMessageId: null,
+          },
+          messages: [],
+          session: null,
+        },
+      });
+    },
+  });
+
+  await assert.rejects(
+    client.waitForTurnTerminal({
+      threadId: "thread-1",
+      minimumSequence: 1,
+      timeoutMs: 15,
+      absoluteTimeoutMs: 25,
+      pollIntervalMs: 1,
+    }),
+    /absolute deadline of 25ms/,
+  );
+  assert.equal(calls, 3);
+});

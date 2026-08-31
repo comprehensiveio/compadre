@@ -39,6 +39,7 @@ export interface NativeT3AguiGateway {
   waitForTerminal(input: {
     turn: T3GatewayTurn;
     timeoutMs?: number;
+    absoluteTimeoutMs?: number;
     signal?: AbortSignal;
     onSnapshot?(snapshot: T3ThreadSnapshot): void | Promise<void>;
   }): Promise<T3ThreadSnapshot>;
