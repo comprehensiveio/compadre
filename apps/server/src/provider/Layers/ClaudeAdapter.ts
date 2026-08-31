@@ -330,6 +330,8 @@ interface ClaudeQueryRuntime extends AsyncIterable<SDKMessage> {
 export interface ClaudeAdapterLiveOptions {
   readonly instanceId?: ProviderInstanceId;
   readonly environment?: NodeJS.ProcessEnv;
+  /** Override the runtime uid for deterministic tests. Defaults to the process uid. */
+  readonly effectiveUserId?: number;
   readonly createQuery?: (input: {
     readonly prompt: AsyncIterable<SDKUserMessage>;
     readonly options: ClaudeQueryOptions;
@@ -1704,6 +1706,9 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
   const serverConfig = yield* ServerConfig;
   const crypto = yield* Crypto.Crypto;
   const compadreMcpBridge = readCompadreMcpBridge(options?.environment ?? process.env);
+  const effectiveUserId =
+    options?.effectiveUserId ??
+    (typeof process.getuid === "function" ? process.getuid() : undefined);
   const claudeEnvironment = yield* makeClaudeEnvironment(claudeSettings, options?.environment).pipe(
     Effect.provideService(Path.Path, path),
   );
@@ -4291,7 +4296,15 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         auto: "auto",
         "full-access": "bypassPermissions",
       };
-      const permissionMode = runtimeModeToPermission[input.runtimeMode];
+      // Claude Code refuses `--dangerously-skip-permissions` when its process
+      // runs as root. Compadre intentionally keeps the T3 server as root so a
+      // thread can lazily start its isolated database and dev services. Keep
+      // T3's full-access tool policy (implemented by `canUseTool`), but use
+      // Claude's non-interactive edit mode instead of the forbidden CLI flag.
+      const permissionMode =
+        input.runtimeMode === "full-access" && effectiveUserId === 0
+          ? "acceptEdits"
+          : runtimeModeToPermission[input.runtimeMode];
       const settings = {
         ...(typeof thinking === "boolean" ? { alwaysThinkingEnabled: thinking } : {}),
         ...(fastMode ? { fastMode: true } : {}),
