@@ -4,7 +4,12 @@ import { extractJsonObject } from "@t3tools/shared/schemaJson";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
-import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/unstable/http";
+import {
+  HttpClient,
+  HttpClientError,
+  HttpClientRequest,
+  HttpClientResponse,
+} from "effect/unstable/http";
 import * as HttpBody from "effect/unstable/http/HttpBody";
 
 import * as TextGeneration from "./TextGeneration.ts";
@@ -92,7 +97,13 @@ export const makeCompadreTextGeneration = Effect.fn("makeCompadreTextGeneration"
           ? cause
           : new TextGenerationError({
               operation: input.operation,
-              detail: "Compadre returned invalid structured text-generation output.",
+              detail: HttpClientError.isHttpClientError(cause)
+                ? cause.response !== undefined
+                  ? `Compadre text-generation request failed with HTTP ${cause.response.status}.`
+                  : "Compadre text-generation request failed."
+                : Schema.isSchemaError(cause)
+                  ? "Compadre returned invalid structured text-generation output."
+                  : "Compadre text-generation request failed.",
               cause,
             }),
       ),
