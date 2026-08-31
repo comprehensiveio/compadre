@@ -453,8 +453,9 @@ export class T3Gateway {
       throw new Error("T3 worker sweep interval must be a positive number");
     }
     let inFlight: Promise<void> | undefined;
+    let stopped = false;
     const sweep = () => {
-      if (inFlight) return;
+      if (stopped || inFlight) return;
       inFlight = this.sweepExpiredWarmWorkers()
         .catch((error) => {
           console.error("[t3-worker-lifecycle] sweep failed", {
@@ -470,7 +471,10 @@ export class T3Gateway {
     sweep();
     const timer = setInterval(sweep, intervalMs);
     timer.unref();
-    return () => clearInterval(timer);
+    return () => {
+      stopped = true;
+      clearInterval(timer);
+    };
   }
 
   /**

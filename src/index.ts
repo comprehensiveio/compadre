@@ -41,6 +41,11 @@ import {
   DEFAULT_CENTRAL_T3_BACKUP_INTERVAL_MS,
 } from "./services/central-t3-backup.js";
 import { closeHttpServer } from "./http-shutdown.js";
+import {
+  getConfiguredT3Gateway,
+  nativeT3GatewayEnabled,
+  stopConfiguredT3WorkerLifecycle,
+} from "./t3/runtime.js";
 
 const app = new Hono();
 
@@ -83,6 +88,15 @@ async function start() {
     console.log(
       `[persistence] TanStack thread state enabled (run memory: ${RUN_MEMORY_MODE})`,
     );
+  }
+  if (nativeT3GatewayEnabled()) {
+    const gateway = await getConfiguredT3Gateway();
+    if (!gateway) {
+      throw new Error(
+        "Native T3 worker lifecycle requires configured thread persistence",
+      );
+    }
+    console.log("[t3-worker-lifecycle] startup sweeper enabled");
   }
   const agent = validateConversationConfiguration();
   const slackInstallation = await validateConfiguredSlackInstallation();
@@ -187,6 +201,7 @@ async function start() {
   const shutdown = (signal: NodeJS.Signals) => {
     if (shuttingDown) return;
     shuttingDown = true;
+    stopConfiguredT3WorkerLifecycle();
     console.log(`[shutdown] ${signal} received; draining in-flight requests`);
     const configuredTimeout = Number(
       process.env.COMPADRE_SHUTDOWN_TIMEOUT_MS ?? "295000",

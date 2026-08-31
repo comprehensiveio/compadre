@@ -12,12 +12,24 @@ import {
 } from "./artifact-store.js";
 
 let configuredGateway: Promise<T3Gateway | null> | undefined;
+let stopConfiguredGatewaySweeper: (() => void) | undefined;
 let configuredRunCoordinator: Promise<NativeT3RunCoordinator | null> | undefined;
 let configuredArtifactStore: Promise<T3ArtifactStore | null> | undefined;
 
 const DEFAULT_T3_WORKER_WARM_TTL_MS = 30 * 60 * 1000;
 const DEFAULT_T3_WORKER_SWEEP_INTERVAL_MS = 60 * 1000;
 const DEFAULT_MODAL_TIMEOUT_MS = 2 * 60 * 60 * 1000;
+
+export function nativeT3GatewayEnabled(
+  environment: NodeJS.ProcessEnv = process.env,
+): boolean {
+  return [
+    "COMPADRE_T3_DIRECTORY_ENABLED",
+    "COMPADRE_T3_SLACK_ENABLED",
+    "COMPADRE_T3_API_ENABLED",
+    "COMPADRE_HOSTED_T3_ENABLED",
+  ].some((name) => environment[name] === "true");
+}
 
 function positiveDurationSetting(
   name: string,
@@ -91,7 +103,7 @@ export async function getConfiguredT3Gateway(): Promise<T3Gateway | null> {
             ),
           },
         );
-        gateway.startWorkerLifecycleSweeper(
+        stopConfiguredGatewaySweeper = gateway.startWorkerLifecycleSweeper(
           positiveDurationSetting(
             "COMPADRE_T3_WORKER_SWEEP_INTERVAL_MS",
             process.env.COMPADRE_T3_WORKER_SWEEP_INTERVAL_MS,
@@ -107,6 +119,12 @@ export async function getConfiguredT3Gateway(): Promise<T3Gateway | null> {
     configuredGateway = initialization;
   }
   return configuredGateway;
+}
+
+/** Stop periodic worker lifecycle work before the controller begins draining. */
+export function stopConfiguredT3WorkerLifecycle(): void {
+  stopConfiguredGatewaySweeper?.();
+  stopConfiguredGatewaySweeper = undefined;
 }
 
 /** Shared durable producer used by the native provider POST and replay routes. */
