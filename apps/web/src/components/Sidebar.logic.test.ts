@@ -108,11 +108,12 @@ describe("threadMatchesSidebarIdentityFilter", () => {
     externalThread: null,
   };
 
-  it("distinguishes the starter from broader Slack participation", () => {
+  it("includes participation from either Slack or the authenticated web UI", () => {
     expect(threadMatchesSidebarIdentityFilter(thread, "all", null)).toBe(true);
     expect(threadMatchesSidebarIdentityFilter(thread, "started-by-me", "user-starter")).toBe(true);
     expect(threadMatchesSidebarIdentityFilter(thread, "involved", "user-involved")).toBe(true);
-    expect(threadMatchesSidebarIdentityFilter(thread, "involved", "user-web-only")).toBe(false);
+    expect(threadMatchesSidebarIdentityFilter(thread, "involved", "user-web-only")).toBe(true);
+    expect(threadMatchesSidebarIdentityFilter(thread, "involved", "user-absent")).toBe(false);
   });
 });
 

@@ -42,12 +42,7 @@ export function threadMatchesSidebarIdentityFilter(
   if (filter === "all") return true;
   if (!currentUserId) return false;
   if (filter === "started-by-me") return thread.startedByUserId === currentUserId;
-  return (
-    thread.participants?.some(
-      (participant) =>
-        participant.userId === currentUserId && participant.origins.includes("slack"),
-    ) === true
-  );
+  return thread.participants?.some((participant) => participant.userId === currentUserId) === true;
 }
 
 // The list already reaches its destination through sortable transforms while
