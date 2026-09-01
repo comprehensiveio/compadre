@@ -36,6 +36,13 @@ services:
         value: https://compadre.comprehensive.io
       - key: COMPADRE_T3_MODAL_APP
         value: compadre
+      # 2 guaranteed cores (4 burst): at the 0.5-core default, monorepo
+      # typecheck/lint runs starved the sandbox-local T3 server so badly that
+      # snapshot reads timed out every ~2.5 minutes (2026-09-01).
+      - key: COMPADRE_MODAL_CPU
+        value: "2"
+      - key: COMPADRE_MODAL_CPU_LIMIT
+        value: "4"
       - key: COMPADRE_PREVIEW_HOST_SUFFIX
         value: dev.compadre.comprehensive.io
       - key: TEMPORAL_ADDRESS
