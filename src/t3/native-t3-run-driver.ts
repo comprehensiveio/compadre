@@ -4,6 +4,7 @@ import {
   type TerminalRunStatus,
 } from "@tanstack/ai";
 import type { AgentRunDurability } from "../durability/runtime.js";
+import { log, serializeError } from "../logging.js";
 import { SlackRunMirror } from "../services/native-t3-slack-delivery.js";
 import { dispatchWasSuperseded } from "../services/t3-slack-conversation.js";
 import type { T3ThreadBinding } from "../services/t3-thread-bindings.js";
@@ -449,17 +450,23 @@ export async function driveNativeT3Run(
             providerInstanceId: turn.binding.providerInstanceId,
           })
           .catch((error) =>
-            console.warn("[native-t3-driver] worker interrupt failed", {
-              runId,
-              error,
-            }),
+            log.warn(
+              {
+                runId,
+                canonicalThreadId: request.canonicalThreadId,
+                sandboxId: turn.binding.sandboxId,
+                ...serializeError(error),
+              },
+              "native t3 worker interrupt failed",
+            ),
           );
         watchAbort.abort(CANCELLED_MESSAGE);
       } else {
         handedOff = true;
-        console.log("[native-t3-driver] attempt handed off without run cancellation", {
-          runId,
-        });
+        log.info(
+          { runId, canonicalThreadId: request.canonicalThreadId },
+          "native t3 attempt handed off without run cancellation",
+        );
         watchAbort.abort(
           `Native T3 run ${runId} drive attempt was cancelled without run intent`,
         );
@@ -584,6 +591,18 @@ export async function driveNativeT3Run(
           // The worker is confirmed dead with nothing to restore: retrying
           // (this attempt or the next) cannot revive the turn. Converge
           // promptly instead of burning the inactivity budget three times.
+          log.error(
+            {
+              runId,
+              canonicalThreadId: request.canonicalThreadId,
+              sandboxId: turn.binding.sandboxId,
+              generation: turn.binding.workerGeneration ?? 1,
+              consecutiveUnavailable,
+              code: WORKER_LOST_CODE,
+              ...serializeError(watchFailure),
+            },
+            "native t3 worker lost; converging run as failed",
+          );
           const lostChunk: StreamChunk = {
             type: EventType.RUN_ERROR,
             runId,
@@ -597,10 +616,15 @@ export async function driveNativeT3Run(
           await deps.gateway
             .markWorkerLost?.(request.canonicalThreadId, turn.binding.sandboxId)
             .catch((error) =>
-              console.warn("[native-t3-driver] could not park lost worker", {
-                runId,
-                error,
-              }),
+              log.warn(
+                {
+                  runId,
+                  canonicalThreadId: request.canonicalThreadId,
+                  sandboxId: turn.binding.sandboxId,
+                  ...serializeError(error),
+                },
+                "native t3 could not park lost worker",
+              ),
             );
           return terminalize("failed", {
             message: WORKER_LOST_MESSAGE,
@@ -622,13 +646,22 @@ export async function driveNativeT3Run(
         // orchestrator retry (and eventually finalize) this attempt.
         throw watchFailure;
       }
-      console.warn("[native-t3-driver] watch interrupted; reattaching", {
-        runId,
-        error:
-          watchFailure instanceof Error
-            ? `${watchFailure.name}: ${watchFailure.message}`
-            : String(watchFailure),
-      });
+      log.warn(
+        {
+          runId,
+          canonicalThreadId: request.canonicalThreadId,
+          sandboxId: turn.binding.sandboxId,
+          generation: turn.binding.workerGeneration ?? 1,
+          consecutiveUnavailable,
+          maxConsecutiveUnavailable: MAX_CONSECUTIVE_UNAVAILABLE,
+          msSinceProgress: now() - lastProgressAt,
+          inactivityLimitMs,
+          reconnectDelayMs: options.reconnectDelayMs ?? RECONNECT_DELAY_MS,
+          hasSnapshot: Boolean(turn.binding.workerSnapshotId),
+          ...serializeError(watchFailure),
+        },
+        "native t3 watch interrupted; reattaching",
+      );
       heartbeat("reattaching to native T3 turn");
       await new Promise<void>((resolve) => {
         // Deliberately ref'd: the reconnect pause is part of the activity's

@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { log } from "../logging.js";
 import { z } from "zod";
 
 const TOKEN_EXCHANGE_GRANT = "urn:ietf:params:oauth:grant-type:token-exchange";
@@ -906,11 +907,25 @@ export class T3Client {
         input.signal?.addEventListener("abort", onAbort, { once: true });
       });
     }
+    const absoluteExpired =
+      absoluteDeadline <= progressDeadline ||
+      this.now().getTime() >= absoluteDeadline;
+    log.error(
+      {
+        threadId: input.threadId,
+        messageId: input.messageId,
+        deadline: absoluteExpired ? "absolute" : "progress",
+        elapsedMs: this.now().getTime() - startedAt,
+        absoluteTimeoutMs,
+        progressTimeoutMs: timeoutMs,
+        minimumSequence: input.minimumSequence,
+      },
+      "t3 turn wait timed out",
+    );
     throw new T3GatewayError(
       "timeout",
       "wait for turn",
-      absoluteDeadline <= progressDeadline ||
-        this.now().getTime() >= absoluteDeadline
+      absoluteExpired
         ? `T3 turn exceeded its absolute deadline of ${absoluteTimeoutMs}ms`
         : `T3 turn made no durable progress for ${timeoutMs}ms`,
     );

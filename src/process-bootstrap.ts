@@ -21,6 +21,12 @@ export function configureTelemetryEnvironment(
   environment.DD_LLMOBS_ML_APP ??= "compadre";
   environment.DD_TRACE_OTEL_ENABLED ??= "true";
   environment.DD_METRICS_OTEL_ENABLED ??= "true";
+  // Correlate structured pino logs with traces (dd.trace_id/span_id/service/
+  // env/version). Dashboard-created Render services don't inherit render.yaml
+  // env vars, so default env/version here: Render exposes the deploy commit.
+  environment.DD_LOGS_INJECTION ??= "true";
+  environment.DD_ENV ??= "experiment";
+  environment.DD_VERSION ??= environment.RENDER_GIT_COMMIT?.slice(0, 7);
 
   if (ephemeral) {
     environment.DD_TRACE_FLUSH_INTERVAL ??= "0";

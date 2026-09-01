@@ -1,5 +1,6 @@
 import crypto from "node:crypto";
 import { Hono } from "hono";
+import { log, serializeError } from "../logging.js";
 import {
   configuredAgentProvider,
   type ConversationOptions,
@@ -248,18 +249,29 @@ slackEventsRoutes.post("/slack/events", async (c) => {
             event: slackEvent,
           });
         } catch (error) {
-          console.error("[slack-events] durable ingress persistence failed", {
-            channel: slackEvent.channel,
-            ts: slackEvent.ts,
-            error,
-          });
+          log.error(
+            {
+              slackChannelId: slackEvent.channel,
+              slackTs: slackEvent.ts,
+              ...serializeError(error),
+            },
+            "slack durable ingress persistence failed",
+          );
           // Fail the delivery so Slack retries it.
           return c.json({ error: "ingress persistence failed" }, 500);
         }
         inbox.poke();
       } else {
         handleEvent(slackEvent, teamId, botUserId).catch((err) =>
-          console.error("[slack-events] unhandled error in handleEvent:", err),
+          log.error(
+            {
+              slackChannelId: slackEvent.channel,
+              slackTs: slackEvent.ts,
+              slackUserId: slackEvent.user,
+              ...serializeError(err),
+            },
+            "slack handleEvent unhandled error",
+          ),
         );
       }
     }
@@ -329,7 +341,15 @@ export async function routeSlackEvent(
 
   if (isDM || isMention) {
     await handleAIMessage(event, isDM, teamId, botUserId, hooks).catch((err) =>
-      console.error("[slack-events] unhandled error in handleAIMessage:", err),
+      log.error(
+        {
+          slackChannelId: event.channel,
+          slackTs: event.ts,
+          slackUserId: event.user,
+          ...serializeError(err),
+        },
+        "slack handleAIMessage unhandled error",
+      ),
     );
   }
 }
@@ -386,7 +406,7 @@ async function handleAIMessage(
         })
       : null,
     getConfiguredUserDirectory().catch((error) => {
-      console.warn("[slack-events] user directory unavailable", { error });
+      log.warn(serializeError(error), "slack user directory unavailable");
       return null;
     }),
   ]);
@@ -649,7 +669,15 @@ async function handleAIMessage(
       })
       .catch(async (err) => {
         stopReservationHeartbeat();
-        console.error(`[slack-events] native T3 error for ${event.user}:`, err);
+        log.error(
+          {
+            slackUserId: event.user,
+            slackChannelId: event.channel,
+            slackThreadTs: event.thread_ts ?? event.ts,
+            ...serializeError(err),
+          },
+          "slack native t3 turn failed",
+        );
         if (
           slackDeliveries &&
           slackStream &&

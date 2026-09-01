@@ -7,6 +7,7 @@ import {
   parseT3SlackDestinationMarker,
   type ManagedT3ModalEnvironment,
 } from "./modal-worker.js";
+import { log, serializeError } from "../logging.js";
 import { modalSandboxProvider } from "../tanstack/modal-sandbox.js";
 import { T3Client } from "./client.js";
 import type { T3OrchestrationSnapshot } from "./client.js";
@@ -152,7 +153,10 @@ export class T3ModalEnvironmentManager implements T3EnvironmentConnectionManager
     });
     const handle = await provider.resume({ id: binding.sandboxId });
     if (!handle) {
-      throw new T3EnvironmentUnavailableError(binding.sandboxId);
+      throw new T3EnvironmentUnavailableError(binding.sandboxId, {
+        canonicalThreadId: binding.canonicalThreadId,
+        reason: "resume returned no handle (sandbox terminated?)",
+      });
     }
     await this.assertProtectedSlackDestination(
       binding,
@@ -228,7 +232,10 @@ export class T3ModalEnvironmentManager implements T3EnvironmentConnectionManager
       });
       const resumed = await provider.resume({ id: binding.sandboxId });
       if (!resumed) {
-        throw new T3EnvironmentUnavailableError(binding.sandboxId);
+        throw new T3EnvironmentUnavailableError(binding.sandboxId, {
+          canonicalThreadId: binding.canonicalThreadId,
+          reason: "resume for hibernation returned no handle",
+        });
       }
       sandbox = resumed;
       await this.assertProtectedSlackDestination(
@@ -273,20 +280,18 @@ export class T3ModalEnvironmentManager implements T3EnvironmentConnectionManager
         { projectId: binding.projectId, t3ThreadId: binding.t3ThreadId },
         this.workerEnvironment(binding),
       ).catch((restartError) => {
-        console.error(
-          "[t3-worker-lifecycle] restart after snapshot failure failed",
+        log.error(
           {
+            canonicalThreadId: binding.canonicalThreadId,
             sandboxId: binding.sandboxId,
             generation: binding.workerGeneration ?? 1,
-            errorName:
-              restartError instanceof Error
-                ? restartError.name
-                : typeof restartError,
-            errorMessage:
-              restartError instanceof Error
-                ? restartError.message
-                : String(restartError),
+            snapshotError:
+              error instanceof Error
+                ? `${error.name}: ${error.message}`
+                : String(error),
+            ...serializeError(restartError),
           },
+          "t3 worker restart after snapshot failure failed",
         );
       });
       throw error;
@@ -320,6 +325,16 @@ export class T3ModalEnvironmentManager implements T3EnvironmentConnectionManager
         // destination violation blocked every reconnect to a healthy worker
         // for the rest of its life (2026-09-01). Surface it as the
         // reconnect failure it is so watchers ride it out.
+        log.warn(
+          {
+            canonicalThreadId: binding.canonicalThreadId,
+            sandboxId,
+            markerPath: T3_SLACK_DESTINATION_PATH,
+            outcome: "transient-read-failure",
+            ...serializeError(error),
+          },
+          "protected slack destination marker read failed (transient)",
+        );
         throw error;
       }
       marker = undefined;
@@ -328,6 +343,18 @@ export class T3ModalEnvironmentManager implements T3EnvironmentConnectionManager
       marker?.channelId !== binding.blockedSlackDestination.channelId ||
       marker.threadTs !== binding.blockedSlackDestination.threadTs
     ) {
+      log.error(
+        {
+          canonicalThreadId: binding.canonicalThreadId,
+          sandboxId,
+          outcome: marker ? "destination-mismatch" : "marker-missing",
+          expectedChannelId: binding.blockedSlackDestination.channelId,
+          expectedThreadTs: binding.blockedSlackDestination.threadTs,
+          actualChannelId: marker?.channelId,
+          actualThreadTs: marker?.threadTs,
+        },
+        "protected slack destination violation",
+      );
       throw new Error(
         `T3 Modal sandbox ${sandboxId} does not have its protected Slack destination`,
       );

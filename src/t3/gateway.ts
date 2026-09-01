@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { metrics } from "@opentelemetry/api";
+import { log, serializeError } from "../logging.js";
 import { InMemoryLockStore, type LockStore } from "./storage.js";
 import type {
   T3Client,
@@ -92,9 +93,21 @@ export interface T3EnvironmentConnectionManager {
 }
 
 export class T3EnvironmentUnavailableError extends Error {
-  constructor(readonly sandboxId: string) {
-    super(`T3 Modal sandbox ${sandboxId} is unavailable`);
+  readonly canonicalThreadId?: string;
+  readonly reason?: string;
+
+  constructor(
+    readonly sandboxId: string,
+    context: { canonicalThreadId?: string; reason?: string } = {},
+  ) {
+    super(
+      `T3 Modal sandbox ${sandboxId} is unavailable${
+        context.reason ? ` (${context.reason})` : ""
+      }`,
+    );
     this.name = "T3EnvironmentUnavailableError";
+    this.canonicalThreadId = context.canonicalThreadId;
+    this.reason = context.reason;
   }
 }
 
@@ -271,14 +284,19 @@ export class T3Gateway {
       provider: binding.providerInstanceId,
       generation: binding.workerGeneration ?? 1,
     });
-    console.log("[t3-worker-lifecycle]", {
-      event,
-      canonicalThreadId: binding.canonicalThreadId,
-      sandboxId: binding.sandboxId,
-      provider: binding.providerInstanceId,
-      generation: binding.workerGeneration ?? 1,
-      ...attributes,
-    });
+    log.info(
+      {
+        event,
+        canonicalThreadId: binding.canonicalThreadId,
+        sandboxId: binding.sandboxId,
+        provider: binding.providerInstanceId,
+        generation: binding.workerGeneration ?? 1,
+        workerState: binding.workerState,
+        warmUntil: binding.warmUntil,
+        ...attributes,
+      },
+      `t3 worker lifecycle: ${event}`,
+    );
   }
 
   private scheduleHibernation(binding: T3ThreadBinding): void {
@@ -289,13 +307,17 @@ export class T3Gateway {
     );
     this.schedule(() => {
       void this.hibernateIfWarm(binding.canonicalThreadId).catch((error) => {
-        console.error("[t3-worker-lifecycle] hibernation failed", {
-          canonicalThreadId: binding.canonicalThreadId,
-          sandboxId: binding.sandboxId,
-          generation: binding.workerGeneration ?? 1,
-          errorName: error instanceof Error ? error.name : typeof error,
-          errorMessage: error instanceof Error ? error.message : String(error),
-        });
+        log.error(
+          {
+            canonicalThreadId: binding.canonicalThreadId,
+            sandboxId: binding.sandboxId,
+            generation: binding.workerGeneration ?? 1,
+            warmUntil: binding.warmUntil,
+            scheduledDelayMs: delayMs,
+            ...serializeError(error),
+          },
+          "t3 worker hibernation failed",
+        );
       });
     }, delayMs);
   }
@@ -334,7 +356,23 @@ export class T3Gateway {
       }
     }
     if (!binding.workerSnapshotId || !this.environments.restore) {
-      throw new T3EnvironmentUnavailableError(binding.sandboxId);
+      const reason = !binding.workerSnapshotId
+        ? "no snapshot to restore"
+        : "restore unsupported";
+      log.warn(
+        {
+          canonicalThreadId: binding.canonicalThreadId,
+          sandboxId: binding.sandboxId,
+          generation: binding.workerGeneration ?? 1,
+          workerState: binding.workerState,
+          reason,
+        },
+        "t3 worker unavailable for turn",
+      );
+      throw new T3EnvironmentUnavailableError(binding.sandboxId, {
+        canonicalThreadId: binding.canonicalThreadId,
+        reason,
+      });
     }
 
     const restoring: T3ThreadBinding = {
@@ -532,11 +570,10 @@ export class T3Gateway {
       if (stopped || inFlight) return;
       inFlight = this.sweepExpiredWarmWorkers()
         .catch((error) => {
-          console.error("[t3-worker-lifecycle] sweep failed", {
-            errorName: error instanceof Error ? error.name : typeof error,
-            errorMessage:
-              error instanceof Error ? error.message : String(error),
-          });
+          log.error(
+            { sweepIntervalMs: intervalMs, ...serializeError(error) },
+            "t3 worker lifecycle sweep failed",
+          );
         })
         .finally(() => {
           inFlight = undefined;

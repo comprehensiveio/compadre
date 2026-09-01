@@ -1,4 +1,5 @@
 import { EventType, type StreamChunk } from "../t3/agui-protocol.js";
+import { log, serializeError } from "../logging.js";
 import type { HostedSlackBinding } from "./hosted-thread-bindings.js";
 import { SlackStream } from "./slack-stream.js";
 import { slackFailureNotice } from "./terminal-response.js";
@@ -51,11 +52,15 @@ export class SlackRunMirror {
 
   private disableDelivery(context: string, error: unknown): void {
     this.deliveryEnabled = false;
-    console.error(`[native-t3-slack] ${context}`, {
-      channel: this.input.binding.channelId,
-      threadTs: this.input.binding.threadTs,
-      error,
-    });
+    log.error(
+      {
+        deliveryContext: context,
+        slackChannelId: this.input.binding.channelId,
+        slackThreadTs: this.input.binding.threadTs,
+        ...serializeError(error),
+      },
+      "native t3 slack delivery disabled",
+    );
   }
 
   /** Post the intro exactly once per run — skipped on a resumed driver. */

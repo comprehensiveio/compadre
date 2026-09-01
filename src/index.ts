@@ -5,6 +5,7 @@ if (!process.env.PATH?.includes(process.execPath.replace(/\/node$/, ""))) {
 }
 
 import { serve } from "@hono/node-server";
+import { log, serializeError } from "./logging.js";
 import ddTrace from "dd-trace";
 import { Hono } from "hono";
 import { logger } from "hono/logger";
@@ -76,7 +77,10 @@ app.onError((err, c) => {
     span.setTag("error.stack", err.stack);
     span.setTag("error.type", err.constructor.name);
   }
-  console.error(`[error] ${c.req.method} ${c.req.path}:`, err.message);
+  log.error(
+    { httpMethod: c.req.method, httpPath: c.req.path, ...serializeError(err) },
+    "unhandled http route error",
+  );
   return c.json({ ok: false, error: err.message }, 500);
 });
 

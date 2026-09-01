@@ -1,3 +1,4 @@
+import { log, serializeError } from "../logging.js";
 import {
   RUN_CANCEL_REASON,
   isTerminalRunStatus,
@@ -207,10 +208,14 @@ export class NativeT3RunCoordinator {
     const done = drive.then(
       () => undefined,
       async (error) => {
-        console.error("[native-t3-run] producer failed", {
-          runId: input.runId,
-          error,
-        });
+        log.error(
+          {
+            runId: input.runId,
+            canonicalThreadId: input.threadId,
+            ...serializeError(error),
+          },
+          "native t3 run producer failed",
+        );
         const current = await this.durability.runs.get(input.runId);
         if (
           current &&
