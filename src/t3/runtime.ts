@@ -9,6 +9,7 @@ import { collectNativeT3ArtifactEvents } from "./artifact-events.js";
 import { T3Gateway } from "./gateway.js";
 import { configuredCentralT3Client } from "./central-conversation.js";
 import { T3ModalEnvironmentManager } from "./modal-environments.js";
+import { readWorkerTemplate } from "./worker-templates.js";
 import type { NativeT3RunDriverDependencies } from "./native-t3-run-driver.js";
 import { NativeT3RunCoordinator } from "./run-coordinator.js";
 import { recoverNativeT3Runs, type NativeT3RecoverySummary } from "./run-recovery.js";
@@ -95,7 +96,10 @@ export async function getConfiguredT3Gateway(): Promise<T3Gateway | null> {
         );
         const gateway = new T3Gateway(
           bindings,
-          new T3ModalEnvironmentManager(),
+          new T3ModalEnvironmentManager(process.env, undefined, {
+            workerTemplate: () =>
+              readWorkerTemplate(runtime.persistence.stores.metadata),
+          }),
           crypto.randomUUID,
           () => new Date(),
           runtime.locks,

@@ -6,7 +6,9 @@ import {
   NativeT3RunStateError,
   type NativeT3RunOutcome,
 } from "../t3/native-t3-run-driver.js";
+import { getConfiguredThreadPersistence } from "../persistence/runtime.js";
 import { getConfiguredNativeT3RunDriverDependencies } from "../t3/runtime.js";
+import { buildT3WorkerTemplate } from "../t3/worker-templates.js";
 import type { NativeT3RunWorkflowInput } from "./shared.js";
 
 const HEARTBEAT_INTERVAL_MS = 30_000;
@@ -65,4 +67,37 @@ export async function finalizeNativeT3RunActivity(input: {
     cancelled: input.cancelled,
     message: input.message,
   });
+}
+
+/**
+ * Build and publish a fresh golden worker template. The build proves itself
+ * by running the same scripts a real thread runs; a failed build leaves the
+ * previously published template untouched.
+ */
+export async function buildT3WorkerTemplateActivity(): Promise<{
+  snapshotId: string;
+  repoSha: string;
+  backupKey: string;
+  builtAt: string;
+}> {
+  const context = Context.current();
+  const runtime = await getConfiguredThreadPersistence();
+  if (!runtime) {
+    throw ApplicationFailure.nonRetryable(
+      "Thread persistence is not configured",
+      "NativeT3RunStateError",
+    );
+  }
+  const heartbeatTimer = setInterval(
+    () => context.heartbeat("building worker template"),
+    HEARTBEAT_INTERVAL_MS,
+  );
+  heartbeatTimer.unref();
+  try {
+    return await buildT3WorkerTemplate({
+      metadata: runtime.persistence.stores.metadata,
+    });
+  } finally {
+    clearInterval(heartbeatTimer);
+  }
 }

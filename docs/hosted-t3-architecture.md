@@ -55,6 +55,19 @@ against Render's bootstrap workspace is not an authoritative substitute.
 
 ## Worker lifecycle
 
+New workers provision from a **golden template** when one is published: a
+6-hourly Temporal cron builds a fully-warmed comp environment (shallow
+checkout, dependencies, restored anonymized production database, Vite cache)
+by running the same `compadre-dev-up.sh` / `compadre-dev-data.sh` scripts a
+real thread runs, captures a Modal filesystem snapshot, and publishes its
+image ID to Postgres metadata (`compadre.t3.worker-template.v1`). Provisioning
+restores that image, refreshes the checkout to the branch tip, and projects
+per-thread skills, T3 fork, and credentials — measured ~10 s to a live T3
+worker versus 6+ minutes for a cold clone-and-build. With no published
+template (or after `DELETE /internal/operations/worker-template`, the
+operational kill switch), provisioning cold-builds exactly as before. A failed
+template build never publishes, leaving the previous template serving.
+
 Native T3 workers use a durable lifecycle recorded with the thread binding in
 Postgres:
 

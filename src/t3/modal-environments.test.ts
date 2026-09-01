@@ -156,3 +156,70 @@ test("checkpoints a running worker without quiescing or terminating it", async (
   // Live checkpoint: no dev-stack teardown, no T3 kill, no terminate.
   assert.deepEqual(events, ["checkpoint:t3-worker-generation-1"]);
 });
+
+function managedEnvironment(sandboxId: string) {
+  return {
+    sandboxId,
+    baseUrl: "https://worker.example",
+    pairingUrl: "https://worker.example/pair",
+    workspaceRoot: "/workspace",
+    projectId: "project-1",
+    client: {} as never,
+    handle: {} as never,
+  };
+}
+
+test("provisions from the golden template when one is published", async () => {
+  const calls: string[] = [];
+  const manager = new T3ModalEnvironmentManager({}, undefined, {
+    async workerTemplate() {
+      return {
+        snapshotId: "im-template-1",
+        repoSha: "abc123",
+        backupKey: "hourly/backup.sql.gz",
+        builtAt: "2026-09-01T00:00:00.000Z",
+      };
+    },
+    launchFromTemplate: async (snapshotId) => {
+      calls.push(`template:${snapshotId}`);
+      return managedEnvironment("sandbox-from-template");
+    },
+    async launch() {
+      calls.push("cold");
+      return managedEnvironment("sandbox-cold");
+    },
+  });
+
+  const connection = await manager.provision({
+    canonicalThreadId: "thread-template",
+    providerInstanceId: "codex",
+  });
+
+  assert.deepEqual(calls, ["template:im-template-1"]);
+  assert.equal(connection.sandboxId, "sandbox-from-template");
+});
+
+test("provisions cold when no template is published", async () => {
+  const calls: string[] = [];
+  const manager = new T3ModalEnvironmentManager({}, undefined, {
+    async workerTemplate() {
+      return null;
+    },
+    launchFromTemplate: async () => {
+      calls.push("template");
+      return managedEnvironment("sandbox-from-template");
+    },
+    async launch() {
+      calls.push("cold");
+      return managedEnvironment("sandbox-cold");
+    },
+  });
+
+  const connection = await manager.provision({
+    canonicalThreadId: "thread-cold",
+    providerInstanceId: "codex",
+  });
+
+  assert.deepEqual(calls, ["cold"]);
+  assert.equal(connection.sandboxId, "sandbox-cold");
+});

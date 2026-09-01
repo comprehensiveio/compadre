@@ -94,3 +94,25 @@ export async function nativeT3RunWorkflow(
     throw error;
   }
 }
+
+const { buildT3WorkerTemplateActivity } = proxyActivities<typeof activities>({
+  // A build is a full cold provision (clone, dependency restore, production
+  // backup download and restore) plus a snapshot: ~15 minutes measured.
+  startToCloseTimeout: "45 minutes",
+  heartbeatTimeout: "2 minutes",
+  cancellationType: ActivityCancellationType.WAIT_CANCELLATION_COMPLETED,
+  retry: {
+    initialInterval: "1 minute",
+    backoffCoefficient: 2,
+    maximumAttempts: 2,
+  },
+});
+
+/**
+ * Cron workflow (see ensureWorkerTemplateBuildSchedule): each firing builds
+ * one fresh golden worker template and publishes its snapshot ID. Failures
+ * leave the previous template serving and surface in Temporal's UI.
+ */
+export async function t3WorkerTemplateBuildWorkflow(): Promise<void> {
+  await buildT3WorkerTemplateActivity();
+}

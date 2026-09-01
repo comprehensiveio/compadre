@@ -55,6 +55,8 @@ import {
   nativeT3GatewayEnabled,
   recoverConfiguredNativeT3Runs,
 } from "./t3/runtime.js";
+import { devEnvironmentEnabled } from "./t3/dev-environment.js";
+import { ensureWorkerTemplateBuildSchedule } from "./temporal/client.js";
 import { NATIVE_T3_RUN_ORCHESTRATOR } from "./temporal/mode.js";
 import {
   startNativeT3TemporalWorker,
@@ -123,6 +125,14 @@ async function start() {
         console.error("[temporal] worker stopped unexpectedly", error);
         if (!shuttingDown) process.exit(1);
       });
+      if (devEnvironmentEnabled()) {
+        ensureWorkerTemplateBuildSchedule().catch((error) => {
+          log.error(
+            serializeError(error),
+            "worker-template build cron could not be ensured",
+          );
+        });
+      }
     }
   }
   const agent = validateConversationConfiguration();

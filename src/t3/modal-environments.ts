@@ -1,5 +1,6 @@
 import {
   launchManagedT3ModalEnvironment,
+  launchManagedT3ModalEnvironmentFromTemplate,
   restartManagedT3ModalEnvironment,
   restoreManagedT3ModalEnvironment,
   T3_GATEWAY_CREDENTIAL_PATH,
@@ -17,6 +18,7 @@ import type {
 } from "./gateway.js";
 import { T3EnvironmentUnavailableError } from "./gateway.js";
 import type { T3ThreadBinding } from "../services/t3-thread-bindings.js";
+import type { T3WorkerTemplate } from "./worker-templates.js";
 import { t3EncryptedPorts } from "./dev-environment.js";
 import type { SandboxHandle } from "@tanstack/ai-sandbox";
 
@@ -52,8 +54,11 @@ export interface T3ModalProvisionedEnvironment {
 
 export interface T3ModalEnvironmentDependencies {
   launch: typeof launchManagedT3ModalEnvironment;
+  launchFromTemplate: typeof launchManagedT3ModalEnvironmentFromTemplate;
   restore: typeof restoreManagedT3ModalEnvironment;
   restart: typeof restartManagedT3ModalEnvironment;
+  /** Newest published golden template, if any. Absent -> cold build. */
+  workerTemplate: () => Promise<T3WorkerTemplate | null>;
 }
 
 /** Reject provider launches that cannot authenticate before incurring sandbox cost. */
@@ -121,9 +126,18 @@ export class T3ModalEnvironmentManager implements T3EnvironmentConnectionManager
     };
   }): Promise<T3EnvironmentConnection> {
     assertProviderCredentialsConfigured(input.providerInstanceId, this.environment);
-    const launched = await (
-      this.dependencies.launch ?? launchManagedT3ModalEnvironment
-    )({
+    const template = (await this.dependencies.workerTemplate?.()) ?? null;
+    if (template) {
+      log.info(
+        {
+          canonicalThreadId: input.canonicalThreadId,
+          snapshotId: template.snapshotId,
+          templateBuiltAt: template.builtAt,
+        },
+        "t3 worker provisioning from golden template",
+      );
+    }
+    const workerEnvironment: NodeJS.ProcessEnv = {
       ...this.environment,
       COMPADRE_CANONICAL_THREAD_ID: input.canonicalThreadId,
       COMPADRE_PROVIDER_INSTANCE_ID: input.providerInstanceId,
@@ -136,7 +150,15 @@ export class T3ModalEnvironmentManager implements T3EnvironmentConnectionManager
               input.blockedSlackDestination.threadTs,
           }
         : {}),
-    });
+    };
+    const launched = template
+      ? await (
+          this.dependencies.launchFromTemplate ??
+          launchManagedT3ModalEnvironmentFromTemplate
+        )(template.snapshotId, workerEnvironment)
+      : await (this.dependencies.launch ?? launchManagedT3ModalEnvironment)(
+          workerEnvironment,
+        );
     await this.onProvisioned?.({
       ...input,
       sandboxId: launched.sandboxId,

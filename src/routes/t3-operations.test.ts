@@ -54,3 +54,60 @@ test("keeps the operations API dark when the hosted directory is disabled", asyn
   );
   assert.equal((await app.request("/internal/operations/threads")).status, 404);
 });
+
+test("worker-template endpoints read, clear, and trigger builds", async () => {
+  await withApiKey(async () => {
+  const data = new Map<string, unknown>();
+  const metadata = {
+    async get(namespace: string, key: string) {
+      return data.get(`${namespace}:${key}`) ?? null;
+    },
+    async set(namespace: string, key: string, value: unknown) {
+      data.set(`${namespace}:${key}`, value);
+    },
+    async delete(namespace: string, key: string) {
+      data.delete(`${namespace}:${key}`);
+    },
+  };
+  const app = createT3OperationsRoutes({
+    enabled: () => true,
+    snapshot: async () => ({}),
+    metadata: async () => metadata,
+    startTemplateBuild: async () => "workflow-1",
+  });
+  const headers = { Authorization: `Bearer ${process.env.COMPADRE_API_KEY}` };
+
+  const empty = await app.request("/internal/operations/worker-template", { headers });
+  assert.equal(empty.status, 200);
+  assert.deepEqual(await empty.json(), { template: null });
+
+  await metadata.set("compadre.t3.worker-template.v1", "current", {
+    snapshotId: "im-1",
+    repoSha: "abc",
+    backupKey: "hourly/x.sql.gz",
+    builtAt: "2026-09-01T00:00:00.000Z",
+  });
+  const filled = await app.request("/internal/operations/worker-template", { headers });
+  assert.equal(((await filled.json()) as { template: { snapshotId: string } }).template.snapshotId, "im-1");
+
+  const build = await app.request("/internal/operations/worker-template/build", {
+    method: "POST",
+    headers,
+  });
+  assert.equal(build.status, 202);
+
+  const cleared = await app.request("/internal/operations/worker-template", {
+    method: "DELETE",
+    headers,
+  });
+  assert.equal(cleared.status, 200);
+  assert.deepEqual(await (await app.request("/internal/operations/worker-template", { headers })).json(), {
+    template: null,
+  });
+
+  assert.equal(
+    (await app.request("/internal/operations/worker-template")).status,
+    401,
+  );
+  });
+});

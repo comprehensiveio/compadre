@@ -17,15 +17,21 @@ export function harnessWorkspacePath(
   return environment.COMPADRE_MODAL_WORKDIR?.trim() || "/workspace";
 }
 
-function modalSetupCommands(environment: NodeJS.ProcessEnv): string[] {
+/** The exact shallow clone a production worker sandbox runs at provision. */
+export function repositoryCloneCommand(
+  environment: NodeJS.ProcessEnv = process.env,
+): string {
   const repositoryUrl = configuredRepositoryUrl(environment);
   const branch = environment.REPO_BRANCH?.trim() || "main";
   const quote = (value: string): string =>
     `'${value.replaceAll("'", `'\\''`)}'`;
-  const clone = environment.GITHUB_PERSONAL_ACCESS_TOKEN
+  return environment.GITHUB_PERSONAL_ACCESS_TOKEN
     ? `git -c credential.helper='!f() { echo "username=$GIT_ASKPASS_USER"; echo "password=$GIT_ASKPASS_TOKEN"; }; f' clone --depth 1 --single-branch --branch ${quote(branch)} -- ${quote(repositoryUrl)} . 2>&1`
     : `git clone --depth 1 --single-branch --branch ${quote(branch)} -- ${quote(repositoryUrl)} . 2>&1`;
-  return [clone];
+}
+
+function modalSetupCommands(environment: NodeJS.ProcessEnv): string[] {
+  return [repositoryCloneCommand(environment)];
 }
 
 export interface CreateHarnessSandboxOptions {

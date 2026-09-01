@@ -1,6 +1,10 @@
-import { Client, Connection } from "@temporalio/client";
+import { Client, Connection, WorkflowExecutionAlreadyStartedError } from "@temporalio/client";
 import Long from "long";
-import { temporalAddress, temporalNamespace } from "./shared.js";
+import {
+  NATIVE_T3_TASK_QUEUE,
+  temporalAddress,
+  temporalNamespace,
+} from "./shared.js";
 
 let configuredClient: Promise<Client> | undefined;
 
@@ -76,4 +80,24 @@ export function getTemporalClient(): Promise<Client> {
 
 export function resetTemporalClientForTests(): void {
   configuredClient = undefined;
+}
+
+/**
+ * Idempotently start the 6-hourly golden-template build cron. Failures here
+ * never block startup: a missing schedule only means new threads cold-build,
+ * which is the pre-template behavior.
+ */
+export async function ensureWorkerTemplateBuildSchedule(): Promise<void> {
+  const client = await getTemporalClient();
+  try {
+    await client.workflow.start("t3WorkerTemplateBuildWorkflow", {
+      workflowId: "t3-worker-template-build",
+      taskQueue: NATIVE_T3_TASK_QUEUE,
+      cronSchedule: "0 */6 * * *",
+    });
+    console.log("[temporal] worker-template build cron started");
+  } catch (error) {
+    if (error instanceof WorkflowExecutionAlreadyStartedError) return;
+    throw error;
+  }
 }

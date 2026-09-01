@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import fs from "node:fs/promises";
-import { COMPADRE_SKILL_NAMES } from "../compadre-skills.js";
+import { COMPADRE_SKILL_NAMES, compadreSkillUploads } from "../compadre-skills.js";
 import { gitAuthenticationEnvironment } from "../repo.js";
 import {
   ModalHandle,
@@ -595,6 +595,84 @@ export async function launchManagedT3ModalEnvironment(
       handle,
       startupToken: pairingToken,
     });
+  } catch (error) {
+    await handle.destroy().catch(() => undefined);
+    throw error;
+  }
+}
+
+/**
+ * Launch a worker from the golden template snapshot: a pre-warmed comp dev
+ * environment (checkout, dependencies, restored anonymized production
+ * database, Vite cache) with no T3 state or thread identity. The checkout is
+ * refreshed to the current branch tip, then the same per-thread projection
+ * as a cold launch runs: skills, T3 fork, credentials, project bootstrap.
+ */
+export async function launchManagedT3ModalEnvironmentFromTemplate(
+  templateSnapshotId: string,
+  environment: NodeJS.ProcessEnv = process.env,
+): Promise<ManagedT3ModalEnvironment> {
+  const workerEnvironment: NodeJS.ProcessEnv = {
+    ...environment,
+    COMPADRE_MODAL_APP: environment.COMPADRE_T3_MODAL_APP?.trim() || "compadre",
+  };
+  const forkArchivePath = await resolveT3ForkArchive(workerEnvironment);
+  const provider = modalSandboxProvider({
+    environment: workerEnvironment,
+    encryptedPorts: t3EncryptedPorts(workerEnvironment),
+  });
+  if (!provider.restoreSnapshot) {
+    throw new Error("The Modal sandbox provider does not support restoration");
+  }
+  const handle = (await provider.restoreSnapshot({
+    snapshotId: templateSnapshotId,
+  })) as T3SandboxHandle;
+  try {
+    await handle.env.set(
+      workerEnvironment.GITHUB_PERSONAL_ACCESS_TOKEN
+        ? {
+            GIT_ASKPASS_USER: "x-access-token",
+            GIT_ASKPASS_TOKEN: workerEnvironment.GITHUB_PERSONAL_ACCESS_TOKEN,
+            GIT_TERMINAL_PROMPT: "0",
+          }
+        : { GIT_TERMINAL_PROMPT: "0" },
+    );
+    const branch = workerEnvironment.REPO_BRANCH?.trim() || "main";
+    const credentialHelper =
+      "-c credential.helper='!f() { echo \"username=$GIT_ASKPASS_USER\"; echo \"password=$GIT_ASKPASS_TOKEN\"; }; f'";
+    const refresh = await handle.process.exec(
+      `git ${credentialHelper} fetch --depth 1 origin ${quote(branch)} && git reset --hard ${quote(`origin/${branch}`)} --quiet`,
+    );
+    if (refresh.exitCode !== 0) {
+      throw new Error(
+        `template checkout refresh failed: ${(refresh.stderr || refresh.stdout).slice(-2000)}`,
+      );
+    }
+    for (const upload of compadreSkillUploads()) {
+      const directory = upload.path.slice(0, upload.path.lastIndexOf("/"));
+      const prepared = await handle.process.exec(`mkdir -p ${quote(directory)}`);
+      if (prepared.exitCode !== 0) {
+        throw new Error(prepared.stderr || prepared.stdout);
+      }
+      await handle.fs.write(
+        upload.path,
+        new TextDecoder().decode(upload.data),
+      );
+    }
+    await installLocalT3Fork(handle, forkArchivePath);
+    await projectWorkerRuntimeEnvironment(handle, workerEnvironment);
+    const blockedSlackDestination =
+      blockedSlackDestinationFromEnvironment(workerEnvironment);
+    if (blockedSlackDestination) {
+      await handle.fs.write(
+        T3_SLACK_DESTINATION_PATH,
+        JSON.stringify(blockedSlackDestination),
+      );
+    }
+    const workspaceRoot = handle.workspaceRoot ?? "/workspace";
+    await bootstrapT3Project(handle, workspaceRoot);
+    const startupToken = await startT3Server(handle, workspaceRoot);
+    return await connectManagedT3Environment({ handle, startupToken });
   } catch (error) {
     await handle.destroy().catch(() => undefined);
     throw error;
