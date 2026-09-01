@@ -49,6 +49,13 @@ services:
       # attempts hand off cleanly, so three attempts cover the full lifetime.
       - key: COMPADRE_MODAL_TIMEOUT_MS
         value: "21600000"
+      # 8 GiB guaranteed memory: full-monorepo ci-checks exhausted the 2 GiB
+      # default so completely that even pkill could not spawn inside the
+      # sandbox and the turn wedged for an hour (2026-09-01).
+      - key: COMPADRE_MODAL_MEMORY_MIB
+        value: "8192"
+      - key: COMPADRE_MODAL_MEMORY_LIMIT_MIB
+        value: "16384"
       - key: COMPADRE_PREVIEW_HOST_SUFFIX
         value: dev.compadre.comprehensive.io
       - key: TEMPORAL_ADDRESS
