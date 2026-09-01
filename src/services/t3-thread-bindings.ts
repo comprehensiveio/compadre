@@ -219,6 +219,34 @@ export class T3ThreadBindingStore {
     await this.metadata.set(NAMESPACE, bindingKey, binding);
   }
 
+  /**
+   * Replace a binding whose worker was lost without a restorable snapshot
+   * (for example the sandbox reached its lifetime mid-turn). Unlike
+   * bindRecord this permits a NEW native t3ThreadId — the dead worker's
+   * transcript is gone and central T3 remains the canonical conversation —
+   * while still refusing provider or protected-Slack-destination changes.
+   */
+  async replaceLostWorkerRecord(binding: T3ThreadBinding): Promise<void> {
+    const existing = await this.read(key(binding.canonicalThreadId));
+    if (existing && existing.providerInstanceId !== binding.providerInstanceId) {
+      throw new Error(
+        `T3 thread binding is already assigned to provider ${existing.providerInstanceId}`,
+      );
+    }
+    if (
+      existing &&
+      (existing.blockedSlackDestination?.channelId !==
+        binding.blockedSlackDestination?.channelId ||
+        existing.blockedSlackDestination?.threadTs !==
+          binding.blockedSlackDestination?.threadTs)
+    ) {
+      throw new Error(
+        "T3 thread binding cannot change its protected Slack destination",
+      );
+    }
+    await this.metadata.set(NAMESPACE, key(binding.canonicalThreadId), binding);
+  }
+
   async ensureIndexed(canonicalThreadId: string): Promise<void> {
     await this.locks.withLock(INDEX_LOCK, async (signal) => {
       if (signal.aborted) throw signal.reason;

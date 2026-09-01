@@ -23,9 +23,10 @@ record by a retried finalize step.
    `compadre.t3.run-requests.v1` / `compadre.t3.run-dispatches.v1`), creates
    the run record, and starts `nativeT3RunWorkflow` with a deterministic
    workflow id (`compadre-t3-<sha256(runId)>`). Duplicate starts are no-ops.
-2. `driveNativeT3RunActivity` (130 m start-to-close so one attempt can watch
-   the worker's full ~2 h Modal lifetime, 2 m heartbeat timeout for fast
-   dead-controller detection, 3 attempts) first claims the run's durable driver epoch (the same fencing
+2. `driveNativeT3RunActivity` (130 m start-to-close per attempt, 2 m
+   heartbeat timeout for fast dead-controller detection, 3 attempts — an
+   attempt that hits its ceiling hands off cleanly to the next, so three
+   attempts cover the full 6 h production worker lifetime) first claims the run's durable driver epoch (the same fencing
    in-process drivers use, so a retiring pre-Temporal controller and the
    activity can never both write one run's log), maintains the worker
    binding's active-run marker, dispatches the worker turn **at most once** —
@@ -61,6 +62,14 @@ record by a retried finalize step.
    record carries `cancelRequested`. Any other cancellation is a silent
    handoff — the attempt stops watching and the next attempt (possibly on a
    replacement instance) reattaches.
+6. Worker loss: when reattaches see consecutive `unavailable` errors and the
+   binding has no restorable snapshot (the sandbox hit its lifetime mid-turn,
+   or crashed before its first hibernation), the driver converges the run as
+   failed within about a minute, parks the binding (`worker.lost`), and the
+   NEXT turn on that thread transparently provisions a replacement worker
+   (`provision.replaced`) instead of leaving the thread permanently
+   unreachable. The hibernation sweep likewise parks — never endlessly
+   retries — a lost warm worker.
 
 Subscribers are unchanged: central T3 and replay clients tail the Postgres
 event log over SSE with `Last-Event-ID` resume; producer relocation is

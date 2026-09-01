@@ -449,6 +449,27 @@ export class T3Gateway {
             snapshotId: checkpoint.snapshotId,
           });
         } catch (error) {
+          if (
+            error instanceof T3EnvironmentUnavailableError &&
+            !binding.workerSnapshotId
+          ) {
+            // Nothing to snapshot and nothing to restore: the worker is
+            // gone for good (sandbox lifetime or crash before the first
+            // hibernation). Park the binding instead of retrying forever;
+            // the next turn replaces the worker.
+            const lost: T3ThreadBinding = {
+              ...binding,
+              workerState: "suspended",
+              warmUntil: undefined,
+              status: "unavailable",
+              updatedAt: this.now().toISOString(),
+            };
+            await this.bindings.bindRecord(lost).catch(() => undefined);
+            this.recordWorkerTransition("worker.lost", lost, {
+              phase: "hibernate",
+            });
+            return;
+          }
           const retry: T3ThreadBinding = {
             ...binding,
             workerState: "warm",
@@ -703,7 +724,34 @@ export class T3Gateway {
           "This T3 environment is already assigned to a different Slack destination.",
         );
       }
-      const connected = await this.connectForTurn(existing);
+      let connected;
+      try {
+        connected = await this.connectForTurn(existing);
+      } catch (error) {
+        if (
+          !(error instanceof T3EnvironmentUnavailableError) ||
+          existing.workerSnapshotId
+        ) {
+          throw error;
+        }
+        // The worker died without a restorable snapshot (sandbox lifetime
+        // reached mid-turn, or a crash before the first hibernation). The
+        // worker-local transcript is gone, but central T3 remains the
+        // canonical conversation, so replace the worker instead of leaving
+        // the thread permanently unreachable.
+        this.recordWorkerTransition("worker.lost", existing, {
+          phase: "send",
+          errorName: error instanceof Error ? error.name : typeof error,
+        });
+        return this.provisionTurn(
+          {
+            ...input,
+            blockedSlackDestination:
+              input.blockedSlackDestination ?? existing.blockedSlackDestination,
+          },
+          existing,
+        );
+      }
       const environment = connected.environment;
       const dispatch = await environment.client.startTurn({
         threadId: connected.binding.t3ThreadId,
@@ -727,6 +775,27 @@ export class T3Gateway {
       return { binding: updated, dispatch };
     }
 
+    return this.provisionTurn(input);
+  }
+
+  /** Provision a worker and first turn; `replacing` heals a lost worker. */
+  private async provisionTurn(
+    input: {
+      canonicalThreadId: string;
+      title: string;
+      text: string;
+      displayText?: string;
+      modelSelection: T3ModelSelection;
+      inputFiles?: ReadonlyArray<T3InputFile>;
+      blockedSlackDestination?: {
+        channelId: string;
+        threadTs: string;
+      };
+      signal?: AbortSignal;
+    },
+    replacing?: T3ThreadBinding,
+  ): Promise<T3GatewayTurn> {
+    const providerInstanceId = input.modelSelection.instanceId;
     const environment = await this.environments.provision({
       canonicalThreadId: input.canonicalThreadId,
       providerInstanceId,
@@ -753,18 +822,22 @@ export class T3Gateway {
         sandboxId: environment.sandboxId,
         baseUrl: environment.client.baseUrl,
         workerState: "running",
-        workerGeneration: 1,
+        workerGeneration: (replacing?.workerGeneration ?? 0) + 1,
         sandboxStartedAt: timestamp,
         lastActiveAt: timestamp,
         modelSelection: input.modelSelection,
         blockedSlackDestination: input.blockedSlackDestination,
-        title: input.title,
+        title: replacing?.title ?? input.title,
         status: "working",
-        createdAt: timestamp,
+        createdAt: replacing?.createdAt ?? timestamp,
         updatedAt: timestamp,
       };
-      await this.bindings.bindRecord(binding);
-      this.recordWorkerTransition("provision.completed", binding);
+      if (replacing) await this.bindings.replaceLostWorkerRecord(binding);
+      else await this.bindings.bindRecord(binding);
+      this.recordWorkerTransition(
+        replacing ? "provision.replaced" : "provision.completed",
+        binding,
+      );
       return { binding, dispatch };
     } catch (error) {
       await this.environments.discard?.(environment).catch(() => undefined);
@@ -1038,6 +1111,38 @@ export class T3Gateway {
       );
     }
     return { binding, dispatch };
+  }
+
+  /**
+   * Park a binding whose worker is confirmed gone without a restorable
+   * snapshot, so the sweeper stops retrying hibernation and the next turn
+   * replaces the worker. No-ops when the sandbox changed or a snapshot
+   * exists (those recover through the normal paths).
+   */
+  async markWorkerLost(
+    canonicalThreadId: string,
+    expectedSandboxId?: string,
+  ): Promise<void> {
+    await this.locks.withLock(
+      this.lockKey(canonicalThreadId),
+      async (signal) => {
+        if (signal.aborted) throw signal.reason;
+        const binding = await this.bindings.get(canonicalThreadId);
+        if (!binding || binding.workerSnapshotId) return;
+        if (expectedSandboxId && binding.sandboxId !== expectedSandboxId) {
+          return;
+        }
+        const lost: T3ThreadBinding = {
+          ...binding,
+          workerState: "suspended",
+          warmUntil: undefined,
+          status: "unavailable",
+          updatedAt: this.now().toISOString(),
+        };
+        await this.bindings.bindRecord(lost);
+        this.recordWorkerTransition("worker.lost", lost, { phase: "run" });
+      },
+    );
   }
 
   /**

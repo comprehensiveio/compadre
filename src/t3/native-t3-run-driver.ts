@@ -20,7 +20,7 @@ import type {
   T3ThreadSnapshot,
   T3TurnDispatch,
 } from "./client.js";
-import type { T3GatewayTurn } from "./gateway.js";
+import { T3EnvironmentUnavailableError, type T3GatewayTurn } from "./gateway.js";
 import {
   NativeT3RunRequestStore,
   type NativeT3RunRequest,
@@ -29,6 +29,12 @@ import {
 export const DEFAULT_TERMINAL_WAIT_TIMEOUT_MS = 20 * 60 * 1000;
 const CANCELLED_MESSAGE = "The native T3 run was cancelled.";
 const RECONNECT_DELAY_MS = 15_000;
+// A dead sandbox answers every reattach with "unavailable" instantly; after
+// this many consecutive ones (~1 minute) the worker is confirmed gone.
+const MAX_CONSECUTIVE_UNAVAILABLE = 4;
+const WORKER_LOST_MESSAGE =
+  "The thread's isolated worker ended before this turn completed (sandbox lifetime reached or the worker crashed). A follow-up message continues on a fresh worker from the saved context.";
+const WORKER_LOST_CODE = "NATIVE_T3_WORKER_LOST";
 const CANCELLED_CODE = "NATIVE_T3_RUN_CANCELLED";
 
 /**
@@ -70,6 +76,10 @@ export interface NativeT3DriverGateway {
     source: "central" | "worker";
   } | null>;
   markActiveRun?(canonicalThreadId: string, runId: string): Promise<void>;
+  markWorkerLost?(
+    canonicalThreadId: string,
+    expectedSandboxId?: string,
+  ): Promise<void>;
   clearActiveRun?(
     canonicalThreadId: string,
     runId: string,
@@ -468,6 +478,7 @@ export async function driveNativeT3Run(
     }
     let terminalChunk: StreamChunk | undefined;
     let failure: unknown;
+    let consecutiveUnavailable = 0;
     const inactivityLimitMs =
       options.terminalWaitTimeoutMs ?? DEFAULT_TERMINAL_WAIT_TIMEOUT_MS;
     let lastProgressAt = now();
@@ -516,6 +527,7 @@ export async function driveNativeT3Run(
         wake = undefined;
       };
       const observeSnapshot = (snapshot: T3ThreadSnapshot) => {
+        consecutiveUnavailable = 0;
         if (snapshot.snapshotSequence > lastSequence) {
           lastSequence = snapshot.snapshotSequence;
           lastProgressAt = now();
@@ -560,6 +572,41 @@ export async function driveNativeT3Run(
 
       if (!watchFailure || terminalChunk) break;
       if (watchFailure instanceof NativeT3RunStateError) throw watchFailure;
+      if (watchFailure instanceof T3EnvironmentUnavailableError) {
+        consecutiveUnavailable += 1;
+        if (
+          consecutiveUnavailable >= MAX_CONSECUTIVE_UNAVAILABLE &&
+          !turn.binding.workerSnapshotId
+        ) {
+          // The worker is confirmed dead with nothing to restore: retrying
+          // (this attempt or the next) cannot revive the turn. Converge
+          // promptly instead of burning the inactivity budget three times.
+          const lostChunk: StreamChunk = {
+            type: EventType.RUN_ERROR,
+            runId,
+            message: WORKER_LOST_MESSAGE,
+            code: WORKER_LOST_CODE,
+            timestamp: now(),
+          };
+          await append(lostChunk);
+          mirror?.observe(lostChunk);
+          await mirror?.finish();
+          await deps.gateway
+            .markWorkerLost?.(request.canonicalThreadId, turn.binding.sandboxId)
+            .catch((error) =>
+              console.warn("[native-t3-driver] could not park lost worker", {
+                runId,
+                error,
+              }),
+            );
+          return terminalize("failed", {
+            message: WORKER_LOST_MESSAGE,
+            code: WORKER_LOST_CODE,
+          });
+        }
+      } else {
+        consecutiveUnavailable = 0;
+      }
       if (cancelled || handedOff) {
         // Either durable cancellation (converge below) or an attempt-level
         // cancellation without run intent (rethrown below for the next

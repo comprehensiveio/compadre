@@ -4,6 +4,7 @@ import { requestRunCancel } from "@tanstack/ai";
 import { createAgentRunDurability } from "../durability/runtime.js";
 import { EventType, type StreamChunk } from "./agui-protocol.js";
 import type { T3ThreadSnapshot, T3TurnDispatch } from "./client.js";
+import { T3EnvironmentUnavailableError } from "./gateway.js";
 import type { T3GatewayTurn } from "./gateway.js";
 import {
   driveNativeT3Run,
@@ -119,6 +120,7 @@ function fakeGateway(waitBehaviors: WaitBehavior[]) {
     waits: 0,
     cancels: 0,
     releases: 0,
+    lost: 0,
   };
   const gateway: NativeT3DriverGateway = {
     async send() {
@@ -144,6 +146,9 @@ function fakeGateway(waitBehaviors: WaitBehavior[]) {
     },
     async releaseWorkerAfterRun() {
       calls.releases += 1;
+    },
+    async markWorkerLost() {
+      calls.lost += 1;
     },
   };
   return { gateway, calls };
@@ -488,4 +493,31 @@ test("a watch failure with no durable progress fails the attempt for retry", asy
   );
   assert.equal(calls.waits, 1, "a stalled turn is not reattached");
   assert.equal((await durability.runs.get(runId))?.status, "running");
+});
+
+
+test("a confirmed-dead worker terminalizes the run promptly instead of burning retries", async (t) => {
+  const deadBehavior = async () => {
+    throw new T3EnvironmentUnavailableError("sandbox-1");
+  };
+  const { durability, requests, gateway, calls, chunks, runId } = await harness(
+    "run-worker-lost",
+    [deadBehavior, deadBehavior, deadBehavior, deadBehavior, deadBehavior, deadBehavior],
+  );
+  t.after(() => durability.close());
+
+  const outcome = await driveNativeT3Run(
+    { gateway, durability, requests },
+    runId,
+    { reconnectDelayMs: 5 },
+  );
+
+  assert.equal(outcome.status, "failed");
+  assert.equal(calls.waits, 4, "confirmed dead after four unavailable watches");
+  assert.equal(calls.lost, 1, "the binding is parked for replacement");
+  const events = await chunks();
+  const terminal = events.at(-1);
+  assert.equal(terminal?.type, EventType.RUN_ERROR);
+  assert.equal(terminal?.code, "NATIVE_T3_WORKER_LOST");
+  assert.equal((await durability.runs.get(runId))?.status, "failed");
 });
