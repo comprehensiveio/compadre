@@ -1794,3 +1794,42 @@ test("markWorkerLost parks only the confirmed sandbox and never a restorable one
     "a restorable worker is never parked",
   );
 });
+
+test("releasing a run's worker never warms a container another run still owns", async () => {
+  const persistence = memoryPersistence();
+  const bindings = new T3ThreadBindingStore(persistence.stores.metadata);
+  await bindings.bind({
+    canonicalThreadId: "busy-thread",
+    providerInstanceId: "codex",
+    t3ThreadId: "t3-thread-1",
+    projectId: "project-1",
+    sandboxId: "sandbox-1",
+    baseUrl: "https://t3.example",
+    workerState: "running",
+    workerGeneration: 1,
+    activeRunId: "original-run",
+    modelSelection: { instanceId: "codex", model: "gpt-5.6-sol" },
+    createdAt: "2026-09-01T16:00:00.000Z",
+    updatedAt: "2026-09-01T17:00:00.000Z",
+  });
+  const environments: T3EnvironmentConnectionManager = {
+    async provision() {
+      throw new Error("unused");
+    },
+    async reconnect() {
+      throw new Error("unused");
+    },
+    async hibernate() {
+      throw new Error("unused");
+    },
+  };
+  const gateway = new T3Gateway(bindings, environments);
+
+  // A failed steer's finalize must not warm the worker mid-turn.
+  await gateway.releaseWorkerAfterRun("busy-thread", "steer-run");
+  assert.equal((await bindings.get("busy-thread"))?.workerState, "running");
+
+  // The owning run's own release still works.
+  await gateway.releaseWorkerAfterRun("busy-thread", "original-run");
+  assert.equal((await bindings.get("busy-thread"))?.workerState, "warm");
+});

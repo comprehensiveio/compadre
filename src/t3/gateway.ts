@@ -1151,7 +1151,10 @@ export class T3Gateway {
    * Without this the binding matches neither sweep predicate and the sandbox
    * burns until Modal's hard timeout.
    */
-  async releaseWorkerAfterRun(canonicalThreadId: string): Promise<void> {
+  async releaseWorkerAfterRun(
+    canonicalThreadId: string,
+    releasingRunId?: string,
+  ): Promise<void> {
     if (!this.environments.hibernate) return;
     await this.locks.withLock(
       this.lockKey(canonicalThreadId),
@@ -1159,6 +1162,15 @@ export class T3Gateway {
         if (signal.aborted) throw signal.reason;
         const binding = await this.bindings.get(canonicalThreadId);
         if (!binding || binding.workerState !== "running") return;
+        if (
+          binding.activeRunId &&
+          releasingRunId &&
+          binding.activeRunId !== releasingRunId
+        ) {
+          // Another run still owns this worker (a failed steer must not warm
+          // the container out from under the original turn, 2026-09-01).
+          return;
+        }
         const timestamp = this.now().toISOString();
         const desiredWarmUntil = this.now().getTime() + this.warmLeaseMs;
         const sandboxStartedAt = Date.parse(

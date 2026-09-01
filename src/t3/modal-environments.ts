@@ -312,7 +312,16 @@ export class T3ModalEnvironmentManager implements T3EnvironmentConnectionManager
       marker = parseT3SlackDestinationMarker(
         await handle.fs.read(T3_SLACK_DESTINATION_PATH),
       );
-    } catch {
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (!/not found|no such file|noent/i.test(message)) {
+        // A busy sandbox can time out a filesystem read. That is a transient
+        // I/O failure, not a missing security marker: misreporting it as a
+        // destination violation blocked every reconnect to a healthy worker
+        // for the rest of its life (2026-09-01). Surface it as the
+        // reconnect failure it is so watchers ride it out.
+        throw error;
+      }
       marker = undefined;
     }
     if (

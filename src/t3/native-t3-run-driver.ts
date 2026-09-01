@@ -85,7 +85,10 @@ export interface NativeT3DriverGateway {
     runId: string,
     terminalStatus?: T3ThreadBinding["status"],
   ): Promise<void>;
-  releaseWorkerAfterRun?(canonicalThreadId: string): Promise<void>;
+  releaseWorkerAfterRun?(
+    canonicalThreadId: string,
+    releasingRunId?: string,
+  ): Promise<void>;
 }
 
 export interface NativeT3RunDriverDependencies {
@@ -274,7 +277,7 @@ export async function driveNativeT3Run(
   const releaseWorker = async () => {
     if (!deps.gateway.releaseWorkerAfterRun) return;
     await deps.gateway
-      .releaseWorkerAfterRun(request.canonicalThreadId)
+      .releaseWorkerAfterRun(request.canonicalThreadId, runId)
       .catch((error) =>
         console.warn("[native-t3-driver] worker release failed", {
           runId,
@@ -793,7 +796,7 @@ export async function finalizeNativeT3Run(
       );
     if (deps.gateway?.releaseWorkerAfterRun) {
       await deps.gateway
-        .releaseWorkerAfterRun(request.canonicalThreadId)
+        .releaseWorkerAfterRun(request.canonicalThreadId, runId)
         .catch((error) =>
           console.warn("[native-t3-driver] finalize worker release failed", {
             runId,
