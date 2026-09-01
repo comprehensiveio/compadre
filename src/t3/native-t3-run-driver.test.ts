@@ -284,9 +284,13 @@ test("a run cancelled before dispatch converges without contacting the worker", 
 
 test("an aborted signal interrupts the worker and terminalizes as aborted", async (t) => {
   const abort = new AbortController();
+  let armCancel: () => Promise<void>;
   const { durability, requests, gateway, calls, chunks, runId } = await harness("run-abort", [
     async ({ onSnapshot, signal }) => {
       await onSnapshot?.(snapshotAt({ assistantText: "Working", streaming: true, terminal: false }));
+      // The real cancel flow records durable intent before the workflow (and
+      // therefore the activity) is cancelled.
+      await armCancel();
       abort.abort();
       return new Promise((_resolve, reject) => {
         const fail = () => reject(new Error("watch aborted"));
@@ -295,6 +299,7 @@ test("an aborted signal interrupts the worker and terminalizes as aborted", asyn
       });
     },
   ]);
+  armCancel = () => requestRunCancel(durability.runs, runId).then(() => undefined);
   t.after(() => durability.close());
 
   const outcome = await driveNativeT3Run(
@@ -356,5 +361,63 @@ test("a superseded driver claim cannot append or terminalize", async (t) => {
   // the record; the claim owner converges the run.
   const events = await chunks();
   assert.ok(!events.some((event) => event.type === EventType.RUN_FINISHED));
+  assert.equal((await durability.runs.get(runId))?.status, "running");
+});
+
+
+test("an attempt cancellation without run intent hands off instead of interrupting", async (t) => {
+  const abort = new AbortController();
+  const { durability, requests, gateway, calls, chunks, runId } = await harness("run-handoff", [
+    async ({ onSnapshot, signal }) => {
+      await onSnapshot?.(snapshotAt({ assistantText: "Still working", streaming: true, terminal: false }));
+      // Simulate a startToClose timeout / worker drain: Temporal cancels the
+      // attempt but nobody requested run cancellation.
+      abort.abort();
+      return new Promise((_resolve, reject) => {
+        const fail = () => reject(new Error("watch aborted"));
+        if (signal?.aborted) return fail();
+        signal?.addEventListener("abort", fail, { once: true });
+      });
+    },
+    async ({ onSnapshot }) => {
+      const terminal = snapshotAt({ assistantText: "Still working, now done", streaming: false, terminal: true });
+      await onSnapshot?.(terminal);
+      return terminal;
+    },
+  ]);
+  t.after(() => durability.close());
+  const deps = { gateway, durability, requests };
+
+  // The cancelled attempt must throw for retry and must NOT touch the turn.
+  await assert.rejects(() => driveNativeT3Run(deps, runId, { signal: abort.signal }));
+  assert.equal(calls.cancels, 0, "the worker turn is never interrupted");
+  assert.equal((await durability.runs.get(runId))?.status, "running");
+  const midway = await chunks();
+  assert.ok(!midway.some((event) => event.type === EventType.RUN_ERROR));
+
+  // The next attempt reattaches and completes the run normally.
+  const outcome = await driveNativeT3Run(deps, runId);
+  assert.equal(outcome.status, "completed");
+  assert.equal(calls.sends, 1, "still dispatched exactly once");
+  const events = await chunks();
+  assert.equal(events.filter((event) => event.type === EventType.RUN_FINISHED).length, 1);
+  const text = events
+    .filter((event) => event.type === EventType.TEXT_MESSAGE_CONTENT)
+    .map((event) => event.delta)
+    .join("");
+  assert.equal(text, "Still working, now done");
+});
+
+test("a pre-watch attempt cancellation without run intent retries instead of aborting", async (t) => {
+  const abort = new AbortController();
+  abort.abort();
+  const { durability, requests, gateway, calls, runId } = await harness("run-prehandoff", []);
+  t.after(() => durability.close());
+
+  await assert.rejects(
+    () => driveNativeT3Run({ gateway, durability, requests }, runId, { signal: abort.signal }),
+    /cancelled before watching/,
+  );
+  assert.equal(calls.sends, 0);
   assert.equal((await durability.runs.get(runId))?.status, "running");
 });

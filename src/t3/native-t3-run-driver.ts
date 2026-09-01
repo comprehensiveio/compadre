@@ -315,12 +315,17 @@ export async function driveNativeT3Run(
 
   // Cancellation that raced ahead of the driver: converge without dispatching.
   const dispatched = await deps.requests.getDispatch(runId);
-  if ((run.cancelRequested || options.signal?.aborted) && !dispatched) {
+  if (run.cancelRequested && !dispatched) {
     await append(cancelledChunk(runId, now()));
     return terminalize("aborted", {
       message: CANCELLED_MESSAGE,
       code: CANCELLED_CODE,
     });
+  }
+  if (options.signal?.aborted) {
+    // The attempt was cancelled (timeout, retry supersession, worker drain)
+    // without durable run-cancel intent. Hand off to the next attempt.
+    throw new Error(`Native T3 run ${runId} drive attempt was cancelled before watching`);
   }
 
   let turn: T3GatewayTurn;
@@ -410,24 +415,41 @@ export async function driveNativeT3Run(
   if (mirror && persisted.length === 0) await mirror.start();
 
   const watchAbort = new AbortController();
-  let cancelled = options.signal?.aborted ?? false;
-  const onCancel = () => {
-    cancelled = true;
-    void deps.gateway
-      .cancel({
-        canonicalThreadId: request.canonicalThreadId,
-        providerInstanceId: turn.binding.providerInstanceId,
-      })
-      .catch((error) =>
-        console.warn("[native-t3-driver] worker interrupt failed", {
+  let cancelled = false;
+  const onSignalAbort = () => {
+    // A Temporal activity cancellation is ambiguous: it fires for genuine
+    // run cancellation (workflow cancel after durable intent) but also for
+    // attempt timeouts, retry supersession, and worker drain. Only durable
+    // cancel intent may interrupt the billed worker turn; everything else
+    // must leave the turn running for the next attempt to reattach.
+    void (async () => {
+      const current = await runs.get(runId).catch(() => null);
+      if (current?.cancelRequested) {
+        cancelled = true;
+        await deps.gateway
+          .cancel({
+            canonicalThreadId: request.canonicalThreadId,
+            providerInstanceId: turn.binding.providerInstanceId,
+          })
+          .catch((error) =>
+            console.warn("[native-t3-driver] worker interrupt failed", {
+              runId,
+              error,
+            }),
+          );
+        watchAbort.abort(CANCELLED_MESSAGE);
+      } else {
+        console.log("[native-t3-driver] attempt handed off without run cancellation", {
           runId,
-          error,
-        }),
-      );
-    watchAbort.abort(CANCELLED_MESSAGE);
+        });
+        watchAbort.abort(
+          `Native T3 run ${runId} drive attempt was cancelled without run intent`,
+        );
+      }
+    })();
   };
-  if (cancelled) onCancel();
-  else options.signal?.addEventListener("abort", onCancel, { once: true });
+  if (options.signal?.aborted) onSignalAbort();
+  else options.signal?.addEventListener("abort", onSignalAbort, { once: true });
 
   try {
     const pending: StreamChunk[] = [];
@@ -548,7 +570,7 @@ export async function driveNativeT3Run(
       ...(cancelled ? { code: CANCELLED_CODE } : {}),
     });
   } finally {
-    options.signal?.removeEventListener("abort", onCancel);
+    options.signal?.removeEventListener("abort", onSignalAbort);
   }
 }
 

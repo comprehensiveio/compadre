@@ -256,7 +256,11 @@ owns each run:
   durable driver epoch used by in-process drivers, dispatches the worker turn
   at most once (a durable dispatch record is written right after
   `gateway.send`), maintains the binding's active-run marker, and appends
-  fenced projected events to the Postgres run log. On retry it rebuilds the
+  fenced projected events to the Postgres run log. One attempt may watch for
+  the worker's full lifetime (130-minute start-to-close); heartbeats detect a
+  dead controller within two minutes. Activity cancellation interrupts the
+  worker turn only when the run carries durable `cancelRequested` — attempt
+  timeouts and worker drain hand off silently to the next attempt. On retry it rebuilds the
   projector from the chunks already persisted
   (`NativeT3SnapshotProjector.restore`) and reattaches to the running turn, so
   a controller restart moves the watch to the replacement instance without

@@ -11,6 +11,7 @@ import {
   ActivityCancellationType,
   CancellationScope,
   isCancellation,
+  patched,
   proxyActivities,
 } from "@temporalio/workflow";
 import type * as activities from "./activities.js";
@@ -19,11 +20,32 @@ import type {
   NativeT3RunWorkflowResult,
 } from "./shared.js";
 
+// Retained only so pre-fix workflow histories replay deterministically.
+// Its 25-minute ceiling killed legitimately long turns; see the patched()
+// selection inside the workflow. Remove after those histories drain
+// (retention is 7 days from 2026-09-01).
+const { driveNativeT3RunActivity: driveWithLegacyCeiling } =
+  proxyActivities<typeof activities>({
+    startToCloseTimeout: "25 minutes",
+    heartbeatTimeout: "2 minutes",
+    cancellationType: ActivityCancellationType.WAIT_CANCELLATION_COMPLETED,
+    retry: {
+      initialInterval: "5 seconds",
+      backoffCoefficient: 2,
+      maximumInterval: "1 minute",
+      maximumAttempts: 3,
+      nonRetryableErrorTypes: ["NativeT3RunStateError"],
+    },
+  });
+
 const { driveNativeT3RunActivity } = proxyActivities<typeof activities>({
-  // One watch attempt covers the 20-minute terminal wait plus dispatch and
-  // worker provisioning headroom. Retries resume projection from the durable
-  // event log, so attempts never duplicate already-persisted output.
-  startToCloseTimeout: "25 minutes",
+  // One attempt may legitimately watch for the worker's full ~2-hour Modal
+  // lifetime: the gateway's terminal wait is progress-aware (20-minute
+  // no-durable-progress inactivity limit, absolute ceiling derived from the
+  // sandbox's remaining lifetime). The 2-minute heartbeat timeout still
+  // detects a dead controller quickly, and retries resume projection from
+  // the durable event log without duplicating output.
+  startToCloseTimeout: "130 minutes",
   heartbeatTimeout: "2 minutes",
   cancellationType: ActivityCancellationType.WAIT_CANCELLATION_COMPLETED,
   retry: {
@@ -49,7 +71,9 @@ export async function nativeT3RunWorkflow(
   input: NativeT3RunWorkflowInput,
 ): Promise<NativeT3RunWorkflowResult> {
   try {
-    const outcome = await driveNativeT3RunActivity(input);
+    const outcome = patched("drive-worker-lifetime-ceiling-v1")
+      ? await driveNativeT3RunActivity(input)
+      : await driveWithLegacyCeiling(input);
     return { status: outcome.status };
   } catch (error) {
     const cancelled = isCancellation(error);

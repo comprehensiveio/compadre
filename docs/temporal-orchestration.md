@@ -23,8 +23,9 @@ record by a retried finalize step.
    `compadre.t3.run-requests.v1` / `compadre.t3.run-dispatches.v1`), creates
    the run record, and starts `nativeT3RunWorkflow` with a deterministic
    workflow id (`compadre-t3-<sha256(runId)>`). Duplicate starts are no-ops.
-2. `driveNativeT3RunActivity` (25 m start-to-close, 2 m heartbeat timeout,
-   3 attempts) first claims the run's durable driver epoch (the same fencing
+2. `driveNativeT3RunActivity` (130 m start-to-close so one attempt can watch
+   the worker's full ~2 h Modal lifetime, 2 m heartbeat timeout for fast
+   dead-controller detection, 3 attempts) first claims the run's durable driver epoch (the same fencing
    in-process drivers use, so a retiring pre-Temporal controller and the
    activity can never both write one run's log), maintains the worker
    binding's active-run marker, dispatches the worker turn **at most once** —
@@ -49,6 +50,12 @@ record by a retried finalize step.
 5. Cancellation: `POST /hosted/t3/runs/:id/cancel` records durable cancel
    intent and cancels the workflow; the drive activity's cancellation signal
    interrupts the worker turn and terminalizes the run as `aborted`.
+   A Temporal activity cancellation is deliberately NOT sufficient on its
+   own: it also fires for attempt timeouts, retry supersession, and worker
+   drain, so the driver interrupts the billed worker turn only when the run
+   record carries `cancelRequested`. Any other cancellation is a silent
+   handoff — the attempt stops watching and the next attempt (possibly on a
+   replacement instance) reattaches.
 
 Subscribers are unchanged: central T3 and replay clients tail the Postgres
 event log over SSE with `Last-Event-ID` resume; producer relocation is
