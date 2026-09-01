@@ -48,6 +48,11 @@ import {
   recoverConfiguredNativeT3Runs,
   stopConfiguredT3WorkerLifecycle,
 } from "./t3/runtime.js";
+import { NATIVE_T3_RUN_ORCHESTRATOR } from "./temporal/mode.js";
+import {
+  startNativeT3TemporalWorker,
+  type RunningTemporalWorker,
+} from "./temporal/worker.js";
 
 const app = new Hono();
 
@@ -92,6 +97,7 @@ async function start() {
       `[persistence] TanStack thread state enabled (run memory: ${RUN_MEMORY_MODE})`,
     );
   }
+  let temporalWorker: RunningTemporalWorker | undefined;
   if (nativeT3GatewayEnabled()) {
     const gateway = await getConfiguredT3Gateway();
     if (!gateway) {
@@ -100,6 +106,15 @@ async function start() {
       );
     }
     console.log("[t3-worker-lifecycle] startup sweeper enabled");
+    if (NATIVE_T3_RUN_ORCHESTRATOR === "temporal") {
+      // Fail fast: without the Temporal worker no native run can execute, so
+      // an unreachable server must block this deploy from receiving traffic.
+      temporalWorker = await startNativeT3TemporalWorker();
+      temporalWorker.done.catch((error) => {
+        console.error("[temporal] worker stopped unexpectedly", error);
+        if (!shuttingDown) process.exit(1);
+      });
+    }
   }
   const agent = validateConversationConfiguration();
   const slackInstallation = await validateConfiguredSlackInstallation();
@@ -226,7 +241,14 @@ async function start() {
       console.error(`[shutdown] drain exceeded ${timeoutMs}ms`);
       process.exit(1);
     }, timeoutMs);
-    void closeHttpServer(server).then(
+    // Drain HTTP and the Temporal worker together. Activities that cannot
+    // finish inside the window are resumed by the replacement instance.
+    const drainTemporal = temporalWorker
+      ? temporalWorker.shutdown().catch((error) => {
+          console.error("[shutdown] Temporal worker drain failed", error);
+        })
+      : Promise.resolve();
+    void Promise.all([closeHttpServer(server), drainTemporal]).then(
       () => {
         clearTimeout(forceExit);
         console.log("[shutdown] in-flight requests drained");

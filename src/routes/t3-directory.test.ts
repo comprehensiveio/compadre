@@ -7,6 +7,7 @@ import type { T3GatewayTurn } from "../t3/gateway.js";
 import type { T3ArtifactStore } from "../t3/artifact-store.js";
 import { createAgentRunDurability } from "../durability/runtime.js";
 import { NativeT3RunCoordinator } from "../t3/run-coordinator.js";
+import { InProcessNativeT3RunService } from "../t3/run-service.js";
 import {
   createT3DirectoryRoutes,
   shouldMirrorNativeT3RunToSlack,
@@ -542,6 +543,11 @@ test("streams a native Modal T3 turn through the central provider endpoint", asy
     createId: () => "generated",
     getGateway: async () => gateway,
     getRunCoordinator: async () => runCoordinator,
+    getRunService: async () =>
+      new InProcessNativeT3RunService({
+        gateway,
+        coordinator: runCoordinator,
+      }),
     watchTurn() {},
     async getSlackBinding(threadId) {
       slackBindingLookups.push(threadId);

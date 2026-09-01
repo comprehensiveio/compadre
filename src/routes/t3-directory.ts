@@ -17,38 +17,32 @@ import {
 } from "../t3/gateway.js";
 import {
   getConfiguredNativeT3RunCoordinator,
+  getConfiguredNativeT3RunService,
   getConfiguredT3ArtifactStore,
   getConfiguredT3Gateway,
 } from "../t3/runtime.js";
+import type { NativeT3RunService } from "../t3/run-service.js";
+import type { NativeT3RunRequest } from "../t3/run-request-store.js";
 import { requireCompadreApiKey } from "./auth.js";
-import {
-  createNativeT3AguiRecoveryStream,
-  createNativeT3AguiStream,
-  traceNativeT3AguiStream,
-} from "../t3/agui-stream.js";
 import {
   NATIVE_T3_PROTOCOL_HEADER,
   NATIVE_T3_PROTOCOL_VERSION,
 } from "../t3/agui-protocol.js";
 import { isAgentProvider } from "../tanstack/protocol.js";
 import { durableRunEventsResponse } from "../durability/http.js";
+import { ACTIVE_RUN_FIRST_CHUNK_DEADLINE_MS } from "../durability/runtime.js";
 import { getConfiguredThreadPersistence } from "../persistence/runtime.js";
 import {
   HostedThreadBindingStore,
   type HostedSlackBinding,
 } from "../services/hosted-thread-bindings.js";
-import { mirrorNativeT3RunToSlack } from "../services/native-t3-slack-delivery.js";
-import {
-  dispatchWasSuperseded,
-  finalAssistantTextForDispatch,
-} from "../services/t3-slack-conversation.js";
+import { finalAssistantTextForDispatch } from "../services/t3-slack-conversation.js";
 import {
   centralT3DetailsUrl,
   isSlackEntrypointMessageId,
 } from "../t3/central-conversation.js";
 import type { NativeT3RunCoordinator } from "../t3/run-coordinator.js";
 import { inputFilesSchema, type InputFile } from "../services/input-files.js";
-import { SlackClient } from "../services/slack-client.js";
 import type { T3ArtifactStore } from "../t3/artifact-store.js";
 import type { T3OutputArtifact } from "../t3/output-artifacts.js";
 
@@ -60,11 +54,6 @@ const OUTPUT_ARTIFACT_INSTRUCTIONS = [
   "When you create a file for the user, write the final downloadable copy under /tmp/agent-outputs.",
   "Use a descriptive filename and keep temporary/intermediate files elsewhere.",
 ].join(" ");
-
-export interface ActiveNativeT3Run {
-  gateway: T3DirectoryGateway;
-  turn: T3GatewayTurn;
-}
 
 interface T3DirectoryGateway {
   list(): Promise<T3ThreadBinding[]>;
@@ -119,6 +108,7 @@ export interface T3DirectoryRoutesDependencies {
   enabled(): boolean;
   getGateway(): Promise<T3DirectoryGateway | null>;
   getRunCoordinator?(): Promise<NativeT3RunCoordinator | null>;
+  getRunService?(): Promise<NativeT3RunService | null>;
   getArtifactStore?(): Promise<T3ArtifactStore | null>;
   createId(): string;
   watchTurn(gateway: T3DirectoryGateway, turn: T3GatewayTurn): void;
@@ -129,6 +119,7 @@ const defaultDependencies: T3DirectoryRoutesDependencies = {
   enabled: () => process.env.COMPADRE_T3_DIRECTORY_ENABLED === "true",
   getGateway: getConfiguredT3Gateway,
   getRunCoordinator: getConfiguredNativeT3RunCoordinator,
+  getRunService: getConfiguredNativeT3RunService,
   getArtifactStore: getConfiguredT3ArtifactStore,
   createId: crypto.randomUUID,
   watchTurn(gateway, turn) {
@@ -384,7 +375,6 @@ function acceptsNativeT3Protocol(request: Request): boolean {
 
 export function createT3DirectoryRoutes(
   dependencies: T3DirectoryRoutesDependencies = defaultDependencies,
-  activeRuns: Map<string, ActiveNativeT3Run> = new Map(),
 ): Hono {
   const routes = new Hono();
 
@@ -524,11 +514,10 @@ export function createT3DirectoryRoutes(
     if (!gateway) {
       return c.json({ error: "thread persistence requires durability" }, 503);
     }
-    const runCoordinator = await (
-      dependencies.getRunCoordinator?.() ??
-      getConfiguredNativeT3RunCoordinator()
+    const runService = await (
+      dependencies.getRunService?.() ?? getConfiguredNativeT3RunService()
     );
-    if (!runCoordinator) {
+    if (!runService) {
       return c.json({ error: "native T3 run durability is not configured" }, 503);
     }
     const artifactStore = await dependencies.getArtifactStore?.();
@@ -581,157 +570,61 @@ export function createT3DirectoryRoutes(
             threadId: slackBinding.t3ThreadId,
           })
         : undefined;
-    await runCoordinator.start({
+    const runRequest: NativeT3RunRequest = {
       runId,
-      threadId: canonicalThreadId,
-      source(signal) {
-        let workerTurn: T3GatewayTurn | undefined;
-        const nativeStream = createNativeT3AguiStream({
-          gateway,
-          canonicalThreadId,
-          runId,
-          title:
-            nonEmptyString(params.forwardedProps.title, MAX_TITLE_LENGTH) ??
-            "T3 thread",
-          text: artifactStore
-            ? `${providerText}\n\n${OUTPUT_ARTIFACT_INSTRUCTIONS}`
-            : providerText,
-          modelSelection: selectedModel,
-          inputFiles: parsedInputFiles.data,
-          blockedSlackDestination: linkedSlackBinding
-            ? {
-                channelId: linkedSlackBinding.channelId,
-                threadTs: linkedSlackBinding.threadTs,
-              }
-            : undefined,
-          outputArtifactEvents:
-            artifactStore && gateway.collectOutputArtifacts
-              ? async (turn) => {
-                  const events: import("../t3/agui-protocol.js").StreamChunk[] = [];
-                  const collection = await gateway.collectOutputArtifacts!(
-                    turn,
-                    async (artifact) => {
-                      const metadata = await artifactStore.publish({
-                        runId,
-                        artifactId: artifact.digest,
-                        path: artifact.path,
-                        name: artifact.filename,
-                        title: artifact.title,
-                        mimetype: artifact.mimetype,
-                        bytes: artifact.bytes,
-                      });
-                      const slackTeamId =
-                        linkedSlackBinding?.recipientTeamId ??
-                        process.env.SLACK_TEAM_ID?.trim() ??
-                        process.env.COMPADRE_SLACK_WORKSPACE_ID?.trim();
-                      if (linkedSlackBinding && botToken && slackTeamId) {
-                        try {
-                          await new SlackClient({ botToken, teamId: slackTeamId }).uploadBytes({
-                            channel: linkedSlackBinding.channelId,
-                            threadTs: linkedSlackBinding.threadTs,
-                            data: artifact.bytes,
-                            filename: artifact.filename,
-                            title: artifact.title,
-                          });
-                        } catch (error) {
-                          console.warn("[t3-artifacts] Slack artifact delivery failed", {
-                            runId,
-                            artifactId: metadata.artifactId,
-                            error,
-                          });
-                        }
-                      }
-                      events.push({
-                        type: "OUTPUT_ARTIFACT",
-                        timestamp: Date.now(),
-                        artifact: {
-                          artifactId: metadata.artifactId,
-                          path: metadata.path,
-                          name: metadata.name,
-                          title: metadata.title,
-                          mimetype: metadata.mimetype,
-                          sizeBytes: metadata.sizeBytes,
-                          storage: "hosted-object",
-                        },
-                      });
-                    },
-                  );
-                  for (const failure of collection.failures) {
-                    console.warn("[t3-artifacts] output artifact was not published", {
-                      runId,
-                      failure,
-                    });
-                  }
-                  return events;
-                }
-              : undefined,
-          signal,
-          async onTurn(turn) {
-            workerTurn = turn;
-            activeRuns.set(runId, { gateway, turn });
-            await gateway.markActiveRun?.(canonicalThreadId, runId);
-          },
-          async onTerminal() {
-            activeRuns.delete(runId);
-            await gateway.clearActiveRun?.(canonicalThreadId, runId).catch((error: unknown) => {
-              console.error("[native-t3-run] active run marker could not be cleared", {
-                runId,
-                canonicalThreadId,
-                error,
-              });
-            });
-          },
-        });
-        const mirroredStream = slackBinding && botToken
-          ? mirrorNativeT3RunToSlack(nativeStream, {
-              binding: slackBinding,
+      canonicalThreadId,
+      provider,
+      title:
+        nonEmptyString(params.forwardedProps.title, MAX_TITLE_LENGTH) ??
+        "T3 thread",
+      text: artifactStore
+        ? `${providerText}\n\n${OUTPUT_ARTIFACT_INSTRUCTIONS}`
+        : providerText,
+      modelSelection: selectedModel,
+      inputFiles: parsedInputFiles.data,
+      ...(linkedSlackBinding
+        ? {
+            blockedSlackDestination: {
+              channelId: linkedSlackBinding.channelId,
+              threadTs: linkedSlackBinding.threadTs,
+            },
+            slackArtifactDestination: {
+              channelId: linkedSlackBinding.channelId,
+              threadTs: linkedSlackBinding.threadTs,
+              ...(linkedSlackBinding.recipientTeamId
+                ? { recipientTeamId: linkedSlackBinding.recipientTeamId }
+                : {}),
+            },
+          }
+        : {}),
+      ...(slackBinding && botToken
+        ? {
+            slackMirror: {
+              channelId: slackBinding.channelId,
+              threadTs: slackBinding.threadTs,
+              ...(slackBinding.recipientUserId
+                ? { recipientUserId: slackBinding.recipientUserId }
+                : {}),
+              ...(slackBinding.recipientTeamId
+                ? { recipientTeamId: slackBinding.recipientTeamId }
+                : {}),
               userMessage: text,
-              detailsUrl,
-              botToken,
-              async shouldDeliverFinal() {
-                if (!workerTurn) return true;
-                try {
-                  const latest = await gateway.snapshot({
-                    canonicalThreadId,
-                    providerInstanceId: selectedModel.instanceId,
-                  });
-                  return latest
-                    ? !dispatchWasSuperseded(
-                        latest.snapshot,
-                        workerTurn.dispatch,
-                      )
-                    : true;
-                } catch (error) {
-                  // Slack mirroring is best-effort. A snapshot read outage
-                  // must not turn a successful provider run into a failure;
-                  // the worst case here is one duplicate final answer.
-                  console.warn(
-                    "[native-t3-slack] could not determine final delivery owner",
-                    { runId, canonicalThreadId, error },
-                  );
-                  return true;
-                }
-              },
-            })
-          : nativeStream;
-        return traceNativeT3AguiStream(mirroredStream, {
-          canonicalThreadId,
-          runId,
-          provider,
-          model: selectedModel.model,
-        });
-      },
-      async cancel() {
-        const active = activeRuns.get(runId);
-        if (!active) return;
-        await active.gateway.cancel({
-          canonicalThreadId: active.turn.binding.canonicalThreadId,
-          providerInstanceId: active.turn.binding.providerInstanceId,
-        });
-      },
-    });
+              ...(detailsUrl ? { detailsUrl } : {}),
+            },
+          }
+        : {}),
+      collectArtifacts: Boolean(artifactStore),
+      createdAt: new Date().toISOString(),
+    };
+    await runService.startTurn(runRequest);
+    // This subscriber KNOWS the run is live (it just started it), so it may
+    // wait out orchestrator scheduling before the first chunk. The Postgres
+    // backend ignores the option; the memory backend would otherwise apply
+    // its unknown-run fail-fast and drop the stream before RUN_STARTED.
     return durableRunEventsResponse(
-      runCoordinator.stream(runId),
+      runService.stream(runId, {
+        firstChunkDeadlineMs: ACTIVE_RUN_FIRST_CHUNK_DEADLINE_MS,
+      }),
       c.req.raw,
       {
         [NATIVE_T3_PROTOCOL_HEADER]: String(NATIVE_T3_PROTOCOL_VERSION),
@@ -741,74 +634,52 @@ export function createT3DirectoryRoutes(
   });
 
   routes.get("/hosted/t3/runs/:runId/events", guarded(async (c) => {
+    const runService = await (
+      dependencies.getRunService?.() ?? getConfiguredNativeT3RunService()
+    );
     const runCoordinator = await (
       dependencies.getRunCoordinator?.() ??
       getConfiguredNativeT3RunCoordinator()
     );
-    if (!runCoordinator) {
+    const reader = runService ?? runCoordinator;
+    if (!reader) {
       return c.json({ error: "native T3 run durability is not configured" }, 503);
     }
     const runId = routeParam(c, "runId");
-    const run = await runCoordinator.run(runId);
+    const run = await reader.run(runId);
     if (!run) return c.json({ error: "native T3 run not found", runId }, 404);
-    const gateway = await dependencies.getGateway();
-    if (gateway) {
-      await runCoordinator.resume({
+    // A replay subscriber may arrive after the run's producer disappeared.
+    // The service decides whether reattachment is needed: the Temporal
+    // orchestrator is a no-op (its drive activity is the sole producer), the
+    // in-process orchestrator reattaches the worker turn.
+    await runService?.ensureSubscriberRecovery(runId).catch((error) => {
+      console.error("[native-t3-run] recovery could not start", {
         runId,
         threadId: run.threadId,
-        source(signal) {
-          return createNativeT3AguiRecoveryStream({
-            gateway,
-            canonicalThreadId: run.threadId,
-            runId,
-            startedAt: run.startedAt,
-            signal,
-            async onTurn(turn) {
-              activeRuns.set(runId, { gateway, turn });
-              await gateway.markActiveRun?.(run.threadId, runId);
-            },
-            async onTerminal() {
-              activeRuns.delete(runId);
-              await gateway.clearActiveRun?.(run.threadId, runId).catch((error: unknown) => {
-                console.error("[native-t3-run] active run marker could not be cleared", {
-                  runId,
-                  canonicalThreadId: run.threadId,
-                  error,
-                });
-              });
-            },
-          });
-        },
-        async cancel() {
-          const active = activeRuns.get(runId);
-          await gateway.cancel({
-            canonicalThreadId: run.threadId,
-            providerInstanceId: active?.turn.binding.providerInstanceId ?? "",
-          });
-        },
-      }).catch((error) => {
-        console.error("[native-t3-run] recovery could not start", {
-          runId,
-          threadId: run.threadId,
-          error,
-        });
+        error,
       });
-    }
-    return durableRunEventsResponse(runCoordinator.stream(runId), c.req.raw, {
+    });
+    return durableRunEventsResponse(reader.stream(runId), c.req.raw, {
       [NATIVE_T3_PROTOCOL_HEADER]: String(NATIVE_T3_PROTOCOL_VERSION),
     });
   }));
 
   routes.post("/hosted/t3/runs/:runId/cancel", guarded(async (c) => {
     const runId = routeParam(c, "runId");
-    const runCoordinator = await (
-      dependencies.getRunCoordinator?.() ??
-      getConfiguredNativeT3RunCoordinator()
-    );
-    if (!runCoordinator) {
+    // The run service dispatches durable (workflow) cancellation; the bare
+    // coordinator remains the fallback for legacy in-process producers.
+    const runCanceller =
+      (await (
+        dependencies.getRunService?.() ?? getConfiguredNativeT3RunService()
+      )) ??
+      (await (
+        dependencies.getRunCoordinator?.() ??
+        getConfiguredNativeT3RunCoordinator()
+      ));
+    if (!runCanceller) {
       return c.json({ error: "native T3 run durability is not configured" }, 503);
     }
-    const result = await runCoordinator.cancel(runId);
+    const result = await runCanceller.cancel(runId);
     if (!result.found) {
       return c.json({ error: "native T3 run not found", runId }, 404);
     }

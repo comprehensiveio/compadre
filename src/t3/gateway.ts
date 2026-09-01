@@ -1021,6 +1021,65 @@ export class T3Gateway {
     });
   }
 
+  /**
+   * Rebuild a turn handle from its persisted dispatch so a relocated driver
+   * can keep watching a turn it did not dispatch. The binding is re-read
+   * because the worker may have changed sandbox generation since dispatch.
+   */
+  async resumeTurn(
+    canonicalThreadId: string,
+    dispatch: T3TurnDispatch,
+  ): Promise<T3GatewayTurn | null> {
+    const binding = await this.bindings.get(canonicalThreadId);
+    if (!binding) return null;
+    if (binding.t3ThreadId !== dispatch.threadId) {
+      throw new Error(
+        `Dispatch for T3 thread ${dispatch.threadId} does not match binding ${binding.t3ThreadId}`,
+      );
+    }
+    return { binding, dispatch };
+  }
+
+  /**
+   * Converge a worker left "running" after its run terminalized without a
+   * successful waitForTerminal (driver crash, watch timeout, cancellation).
+   * Without this the binding matches neither sweep predicate and the sandbox
+   * burns until Modal's hard timeout.
+   */
+  async releaseWorkerAfterRun(canonicalThreadId: string): Promise<void> {
+    if (!this.environments.hibernate) return;
+    await this.locks.withLock(
+      this.lockKey(canonicalThreadId),
+      async (signal) => {
+        if (signal.aborted) throw signal.reason;
+        const binding = await this.bindings.get(canonicalThreadId);
+        if (!binding || binding.workerState !== "running") return;
+        const timestamp = this.now().toISOString();
+        const desiredWarmUntil = this.now().getTime() + this.warmLeaseMs;
+        const sandboxStartedAt = Date.parse(
+          binding.sandboxStartedAt ?? binding.createdAt,
+        );
+        const latestSafeWarmUntil = Number.isFinite(sandboxStartedAt)
+          ? sandboxStartedAt + this.maxLiveMs - this.hibernationSafetyMs
+          : desiredWarmUntil;
+        const updated: T3ThreadBinding = {
+          ...binding,
+          workerState: "warm",
+          lastActiveAt: timestamp,
+          warmUntil: new Date(
+            Math.min(desiredWarmUntil, latestSafeWarmUntil),
+          ).toISOString(),
+          updatedAt: timestamp,
+        };
+        await this.bindings.bindRecord(updated);
+        this.scheduleHibernation(updated);
+        this.recordWorkerTransition("warm.recovered", updated, {
+          warmUntil: updated.warmUntil,
+        });
+      },
+    );
+  }
+
   async collectOutputArtifacts(
     turn: T3GatewayTurn,
     publish: (artifact: T3OutputArtifact) => Promise<void>,

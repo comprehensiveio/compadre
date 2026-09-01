@@ -328,6 +328,99 @@ export class NativeT3SnapshotProjector {
     private readonly requestedMessageId: string,
   ) {}
 
+  /**
+   * Rebuild projector state from the chunks already appended to a run's
+   * durable event log, so a relocated or retried driver continues the same
+   * projection instead of re-emitting the turn from the beginning.
+   *
+   * The reconstruction is possible because the emitted chunks carry their own
+   * provenance: TEXT_MESSAGE_CONTENT includes the full accumulated `content`,
+   * TOOL_CALL_RESULT's `messageId` is the completing activity id, and
+   * TOOL_CALL_START's `toolCallId` keys the tool map. Usage activities cannot
+   * be recovered (their activity ids are not persisted), so a resumed run may
+   * repeat a THREAD_TOKEN_USAGE_UPDATED event; consumers treat usage as
+   * latest-wins.
+   */
+  static restore(
+    runId: string,
+    canonicalThreadId: string,
+    requestedMessageId: string,
+    chunks: Iterable<StreamChunk>,
+  ): NativeT3SnapshotProjector {
+    const projector = new NativeT3SnapshotProjector(
+      runId,
+      canonicalThreadId,
+      requestedMessageId,
+    );
+    for (const chunk of chunks) {
+      switch (chunk.type) {
+        case EventType.TEXT_MESSAGE_START: {
+          if (chunk.messageId && !projector.assistantMessages.has(chunk.messageId)) {
+            projector.assistantMessages.set(chunk.messageId, {
+              text: "",
+              ended: false,
+            });
+          }
+          break;
+        }
+        case EventType.TEXT_MESSAGE_CONTENT: {
+          if (!chunk.messageId) break;
+          const projected = projector.assistantMessages.get(chunk.messageId) ?? {
+            text: "",
+            ended: false,
+          };
+          projected.text =
+            typeof chunk.content === "string"
+              ? chunk.content
+              : `${projected.text}${chunk.delta ?? ""}`;
+          projector.assistantMessages.set(chunk.messageId, projected);
+          break;
+        }
+        case EventType.TEXT_MESSAGE_END: {
+          if (!chunk.messageId) break;
+          const projected = projector.assistantMessages.get(chunk.messageId);
+          if (projected) projected.ended = true;
+          break;
+        }
+        case EventType.TOOL_CALL_START: {
+          if (!chunk.toolCallId) break;
+          projector.tools.set(chunk.toolCallId, {
+            ...(chunk.itemType ? { itemType: chunk.itemType } : {}),
+            title: chunk.title ?? chunk.toolName ?? chunk.toolCallName ?? "Tool",
+            ...(chunk.detail ? { detail: chunk.detail } : {}),
+            ...(chunk.data !== undefined ? { data: chunk.data } : {}),
+          });
+          break;
+        }
+        case EventType.TOOL_CALL_RESULT: {
+          // messageId carries the completing activity id, which is the key
+          // project() consults before re-emitting a completed tool call.
+          if (chunk.messageId) projector.seenActivities.add(chunk.messageId);
+          break;
+        }
+        case EventType.RUN_FINISHED:
+        case EventType.RUN_ERROR: {
+          projector.terminal = true;
+          break;
+        }
+        default:
+          break;
+      }
+    }
+    return projector;
+  }
+
+  get isTerminal(): boolean {
+    return this.terminal;
+  }
+
+  /** Accumulated assistant text per message, for resuming a Slack mirror. */
+  get assistantTexts(): ReadonlyMap<string, string> {
+    return new Map(
+      [...this.assistantMessages].map(([id, projected]) => [id, projected.text]),
+    );
+  }
+
   project(snapshot: T3ThreadSnapshot): StreamChunk[] {
     if (this.terminal) return [];
     const requestedMessage = snapshot.thread.messages.find(

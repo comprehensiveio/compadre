@@ -143,6 +143,95 @@ test("projects native T3 text and tool snapshots incrementally", () => {
   assert.deepEqual(toolResult?.data, { command: "pwd" });
 });
 
+test("a restored projector continues where the persisted chunks stopped", () => {
+  const startActivity = {
+    id: "activity-start",
+    kind: "tool.started",
+    turnId: "turn-1",
+    summary: "Command run started",
+    createdAt: "2026-08-26T16:00:00.400Z",
+    payload: {
+      toolCallId: "tool-1",
+      itemType: "command_execution",
+      detail: "Bash: pwd",
+      data: { command: "pwd" },
+    },
+  };
+  const completeActivity = {
+    id: "activity-complete",
+    kind: "tool.completed",
+    turnId: "turn-1",
+    summary: "Command run",
+    createdAt: "2026-08-26T16:00:00.800Z",
+    payload: {
+      toolCallId: "tool-1",
+      detail: "Bash: pwd",
+      status: "completed",
+      data: { command: "pwd" },
+    },
+  };
+  const partial = snapshot({
+    sequence: 4,
+    state: "running",
+    text: "hello",
+    streaming: true,
+    activities: [startActivity],
+  });
+  const terminal = snapshot({
+    sequence: 8,
+    state: "completed",
+    text: "hello world",
+    streaming: false,
+    activities: [startActivity, completeActivity],
+  });
+
+  // Uninterrupted projection is the reference behavior.
+  const reference = new NativeT3SnapshotProjector("run-1", "central-thread", "user-1");
+  const referenceEvents = [
+    ...reference.project(partial),
+    ...reference.project(terminal),
+  ];
+
+  // A crashed driver persisted only the first snapshot's chunks; the retry
+  // restores from them and must emit exactly the remaining events.
+  const original = new NativeT3SnapshotProjector("run-1", "central-thread", "user-1");
+  const persisted = original.project(partial);
+  const restored = NativeT3SnapshotProjector.restore(
+    "run-1",
+    "central-thread",
+    "user-1",
+    persisted,
+  );
+  assert.equal(restored.isTerminal, false);
+  const resumed = restored.project(terminal);
+  const combined = [...persisted, ...resumed];
+
+  assert.deepEqual(
+    combined.map((event) => event.type),
+    referenceEvents.map((event) => event.type),
+  );
+  assert.equal(
+    combined.filter((event) => event.type === EventType.TOOL_CALL_START).length,
+    1,
+  );
+  assert.equal(
+    combined.filter((event) => event.type === EventType.TOOL_CALL_RESULT).length,
+    1,
+  );
+  assert.equal(
+    combined
+      .filter((event) => event.type === EventType.TEXT_MESSAGE_CONTENT)
+      .map((event) => event.delta)
+      .join(""),
+    "hello world",
+  );
+  assert.equal(restored.isTerminal, true);
+  assert.equal(
+    NativeT3SnapshotProjector.restore("run-1", "central-thread", "user-1", combined).isTerminal,
+    true,
+  );
+});
+
 test("ignores a stale terminal snapshot from before the requested message", () => {
   const projector = new NativeT3SnapshotProjector("run-1", "central-thread", "new-user");
   assert.deepEqual(projector.project(snapshot({

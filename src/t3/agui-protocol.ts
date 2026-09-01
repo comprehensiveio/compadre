@@ -50,6 +50,7 @@ export interface StreamChunk {
   status?: string;
   finishReason?: string | null;
   message?: string;
+  code?: string;
   usage?: Record<string, unknown>;
   artifact?: {
     artifactId: string;

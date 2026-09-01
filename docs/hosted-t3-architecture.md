@@ -157,22 +157,27 @@ appends, stream close, and terminal run-record writes are fenced against that
 epoch so a retiring controller cannot duplicate prose or tool arguments after
 a replacement claims the run.
 
+Under the default Temporal orchestrator (below), the run's drive activity is
+the only native-run producer: its retries reattach after a controller restart,
+so neither subscriber-triggered nor startup reattachment is needed for native
+runs. The following two in-process recovery paths remain implemented and
+active when `NATIVE_T3_RUN_ORCHESTRATOR` is set to `"in-process"`:
+
 The provider transport reconnects with `GET /hosted/t3/runs/:runId/events`.
 When that request reaches a controller that is not already driving the run, the
 controller reconnects to the existing Modal T3 thread, identifies the already
 dispatched turn from its worker snapshot, and reprojects the full narration and
-tool history without sending another provider request. This specifically makes
-controller rollouts recoverable. The central T3 service's exclusive SQLite
-disk is a separate deployment-availability limitation described below.
+tool history without sending another provider request. The central T3 service's
+exclusive SQLite disk is a separate deployment-availability limitation
+described below.
 
 The worker binding also records the exact active native provider run ID after
-dispatch. Five seconds after controller startup, Compadre scans only bindings
-that are both `working` and carry that marker, claims a new fenced driver epoch,
-and starts the same snapshot-reprojection path. Terminal completion clears the
-marker conditionally, so a late retiring driver cannot clear a newer run's
-identity. This closes the normal Render-rollout gap without redispatching the
-user message or confusing the outer compatibility run with the inner provider
-run.
+dispatch (both orchestrator modes maintain this marker for diagnostics and
+sweeps). In in-process mode, five seconds after controller startup, Compadre
+scans only bindings that are both `working` and carry that marker, claims a new
+fenced driver epoch, and starts the same snapshot-reprojection path. Terminal
+completion clears the marker conditionally, so a late retiring driver cannot
+clear a newer run's identity.
 
 The legacy/API compatibility stream is a second durable run, because its
 external run and thread IDs intentionally differ from the central T3 provider
@@ -232,6 +237,43 @@ run volume or controller concurrency grows, harden it in this order:
    epochs.
 5. Keep a synthetic long-run rollout canary that asserts one dispatch, retained
    narration/tools, terminal durable status, and one final Slack delivery.
+
+## Durable run orchestration (Temporal)
+
+Native T3 run execution is orchestrated by a self-hosted Temporal server
+(`compadre-temporal` in render.yaml; `docker compose up -d` locally). The
+selector is the code constant `NATIVE_T3_RUN_ORCHESTRATOR` in
+`src/temporal/mode.ts`; `"in-process"` restores the fire-and-forget driver
+plus the in-process recovery paths above as the rollback.
+
+One `nativeT3RunWorkflow` (deterministic workflow id derived from the run id)
+owns each run:
+
+- `/hosted/t3/chat` persists the full serializable run request
+  (`src/t3/run-request-store.ts`) and launches the workflow with only
+  `{runId, threadId}`; a duplicate launch is a no-op.
+- The drive activity (`src/t3/native-t3-run-driver.ts`) claims the same
+  durable driver epoch used by in-process drivers, dispatches the worker turn
+  at most once (a durable dispatch record is written right after
+  `gateway.send`), maintains the binding's active-run marker, and appends
+  fenced projected events to the Postgres run log. On retry it rebuilds the
+  projector from the chunks already persisted
+  (`NativeT3SnapshotProjector.restore`) and reattaches to the running turn, so
+  a controller restart moves the watch to the replacement instance without
+  duplicating events. Transient watch failures throw and are retried; only
+  genuine provider terminals and explicit cancellation terminalize the run.
+- A non-cancellable finalize activity converges every abandoned run to a
+  terminal record, closes the event log, clears the active-run marker, and
+  releases the worker into its warm lease.
+- Cancellation is durable: cancel intent is recorded in Postgres and the
+  workflow is cancelled; the drive activity interrupts the worker turn.
+
+The Temporal worker runs inside the `compadre-api` process on the
+`compadre-native-t3` task queue. Startup fails fast when the Temporal server is
+unreachable, which blocks a bad deploy from receiving traffic. During the
+rollout overlap between an in-process-orchestrated retiring instance and a
+Temporal-orchestrated replacement, epoch fencing keeps exactly one producer per
+run. See [Temporal orchestration](./temporal-orchestration.md) for operations.
 
 ## Usage
 
@@ -305,11 +347,12 @@ HTTP 5xx or transcript unavailability throughout the rollout. Until then,
 every T3 fork merge must be treated as a user-visible maintenance event and
 verified after the replacement instance is live.
 
-The controller is also kept at one instance today. Native T3 run events,
-cancel intent, snapshot reattachment, and driver-epoch fencing are durable, but
-active tool bridges and the immediate cancel path are still process-local.
-General multi-instance operation additionally requires persisted command
-delivery for those process-local capabilities.
+The controller is also kept at one instance today. Native T3 run execution,
+events, dispatch metadata, driver-epoch fencing, and cancellation are durable
+through Temporal, and a restart resumes active runs on the replacement
+instance. Multi-instance operation additionally requires durable per-run
+tool-bridge credentials (the relay tool bridge is still process-local) and
+explicit write ownership for the worker-lifecycle sweep.
 
 ## Configuration
 

@@ -17,6 +17,133 @@ function toolName(chunk: StreamChunk): string | null {
 }
 
 /**
+ * Observer-form Slack mirror for the durable run driver. Unlike the
+ * generator wrapper below, it never treats a driver exception as terminal:
+ * a retried drive activity constructs a new mirror with `resume` state and
+ * continues, and only an explicit `finish` posts the final message. Slack
+ * delivery stays best-effort — a Slack outage must not fail the run.
+ */
+export class SlackRunMirror {
+  private deliveryEnabled = true;
+  private readonly assistantMessages: Map<string, string>;
+  private activeAssistantMessageId: string | undefined;
+  private terminalError: string | undefined;
+
+  constructor(
+    private readonly input: {
+      binding: HostedSlackBinding;
+      userMessage: string;
+      detailsUrl?: string;
+      botToken: string;
+      shouldDeliverFinal?: () => Promise<boolean>;
+    },
+    resume?: { assistantTexts?: ReadonlyMap<string, string> },
+    private readonly slack: NativeT3SlackDeliveryStream = new SlackStream({
+      channel: input.binding.channelId,
+      threadTs: input.binding.threadTs,
+      botToken: input.botToken,
+      recipientUserId: input.binding.recipientUserId,
+      recipientTeamId: input.binding.recipientTeamId,
+    }),
+  ) {
+    this.assistantMessages = new Map(resume?.assistantTexts ?? []);
+  }
+
+  private disableDelivery(context: string, error: unknown): void {
+    this.deliveryEnabled = false;
+    console.error(`[native-t3-slack] ${context}`, {
+      channel: this.input.binding.channelId,
+      threadTs: this.input.binding.threadTs,
+      error,
+    });
+  }
+
+  /** Post the intro exactly once per run — skipped on a resumed driver. */
+  async start(): Promise<void> {
+    if (!this.deliveryEnabled) return;
+    try {
+      await this.slack.postThreadMessage(`*From Compadre web:*
+${this.input.userMessage}`);
+      await this.slack.setStatus("is thinking...");
+    } catch (error) {
+      this.disableDelivery("failed to start Slack mirror", error);
+    }
+  }
+
+  observe(chunk: StreamChunk): void {
+    if (chunk.type === EventType.TEXT_MESSAGE_START && chunk.messageId) {
+      this.activeAssistantMessageId = chunk.messageId;
+      if (!this.assistantMessages.has(chunk.messageId)) {
+        this.assistantMessages.set(chunk.messageId, "");
+      }
+    }
+    if (chunk.type === EventType.TEXT_MESSAGE_CONTENT) {
+      const messageId = chunk.messageId ?? this.activeAssistantMessageId;
+      if (messageId) {
+        const previous = this.assistantMessages.get(messageId) ?? "";
+        this.assistantMessages.set(
+          messageId,
+          typeof chunk.content === "string"
+            ? chunk.content
+            : `${previous}${chunk.delta ?? ""}`,
+        );
+      }
+    }
+    if (chunk.type === EventType.TEXT_MESSAGE_END) {
+      this.activeAssistantMessageId = undefined;
+    }
+    if (chunk.type === EventType.RUN_ERROR) {
+      this.terminalError = chunk.message || "Native T3 worker failed.";
+    }
+    if (!this.deliveryEnabled) return;
+    const name = toolName(chunk);
+    if (name) {
+      void this.slack
+        .setStatus(`is ${humanizeToolName(name).toLowerCase()}...`)
+        .catch((error) =>
+          this.disableDelivery("failed to update Slack status", error),
+        );
+    }
+  }
+
+  /** Deliver the final Slack message after the run's terminal event. */
+  async finish(): Promise<void> {
+    if (!this.deliveryEnabled) return;
+    try {
+      const ownsFinal = (await this.input.shouldDeliverFinal?.()) ?? true;
+      if (!ownsFinal) {
+        // A later steer owns the shared Slack status and final answer.
+        return;
+      }
+      const finalText = [...this.assistantMessages.values()]
+        .reverse()
+        .find((text) => text.trim().length > 0);
+      if (this.terminalError) {
+        await this.slack.postThreadMessage(
+          slackFailureNotice(new Error(this.terminalError)),
+        );
+      } else if (finalText) {
+        await this.slack.postThreadMessage(finalText.trim());
+      } else {
+        await this.slack.postThreadMessage(
+          slackFailureNotice(
+            new Error("Native T3 completed without a final response."),
+          ),
+        );
+      }
+      if (this.input.detailsUrl) {
+        await this.slack.postThreadContext(
+          `<${this.input.detailsUrl}|open session in Compadre web>`,
+        );
+      }
+    } catch (error) {
+      this.disableDelivery("failed to deliver the final Slack mirror", error);
+    }
+    await this.slack.clearStatus().catch(() => undefined);
+  }
+}
+
+/**
  * Mirror a central-web turn into its linked Slack thread while leaving the
  * native T3 event stream authoritative. Slack delivery is deliberately
  * best-effort: a Slack outage must not interrupt the provider run or the web

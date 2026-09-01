@@ -50,6 +50,7 @@ Production endpoints:
 | Canonical users and workspace-scoped Slack identities | Compadre Postgres | `src/db/schema.ts`, user/auth services |
 | Slack/API to canonical-thread binding | Compadre Postgres | hosted-thread and T3 binding services |
 | Native run lifecycle, ordered delivery events, cancellation | Compadre Postgres | `src/durability`, `src/t3`, route adapters |
+| Native run execution orchestration (dispatch-once, watch retry/resume, finalize convergence) | Temporal (`compadre-temporal` service, state in `compadre-temporal-db`) | `src/temporal`, `src/t3/native-t3-run-driver.ts`, `src/t3/run-service.ts` |
 | Slack completion reservation/recovery | Compadre Postgres outbox | `src/services/slack-turn-delivery*` |
 | Checkout, shell, provider process, worker-local transcript | One Modal worker per thread | `src/t3/modal-worker.ts`, `src/tanstack/modal-sandbox.ts` |
 | Generated attachments/artifacts | Private Comprehensive object storage plus metadata | Compadre artifact services; `s3://compadre` |
@@ -75,6 +76,7 @@ remains the transcript rendered to users.
 | Per-thread filesystem/dev server/database | Compadre Modal worker/runtime | `compadre-api` |
 | Conversation schema | T3 SQLite migration | `compadre-web` |
 | Control-plane schema | Compadre Postgres/Drizzle migration | `compadre-api` pre-deploy |
+| Run orchestration (workflow/activities/driver, retries, cancellation) | Compadre `src/temporal` + `src/t3` driver; keep running histories replayable (`patched()`) | `compadre-api`; verify with `npm run temporal:probe` |
 
 ## Cross-repository contracts
 

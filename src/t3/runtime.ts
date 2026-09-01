@@ -4,11 +4,21 @@ import { getConfiguredThreadPersistence } from "../persistence/runtime.js";
 import { recoverCentralT3DurableRuns } from "../services/central-t3-run.js";
 import { T3ThreadBindingStore } from "../services/t3-thread-bindings.js";
 import { T3ThreadSnapshotStore } from "../services/t3-thread-snapshots.js";
+import { NATIVE_T3_RUN_ORCHESTRATOR } from "../temporal/mode.js";
+import { collectNativeT3ArtifactEvents } from "./artifact-events.js";
 import { T3Gateway } from "./gateway.js";
 import { configuredCentralT3Client } from "./central-conversation.js";
 import { T3ModalEnvironmentManager } from "./modal-environments.js";
+import type { NativeT3RunDriverDependencies } from "./native-t3-run-driver.js";
 import { NativeT3RunCoordinator } from "./run-coordinator.js";
 import { recoverNativeT3Runs, type NativeT3RecoverySummary } from "./run-recovery.js";
+import { NativeT3RunRequestStore } from "./run-request-store.js";
+import {
+  createTemporalNativeT3WorkflowLauncher,
+  InProcessNativeT3RunService,
+  TemporalNativeT3RunService,
+  type NativeT3RunService,
+} from "./run-service.js";
 import {
   S3T3ArtifactObjectStore,
   T3ArtifactStore,
@@ -18,6 +28,7 @@ let configuredGateway: Promise<T3Gateway | null> | undefined;
 let stopConfiguredGatewaySweeper: (() => void) | undefined;
 let configuredRunCoordinator: Promise<NativeT3RunCoordinator | null> | undefined;
 let configuredArtifactStore: Promise<T3ArtifactStore | null> | undefined;
+let configuredRunService: Promise<NativeT3RunService | null> | undefined;
 
 const DEFAULT_T3_WORKER_WARM_TTL_MS = 30 * 60 * 1000;
 const DEFAULT_T3_WORKER_SWEEP_INTERVAL_MS = 60 * 1000;
@@ -152,7 +163,14 @@ export async function recoverConfiguredNativeT3Runs(): Promise<
       compatibilitySkipped: 0,
     };
   }
-  const provider = await recoverNativeT3Runs({ gateway, coordinator });
+  // Under Temporal orchestration the workflow's drive activity is the only
+  // native-run producer: its retries already reattach after a controller
+  // restart, and a second in-process producer would only trade epoch claims
+  // with the activity. Compatibility-run recovery stays in-process.
+  const provider =
+    NATIVE_T3_RUN_ORCHESTRATOR === "temporal"
+      ? { scanned: 0, resumed: 0, skipped: 0 }
+      : await recoverNativeT3Runs({ gateway, coordinator });
   const client = configuredCentralT3Client();
   const compatibility = client
     ? await recoverCentralT3DurableRuns({ coordinator, client })
@@ -163,6 +181,98 @@ export async function recoverConfiguredNativeT3Runs(): Promise<
     compatibilityResumed: compatibility.resumed,
     compatibilitySkipped: compatibility.skipped,
   };
+}
+
+async function buildRunRequestStore(): Promise<NativeT3RunRequestStore | null> {
+  const runtime = await getConfiguredThreadPersistence();
+  if (!runtime) return null;
+  return new NativeT3RunRequestStore(runtime.persistence.stores.metadata);
+}
+
+async function buildCollectArtifactEvents(
+  gateway: T3Gateway,
+): Promise<NativeT3RunDriverDependencies["collectArtifactEvents"]> {
+  const artifactStore = await getConfiguredT3ArtifactStore().catch((error) => {
+    console.warn("[t3-artifacts] artifact store unavailable", { error });
+    return null;
+  });
+  if (!artifactStore) return undefined;
+  return (turn, request) =>
+    collectNativeT3ArtifactEvents({
+      gateway,
+      artifactStore,
+      turn,
+      runId: request.runId,
+      ...(request.slackArtifactDestination
+        ? { slackDestination: request.slackArtifactDestination }
+        : {}),
+      ...(process.env.SLACK_BOT_TOKEN?.trim()
+        ? { botToken: process.env.SLACK_BOT_TOKEN.trim() }
+        : {}),
+    });
+}
+
+let overriddenDriverDependencies: NativeT3RunDriverDependencies | undefined;
+
+/** Probe/test seam: substitute the gateway and stores the activities use. */
+export function setNativeT3RunDriverDependenciesForTests(
+  dependencies: NativeT3RunDriverDependencies | undefined,
+): void {
+  overriddenDriverDependencies = dependencies;
+}
+
+/** Dependencies for the durable drive/finalize activities. */
+export async function getConfiguredNativeT3RunDriverDependencies(): Promise<NativeT3RunDriverDependencies | null> {
+  if (overriddenDriverDependencies) return overriddenDriverDependencies;
+  const [gateway, durability, requests, persistence] = await Promise.all([
+    getConfiguredT3Gateway(),
+    getConfiguredAgentRunDurability(),
+    buildRunRequestStore(),
+    getConfiguredThreadPersistence(),
+  ]);
+  if (!gateway || !durability || !requests || !persistence) return null;
+  const collectArtifactEvents = await buildCollectArtifactEvents(gateway);
+  return {
+    gateway,
+    durability,
+    requests,
+    locks: persistence.locks,
+    ...(collectArtifactEvents ? { collectArtifactEvents } : {}),
+  };
+}
+
+/** Producer for /hosted/t3/chat, selected by NATIVE_T3_RUN_ORCHESTRATOR. */
+export async function getConfiguredNativeT3RunService(): Promise<NativeT3RunService | null> {
+  if (!configuredRunService) {
+    const initialization = (async () => {
+      const [gateway, coordinator, requests] = await Promise.all([
+        getConfiguredT3Gateway(),
+        getConfiguredNativeT3RunCoordinator(),
+        buildRunRequestStore(),
+      ]);
+      if (!gateway || !coordinator || !requests) return null;
+      if (NATIVE_T3_RUN_ORCHESTRATOR === "temporal") {
+        return new TemporalNativeT3RunService(
+          coordinator,
+          requests,
+          createTemporalNativeT3WorkflowLauncher(),
+        );
+      }
+      const collectArtifactEvents = await buildCollectArtifactEvents(gateway);
+      return new InProcessNativeT3RunService({
+        gateway,
+        coordinator,
+        ...(collectArtifactEvents ? { collectArtifactEvents } : {}),
+      });
+    })().catch((error) => {
+      if (configuredRunService === initialization) {
+        configuredRunService = undefined;
+      }
+      throw error;
+    });
+    configuredRunService = initialization;
+  }
+  return configuredRunService;
 }
 
 /** Shared durable producer used by the native provider POST and replay routes. */
