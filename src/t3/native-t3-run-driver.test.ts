@@ -8,6 +8,7 @@ import type { T3GatewayTurn } from "./gateway.js";
 import {
   driveNativeT3Run,
   finalizeNativeT3Run,
+  NativeT3RunStateError,
   type NativeT3DriverGateway,
 } from "./native-t3-run-driver.js";
 import {
@@ -132,7 +133,9 @@ function fakeGateway(waitBehaviors: WaitBehavior[]) {
     async waitForTerminal(input) {
       const behavior = waitBehaviors[calls.waits];
       calls.waits += 1;
-      if (!behavior) throw new Error("no scripted waitForTerminal behavior");
+      if (!behavior) {
+        throw new NativeT3RunStateError("no scripted waitForTerminal behavior");
+      }
       return behavior(input);
     },
     async cancel() {
@@ -216,9 +219,13 @@ test("drives a native T3 run to completion against durable state", async (t) => 
 });
 
 test("a retried driver resumes projection without duplicating events", async (t) => {
+  let clock = 1_000_000;
   const { durability, requests, gateway, calls, chunks, runId } = await harness("run-resume", [
     async ({ onSnapshot }) => {
       await onSnapshot?.(snapshotAt({ assistantText: "Working dir", streaming: true, terminal: false }));
+      // The watch dies and the turn then stalls past the inactivity limit,
+      // so the attempt genuinely fails and Temporal schedules a retry.
+      clock += 21 * 60_000;
       throw new Error("controller crashed mid-watch");
     },
     async ({ onSnapshot }) => {
@@ -228,11 +235,11 @@ test("a retried driver resumes projection without duplicating events", async (t)
     },
   ]);
   t.after(() => durability.close());
-  const deps = { gateway, durability, requests };
+  const deps = { gateway, durability, requests, now: () => clock };
 
   // Attempt 1: transient failure must NOT terminalize the run.
   await assert.rejects(
-    () => driveNativeT3Run(deps, runId),
+    () => driveNativeT3Run(deps, runId, { reconnectDelayMs: 5 }),
     /controller crashed mid-watch/,
   );
   assert.equal((await durability.runs.get(runId))?.status, "running");
@@ -419,5 +426,66 @@ test("a pre-watch attempt cancellation without run intent retries instead of abo
     /cancelled before watching/,
   );
   assert.equal(calls.sends, 0);
+  assert.equal((await durability.runs.get(runId))?.status, "running");
+});
+
+test("one attempt rides out an interrupted watch while the turn progresses", async (t) => {
+  const { durability, requests, gateway, calls, chunks, runId } = await harness("run-ride-out", [
+    async ({ onSnapshot }) => {
+      await onSnapshot?.(snapshotAt({ assistantText: "Converting the grid", streaming: true, terminal: false }));
+      // The sandbox is CPU-starved: snapshot reads time out while the turn
+      // keeps working. This must NOT fail the activity attempt.
+      throw new Error("T3 thread snapshot timed out");
+    },
+    async ({ onSnapshot }) => {
+      const terminal = snapshotAt({ assistantText: "Converting the grid... done", streaming: false, terminal: true });
+      await onSnapshot?.(terminal);
+      return terminal;
+    },
+  ]);
+  t.after(() => durability.close());
+
+  const outcome = await driveNativeT3Run(
+    { gateway, durability, requests },
+    runId,
+    { reconnectDelayMs: 5 },
+  );
+
+  assert.equal(outcome.status, "completed");
+  assert.equal(calls.waits, 2, "reattached within the same attempt");
+  assert.equal(calls.sends, 1);
+  const events = await chunks();
+  assert.equal(events.filter((event) => event.type === EventType.RUN_FINISHED).length, 1);
+  assert.equal(
+    events
+      .filter((event) => event.type === EventType.TEXT_MESSAGE_CONTENT)
+      .map((event) => event.delta)
+      .join(""),
+    "Converting the grid... done",
+  );
+  assert.equal((await durability.runs.get(runId))?.status, "completed");
+});
+
+test("a watch failure with no durable progress fails the attempt for retry", async (t) => {
+  let clock = 1_000_000;
+  const { durability, requests, gateway, calls, runId } = await harness("run-stall", [
+    async () => {
+      // No snapshots at all, and the inactivity limit elapses.
+      clock += 21 * 60_000;
+      throw new Error("T3 thread snapshot timed out");
+    },
+  ]);
+  t.after(() => durability.close());
+
+  await assert.rejects(
+    () =>
+      driveNativeT3Run(
+        { gateway, durability, requests, now: () => clock },
+        runId,
+        { reconnectDelayMs: 5 },
+      ),
+    /snapshot timed out/,
+  );
+  assert.equal(calls.waits, 1, "a stalled turn is not reattached");
   assert.equal((await durability.runs.get(runId))?.status, "running");
 });

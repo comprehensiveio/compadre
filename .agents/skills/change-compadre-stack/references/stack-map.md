@@ -52,6 +52,7 @@ Production endpoints:
 | Native run lifecycle, ordered delivery events, cancellation | Compadre Postgres | `src/durability`, `src/t3`, route adapters |
 | Native run execution orchestration (dispatch-once, watch retry/resume, finalize convergence) | Temporal (`compadre-temporal` service, state in `compadre-temporal-db`) | `src/temporal`, `src/t3/native-t3-run-driver.ts`, `src/t3/run-service.ts` |
 | Slack completion reservation/recovery | Compadre Postgres outbox | `src/services/slack-turn-delivery*` |
+| Slack ingress durability/dedupe (persist before ack) | Compadre Postgres inbox | `src/services/slack-inbox*`, `src/routes/slack-events.ts` |
 | Checkout, shell, provider process, worker-local transcript | One Modal worker per thread | `src/t3/modal-worker.ts`, `src/tanstack/modal-sandbox.ts` |
 | Generated attachments/artifacts | Private Comprehensive object storage plus metadata | Compadre artifact services; `s3://compadre` |
 | Logs, APM traces, LLM input/output/usage/cost | Datadog | controller, web, and worker telemetry |

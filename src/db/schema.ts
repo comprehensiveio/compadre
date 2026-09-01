@@ -303,6 +303,56 @@ export type PullRequestWatchStatus =
   | "notified"
   | "closed_unmerged";
 
+export type SlackInboxEventStatus = "queued" | "processing" | "done" | "dead";
+
+/**
+ * Durable Slack ingress. A verified event is persisted here BEFORE the HTTP
+ * 200 acknowledgment, so a controller crash or deploy between Slack's
+ * delivery and turn dispatch can no longer lose a message. Rows are claimed
+ * by the in-process inbox processor and marked done once the turn is durably
+ * owned downstream (central dispatch plus outbox reservation).
+ */
+export const slackInboxEvents = pgTable(
+  "compadre_slack_inbox_events",
+  {
+    /** Slack's event_id: stable across Slack's own delivery retries. */
+    eventKey: text("event_key").primaryKey(),
+    teamId: text("team_id"),
+    botUserId: text("bot_user_id"),
+    event: jsonb("event").notNull(),
+    status: text("status")
+      .$type<SlackInboxEventStatus>()
+      .notNull()
+      .default("queued"),
+    attempts: integer("attempts").notNull().default(0),
+    nextAttemptAt: timestamp("next_attempt_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    claimedAt: timestamp("claimed_at", { withTimezone: true }),
+    lastError: text("last_error"),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    check(
+      "compadre_slack_inbox_events_status_check",
+      sql`${table.status} in ('queued', 'processing', 'done', 'dead')`,
+    ),
+    check(
+      "compadre_slack_inbox_events_attempts_check",
+      sql`${table.attempts} >= 0`,
+    ),
+    index("compadre_slack_inbox_events_claimable_idx").on(
+      table.status,
+      table.nextAttemptAt,
+    ),
+  ],
+);
+
 export const pullRequestWatches = pgTable(
   "compadre_pr_watches",
   {

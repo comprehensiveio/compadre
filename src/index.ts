@@ -36,6 +36,13 @@ import {
   createSlackTurnDeliveryProcessor,
   DEFAULT_SLACK_DELIVERY_INTERVAL_MS,
 } from "./services/slack-turn-delivery.js";
+import {
+  createSlackInboxProcessor,
+  DEFAULT_SLACK_INBOX_INTERVAL_MS,
+  setConfiguredSlackInbox,
+} from "./services/slack-inbox.js";
+import { SlackInboxStore } from "./services/slack-inbox-store.js";
+import { routeSlackEvent } from "./routes/slack-events.js";
 import { validateConfiguredSlackInstallation } from "./services/slack-installation.js";
 import {
   configuredCentralT3Backup,
@@ -201,6 +208,31 @@ async function start() {
         threadPersistence?.database &&
         process.env.COMPADRE_T3_SLACK_ENABLED === "true"
       ) {
+        // Durable Slack ingress: events are persisted by the route before
+        // Slack's acknowledgment; this processor routes them (including rows
+        // stranded by a previous instance) with claim-based recovery.
+        const inboxStore = new SlackInboxStore(threadPersistence.database);
+        const processSlackInbox = createSlackInboxProcessor({
+          store: inboxStore,
+          route: (event, teamId, inboxBotUserId, inboxHooks) =>
+            routeSlackEvent(event, teamId, inboxBotUserId, inboxHooks),
+        });
+        const scheduleSlackInbox = () => {
+          void processSlackInbox().catch((error) =>
+            console.error("[slack-inbox] processing failed:", error),
+          );
+        };
+        setConfiguredSlackInbox({
+          store: inboxStore,
+          poke: scheduleSlackInbox,
+        });
+        scheduleSlackInbox();
+        const inboxInterval = setInterval(
+          scheduleSlackInbox,
+          DEFAULT_SLACK_INBOX_INTERVAL_MS,
+        );
+        inboxInterval.unref();
+
         const processSlackDeliveries = createSlackTurnDeliveryProcessor({
           store: new SlackTurnDeliveryStore(threadPersistence.database),
           botToken,

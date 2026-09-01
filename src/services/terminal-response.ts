@@ -1,10 +1,10 @@
 import type { ConversationResult } from "../conversation.js";
 
 export const INCOMPLETE_RESPONSE_NOTICE =
-  ":warning: I stopped without producing a complete final answer. Reply `continue` and I'll pick the investigation back up.";
+  ":warning: I stopped without producing a complete final answer. Reply `@Compadre continue` and I'll pick the investigation back up.";
 
 export const AGENT_FAILURE_NOTICE =
-  ":warning: This run stopped unexpectedly. Reply `continue` and I'll resume from the saved investigation.";
+  ":warning: This run stopped unexpectedly. Reply `@Compadre continue` and I'll resume from the saved investigation.";
 
 /**
  * Tracks whether the user-facing text stream ends with an answer rather than

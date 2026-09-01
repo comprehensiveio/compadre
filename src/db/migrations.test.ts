@@ -63,6 +63,7 @@ test(
           "compadre_auth_login_flows",
           "compadre_auth_login_grants",
           "compadre_pr_watches",
+          "compadre_slack_inbox_events",
           "compadre_slack_turn_deliveries",
           "compadre_user_identities",
           "compadre_users",

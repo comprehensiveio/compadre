@@ -28,6 +28,7 @@ import {
 
 export const DEFAULT_TERMINAL_WAIT_TIMEOUT_MS = 20 * 60 * 1000;
 const CANCELLED_MESSAGE = "The native T3 run was cancelled.";
+const RECONNECT_DELAY_MS = 15_000;
 const CANCELLED_CODE = "NATIVE_T3_RUN_CANCELLED";
 
 /**
@@ -105,6 +106,8 @@ export interface DriveNativeT3RunOptions {
   /** Progress callback mapped to Temporal activity heartbeats. */
   heartbeat?(detail: string): void;
   terminalWaitTimeoutMs?: number;
+  /** Delay before reattaching after an interrupted watch (tests shrink it). */
+  reconnectDelayMs?: number;
 }
 
 export interface NativeT3RunOutcome {
@@ -416,6 +419,7 @@ export async function driveNativeT3Run(
 
   const watchAbort = new AbortController();
   let cancelled = false;
+  let handedOff = false;
   const onSignalAbort = () => {
     // A Temporal activity cancellation is ambiguous: it fires for genuine
     // run cancellation (workflow cancel after durable intent) but also for
@@ -439,6 +443,7 @@ export async function driveNativeT3Run(
           );
         watchAbort.abort(CANCELLED_MESSAGE);
       } else {
+        handedOff = true;
         console.log("[native-t3-driver] attempt handed off without run cancellation", {
           runId,
         });
@@ -461,48 +466,14 @@ export async function driveNativeT3Run(
         timestamp: now(),
       });
     }
-    let wake: (() => void) | undefined;
-    let completed = false;
-    let failure: unknown;
-    const notify = () => {
-      wake?.();
-      wake = undefined;
-    };
-    const waiter = deps.gateway
-      .waitForTerminal({
-        turn,
-        timeoutMs:
-          options.terminalWaitTimeoutMs ?? DEFAULT_TERMINAL_WAIT_TIMEOUT_MS,
-        signal: watchAbort.signal,
-        onSnapshot(snapshot) {
-          pending.push(...projector.project(snapshot));
-          heartbeat("streaming native T3 turn");
-          notify();
-        },
-      })
-      .then(
-        (snapshot) => {
-          pending.push(...projector.project(snapshot));
-          completed = true;
-          notify();
-        },
-        (error) => {
-          failure = error;
-          completed = true;
-          notify();
-        },
-      );
-
     let terminalChunk: StreamChunk | undefined;
-    while (!completed || pending.length > 0) {
-      if (pending.length === 0) {
-        if (completed) break;
-        await new Promise<void>((resolve) => {
-          wake = resolve;
-        });
-        continue;
-      }
-      const chunk = pending.shift()!;
+    let failure: unknown;
+    const inactivityLimitMs =
+      options.terminalWaitTimeoutMs ?? DEFAULT_TERMINAL_WAIT_TIMEOUT_MS;
+    let lastProgressAt = now();
+    let lastSequence = -1;
+
+    const drainChunk = async (chunk: StreamChunk) => {
       if (
         chunk.type === EventType.RUN_FINISHED &&
         request.collectArtifacts &&
@@ -530,8 +501,110 @@ export async function driveNativeT3Run(
       ) {
         terminalChunk = chunk;
       }
+    };
+
+    // Supervision loop: one activity attempt rides out interrupted watches
+    // (a CPU-starved sandbox stops answering snapshot reads while the turn
+    // keeps working) by reattaching, and only fails the attempt when the
+    // turn makes no durable progress for the full inactivity limit.
+    for (;;) {
+      let wake: (() => void) | undefined;
+      let completed = false;
+      let watchFailure: unknown;
+      const notify = () => {
+        wake?.();
+        wake = undefined;
+      };
+      const observeSnapshot = (snapshot: T3ThreadSnapshot) => {
+        if (snapshot.snapshotSequence > lastSequence) {
+          lastSequence = snapshot.snapshotSequence;
+          lastProgressAt = now();
+        }
+        pending.push(...projector.project(snapshot));
+      };
+      const waiter = deps.gateway
+        .waitForTerminal({
+          turn,
+          timeoutMs: inactivityLimitMs,
+          signal: watchAbort.signal,
+          onSnapshot(snapshot) {
+            observeSnapshot(snapshot);
+            heartbeat("streaming native T3 turn");
+            notify();
+          },
+        })
+        .then(
+          (snapshot) => {
+            observeSnapshot(snapshot);
+            completed = true;
+            notify();
+          },
+          (error) => {
+            watchFailure = error;
+            completed = true;
+            notify();
+          },
+        );
+
+      while (!completed || pending.length > 0) {
+        if (pending.length === 0) {
+          if (completed) break;
+          await new Promise<void>((resolve) => {
+            wake = resolve;
+          });
+          continue;
+        }
+        await drainChunk(pending.shift()!);
+      }
+      await waiter;
+
+      if (!watchFailure || terminalChunk) break;
+      if (watchFailure instanceof NativeT3RunStateError) throw watchFailure;
+      if (cancelled || handedOff) {
+        // Either durable cancellation (converge below) or an attempt-level
+        // cancellation without run intent (rethrown below for the next
+        // attempt): never ride out an aborted attempt.
+        failure = watchFailure;
+        break;
+      }
+      if (now() - lastProgressAt >= inactivityLimitMs) {
+        // A genuine stall: no durable progress across reattachments. Let the
+        // orchestrator retry (and eventually finalize) this attempt.
+        throw watchFailure;
+      }
+      console.warn("[native-t3-driver] watch interrupted; reattaching", {
+        runId,
+        error:
+          watchFailure instanceof Error
+            ? `${watchFailure.name}: ${watchFailure.message}`
+            : String(watchFailure),
+      });
+      heartbeat("reattaching to native T3 turn");
+      await new Promise<void>((resolve) => {
+        // Deliberately ref'd: the reconnect pause is part of the activity's
+        // legitimate lifetime and must not let an idle event loop exit.
+        const timer = setTimeout(
+          resolve,
+          options.reconnectDelayMs ?? RECONNECT_DELAY_MS,
+        );
+        watchAbort.signal.addEventListener(
+          "abort",
+          () => {
+            clearTimeout(timer);
+            resolve();
+          },
+          { once: true },
+        );
+      });
+      if (cancelled) {
+        failure = watchFailure;
+        break;
+      }
+      const resumed = await deps.gateway
+        .resumeTurn(request.canonicalThreadId, turn.dispatch)
+        .catch(() => null);
+      if (resumed) turn = resumed;
     }
-    await waiter;
 
     if (failure && !cancelled && !terminalChunk) {
       // Transient watch failure: leave the run open for the next attempt.

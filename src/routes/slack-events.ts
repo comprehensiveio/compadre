@@ -53,6 +53,10 @@ import {
 } from "../services/slack-turn-delivery-store.js";
 import { deliverClaimedSlackTurn } from "../services/slack-turn-delivery.js";
 import { isAllowedSlackApp } from "../services/slack-installation.js";
+import {
+  getConfiguredSlackInbox,
+  type SlackInboxRouteHooks,
+} from "../services/slack-inbox.js";
 
 export const slackEventsRoutes = new Hono();
 
@@ -229,14 +233,61 @@ slackEventsRoutes.post("/slack/events", async (c) => {
           : undefined,
         event: event as SlackEvent,
       });
-      handleEvent(event as SlackEvent, teamId, botUserId).catch((err) =>
-        console.error("[slack-events] unhandled error in handleEvent:", err),
-      );
+      const slackEvent = event as SlackEvent;
+      const inbox = getConfiguredSlackInbox();
+      if (inbox && isAiRoutableSlackEvent(slackEvent, botUserId)) {
+        // Persist BEFORE acknowledging: after the 200, Slack never retries,
+        // so the row is the only thing standing between a deploy and a lost
+        // message. The key spans app_mention/message duplicates of the same
+        // message and Slack's own delivery retries.
+        try {
+          await inbox.store.enqueue({
+            eventKey: durableSlackEventKey(slackEvent, teamId),
+            ...(teamId ? { teamId } : {}),
+            ...(botUserId ? { botUserId } : {}),
+            event: slackEvent,
+          });
+        } catch (error) {
+          console.error("[slack-events] durable ingress persistence failed", {
+            channel: slackEvent.channel,
+            ts: slackEvent.ts,
+            error,
+          });
+          // Fail the delivery so Slack retries it.
+          return c.json({ error: "ingress persistence failed" }, 500);
+        }
+        inbox.poke();
+      } else {
+        handleEvent(slackEvent, teamId, botUserId).catch((err) =>
+          console.error("[slack-events] unhandled error in handleEvent:", err),
+        );
+      }
     }
   }
 
   return c.json({ ok: true });
 });
+
+/** One message may arrive as both app_mention and message.channels. */
+export function durableSlackEventKey(
+  event: SlackEvent,
+  teamId?: string,
+): string {
+  return `${teamId ?? event.team ?? "unknown"}:${event.channel}:${event.ts}`;
+}
+
+/** The subset of events the AI conversation path would act on. */
+export function isAiRoutableSlackEvent(
+  event: SlackEvent,
+  botUserId?: string,
+): boolean {
+  if (!isSupportedUserMessage(event)) return false;
+  const isDM = event.channel.startsWith("D");
+  const isMention =
+    event.type === "app_mention" ||
+    Boolean(botUserId && event.text?.includes(`<@${botUserId}>`));
+  return isDM || isMention;
+}
 
 async function handleEvent(
   event: SlackEvent,
@@ -245,6 +296,22 @@ async function handleEvent(
 ) {
   if (!isSupportedUserMessage(event)) return;
   if (isDuplicate(event.ts)) return;
+  await routeSlackEvent(event, teamId, botUserId);
+}
+
+/**
+ * Route one verified Slack event. Used directly for non-durable events and
+ * by the inbox processor for persisted ones; dedupe belongs to the caller
+ * (the in-memory set for direct events, the inbox primary key for durable
+ * ones) so a retried durable event is never dropped as "seen".
+ */
+export async function routeSlackEvent(
+  event: SlackEvent,
+  teamId?: string,
+  botUserId?: string,
+  hooks?: SlackInboxRouteHooks,
+) {
+  if (!isSupportedUserMessage(event)) return;
 
   const isDM = event.channel.startsWith("D");
   const isMention =
@@ -261,7 +328,7 @@ async function handleEvent(
   }
 
   if (isDM || isMention) {
-    handleAIMessage(event, isDM, teamId, botUserId).catch((err) =>
+    await handleAIMessage(event, isDM, teamId, botUserId, hooks).catch((err) =>
       console.error("[slack-events] unhandled error in handleAIMessage:", err),
     );
   }
@@ -272,6 +339,7 @@ async function handleAIMessage(
   isDM: boolean,
   teamId?: string,
   botUserId?: string,
+  hooks?: SlackInboxRouteHooks,
 ) {
   const botToken = process.env.SLACK_BOT_TOKEN;
   const threadTs = event.thread_ts || event.ts;
@@ -486,6 +554,18 @@ async function handleAIMessage(
         },
         async onDispatched(prepared, dispatch) {
           dispatchedMessageId = dispatch.messageId;
+          // The turn is committed centrally; from here the outbox and the
+          // run orchestrator own recovery, so the durable inbox row (when
+          // this event came through it) must not be retried.
+          if (hooks) {
+            await Promise.resolve(hooks.onDurablyDispatched()).catch(
+              (error) =>
+                console.error(
+                  "[slack-events] could not settle durable ingress row",
+                  { channel: event.channel, ts: event.ts, error },
+                ),
+            );
+          }
           if (!slackDeliveries || !slackStream) return;
           const slackTeamId = workspaceId?.trim();
           if (!slackTeamId) {

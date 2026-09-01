@@ -36,11 +36,16 @@ record by a retried finalize step.
    (`NativeT3SnapshotProjector.restore`), so subscribers never see duplicated
    events. Slack final delivery honors steer supersession
    (`dispatchWasSuperseded`), matching the in-process mirror.
-3. Retry semantics are split by cost, deliberately: transient watch failures
-   (worker reconnect, Modal blips, watch timeout) **throw** and are retried by
-   Temporal; only a genuine provider terminal event or explicit cancellation
-   terminalizes the run. The legacy in-process stream converted every
-   exception into a terminal RUN_ERROR — that inversion is the main
+3. Retry semantics are split by cost, deliberately. Within one attempt the
+   driver rides out interrupted watches: a CPU-starved sandbox stops
+   answering snapshot reads while the harness keeps working (observed
+   2026-09-01 during `pnpm typecheck`), so on a watch error with recent
+   durable progress the driver waits ~15 s, reattaches via `resumeTurn`, and
+   keeps the same projector. Only a genuine stall — no new snapshot sequence
+   for the 20-minute inactivity limit — or a state error fails the attempt,
+   and Temporal retries that. Only a provider terminal event or explicit
+   cancellation terminalizes the run. The legacy in-process stream converted
+   every exception into a terminal RUN_ERROR — that inversion is the main
    reliability change.
 4. `finalizeNativeT3RunActivity` (5 attempts, non-cancellable scope) converges
    any run whose drive could not finish: appends a terminal RUN_ERROR, marks

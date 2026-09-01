@@ -118,6 +118,23 @@ Postgres. This is a transitional recovery record and duplicates conversation
 text. Replace it with a narrow execution record after durable worker-event
 delivery can reconstruct central T3 without the full snapshot.
 
+## Durable Slack ingress
+
+A verified, AI-routable Slack event is persisted to Postgres
+(`compadre_slack_inbox_events`) BEFORE the HTTP 200 acknowledgment. Slack
+never retries an acknowledged delivery, so before this table existed a deploy
+or crash between the ack and turn dispatch silently lost the message (observed
+2026-09-01 during a rollout). The row key `${team}:${channel}:${ts}` collapses
+Slack's own delivery retries and the app_mention/message duplicate pair for
+one mention. The in-process inbox processor claims rows (stale claims are
+reclaimed after a TTL, so a replacement instance finishes what a dead one
+started), routes them through the normal Slack path, and settles the row the
+moment the turn is durably owned downstream — central dispatch committed and
+the delivery-outbox row reserved. A persistence failure fails the HTTP
+delivery so Slack retries it. The selector is the code constant
+`SLACK_INGRESS_MODE` in `src/services/slack-inbox.ts`; `"direct"` restores the
+acknowledge-then-fire-and-forget behavior.
+
 ## Worker event delivery
 
 The controller projects worker T3 snapshots into version 1 of the native T3
