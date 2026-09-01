@@ -615,7 +615,7 @@ export async function restoreManagedT3ModalEnvironment(
     COMPADRE_MODAL_APP: environment.COMPADRE_T3_MODAL_APP?.trim() || "compadre",
   };
   // A filesystem snapshot contains the T3 package that was current when the
-  // thread hibernated. Reinstall the controller's currently pinned fork before
+  // thread was checkpointed. Reinstall the controller's currently pinned fork before
   // starting it so resumed threads receive runtime fixes just like new ones.
   const forkArchivePath = await resolveT3ForkArchive(workerEnvironment);
   const provider = modalSandboxProvider({

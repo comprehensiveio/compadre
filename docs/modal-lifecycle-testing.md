@@ -1,32 +1,33 @@
 # Modal worker lifecycle testing
 
-Use three gates before deploying the hosted-T3 worker lifecycle. The first is
-fully local and free. The second runs the local controller code against real
-Modal APIs, without deploying Render. The third is a deployment canary.
+The worker lifecycle is deliberately simple: one sandbox lives for the whole
+task (24-hour Modal lifetime by default), a live filesystem checkpoint is
+captured after every terminal turn without stopping the worker, and a dead
+sandbox is restored from its last checkpoint on the next turn. There is no
+warm lease, no hibernation, and no sweeper.
 
 ## Gate 1: deterministic local lifecycle
 
 ```bash
 npx tsx --test --test-name-pattern \
-  "controller restart, hibernation, and restore" \
+  "checkpoints a terminal turn" \
   src/t3/gateway.test.ts
 ```
 
 This vertical test uses the real binding store and gateway state machine with
 in-memory persistence. It proves:
 
-- the terminal turn becomes `warm`;
-- a new controller instance reconstructs the overdue sweep from durable state;
-- hibernation records the snapshot and leaves the binding `suspended`;
-- a clock jump to three hours causes restoration, not provisioning of another
-  logical thread;
+- the terminal turn records a checkpoint while the worker keeps running;
+- a new controller instance reconnects to the still-live sandbox instead of
+  provisioning another logical thread;
+- after the sandbox dies, the next turn restores from the checkpoint;
 - sandbox ID and worker generation change while the native T3 thread ID stays
   fixed; and
 - the next command uses `startTurn`, not `startNewThread`.
 
-Related focused tests cover Modal tag privacy, quiescing the dev stack before
-capture, capture-before-termination ordering, restore failure state, and the
-five-minute hard-timeout safety margin. Run all of them with:
+Related focused tests cover Modal tag privacy, live checkpoint capture without
+quiesce or termination, restore failure state, and the five-minute watch
+safety margin before the sandbox's hard timeout. Run all of them with:
 
 ```bash
 npx tsx --test \
@@ -37,45 +38,26 @@ npx tsx --test \
   src/t3/gateway.test.ts
 ```
 
-## Gate 2: local controller against real Modal
-
-Populate `.env.local` with the same Modal, repository, provider, and optional
-dev-environment configuration used by production, then run:
+## Gate 2: end-to-end Temporal probe
 
 ```bash
-npm run t3:hibernation-probe
+npm run temporal:up
+npm run temporal:probe
 ```
 
-The probe performs two small provider turns and one real Modal filesystem
-snapshot. Between turns it:
-
-1. writes a random marker into `/workspace`;
-2. advances the injected controller clock beyond the 30-minute warm lease;
-3. constructs a new gateway instance to simulate a Render restart;
-4. runs the overdue-worker sweep;
-5. proves the original sandbox cannot reconnect;
-6. advances the clock to three hours and sends another message;
-7. verifies a different sandbox ID, generation 2, the same native thread ID,
-   and the restored filesystem marker; and
-8. terminates the restored sandbox in a `finally` block.
-
-The probe leaves only the first filesystem image for post-failure inspection;
-its TTL defaults to one hour rather than production's seven days. Override that
-with `COMPADRE_T3_PROBE_SNAPSHOT_TTL_MS`. This gate incurs a few minutes of
-Modal compute, snapshot storage, and two provider requests.
-
-Do not publish the JSON output in a public issue. It contains sandbox and
-thread identifiers, although it contains no credentials or message bodies.
+The probe drives the full durable run path (workflow launch, mid-watch crash
+retry, resume without duplication, durable cancellation) against a real local
+Temporal server with a fake Modal gateway.
 
 ## Gate 3: deployment canary
 
-Only Modal's control plane can prove image capture/restore and encrypted tunnel
-behavior. Only the deployed Render/T3 pair can additionally prove Postgres
-metadata, service authentication, preview proxying, Slack delivery, and a
-controller deploy during the warm interval. After gates 1 and 2 pass, use one
-non-production Slack thread for that final canary.
+Only Modal's control plane can prove image capture/restore and encrypted
+tunnel behavior. Only the deployed Render/T3 pair can additionally prove
+Postgres metadata, service authentication, preview proxying, Slack delivery,
+and a controller deploy mid-task. After gates 1 and 2 pass, use one
+non-production Slack thread (`#slack-bot-test`) for that final canary.
 
 No local test can prove recovery if the worker is forcibly deleted before its
-first successful snapshot. It also cannot make an active provider turn survive
-past `COMPADRE_MODAL_TIMEOUT_MS`; the hibernation path protects completed idle
-workers, not arbitrarily long active runs.
+first successful checkpoint. An active provider turn also cannot survive past
+`COMPADRE_MODAL_TIMEOUT_MS` (24 h default); the checkpoint protects the
+thread's continuity across worker death, not arbitrarily long single turns.

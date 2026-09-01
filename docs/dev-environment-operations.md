@@ -15,9 +15,9 @@ each hosted T3 thread. The safety and ownership rules in
   Redis, dependency restoration, and Vite remain stopped until the agent runs
   `scripts/compadre-dev-up.sh up`.
 - The idempotent `up`, `status`, `url`, and `down` commands are the supported
-  lifecycle interface. After a turn, the sandbox stays warm for 30 minutes by
-  default. Compadre then runs `down`, snapshots the stopped filesystem, and
-  terminates billed compute.
+  lifecycle interface. The sandbox stays live for its whole 24-hour lifetime;
+  after each terminal turn Compadre captures a live filesystem checkpoint
+  without stopping anything.
 - Review traffic enters through the hosted T3 service at
   `https://<canonical-thread-id>.dev.compadre.comprehensive.io`. The service
   requires a Comprehensive Slack-backed browser session, resolves the existing

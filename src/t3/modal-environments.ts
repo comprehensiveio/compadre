@@ -219,7 +219,13 @@ export class T3ModalEnvironmentManager implements T3EnvironmentConnectionManager
     }
   }
 
-  async hibernate(
+  /**
+   * Live filesystem checkpoint of a running worker. Nothing is quiesced or
+   * terminated: the worker keeps serving follow-up turns, and the snapshot
+   * exists so a later worker loss (sandbox lifetime, crash) restores from
+   * this point instead of a fresh clone.
+   */
+  async checkpoint(
     binding: T3ThreadBinding,
     connection?: T3EnvironmentConnection,
   ): Promise<{ snapshotId: string }> {
@@ -234,7 +240,7 @@ export class T3ModalEnvironmentManager implements T3EnvironmentConnectionManager
       if (!resumed) {
         throw new T3EnvironmentUnavailableError(binding.sandboxId, {
           canonicalThreadId: binding.canonicalThreadId,
-          reason: "resume for hibernation returned no handle",
+          reason: "resume for checkpoint returned no handle",
         });
       }
       sandbox = resumed;
@@ -244,58 +250,16 @@ export class T3ModalEnvironmentManager implements T3EnvironmentConnectionManager
         binding.sandboxId,
       );
     }
-    if (!sandbox?.capabilities.snapshots || !sandbox.snapshot) {
-      throw new Error("The native T3 worker does not support snapshots");
+    const capable = sandbox as typeof sandbox & {
+      checkpoint?(label?: string): Promise<{ id: string }>;
+    };
+    if (!capable.checkpoint) {
+      throw new Error("The native T3 worker does not support checkpoints");
     }
-    const quiesced = await sandbox.process.exec(
-      [
-        "set -e",
-        "if [ -x scripts/compadre-dev-up.sh ]; then scripts/compadre-dev-up.sh down; fi",
-        "if [ -s /var/run/t3.pid ]; then",
-        "  pid=$(cat /var/run/t3.pid)",
-        '  kill "$pid" 2>/dev/null || true',
-        '  i=0; while kill -0 "$pid" 2>/dev/null && [ "$i" -lt 50 ]; do sleep 0.1; i=$((i + 1)); done',
-        '  if kill -0 "$pid" 2>/dev/null; then kill -KILL "$pid"; fi',
-        "fi",
-        "sync",
-      ].join("\n"),
-      { cwd: sandbox.workspaceRoot ?? "/workspace" },
+    const snapshot = await capable.checkpoint(
+      `t3-worker-generation-${binding.workerGeneration ?? 1}`,
     );
-    if (quiesced.exitCode !== 0) {
-      throw new Error(
-        `Could not quiesce T3 worker ${binding.sandboxId}: ${quiesced.stderr || quiesced.stdout}`,
-      );
-    }
-    try {
-      const snapshot = await sandbox.snapshot(
-        `t3-worker-generation-${binding.workerGeneration ?? 1}`,
-      );
-      return { snapshotId: snapshot.id };
-    } catch (error) {
-      // Snapshot capture failures leave the sandbox alive but T3 stopped.
-      // Restore service before returning the failure so a retry or new message
-      // can still reconnect to this generation.
-      await (this.dependencies.restart ?? restartManagedT3ModalEnvironment)(
-        sandbox,
-        { projectId: binding.projectId, t3ThreadId: binding.t3ThreadId },
-        this.workerEnvironment(binding),
-      ).catch((restartError) => {
-        log.error(
-          {
-            canonicalThreadId: binding.canonicalThreadId,
-            sandboxId: binding.sandboxId,
-            generation: binding.workerGeneration ?? 1,
-            snapshotError:
-              error instanceof Error
-                ? `${error.name}: ${error.message}`
-                : String(error),
-            ...serializeError(restartError),
-          },
-          "t3 worker restart after snapshot failure failed",
-        );
-      });
-      throw error;
-    }
+    return { snapshotId: snapshot.id };
   }
 
   async discard(connection: T3EnvironmentConnection): Promise<void> {

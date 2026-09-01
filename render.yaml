@@ -43,19 +43,16 @@ services:
         value: "2"
       - key: COMPADRE_MODAL_CPU_LIMIT
         value: "4"
-      # 6-hour worker lifetime: at the 2-hour default a long production
-      # investigation died mid-turn when Modal killed its sandbox
-      # (2026-09-01, #production-support). The drive activity's 130-minute
-      # attempts hand off cleanly, so three attempts cover the full lifetime.
-      - key: COMPADRE_MODAL_TIMEOUT_MS
-        value: "21600000"
-      # 8 GiB guaranteed memory: full-monorepo ci-checks exhausted the 2 GiB
-      # default so completely that even pkill could not spawn inside the
-      # sandbox and the turn wedged for an hour (2026-09-01).
+      # Worker lifetime is the code default (24 h, src/t3/runtime.ts): the
+      # sandbox lives for the whole task like toltagent's, with a live
+      # checkpoint after every terminal turn as the recovery point.
+      # 16 GiB guaranteed memory: full-monorepo ci-checks wedged both the
+      # 2 GiB and 8 GiB sandboxes so completely that even pkill could not
+      # spawn inside them (2026-09-01).
       - key: COMPADRE_MODAL_MEMORY_MIB
-        value: "8192"
-      - key: COMPADRE_MODAL_MEMORY_LIMIT_MIB
         value: "16384"
+      - key: COMPADRE_MODAL_MEMORY_LIMIT_MIB
+        value: "32768"
       - key: COMPADRE_PREVIEW_HOST_SUFFIX
         value: dev.compadre.comprehensive.io
       - key: TEMPORAL_ADDRESS

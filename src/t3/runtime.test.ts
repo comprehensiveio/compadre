@@ -1,9 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import {
-  nativeT3GatewayEnabled,
-  stopConfiguredT3WorkerLifecycle,
-} from "./runtime.js";
+import { nativeT3GatewayEnabled } from "./runtime.js";
 
 test("starts the native T3 gateway eagerly for every hosted entrypoint", () => {
   for (const name of [
@@ -24,9 +21,3 @@ test("does not start the Modal lifecycle for disabled legacy services", () => {
   );
 });
 
-test("stopping an uninitialized worker lifecycle is idempotent", () => {
-  assert.doesNotThrow(() => {
-    stopConfiguredT3WorkerLifecycle();
-    stopConfiguredT3WorkerLifecycle();
-  });
-});

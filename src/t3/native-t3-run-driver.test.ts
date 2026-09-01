@@ -119,7 +119,6 @@ function fakeGateway(waitBehaviors: WaitBehavior[]) {
     resumes: 0,
     waits: 0,
     cancels: 0,
-    releases: 0,
     lost: 0,
   };
   const gateway: NativeT3DriverGateway = {
@@ -143,9 +142,6 @@ function fakeGateway(waitBehaviors: WaitBehavior[]) {
     async cancel() {
       calls.cancels += 1;
       return 1;
-    },
-    async releaseWorkerAfterRun() {
-      calls.releases += 1;
     },
     async markWorkerLost() {
       calls.lost += 1;
@@ -203,7 +199,6 @@ test("drives a native T3 run to completion against durable state", async (t) => 
 
   assert.equal(outcome.status, "completed");
   assert.equal(calls.sends, 1);
-  assert.equal(calls.releases, 1);
   const events = await chunks();
   const types = events.map((event) => event.type);
   assert.deepEqual(types, [
@@ -342,7 +337,6 @@ test("finalize converges an abandoned run and is idempotent for terminal ones", 
   assert.equal(run?.error?.message, "workflow retries exhausted");
   const events = await chunks();
   assert.equal(events.at(-1)?.type, EventType.RUN_ERROR);
-  assert.equal(calls.releases, 1);
 
   // Second finalize must not overwrite the terminal record.
   await finalizeNativeT3Run({ durability, requests, gateway }, runId, {

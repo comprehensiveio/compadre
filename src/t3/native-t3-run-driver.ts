@@ -86,10 +86,6 @@ export interface NativeT3DriverGateway {
     runId: string,
     terminalStatus?: T3ThreadBinding["status"],
   ): Promise<void>;
-  releaseWorkerAfterRun?(
-    canonicalThreadId: string,
-    releasingRunId?: string,
-  ): Promise<void>;
 }
 
 export interface NativeT3RunDriverDependencies {
@@ -275,18 +271,6 @@ export async function driveNativeT3Run(
     await stream.append([withProtocolVersion(chunk)]);
   };
 
-  const releaseWorker = async () => {
-    if (!deps.gateway.releaseWorkerAfterRun) return;
-    await deps.gateway
-      .releaseWorkerAfterRun(request.canonicalThreadId, runId)
-      .catch((error) =>
-        console.warn("[native-t3-driver] worker release failed", {
-          runId,
-          error,
-        }),
-      );
-  };
-
   const terminalize = async (
     status: TerminalRunStatus,
     error?: { message: string; code?: string },
@@ -325,7 +309,6 @@ export async function driveNativeT3Run(
           error: markerError,
         }),
       );
-    await releaseWorker();
     await deps.requests.trimTerminalRequest(runId).catch(() => undefined);
     return { status };
   };
@@ -827,16 +810,6 @@ export async function finalizeNativeT3Run(
           error,
         }),
       );
-    if (deps.gateway?.releaseWorkerAfterRun) {
-      await deps.gateway
-        .releaseWorkerAfterRun(request.canonicalThreadId, runId)
-        .catch((error) =>
-          console.warn("[native-t3-driver] finalize worker release failed", {
-            runId,
-            error,
-          }),
-        );
-    }
     await deps.requests.trimTerminalRequest(runId).catch(() => undefined);
   }
 }

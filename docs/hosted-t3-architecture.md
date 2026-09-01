@@ -53,42 +53,41 @@ against Render's bootstrap workspace is not an authoritative substitute.
 | Attachments and large artifacts | Central object storage |
 | Logs, traces, model usage and cost telemetry | Datadog |
 
-## Worker lifecycle and idle cost
+## Worker lifecycle
 
 Native T3 workers use a durable lifecycle recorded with the thread binding in
 Postgres:
 
 ```text
-running -> warm -> hibernating -> suspended -> restoring -> running
+running -> (dies) -> suspended -> restoring -> running
 ```
 
-After a terminal turn, the worker remains warm for 30 minutes by default. The
-controller then stops the optional dev stack, stops the worker-local T3 server,
-captures a Modal filesystem snapshot, records the image ID, and terminates the
-sandbox. The snapshot includes `/workspace`, worker-local T3 state under
-`/var/lib/t3`, and stopped local database files. It does not preserve running
-processes.
+The worker sandbox lives for its whole Modal lifetime (24 hours by default) —
+there is no warm lease, hibernation, or sweeper. After every terminal turn
+the controller captures a live Modal filesystem checkpoint without stopping
+the worker and records the image ID on the binding. The checkpoint includes
+`/workspace` and worker-local T3 state under `/var/lib/t3`. It does not
+preserve running processes.
 
-A later message creates a new Modal sandbox from that image, reprojects current
-credentials and signed artifact URLs, restarts T3, verifies the assigned
-project/thread and protected Slack destination, and continues the same native
-T3 thread. With the default seven-day snapshot TTL, a message after three hours
-resumes from the saved filesystem and transcript. This is restoration into a
-new sandbox ID, not revival of the terminated sandbox.
+When the sandbox dies (lifetime expiry, OOM, crash), the next message creates
+a new Modal sandbox from the last checkpoint, reprojects current credentials
+and signed artifact URLs, restarts T3, verifies the assigned project/thread
+and protected Slack destination, and continues the same native T3 thread.
+This is restoration into a new sandbox ID, not revival of the dead sandbox.
+A binding with no checkpoint (the worker died before its first terminal turn)
+is parked, and the next turn provisions a replacement worker on the same
+canonical thread.
 
-The warm deadline is capped five minutes before Modal's configured hard sandbox
-timeout. An in-process timer handles the normal path and a Postgres-backed
-sweeper reconstructs overdue work after a controller restart. Preview lookup
-does not wake a suspended worker; sending a new message does. After the snapshot
-TTL expires, the central transcript remains readable, but the worker filesystem
-can no longer be restored from that image.
+The drive activity's watch ceiling is capped five minutes before Modal's
+configured hard sandbox timeout. After the checkpoint TTL expires (seven
+days by default), the central transcript remains readable, but the worker
+filesystem can no longer be restored from that image.
 
 Modal sandboxes receive credential-free cost tags for environment, purpose,
 provider, dev-environment status, worker generation, and a hashed thread key.
-Lifecycle transitions and live duration are emitted as
-`compadre.t3.worker.lifecycle.transitions` and
-`compadre.t3.worker.live.duration`. Use those with Modal billing exports to
-track worker-hours and detect warm workers that outlive their lease.
+Lifecycle transitions are emitted as
+`compadre.t3.worker.lifecycle.transitions`. Use those with Modal billing
+exports to track worker-hours.
 
 ## Identity and browser access
 
@@ -190,7 +189,7 @@ described below.
 
 The worker binding also records the exact active native provider run ID after
 dispatch (both orchestrator modes maintain this marker for diagnostics and
-sweeps). In in-process mode, five seconds after controller startup, Compadre
+recovery). In in-process mode, five seconds after controller startup, Compadre
 scans only bindings that are both `working` and carry that marker, claims a new
 fenced driver epoch, and starts the same snapshot-reprojection path. Terminal
 completion clears the marker conditionally, so a late retiring driver cannot
@@ -284,8 +283,8 @@ owns each run:
   duplicating events. Transient watch failures throw and are retried; only
   genuine provider terminals and explicit cancellation terminalize the run.
 - A non-cancellable finalize activity converges every abandoned run to a
-  terminal record, closes the event log, clears the active-run marker, and
-  releases the worker into its warm lease.
+  terminal record, closes the event log, and clears the active-run marker.
+  The worker itself keeps running for follow-up turns.
 - Cancellation is durable: cancel intent is recorded in Postgres and the
   workflow is cancelled; the drive activity interrupts the worker turn.
 
@@ -372,8 +371,7 @@ The controller is also kept at one instance today. Native T3 run execution,
 events, dispatch metadata, driver-epoch fencing, and cancellation are durable
 through Temporal, and a restart resumes active runs on the replacement
 instance. Multi-instance operation additionally requires durable per-run
-tool-bridge credentials (the relay tool bridge is still process-local) and
-explicit write ownership for the worker-lifecycle sweep.
+tool-bridge credentials (the relay tool bridge is still process-local).
 
 ## Configuration
 
@@ -400,9 +398,7 @@ COMPADRE_T3_PACKAGE_URL=<pinned fork release>
 COMPADRE_T3_PACKAGE_SHA256=<required digest>
 COMPADRE_T3_ARTIFACT_BUCKET=compadre
 COMPADRE_T3_ARTIFACT_REGION=us-west-2
-COMPADRE_T3_WORKER_WARM_TTL_MS=1800000
-COMPADRE_T3_WORKER_SWEEP_INTERVAL_MS=60000
-COMPADRE_MODAL_TIMEOUT_MS=7200000
+COMPADRE_MODAL_TIMEOUT_MS=86400000
 COMPADRE_MODAL_SNAPSHOT_TTL_MS=604800000
 ```
 

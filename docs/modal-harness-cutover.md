@@ -1,9 +1,9 @@
 # Modal harness cutover
 
 > This runbook describes the legacy TanStack harness lifecycle. Production
-> hosted-T3 threads use the warm-lease lifecycle documented in
-> `docs/hosted-t3-architecture.md`: one worker stays warm briefly, then is
-> snapshotted and restored on a later message.
+> hosted-T3 threads use the lifecycle documented in
+> `docs/hosted-t3-architecture.md`: one worker lives for the whole task, is
+> checkpointed live after terminal turns, and is restored if it dies.
 
 ## Boundary
 

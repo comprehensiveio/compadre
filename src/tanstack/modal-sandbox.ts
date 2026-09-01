@@ -511,6 +511,25 @@ export class ModalHandle implements SandboxHandle {
     };
   }
 
+  /**
+   * Live filesystem checkpoint: capture a restorable snapshot while the
+   * sandbox keeps running. Crash-consistent (no quiesce) by design — the
+   * checkpoint exists so a later worker loss can restore recent state, not
+   * to migrate a live process.
+   */
+  async checkpoint(label?: string): Promise<{ id: string; label?: string }> {
+    const image = await timedModalPhase(
+      "checkpoint.capture",
+      () =>
+        this.sandbox.snapshotFilesystem({
+          timeoutMs: 5 * 60 * 1_000,
+          ttlMs: this.snapshotTtlMs,
+        }),
+      { sandboxId: this.id },
+    );
+    return { id: image.imageId, ...(label ? { label } : {}) };
+  }
+
   async snapshot(label?: string): Promise<{ id: string; label?: string }> {
     for (const stop of [...this.stopProcessMonitors]) stop();
     const image = await timedModalPhase(

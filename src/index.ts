@@ -54,7 +54,6 @@ import {
   getConfiguredT3Gateway,
   nativeT3GatewayEnabled,
   recoverConfiguredNativeT3Runs,
-  stopConfiguredT3WorkerLifecycle,
 } from "./t3/runtime.js";
 import { NATIVE_T3_RUN_ORCHESTRATOR } from "./temporal/mode.js";
 import {
@@ -116,7 +115,6 @@ async function start() {
         "Native T3 worker lifecycle requires configured thread persistence",
       );
     }
-    console.log("[t3-worker-lifecycle] startup sweeper enabled");
     if (NATIVE_T3_RUN_ORCHESTRATOR === "temporal") {
       // Fail fast: without the Temporal worker no native run can execute, so
       // an unreachable server must block this deploy from receiving traffic.
@@ -264,7 +262,6 @@ async function start() {
   const shutdown = (signal: NodeJS.Signals) => {
     if (shuttingDown) return;
     shuttingDown = true;
-    stopConfiguredT3WorkerLifecycle();
     console.log(`[shutdown] ${signal} received; draining in-flight requests`);
     const configuredTimeout = Number(
       process.env.COMPADRE_SHUTDOWN_TIMEOUT_MS ?? "295000",

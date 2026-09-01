@@ -25,14 +25,11 @@ import {
 } from "./artifact-store.js";
 
 let configuredGateway: Promise<T3Gateway | null> | undefined;
-let stopConfiguredGatewaySweeper: (() => void) | undefined;
 let configuredRunCoordinator: Promise<NativeT3RunCoordinator | null> | undefined;
 let configuredArtifactStore: Promise<T3ArtifactStore | null> | undefined;
 let configuredRunService: Promise<NativeT3RunService | null> | undefined;
 
-const DEFAULT_T3_WORKER_WARM_TTL_MS = 30 * 60 * 1000;
-const DEFAULT_T3_WORKER_SWEEP_INTERVAL_MS = 60 * 1000;
-const DEFAULT_MODAL_TIMEOUT_MS = 2 * 60 * 60 * 1000;
+const DEFAULT_MODAL_TIMEOUT_MS = 24 * 60 * 60 * 1000;
 
 export function nativeT3GatewayEnabled(
   environment: NodeJS.ProcessEnv = process.env,
@@ -105,24 +102,12 @@ export async function getConfiguredT3Gateway(): Promise<T3Gateway | null> {
           undefined,
           snapshots,
           {
-            warmLeaseMs: positiveDurationSetting(
-              "COMPADRE_T3_WORKER_WARM_TTL_MS",
-              process.env.COMPADRE_T3_WORKER_WARM_TTL_MS,
-              DEFAULT_T3_WORKER_WARM_TTL_MS,
-            ),
             maxLiveMs: positiveDurationSetting(
               "COMPADRE_MODAL_TIMEOUT_MS",
               process.env.COMPADRE_MODAL_TIMEOUT_MS,
               DEFAULT_MODAL_TIMEOUT_MS,
             ),
           },
-        );
-        stopConfiguredGatewaySweeper = gateway.startWorkerLifecycleSweeper(
-          positiveDurationSetting(
-            "COMPADRE_T3_WORKER_SWEEP_INTERVAL_MS",
-            process.env.COMPADRE_T3_WORKER_SWEEP_INTERVAL_MS,
-            DEFAULT_T3_WORKER_SWEEP_INTERVAL_MS,
-          ),
         );
         return gateway;
       })
@@ -133,12 +118,6 @@ export async function getConfiguredT3Gateway(): Promise<T3Gateway | null> {
     configuredGateway = initialization;
   }
   return configuredGateway;
-}
-
-/** Stop periodic worker lifecycle work before the controller begins draining. */
-export function stopConfiguredT3WorkerLifecycle(): void {
-  stopConfiguredGatewaySweeper?.();
-  stopConfiguredGatewaySweeper = undefined;
 }
 
 /** Reclaim provider streams left behind by a previous controller process. */

@@ -123,26 +123,29 @@ test("rejects a missing or additional T3 thread", () => {
   );
 });
 
-test("quiesces development services before snapshotting and terminating a worker", async () => {
-  const events: Array<{ command: string; cwd?: string } | string> = [];
+test("checkpoints a running worker without quiescing or terminating it", async () => {
+  const events: string[] = [];
   const sandbox = {
     workspaceRoot: "/workspace/repository",
     capabilities: { snapshots: true },
     process: {
-      async exec(command: string, options?: { cwd?: string }) {
-        events.push({ command, cwd: options?.cwd });
+      async exec(command: string) {
+        events.push(`exec:${command}`);
         return { exitCode: 0, stdout: "", stderr: "" };
       },
     },
-    async snapshot(label: string) {
-      events.push(`snapshot:${label}`);
+    async checkpoint(label: string) {
+      events.push(`checkpoint:${label}`);
       return { id: "im-worker-1", label };
+    },
+    async snapshot() {
+      throw new Error("checkpoint must not use the terminating snapshot path");
     },
   } as unknown as SandboxHandle;
   const manager = new T3ModalEnvironmentManager({});
 
   assert.deepEqual(
-    await manager.hibernate(binding, {
+    await manager.checkpoint(binding, {
       sandboxId: binding.sandboxId,
       projectId: binding.projectId,
       client: {} as never,
@@ -150,50 +153,6 @@ test("quiesces development services before snapshotting and terminating a worker
     }),
     { snapshotId: "im-worker-1" },
   );
-  assert.match(
-    (events[0] as { command: string }).command,
-    /compadre-dev-up\.sh down/,
-  );
-  assert.match((events[0] as { command: string }).command, /kill \"\$pid\"/);
-  assert.equal((events[0] as { cwd?: string }).cwd, "/workspace/repository");
-  assert.equal(events[1], "snapshot:t3-worker-generation-1");
-});
-
-test("restarts T3 after snapshot capture fails", async () => {
-  let restarted = false;
-  const snapshotError = new Error("snapshot capture failed");
-  const sandbox = {
-    workspaceRoot: "/workspace",
-    capabilities: { snapshots: true },
-    process: {
-      async exec() {
-        return { exitCode: 0, stdout: "", stderr: "" };
-      },
-    },
-    async snapshot() {
-      throw snapshotError;
-    },
-  } as unknown as SandboxHandle;
-  const manager = new T3ModalEnvironmentManager({}, undefined, {
-    async restart(handle, identity) {
-      restarted = true;
-      assert.equal(handle, sandbox);
-      assert.deepEqual(identity, {
-        projectId: binding.projectId,
-        t3ThreadId: binding.t3ThreadId,
-      });
-      return {} as never;
-    },
-  });
-
-  await assert.rejects(
-    manager.hibernate(binding, {
-      sandboxId: binding.sandboxId,
-      projectId: binding.projectId,
-      client: {} as never,
-      sandbox,
-    }),
-    snapshotError,
-  );
-  assert.equal(restarted, true);
+  // Live checkpoint: no dev-stack teardown, no T3 kill, no terminate.
+  assert.deepEqual(events, ["checkpoint:t3-worker-generation-1"]);
 });

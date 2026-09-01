@@ -115,13 +115,12 @@ interface ProbeGatewayState {
   sends: number;
   waits: number;
   cancels: number;
-  releases: number;
 }
 
 function probeGateway(
   behavior: "retry-then-complete" | "hang-until-cancel",
 ): { gateway: NativeT3DriverGateway; state: ProbeGatewayState } {
-  const state: ProbeGatewayState = { sends: 0, waits: 0, cancels: 0, releases: 0 };
+  const state: ProbeGatewayState = { sends: 0, waits: 0, cancels: 0 };
   let messageId = "";
   const gateway: NativeT3DriverGateway = {
     async send() {
@@ -170,9 +169,6 @@ function probeGateway(
     async cancel() {
       state.cancels += 1;
       return 1;
-    },
-    async releaseWorkerAfterRun() {
-      state.releases += 1;
     },
   };
   return { gateway, state };

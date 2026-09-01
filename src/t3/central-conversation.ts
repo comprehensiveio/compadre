@@ -17,7 +17,7 @@ import {
 
 export const CENTRAL_T3_TIMEOUT_MS = 20 * 60 * 1_000;
 const CENTRAL_T3_ABSOLUTE_TIMEOUT_MS = 115 * 60 * 1_000;
-const MODAL_HIBERNATION_SAFETY_MS = 5 * 60 * 1_000;
+const MODAL_LIFETIME_SAFETY_MS = 5 * 60 * 1_000;
 const MAX_PROVIDER_PROMPT_CHARS = 95_000;
 const TRUNCATED_CONTEXT_NOTICE =
   "[Earlier Slack thread context truncated to fit the agent prompt.]";
@@ -35,7 +35,7 @@ export function centralT3AbsoluteTimeoutMs(
     1,
     Math.min(
       CENTRAL_T3_ABSOLUTE_TIMEOUT_MS,
-      configuredWorkerLifetime - MODAL_HIBERNATION_SAFETY_MS,
+      configuredWorkerLifetime - MODAL_LIFETIME_SAFETY_MS,
     ),
   );
 }

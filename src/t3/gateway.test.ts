@@ -259,7 +259,8 @@ test("durably records and conditionally clears the active provider run", async (
     },
     absoluteTimeoutMs: 99 * 60 * 60 * 1_000,
   });
-  assert.equal(receivedAbsoluteTimeoutMs, 114 * 60 * 1_000);
+  // 24h default lifetime - 1min elapsed - 5min watch safety margin.
+  assert.equal(receivedAbsoluteTimeoutMs, (24 * 60 - 6) * 60 * 1_000);
   assert.equal((await bindings.get("thread-active-run"))?.activeRunId, "run-1");
   await gateway.clearActiveRun("thread-active-run", "older-run");
   assert.equal((await bindings.get("thread-active-run"))?.activeRunId, "run-1");
@@ -337,10 +338,6 @@ test("restores a suspended Modal worker before continuing the same T3 thread", a
     },
     () => "unused",
     () => new Date("2026-08-30T13:00:00.000Z"),
-    undefined,
-    undefined,
-    undefined,
-    { schedule: () => undefined },
   );
 
   const turn = await gateway.send({
@@ -358,234 +355,12 @@ test("restores a suspended Modal worker before continuing the same T3 thread", a
   assert.equal(turn.binding.workerState, "running");
 });
 
-test("hibernates a terminal worker after its warm lease", async () => {
-  const persistence = memoryPersistence();
-  const bindings = new T3ThreadBindingStore(persistence.stores.metadata);
-  let currentTime = new Date("2026-08-30T12:00:00.000Z");
-  const hibernated: string[] = [];
-  const client = {
-    baseUrl: "https://worker.example",
-    async startNewThread(input: { threadId?: string }) {
-      return {
-        sequence: 1,
-        commandId: "command-1",
-        messageId: "message-1",
-        threadId: input.threadId!,
-        createdAt: currentTime.toISOString(),
-      };
-    },
-    async startTurn() {
-      throw new Error("unused");
-    },
-    async interruptTurn() {
-      return 2;
-    },
-    async waitForTurnTerminal() {
-      return completedSnapshot;
-    },
-    async threadSnapshot() {
-      return completedSnapshot;
-    },
-    async mintPairingCredential() {
-      throw new Error("unused");
-    },
-  } satisfies T3CommandClient;
-  const environment = {
-    sandboxId: "sandbox-1",
-    projectId: "project-1",
-    client,
-  };
-  const gateway = new T3Gateway(
-    bindings,
-    {
-      async provision() {
-        return environment;
-      },
-      async reconnect() {
-        return environment;
-      },
-      async hibernate(binding) {
-        hibernated.push(binding.canonicalThreadId);
-        return { snapshotId: "im-checkpoint-1" };
-      },
-    },
-    () => "t3-thread-1",
-    () => currentTime,
-    undefined,
-    undefined,
-    undefined,
-    { warmLeaseMs: 30 * 60 * 1000, schedule: () => undefined },
-  );
-  const turn = await gateway.send({
-    canonicalThreadId: "canonical-thread",
-    title: "Restorable thread",
-    text: "work",
-    modelSelection: { instanceId: "codex", model: "gpt-5.6-sol" },
-  });
-  await gateway.waitForTerminal({ turn });
-
-  const warm = await bindings.get("canonical-thread");
-  assert.equal(warm?.workerState, "warm");
-  assert.equal(warm?.warmUntil, "2026-08-30T12:30:00.000Z");
-
-  currentTime = new Date("2026-08-30T12:31:00.000Z");
-  await gateway.sweepExpiredWarmWorkers();
-
-  const suspended = await bindings.get("canonical-thread");
-  assert.deepEqual(hibernated, ["canonical-thread"]);
-  assert.equal(suspended?.workerState, "suspended");
-  assert.equal(suspended?.workerSnapshotId, "im-checkpoint-1");
-  assert.equal(suspended?.warmUntil, undefined);
-});
-
-test("recovers a stale hibernation left by a controller crash", async () => {
-  const persistence = memoryPersistence();
-  const bindings = new T3ThreadBindingStore(persistence.stores.metadata);
-  await bindings.bind({
-    canonicalThreadId: "canonical-thread",
-    providerInstanceId: "codex",
-    t3ThreadId: "t3-thread-1",
-    projectId: "project-1",
-    sandboxId: "sandbox-1",
-    baseUrl: "https://worker.example",
-    modelSelection: { instanceId: "codex", model: "gpt-5.6-sol" },
-    status: "ready",
-    workerState: "hibernating",
-    workerGeneration: 1,
-    sandboxStartedAt: "2026-08-30T11:00:00.000Z",
-    lastActiveAt: "2026-08-30T11:30:00.000Z",
-    warmUntil: "2026-08-30T12:00:00.000Z",
-    createdAt: "2026-08-30T11:00:00.000Z",
-    updatedAt: "2026-08-30T12:00:00.000Z",
-  });
-  let connectionPassed = true;
-  const gateway = new T3Gateway(
-    bindings,
-    {
-      async provision() {
-        throw new Error("unused");
-      },
-      async reconnect() {
-        throw new Error("must not require a live T3 server");
-      },
-      async hibernate(_binding, connection) {
-        connectionPassed = connection !== undefined;
-        return { snapshotId: "im-recovered-checkpoint" };
-      },
-    },
-    () => "unused",
-    () => new Date("2026-08-30T12:11:00.000Z"),
-    undefined,
-    undefined,
-    undefined,
-    { schedule: () => undefined },
-  );
-
-  await gateway.sweepExpiredWarmWorkers();
-
-  const recovered = await bindings.get("canonical-thread");
-  assert.equal(connectionPassed, false);
-  assert.equal(recovered?.workerState, "suspended");
-  assert.equal(recovered?.workerSnapshotId, "im-recovered-checkpoint");
-});
-
-test("finishes an interrupted hibernation before resuming a user turn", async () => {
-  const persistence = memoryPersistence();
-  const bindings = new T3ThreadBindingStore(persistence.stores.metadata);
-  await bindings.bindRecord({
-    canonicalThreadId: "canonical-thread",
-    providerInstanceId: "codex",
-    t3ThreadId: "t3-thread-1",
-    projectId: "project-1",
-    sandboxId: "sandbox-1",
-    baseUrl: "https://old-worker.example",
-    modelSelection: { instanceId: "codex", model: "gpt-5.6-sol" },
-    status: "ready",
-    workerState: "hibernating",
-    workerGeneration: 1,
-    sandboxStartedAt: "2026-08-30T11:00:00.000Z",
-    lastActiveAt: "2026-08-30T11:30:00.000Z",
-    warmUntil: "2026-08-30T12:00:00.000Z",
-    createdAt: "2026-08-30T11:00:00.000Z",
-    updatedAt: "2026-08-30T12:00:00.000Z",
-  });
-  const starts: string[] = [];
-  const restoredClient = {
-    baseUrl: "https://restored-worker.example",
-    async startNewThread() {
-      throw new Error("unused");
-    },
-    async startTurn(input: { threadId: string }) {
-      starts.push(input.threadId);
-      return {
-        sequence: 3,
-        commandId: "command-2",
-        messageId: "message-2",
-        threadId: input.threadId,
-        createdAt: "2026-08-30T12:01:00.000Z",
-      };
-    },
-    async interruptTurn() {
-      return 4;
-    },
-    async waitForTurnTerminal() {
-      return completedSnapshot;
-    },
-    async threadSnapshot() {
-      return completedSnapshot;
-    },
-    async mintPairingCredential() {
-      throw new Error("unused");
-    },
-  } satisfies T3CommandClient;
-  const gateway = new T3Gateway(
-    bindings,
-    {
-      async provision() {
-        throw new Error("unused");
-      },
-      async reconnect(binding) {
-        throw new T3EnvironmentUnavailableError(binding.sandboxId);
-      },
-      async hibernate(_binding, connection) {
-        assert.equal(connection, undefined);
-        return { snapshotId: "im-recovered-checkpoint" };
-      },
-      async restore(binding) {
-        assert.equal(binding.workerSnapshotId, "im-recovered-checkpoint");
-        return {
-          sandboxId: "sandbox-2",
-          projectId: binding.projectId,
-          client: restoredClient,
-        };
-      },
-    },
-    () => "unused",
-    () => new Date("2026-08-30T12:01:00.000Z"),
-    undefined,
-    undefined,
-    undefined,
-    { schedule: () => undefined },
-  );
-
-  const turn = await gateway.send({
-    canonicalThreadId: "canonical-thread",
-    title: "Recovered thread",
-    text: "continue",
-    modelSelection: { instanceId: "codex", model: "gpt-5.6-sol" },
-  });
-
-  assert.deepEqual(starts, ["t3-thread-1"]);
-  assert.equal(turn.binding.sandboxId, "sandbox-2");
-  assert.equal(turn.binding.workerGeneration, 2);
-  assert.equal(turn.binding.workerState, "running");
-});
-
-test("continues the same native thread after controller restart, hibernation, and restore", async () => {
+test("checkpoints a terminal turn, survives a restart, and restores after worker death", async () => {
   const persistence = memoryPersistence();
   const bindings = new T3ThreadBindingStore(persistence.stores.metadata);
   let currentTime = new Date("2026-08-30T12:00:00.000Z");
   let liveSandboxId: string | null = "sandbox-1";
+  let checkpoints = 0;
   const starts: string[] = [];
   const client = (baseUrl: string): T3CommandClient => ({
     baseUrl,
@@ -641,8 +416,9 @@ test("continues the same native thread after controller restart, hibernation, an
         client: activeClient,
       };
     },
-    async hibernate() {
-      liveSandboxId = null;
+    async checkpoint() {
+      // A live checkpoint never stops the worker.
+      checkpoints += 1;
       return { snapshotId: "im-worker-checkpoint" };
     },
     async restore(binding) {
@@ -656,19 +432,11 @@ test("continues the same native thread after controller restart, hibernation, an
       };
     },
   };
-  const lifecycle = {
-    warmLeaseMs: 30 * 60 * 1000,
-    schedule: () => undefined,
-  };
   const firstController = new T3Gateway(
     bindings,
     environments,
     () => "t3-thread-1",
     () => currentTime,
-    undefined,
-    undefined,
-    undefined,
-    lifecycle,
   );
   const firstTurn = await firstController.send({
     canonicalThreadId: "canonical-thread",
@@ -678,24 +446,36 @@ test("continues the same native thread after controller restart, hibernation, an
   });
   await firstController.waitForTerminal({ turn: firstTurn });
 
-  // Model a fresh Render process: only Postgres-backed binding state survives.
+  // The terminal turn is checkpointed but the worker keeps running.
+  const afterFirst = await bindings.get("canonical-thread");
+  assert.equal(checkpoints, 1);
+  assert.equal(afterFirst?.workerSnapshotId, "im-worker-checkpoint");
+  assert.equal(afterFirst?.workerState, "running");
+  assert.equal(liveSandboxId, "sandbox-1", "checkpoint left the sandbox alive");
+
+  // Model a fresh Render process: only Postgres-backed binding state
+  // survives, and the still-live worker is reconnected, not re-provisioned.
   currentTime = new Date("2026-08-30T12:31:00.000Z");
   const restartedController = new T3Gateway(
     bindings,
     environments,
     () => "must-not-create-another-thread",
     () => currentTime,
-    undefined,
-    undefined,
-    undefined,
-    lifecycle,
   );
-  await restartedController.sweepExpiredWarmWorkers();
-  assert.equal(
-    (await bindings.get("canonical-thread"))?.workerState,
-    "suspended",
-  );
+  const reconnectedTurn = await restartedController.send({
+    canonicalThreadId: "canonical-thread",
+    title: "Restartable thread",
+    text: "after the controller restart",
+    modelSelection: { instanceId: "codex", model: "gpt-5.6-sol" },
+  });
+  assert.equal(reconnectedTurn.binding.sandboxId, "sandbox-1");
+  assert.equal(reconnectedTurn.binding.workerGeneration ?? 1, 1);
+  await restartedController.waitForTerminal({ turn: reconnectedTurn });
+  assert.equal(checkpoints, 2);
 
+  // The sandbox dies (Modal 24h ceiling, OOM, ...): the next turn restores
+  // the same native thread from the last checkpoint.
+  liveSandboxId = null;
   currentTime = new Date("2026-08-30T15:00:00.000Z");
   const resumedTurn = await restartedController.send({
     canonicalThreadId: "canonical-thread",
@@ -704,96 +484,16 @@ test("continues the same native thread after controller restart, hibernation, an
     modelSelection: { instanceId: "codex", model: "gpt-5.6-sol" },
   });
 
-  assert.deepEqual(starts, ["new:t3-thread-1", "continue:t3-thread-1"]);
+  assert.deepEqual(starts, [
+    "new:t3-thread-1",
+    "continue:t3-thread-1",
+    "continue:t3-thread-1",
+  ]);
   assert.equal(resumedTurn.binding.t3ThreadId, "t3-thread-1");
   assert.equal(resumedTurn.binding.sandboxId, "sandbox-2");
   assert.equal(resumedTurn.binding.workerGeneration, 2);
   assert.equal(resumedTurn.binding.workerState, "running");
 });
-
-test("caps the warm lease before Modal's hard sandbox deadline", async () => {
-  const persistence = memoryPersistence();
-  const bindings = new T3ThreadBindingStore(persistence.stores.metadata);
-  const now = new Date("2026-08-30T13:50:00.000Z");
-  const client = {
-    baseUrl: "https://worker.example",
-    async startNewThread(input: { threadId?: string }) {
-      return {
-        sequence: 1,
-        commandId: "command-1",
-        messageId: "message-1",
-        threadId: input.threadId!,
-        createdAt: now.toISOString(),
-      };
-    },
-    async startTurn() {
-      throw new Error("unused");
-    },
-    async interruptTurn() {
-      return 2;
-    },
-    async waitForTurnTerminal() {
-      return completedSnapshot;
-    },
-    async threadSnapshot() {
-      return completedSnapshot;
-    },
-    async mintPairingCredential() {
-      throw new Error("unused");
-    },
-  } satisfies T3CommandClient;
-  const environment = {
-    sandboxId: "sandbox-1",
-    projectId: "project-1",
-    client,
-  };
-  const gateway = new T3Gateway(
-    bindings,
-    {
-      async provision() {
-        return environment;
-      },
-      async reconnect() {
-        return environment;
-      },
-      async hibernate() {
-        return { snapshotId: "unused" };
-      },
-    },
-    () => "t3-thread-1",
-    () => now,
-    undefined,
-    undefined,
-    undefined,
-    {
-      warmLeaseMs: 30 * 60 * 1000,
-      maxLiveMs: 2 * 60 * 60 * 1000,
-      hibernationSafetyMs: 5 * 60 * 1000,
-      schedule: () => undefined,
-    },
-  );
-  const turn = await gateway.send({
-    canonicalThreadId: "canonical-thread",
-    title: "Near timeout",
-    text: "work",
-    modelSelection: { instanceId: "codex", model: "gpt-5.6-sol" },
-  });
-  await gateway.waitForTerminal({
-    turn: {
-      ...turn,
-      binding: {
-        ...turn.binding,
-        sandboxStartedAt: "2026-08-30T12:00:00.000Z",
-      },
-    },
-  });
-
-  assert.equal(
-    (await bindings.get("canonical-thread"))?.warmUntil,
-    "2026-08-30T13:55:00.000Z",
-  );
-});
-
 test("resolves a preview from the bound sandbox without provisioning", async () => {
   const persistence = memoryPersistence();
   const bindings = new T3ThreadBindingStore(persistence.stores.metadata);
@@ -1690,62 +1390,6 @@ test("replaces a lost worker (no snapshot) with a fresh native thread on the nex
   ]);
 });
 
-test("parks a lost warm worker instead of retrying hibernation forever", async () => {
-  const persistence = memoryPersistence();
-  const bindings = new T3ThreadBindingStore(persistence.stores.metadata);
-  await bindings.bind({
-    canonicalThreadId: "lost-thread",
-    providerInstanceId: "codex",
-    t3ThreadId: "t3-thread-1",
-    projectId: "project-1",
-    sandboxId: "sandbox-dead",
-    baseUrl: "https://t3.example",
-    workerState: "warm",
-    workerGeneration: 1,
-    warmUntil: "2026-09-01T15:00:00.000Z",
-    modelSelection: { instanceId: "codex", model: "gpt-5.6-sol" },
-    createdAt: "2026-09-01T13:00:00.000Z",
-    updatedAt: "2026-09-01T14:00:00.000Z",
-  });
-  let hibernateCalls = 0;
-  const environments: T3EnvironmentConnectionManager = {
-    async provision() {
-      throw new Error("unused");
-    },
-    async reconnect(binding) {
-      throw new T3EnvironmentUnavailableError(binding.sandboxId);
-    },
-    async hibernate() {
-      hibernateCalls += 1;
-      throw new Error("unreachable: reconnect already failed");
-    },
-  };
-  const scheduled: number[] = [];
-  const gateway = new T3Gateway(
-    bindings,
-    environments,
-    () => "unused-id",
-    () => new Date("2026-09-01T15:10:00.000Z"),
-    undefined,
-    undefined,
-    undefined,
-    { schedule: (_task, delayMs) => scheduled.push(delayMs) },
-  );
-
-  await gateway.sweepExpiredWarmWorkers();
-
-  const parked = await bindings.get("lost-thread");
-  assert.equal(parked?.workerState, "suspended");
-  assert.equal(parked?.status, "unavailable");
-  assert.equal(parked?.warmUntil, undefined);
-  assert.equal(hibernateCalls, 0);
-  assert.deepEqual(scheduled, [], "no hibernation retry is scheduled");
-
-  // A second sweep must be a no-op (no more retry spam).
-  await gateway.sweepExpiredWarmWorkers();
-  assert.equal((await bindings.get("lost-thread"))?.workerState, "suspended");
-});
-
 test("markWorkerLost parks only the confirmed sandbox and never a restorable one", async () => {
   const persistence = memoryPersistence();
   const bindings = new T3ThreadBindingStore(persistence.stores.metadata);
@@ -1770,9 +1414,6 @@ test("markWorkerLost parks only the confirmed sandbox and never a restorable one
     async reconnect() {
       throw new Error("unused");
     },
-    async hibernate() {
-      throw new Error("unused");
-    },
   };
   const gateway = new T3Gateway(bindings, environments);
 
@@ -1795,41 +1436,3 @@ test("markWorkerLost parks only the confirmed sandbox and never a restorable one
   );
 });
 
-test("releasing a run's worker never warms a container another run still owns", async () => {
-  const persistence = memoryPersistence();
-  const bindings = new T3ThreadBindingStore(persistence.stores.metadata);
-  await bindings.bind({
-    canonicalThreadId: "busy-thread",
-    providerInstanceId: "codex",
-    t3ThreadId: "t3-thread-1",
-    projectId: "project-1",
-    sandboxId: "sandbox-1",
-    baseUrl: "https://t3.example",
-    workerState: "running",
-    workerGeneration: 1,
-    activeRunId: "original-run",
-    modelSelection: { instanceId: "codex", model: "gpt-5.6-sol" },
-    createdAt: "2026-09-01T16:00:00.000Z",
-    updatedAt: "2026-09-01T17:00:00.000Z",
-  });
-  const environments: T3EnvironmentConnectionManager = {
-    async provision() {
-      throw new Error("unused");
-    },
-    async reconnect() {
-      throw new Error("unused");
-    },
-    async hibernate() {
-      throw new Error("unused");
-    },
-  };
-  const gateway = new T3Gateway(bindings, environments);
-
-  // A failed steer's finalize must not warm the worker mid-turn.
-  await gateway.releaseWorkerAfterRun("busy-thread", "steer-run");
-  assert.equal((await bindings.get("busy-thread"))?.workerState, "running");
-
-  // The owning run's own release still works.
-  await gateway.releaseWorkerAfterRun("busy-thread", "original-run");
-  assert.equal((await bindings.get("busy-thread"))?.workerState, "warm");
-});

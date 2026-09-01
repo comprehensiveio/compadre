@@ -50,9 +50,10 @@ record by a retried finalize step.
    reliability change.
 4. `finalizeNativeT3RunActivity` (5 attempts, non-cancellable scope) converges
    any run whose drive could not finish: appends a terminal RUN_ERROR, marks
-   the record `failed`/`aborted`, closes the log, releases the worker into its
-   warm lease (`gateway.releaseWorkerAfterRun`) so the hibernation sweep can
-   reclaim it, and trims the persisted request's attachments.
+   the record `failed`/`aborted`, closes the log, and trims the persisted
+   request's attachments. The worker itself is left running — it lives for
+   its whole 24-hour sandbox lifetime and is checkpointed after terminal
+   turns, not managed per-run.
 5. Cancellation: `POST /hosted/t3/runs/:id/cancel` records durable cancel
    intent and cancels the workflow; the drive activity's cancellation signal
    interrupts the worker turn and terminalizes the run as `aborted`.
@@ -63,13 +64,13 @@ record by a retried finalize step.
    handoff — the attempt stops watching and the next attempt (possibly on a
    replacement instance) reattaches.
 6. Worker loss: when reattaches see consecutive `unavailable` errors and the
-   binding has no restorable snapshot (the sandbox hit its lifetime mid-turn,
-   or crashed before its first hibernation), the driver converges the run as
-   failed within about a minute, parks the binding (`worker.lost`), and the
-   NEXT turn on that thread transparently provisions a replacement worker
-   (`provision.replaced`) instead of leaving the thread permanently
-   unreachable. The hibernation sweep likewise parks — never endlessly
-   retries — a lost warm worker.
+   binding has no restorable checkpoint (the sandbox hit its lifetime
+   mid-turn, or crashed before its first checkpoint), the driver converges
+   the run as failed within about a minute, parks the binding
+   (`worker.lost`), and the NEXT turn on that thread transparently
+   provisions a replacement worker (`provision.replaced`) instead of leaving
+   the thread permanently unreachable. If a checkpoint exists, the next turn
+   restores from it and continues the same native thread.
 
 Subscribers are unchanged: central T3 and replay clients tail the Postgres
 event log over SSE with `Last-Event-ID` resume; producer relocation is
