@@ -86,6 +86,21 @@ export class SlackClient {
     });
   }
 
+  /** Post secondary context copy using Slack's intentionally smaller context style. */
+  async postContext(
+    channel: string,
+    markdown: string,
+    threadTs?: string,
+  ): Promise<SlackResponse> {
+    const text = truncateSlackMarkdown(markdown);
+    return this.post("chat.postMessage", {
+      channel,
+      ...(threadTs ? { thread_ts: threadTs } : {}),
+      text,
+      blocks: [{ type: "context", elements: [{ type: "mrkdwn", text }] }],
+    });
+  }
+
   async addReaction(
     channel: string,
     timestamp: string,

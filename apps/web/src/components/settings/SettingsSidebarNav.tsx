@@ -8,6 +8,7 @@ import {
   type KeyboardEvent,
 } from "react";
 import {
+  AlarmClockIcon,
   ArchiveIcon,
   BlocksIcon,
   BotIcon,
@@ -39,6 +40,7 @@ import { scrollToSettingsTarget } from "./settingsLayout";
 import {
   searchSettings,
   SETTINGS_SECTION_LABELS,
+  TRIGGERED_PROMPTS_SETTINGS_AVAILABLE,
   type SettingsPath,
   type SettingsSearchItem,
 } from "./settingsSearch";
@@ -53,6 +55,7 @@ const SETTINGS_SECTION_ICONS: Readonly<
   "/settings/integrations": BlocksIcon,
   "/settings/source-control": GitBranchIcon,
   "/settings/connections": Link2Icon,
+  "/settings/triggered-prompts": AlarmClockIcon,
   "/settings/archived": ArchiveIcon,
 };
 
@@ -60,11 +63,13 @@ export const SETTINGS_NAV_ITEMS: ReadonlyArray<{
   label: string;
   to: SettingsPath;
   icon: ComponentType<{ className?: string }>;
-}> = (Object.keys(SETTINGS_SECTION_LABELS) as SettingsPath[]).map((to) => ({
-  to,
-  label: SETTINGS_SECTION_LABELS[to],
-  icon: SETTINGS_SECTION_ICONS[to],
-}));
+}> = (Object.keys(SETTINGS_SECTION_LABELS) as SettingsPath[])
+  .filter((to) => to !== "/settings/triggered-prompts" || TRIGGERED_PROMPTS_SETTINGS_AVAILABLE)
+  .map((to) => ({
+    to,
+    label: SETTINGS_SECTION_LABELS[to],
+    icon: SETTINGS_SECTION_ICONS[to],
+  }));
 
 function SettingsSectionIcon({ to }: { to: SettingsPath }) {
   const Icon = SETTINGS_SECTION_ICONS[to];

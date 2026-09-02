@@ -396,3 +396,54 @@ export const pullRequestWatches = pgTable(
       .where(sql`${table.status} = 'waiting'`),
   ],
 );
+
+/**
+ * Triggered prompts: stored prompt definitions fired by an external trigger
+ * (cron schedules today; the trigger_type discriminator and JSON config leave
+ * room for other sources later). Each row is mirrored to one Temporal
+ * Schedule; fires dispatch a central T3 turn with origin "trigger"
+ * attribution and deliver only the agent's answer to Slack.
+ */
+export type TriggeredPromptDeliveryMode =
+  | "new_thread"
+  | "same_thread"
+  | "existing_thread";
+
+export const triggeredPrompts = pgTable(
+  "compadre_triggered_prompts",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    name: text("name").notNull(),
+    prompt: text("prompt").notNull(),
+    triggerType: text("trigger_type").notNull().default("cron"),
+    /** Per-type config; for 'cron': { cronExpression, timezone? }. */
+    triggerConfig: jsonb("trigger_config")
+      .$type<{ cronExpression: string; timezone?: string }>()
+      .notNull(),
+    deliveryMode: text("delivery_mode")
+      .$type<TriggeredPromptDeliveryMode>()
+      .notNull()
+      .default("new_thread"),
+    /** Slack channel for new_thread/same_thread fires; null for existing_thread. */
+    slackChannelId: text("slack_channel_id"),
+    /** existing_thread only: the central T3 thread the prompt fires into. */
+    targetThreadId: text("target_thread_id"),
+    enabled: boolean("enabled").notNull().default(true),
+    /** Canonical user id of the creator when known; shown in the UI. */
+    createdBy: text("created_by"),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    lastFiredAt: timestamp("last_fired_at", { withTimezone: true }),
+    lastCentralThreadId: text("last_central_thread_id"),
+  },
+  (table) => [
+    check(
+      "compadre_triggered_prompts_delivery_mode_check",
+      sql`${table.deliveryMode} in ('new_thread', 'same_thread', 'existing_thread')`,
+    ),
+  ],
+);

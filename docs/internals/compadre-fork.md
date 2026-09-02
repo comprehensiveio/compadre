@@ -29,6 +29,7 @@ It is “concentrate each product difference behind a narrow seam.”
 | Controller MCP bridge      | `apps/server/src/mcp/CompadreMcpBridge.ts`                                             | Codex and Claude adapter hooks            |
 | Hosted backup              | `apps/server/src/auth/CompadreBackup.ts`                                               | Server route composition                  |
 | Operations diagnostics     | `apps/server/src/auth/CompadreOperations.ts` and `apps/web/src/components/operations`  | One server route and one hidden web route |
+| Triggered prompts          | `apps/server/src/auth/CompadreTriggeredPrompts.ts` and `apps/web/src/components/settings/TriggeredPromptsSettings*` | One proxy route layer, one settings section, trigger attribution in contracts and timeline |
 | Message attribution        | migrations `043` and `044` plus command attribution hooks                              | Contracts, projection, and UI             |
 | Compadre product UI        | branding, session, sidebar, chat, usage, and CSS hooks in `apps/web`                   | Narrow components and styles              |
 

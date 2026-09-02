@@ -317,8 +317,22 @@ export type OrchestrationProject = typeof OrchestrationProject.Type;
 export const OrchestrationMessageRole = Schema.Literals(["user", "assistant", "system"]);
 export type OrchestrationMessageRole = typeof OrchestrationMessageRole.Type;
 
-export const MessageOrigin = Schema.Literals(["web", "slack", "api"]);
+export const MessageOrigin = Schema.Literals(["web", "slack", "api", "trigger"]);
 export type MessageOrigin = typeof MessageOrigin.Type;
+
+/**
+ * Provenance for machine-triggered turns (origin "trigger"): a stored prompt
+ * fired by a schedule on the Compadre controller. Rendered in place of a
+ * human author in the timeline; the agent never sees this metadata.
+ */
+export const MessageTriggerAttribution = Schema.Struct({
+  triggerId: TrimmedNonEmptyString,
+  name: TrimmedNonEmptyString,
+  triggerType: Schema.Literal("cron"),
+  cronExpression: TrimmedNonEmptyString,
+  timezone: Schema.optional(TrimmedNonEmptyString),
+});
+export type MessageTriggerAttribution = typeof MessageTriggerAttribution.Type;
 
 export const ThreadParticipant = Schema.Struct({
   userId: TrimmedNonEmptyString,
@@ -350,6 +364,7 @@ export const MessageAttribution = Schema.Struct({
       participants: Schema.optional(Schema.Array(ThreadParticipant)),
     }),
   ),
+  trigger: Schema.optional(MessageTriggerAttribution),
 });
 export type MessageAttribution = typeof MessageAttribution.Type;
 

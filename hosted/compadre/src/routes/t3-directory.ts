@@ -297,19 +297,50 @@ function trustedRequesterContext(value: unknown): TrustedRequesterContext | null
 }
 
 /**
+ * The attribution origin, including origins that are deliberately excluded
+ * from the trusted requester context (a triggered prompt's metadata must not
+ * reach the agent).
+ */
+export function attributionOrigin(
+  value: unknown,
+): "web" | "slack" | "api" | "trigger" | null {
+  if (!value || typeof value !== "object") return null;
+  const origin = (value as Record<string, unknown>).origin;
+  return origin === "web" ||
+    origin === "slack" ||
+    origin === "api" ||
+    origin === "trigger"
+    ? origin
+    : null;
+}
+
+/**
  * The controller outbox owns final delivery for Slack-originated turns. The
  * central provider mirror is only for turns that originate elsewhere and need
  * to be reflected into an already-linked Slack thread. Attribution is the
  * authoritative signal because provider adapters may omit message IDs while
  * converting chat history; the prefixed ID remains a compatibility fallback.
+ * Triggered prompts are excluded from both: the mirror would post the prompt
+ * to Slack, so the trigger delivery layer owns their Slack answer instead.
  */
 export function shouldMirrorNativeT3RunToSlack(input: {
   messageId?: string;
   attribution?: unknown;
 }): boolean {
-  const requester = trustedRequesterContext(input.attribution);
-  if (requester) return requester.origin !== "slack";
+  const origin = attributionOrigin(input.attribution);
+  if (origin === "trigger") return false;
+  if (origin) return origin !== "slack";
   return !isSlackEntrypointMessageId(input.messageId);
+}
+
+/** Slack-originated turns whose final answer the controller outbox owns. */
+export function isSlackOwnedNativeT3Run(input: {
+  messageId?: string;
+  attribution?: unknown;
+}): boolean {
+  const origin = attributionOrigin(input.attribution);
+  if (origin) return origin === "slack";
+  return isSlackEntrypointMessageId(input.messageId);
 }
 
 /** Inject trusted identity for the harness without changing visible T3 text. */
@@ -545,11 +576,11 @@ export function createT3DirectoryRoutes(
     const linkedSlackBinding = dependencies.getSlackBinding
       ? await dependencies.getSlackBinding(canonicalThreadId)
       : null;
-    const controllerOwnsSlackDelivery = !shouldMirrorNativeT3RunToSlack({
+    const slackOwnedDelivery = isSlackOwnedNativeT3Run({
       messageId,
       attribution: forwardedProps.attribution,
     });
-    if (controllerOwnsSlackDelivery && !linkedSlackBinding) {
+    if (slackOwnedDelivery && !linkedSlackBinding) {
       return c.json(
         { error: "Slack-originated turns require a durable thread binding" },
         409,
@@ -557,7 +588,10 @@ export function createT3DirectoryRoutes(
     }
     const slackBinding =
       process.env.COMPADRE_HOSTED_SLACK_DELIVERY_ENABLED !== "false" &&
-      !controllerOwnsSlackDelivery
+      shouldMirrorNativeT3RunToSlack({
+        messageId,
+        attribution: forwardedProps.attribution,
+      })
         ? linkedSlackBinding
         : null;
     const botToken = process.env.SLACK_BOT_TOKEN?.trim();

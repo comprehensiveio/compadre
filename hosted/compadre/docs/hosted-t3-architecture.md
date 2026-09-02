@@ -229,6 +229,17 @@ projection uses the same absolute ceiling derived from the Modal sandbox's
 remaining lifetime and a 30-minute no-progress default. A new snapshot sequence
 renews only the inactivity deadline; it never extends the absolute deadline.
 
+## Triggered prompts
+
+Stored prompts fired on cron schedules. Postgres
+(`compadre_triggered_prompts`) is the source of truth; each row is mirrored to
+one Temporal Schedule that dispatches a central T3 turn with `origin:
+"trigger"` attribution and delivers only the agent's answer to Slack. Trigger
+turns are excluded from the native Slack mirror and the trusted-requester
+prompt context so the prompt never reaches Slack and trigger metadata never
+reaches the agent. Managed from Settings → Triggered Prompts through an
+authenticated same-origin proxy. See [Triggered prompts](./triggered-prompts.md).
+
 ## Thread operations diagnostics
 
 `GET /internal/operations/threads` is the controller's authenticated,

@@ -11,6 +11,7 @@ import {
   ActivityCancellationType,
   CancellationScope,
   isCancellation,
+  log,
   patched,
   proxyActivities,
 } from "@temporalio/workflow";
@@ -19,6 +20,7 @@ import type {
   NativeT3RunWorkflowInput,
   NativeT3RunWorkflowResult,
 } from "./shared.js";
+import type { TriggeredPromptWorkflowInput } from "../triggers/types.js";
 
 // Retained only so pre-fix workflow histories replay deterministically.
 // Its 25-minute ceiling killed legitimately long turns; see the patched()
@@ -115,4 +117,43 @@ const { buildT3WorkerTemplateActivity } = proxyActivities<typeof activities>({
  */
 export async function t3WorkerTemplateBuildWorkflow(): Promise<void> {
   await buildT3WorkerTemplateActivity();
+}
+
+const { loadTriggeredPromptActivity, recordTriggerFiredActivity } =
+  proxyActivities<typeof activities>({
+    startToCloseTimeout: "1 minute",
+    retry: { maximumAttempts: 3 },
+  });
+
+// Delivery posts to Slack and dispatches central turns; a blind retry could
+// double-post, so it gets a single attempt and the schedule's next fire acts
+// as the retry.
+const { deliverTriggeredPromptActivity } = proxyActivities<typeof activities>({
+  startToCloseTimeout: "2 minutes",
+  retry: { maximumAttempts: 1 },
+});
+
+/**
+ * Fired by a Temporal Schedule (one per triggered prompt). Re-reads the
+ * definition from Postgres so edits take effect without resyncing the
+ * schedule, then hands the prompt to the delivery layer.
+ */
+export async function triggeredPromptWorkflow(
+  input: TriggeredPromptWorkflowInput,
+): Promise<void> {
+  const record = await loadTriggeredPromptActivity(input.triggerId);
+  if (!record) {
+    log.warn("Triggered prompt not found; skipping fire", {
+      triggerId: input.triggerId,
+    });
+    return;
+  }
+  if (!record.enabled) {
+    log.info("Triggered prompt disabled; skipping fire", {
+      triggerId: input.triggerId,
+    });
+    return;
+  }
+  const result = await deliverTriggeredPromptActivity(record);
+  await recordTriggerFiredActivity(input.triggerId, result);
 }

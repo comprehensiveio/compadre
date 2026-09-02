@@ -53,6 +53,7 @@ import {
 } from "../../lib/diffRendering";
 import ChatMarkdown from "../ChatMarkdown";
 import {
+  AlarmClockIcon,
   BotIcon,
   CheckIcon,
   ChevronDownIcon,
@@ -1007,6 +1008,23 @@ const TimelineRowContent = memo(function TimelineRowContent({ row }: { row: Time
   );
 });
 
+/**
+ * Hover detail for a machine-triggered message. Exported for tests. The
+ * attribution's `trigger` block may be absent on records written by older
+ * controllers; the display name alone still identifies the trigger.
+ */
+export function describeTriggerAttribution(attribution: {
+  readonly displayName: string;
+  readonly trigger?:
+    | { readonly cronExpression: string; readonly timezone?: string | undefined }
+    | undefined;
+}): string {
+  const schedule = attribution.trigger
+    ? `Fires on cron ${attribution.trigger.cronExpression} (${attribution.trigger.timezone ?? "UTC"})`
+    : "Fired by a schedule";
+  return `Triggered prompt “${attribution.displayName}” · ${schedule}`;
+}
+
 function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" }> }) {
   const ctx = use(TimelineRowCtx);
   const attribution = row.message.attribution;
@@ -1151,18 +1169,38 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
           </span>
         ) : null}
         {attribution ? (
-          <div className="flex min-w-0 items-center justify-end gap-1.5 text-muted-foreground">
-            {attributionAvatarUrl ? (
-              <img src={attributionAvatarUrl} alt="" className="size-4 shrink-0 rounded-full" />
-            ) : null}
-            <span className="truncate">{attributionDisplayName}</span>
-            {attribution.origin === "slack" ? (
-              <span className="flex shrink-0 items-center gap-1 text-secondary-label">
-                <MessageCircleIcon className="size-3" />
-                via Slack
-              </span>
-            ) : null}
-          </div>
+          attribution.origin === "trigger" ? (
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <div className="flex min-w-0 items-center justify-end gap-1.5 text-muted-foreground" />
+                }
+              >
+                <AlarmClockIcon className="size-3.5 shrink-0 text-secondary-label" />
+                {/* The trigger's own attribution, not the canonical-participant
+                    rollup: triggers are per message, and a thread can mix human
+                    and triggered turns. */}
+                <span className="truncate">{attribution.displayName}</span>
+                <span className="shrink-0 text-secondary-label">triggered</span>
+              </TooltipTrigger>
+              <TooltipPopup side="top" className="max-w-80">
+                {describeTriggerAttribution(attribution)}
+              </TooltipPopup>
+            </Tooltip>
+          ) : (
+            <div className="flex min-w-0 items-center justify-end gap-1.5 text-muted-foreground">
+              {attributionAvatarUrl ? (
+                <img src={attributionAvatarUrl} alt="" className="size-4 shrink-0 rounded-full" />
+              ) : null}
+              <span className="truncate">{attributionDisplayName}</span>
+              {attribution.origin === "slack" ? (
+                <span className="flex shrink-0 items-center gap-1 text-secondary-label">
+                  <MessageCircleIcon className="size-3" />
+                  via Slack
+                </span>
+              ) : null}
+            </div>
+          )
         ) : null}
         <Tooltip>
           <TooltipTrigger
