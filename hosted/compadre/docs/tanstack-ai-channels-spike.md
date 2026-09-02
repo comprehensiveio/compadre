@@ -1,0 +1,128 @@
+# Provider-neutral agent runtime
+
+## Current shape
+
+All Compadre agent traffic runs through one channel-neutral conversation
+boundary and the TanStack AI harness runtime:
+
+```text
+Slack events ----\
+/prompt -----------+--> runConversation() --> TanStack AI --> Claude Code
+/webhook/:source --/                                  \-----> Codex
+
+AG-UI clients ---------------------------> the same TanStack runtime
+```
+
+`runConversation()` owns ephemeral-run cleanup, provider selection, wall-clock
+cancellation, stream callbacks, and result metrics. The TanStack runtime owns
+per-thread serialization, worktrees, provider-scoped native sessions,
+provider-neutral transcript continuity, MCP clients, and telemetry.
+
+## Configuration
+
+```dotenv
+# claude-code or codex
+COMPADRE_AGENT_PROVIDER=claude-code
+
+# Agent execution has no Compadre-owned wall-clock deadline. Callers and the
+# execution platform may still cancel a run explicitly.
+
+ANTHROPIC_API_KEY=...
+DEFAULT_MODEL=claude-opus-5
+FABLE_MODEL=claude-fable-5
+
+CODEX_API_KEY=...
+CODEX_MODEL=gpt-5.6-sol
+CODEX_REASONING_EFFORT=high
+```
+
+Startup fails fast for an invalid provider. `/prompt` may select `provider` per
+request. Callers use the provider-neutral `threadId`; provider-native
+`sessionId` values are internal and cannot be supplied through `/prompt`.
+
+Slack callers may select a one-turn profile with `--sol`/`--codex`, `--fable`,
+or `--claude-code`/`--cc`. The route is explicit runtime metadata; its control
+token is removed before both the harness prompt and provider-neutral transcript.
+Conflicting profiles are rejected instead of relying on order or precedence.
+
+Both harnesses run non-interactively with approval prompts disabled. Claude
+uses `bypassPermissions`; Codex uses `danger-full-access`, `approvalPolicy:
+never`, and automatic MCP approval. This service therefore assumes its process,
+credentials, prompts, and configured MCP servers are trusted.
+
+Neither harness has a Compadre-owned wall-clock deadline. This lets long-running
+work, including GitHub Actions monitoring and follow-up fixes, finish normally.
+Callers can still cancel through the propagated abort signal, and Modal retains
+its platform and per-command safeguards.
+
+## AG-UI
+
+Set `COMPADRE_TANSTACK_AI_ENABLED=true` to expose authenticated `POST /ag-ui`.
+It accepts a standard AG-UI `RunAgentInput` and returns a TanStack AG-UI SSE
+response. `forwardedProps.provider` may select `claude-code` or `codex`.
+`forwardedProps.profile` may select the allowlisted `claude-code`, `codex`, or
+`fable` profile.
+
+Only allowlisted provider, profile, and model fields affect the harness;
+arbitrary forwarded properties cannot replace adapters or tools.
+
+## Verified behavior
+
+- Claude Code and Codex both run through the production Slack Events path.
+- Claude streams text deltas. Codex publishes status/tool progress during the
+  run and its terminal answer when the run finishes.
+- Same-provider native session resume works for both harnesses.
+- Provider switches retain the bounded neutral transcript while starting the
+  correct provider-native session.
+- Both harnesses share system prompts, worktree setup, MCP tools, cancellation,
+  and dangerous non-interactive permission policy.
+- TanStack OpenTelemetry emits agent, LLM, tool, model, token/cache/reasoning,
+  duration, error, and cost attributes to Datadog LLM Observability. Claude
+  supplies provider-reported cost; Datadog estimates Codex cost from its model
+  and token metadata.
+- One-shot worktrees and thread state are released immediately. Threaded
+  conversations keep their worktree and provider sessions while active;
+  maintenance expires both after one hour without access.
+
+## Provider-neutral instructions
+
+TanStack Intent is installed as a development dependency and maintains the
+version-matched guidance in `AGENTS.md`. Compadre's domain workflow files are
+identified by absolute path in the system prompt. Claude can use its plugin
+commands; Codex and other harnesses can read the same `SKILL.md` sources
+directly.
+
+## Thread persistence experiment
+
+`@tanstack/ai-persistence` now provides the canonical provider-neutral
+transcript, run/interrupt state, and hydration boundary. PostgreSQL-backed
+advisory locks serialize turns across processes. `HarnessThreadStore` still
+keeps the process-local optimization state:
+
+```text
+thread ID
+  -> shared worktree ID
+  -> Claude Code session ID
+  -> Codex session ID
+  -> last provider
+```
+
+Postgres cannot make native Claude/Codex session directories or git worktrees
+portable between hosts. Those remain opportunistic: a fresh host falls back to
+the canonical neutral transcript, and source changes needed later must still be
+committed to a branch or PR.
+
+## Remaining considerations
+
+- Harness-native Claude Code and Codex tool events are durable in the run log
+  but are not guaranteed to become canonical model messages after a native
+  session is lost. The problem, solution options, and recommended follow-up
+  spike are documented in
+  [`harness-tool-history-persistence.md`](harness-tool-history-persistence.md).
+- Claude streams token deltas; Codex currently emits completed message bursts.
+- The local-process sandbox provides lifecycle plumbing, not host isolation.
+  Both harnesses intentionally have unrestricted tool permissions.
+- Required-versus-optional MCP policy is not yet explicit; unavailable optional
+  integrations are logged and skipped.
+- Claude Code and Codex are pinned project dependencies so deployments do not
+  depend on globally installed CLIs.

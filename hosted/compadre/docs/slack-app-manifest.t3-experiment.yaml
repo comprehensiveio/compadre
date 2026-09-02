@@ -1,0 +1,47 @@
+display_information:
+  name: Secret dre experiment
+  description: Experimental Slack entrypoint for the hosted T3 agent
+  background_color: "#111111"
+features:
+  bot_user:
+    display_name: Secret dre experiment
+    always_online: true
+  agent_view:
+    agent_description: Ask the coding agent, then open T3 for the full trace and tool calls.
+    suggested_prompts:
+      - title: Inspect a codebase
+        message: What should I know about this codebase?
+oauth_config:
+  redirect_urls:
+    - https://compadre-api.comprehensive.io/auth/slack/callback
+  scopes:
+    bot:
+      - app_mentions:read
+      - assistant:write
+      - channels:history
+      - channels:read
+      - chat:write
+      - files:read
+      - files:write
+      - groups:history
+      - groups:read
+      - im:history
+      - im:read
+      - mpim:history
+      - mpim:read
+      - reactions:read
+      - reactions:write
+      - users:read
+    user:
+      - openid
+      - profile
+      - email
+settings:
+  event_subscriptions:
+    request_url: https://compadre-api.comprehensive.io/slack/events
+    bot_events:
+      - app_mention
+      - message.im
+  org_deploy_enabled: false
+  socket_mode_enabled: false
+  token_rotation_enabled: false

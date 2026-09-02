@@ -1,0 +1,291 @@
+import {
+  InMemoryLockStore,
+  type LockStore,
+  type MetadataStore,
+} from "../t3/storage.js";
+import type { T3ModelSelection } from "../t3/client.js";
+
+const NAMESPACE = "compadre.t3.thread-bindings.v2";
+const INDEX_KEY = "__index__";
+const INDEX_LOCK = "compadre:t3-thread-bindings:index";
+
+export type T3ThreadDirectoryStatus =
+  | "working"
+  | "ready"
+  | "interrupted"
+  | "error"
+  | "unavailable";
+
+export type T3WorkerState =
+  | "running"
+  | "warm"
+  | "hibernating"
+  | "suspended"
+  | "restoring";
+
+export interface T3ThreadBinding {
+  canonicalThreadId: string;
+  providerInstanceId: string;
+  t3ThreadId: string;
+  projectId: string;
+  sandboxId: string;
+  baseUrl: string;
+  workerState?: T3WorkerState;
+  workerGeneration?: number;
+  workerSnapshotId?: string;
+  sandboxStartedAt?: string;
+  lastActiveAt?: string;
+  warmUntil?: string;
+  modelSelection: T3ModelSelection;
+  blockedSlackDestination?: {
+    channelId: string;
+    threadTs: string;
+  };
+  title?: string;
+  status?: T3ThreadDirectoryStatus;
+  /** Durable identity of the native provider run currently owned by this worker. */
+  activeRunId?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+interface T3ThreadBindingIndexEntry {
+  canonicalThreadId: string;
+}
+
+function key(canonicalThreadId: string): string {
+  return canonicalThreadId;
+}
+
+function isModelSelection(value: unknown): value is T3ModelSelection {
+  if (!value || typeof value !== "object") return false;
+  const record = value as Record<string, unknown>;
+  return (
+    typeof record.instanceId === "string" &&
+    record.instanceId.length > 0 &&
+    typeof record.model === "string" &&
+    record.model.length > 0 &&
+    (record.options === undefined || Array.isArray(record.options))
+  );
+}
+
+function isBlockedSlackDestination(
+  value: unknown,
+): value is NonNullable<T3ThreadBinding["blockedSlackDestination"]> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const record = value as Record<string, unknown>;
+  return (
+    typeof record.channelId === "string" &&
+    record.channelId.length > 0 &&
+    typeof record.threadTs === "string" &&
+    record.threadTs.length > 0
+  );
+}
+
+function isBinding(value: unknown): value is T3ThreadBinding {
+  if (!value || typeof value !== "object") return false;
+  const record = value as Record<string, unknown>;
+  return (
+    typeof record.canonicalThreadId === "string" &&
+    record.canonicalThreadId.length > 0 &&
+    typeof record.providerInstanceId === "string" &&
+    record.providerInstanceId.length > 0 &&
+    typeof record.t3ThreadId === "string" &&
+    record.t3ThreadId.length > 0 &&
+    typeof record.projectId === "string" &&
+    record.projectId.length > 0 &&
+    typeof record.sandboxId === "string" &&
+    record.sandboxId.length > 0 &&
+    typeof record.baseUrl === "string" &&
+    record.baseUrl.length > 0 &&
+    (record.workerState === undefined ||
+      ["running", "warm", "hibernating", "suspended", "restoring"].includes(
+        record.workerState as string,
+      )) &&
+    (record.workerGeneration === undefined ||
+      (Number.isInteger(record.workerGeneration) &&
+        (record.workerGeneration as number) >= 1)) &&
+    (record.workerSnapshotId === undefined ||
+      (typeof record.workerSnapshotId === "string" &&
+        record.workerSnapshotId.length > 0)) &&
+    (record.sandboxStartedAt === undefined ||
+      typeof record.sandboxStartedAt === "string") &&
+    (record.lastActiveAt === undefined ||
+      typeof record.lastActiveAt === "string") &&
+    (record.warmUntil === undefined || typeof record.warmUntil === "string") &&
+    isModelSelection(record.modelSelection) &&
+    (record.blockedSlackDestination === undefined ||
+      isBlockedSlackDestination(record.blockedSlackDestination)) &&
+    (record.title === undefined || typeof record.title === "string") &&
+    (record.status === undefined ||
+      ["working", "ready", "interrupted", "error", "unavailable"].includes(
+        record.status as string,
+      )) &&
+    (record.activeRunId === undefined ||
+      (typeof record.activeRunId === "string" && record.activeRunId.length > 0)) &&
+    typeof record.createdAt === "string" &&
+    typeof record.updatedAt === "string"
+  );
+}
+
+function isIndexEntry(value: unknown): value is T3ThreadBindingIndexEntry {
+  if (!value || typeof value !== "object") return false;
+  const record = value as Record<string, unknown>;
+  return (
+    typeof record.canonicalThreadId === "string" &&
+    record.canonicalThreadId.length > 0
+  );
+}
+
+/**
+ * Durable, credential-free mapping from an external conversation to one native
+ * T3 thread. The provider harness is fixed by T3's first turn; models within
+ * that provider can change without moving the conversation. Environment credentials stay in the connection
+ * manager rather than being written to generic chat metadata.
+ */
+export class T3ThreadBindingStore {
+  constructor(
+    private readonly metadata: MetadataStore,
+    private readonly locks: LockStore = new InMemoryLockStore(),
+  ) {}
+
+  get(
+    canonicalThreadId: string,
+  ): Promise<T3ThreadBinding | null> {
+    return this.read(key(canonicalThreadId));
+  }
+
+  private async read(bindingKey: string): Promise<T3ThreadBinding | null> {
+    const value = await this.metadata.get(NAMESPACE, bindingKey);
+    if (value === null) return null;
+    if (!isBinding(value)) {
+      throw new Error(`Invalid persisted T3 thread binding for ${bindingKey}`);
+    }
+    return value;
+  }
+
+  private async readIndex(): Promise<T3ThreadBindingIndexEntry[]> {
+    const value = await this.metadata.get(NAMESPACE, INDEX_KEY);
+    if (value === null) return [];
+    if (!Array.isArray(value) || !value.every(isIndexEntry)) {
+      throw new Error("Invalid persisted T3 thread binding index");
+    }
+    return value;
+  }
+
+  async list(): Promise<T3ThreadBinding[]> {
+    const entries = await this.readIndex();
+    const bindings = await Promise.all(
+      entries.map((entry) => this.get(entry.canonicalThreadId)),
+    );
+    return bindings
+      .filter((binding): binding is T3ThreadBinding => binding !== null)
+      .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
+  }
+
+  /**
+   * Persist one binding without acquiring the global directory-index lock.
+   * Callers that already hold a per-thread lock use this method, release that
+   * lock, and then call `ensureIndexed` so a finite advisory-lock pool cannot
+   * deadlock on nested per-thread + global locks.
+   */
+  async bindRecord(binding: T3ThreadBinding): Promise<void> {
+    const bindingKey = key(binding.canonicalThreadId);
+    const existing = await this.read(bindingKey);
+    if (existing && existing.t3ThreadId !== binding.t3ThreadId) {
+      throw new Error(
+        `T3 thread binding is already assigned to ${existing.t3ThreadId}`,
+      );
+    }
+    if (
+      existing &&
+      existing.providerInstanceId !== binding.providerInstanceId
+    ) {
+      throw new Error(
+        `T3 thread binding is already assigned to provider ${existing.providerInstanceId}`,
+      );
+    }
+    if (
+      existing &&
+      (existing.blockedSlackDestination?.channelId !==
+        binding.blockedSlackDestination?.channelId ||
+        existing.blockedSlackDestination?.threadTs !==
+          binding.blockedSlackDestination?.threadTs)
+    ) {
+      throw new Error(
+        "T3 thread binding cannot change its protected Slack destination",
+      );
+    }
+    await this.metadata.set(NAMESPACE, bindingKey, binding);
+  }
+
+  /**
+   * Replace a binding whose worker was lost without a restorable snapshot
+   * (for example the sandbox reached its lifetime mid-turn). Unlike
+   * bindRecord this permits a NEW native t3ThreadId — the dead worker's
+   * transcript is gone and central T3 remains the canonical conversation —
+   * while still refusing provider or protected-Slack-destination changes.
+   */
+  async replaceLostWorkerRecord(binding: T3ThreadBinding): Promise<void> {
+    const existing = await this.read(key(binding.canonicalThreadId));
+    if (existing && existing.providerInstanceId !== binding.providerInstanceId) {
+      throw new Error(
+        `T3 thread binding is already assigned to provider ${existing.providerInstanceId}`,
+      );
+    }
+    if (
+      existing &&
+      (existing.blockedSlackDestination?.channelId !==
+        binding.blockedSlackDestination?.channelId ||
+        existing.blockedSlackDestination?.threadTs !==
+          binding.blockedSlackDestination?.threadTs)
+    ) {
+      throw new Error(
+        "T3 thread binding cannot change its protected Slack destination",
+      );
+    }
+    await this.metadata.set(NAMESPACE, key(binding.canonicalThreadId), binding);
+  }
+
+  async ensureIndexed(canonicalThreadId: string): Promise<void> {
+    await this.locks.withLock(INDEX_LOCK, async (signal) => {
+      if (signal.aborted) throw signal.reason;
+      const index = await this.readIndex();
+      if (
+        !index.some(
+          (entry) => entry.canonicalThreadId === canonicalThreadId,
+        )
+      ) {
+        await this.metadata.set(NAMESPACE, INDEX_KEY, [
+          ...index,
+          {
+            canonicalThreadId,
+          },
+        ] satisfies T3ThreadBindingIndexEntry[]);
+      }
+    });
+  }
+
+  async bind(binding: T3ThreadBinding): Promise<void> {
+    await this.bindRecord(binding);
+    await this.ensureIndexed(binding.canonicalThreadId);
+  }
+
+  delete(canonicalThreadId: string): Promise<void> {
+    return this.locks.withLock(INDEX_LOCK, async (signal) => {
+      if (signal.aborted) throw signal.reason;
+      await this.metadata.delete(
+        NAMESPACE,
+        key(canonicalThreadId),
+      );
+      const index = await this.readIndex();
+      await this.metadata.set(
+        NAMESPACE,
+        INDEX_KEY,
+        index.filter(
+          (entry) => entry.canonicalThreadId !== canonicalThreadId,
+        ),
+      );
+    });
+  }
+}

@@ -1,0 +1,42 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: compadre
+          POSTGRES_USER: compadre
+          POSTGRES_PASSWORD: compadre
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U compadre -d compadre"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      COMPADRE_TEST_DATABASE_URL: postgresql://compadre:compadre@127.0.0.1:5432/compadre
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run test:persistence
+      - run: npm run db:check

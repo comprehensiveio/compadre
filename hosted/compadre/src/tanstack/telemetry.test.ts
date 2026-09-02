@@ -1,0 +1,362 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+import {
+  EventType,
+  type ChatMiddleware,
+  type ChatMiddlewareContext,
+  type StreamChunk,
+} from "@tanstack/ai";
+import {
+  BasicTracerProvider,
+  InMemorySpanExporter,
+  SimpleSpanProcessor,
+} from "@opentelemetry/sdk-trace-base";
+import { createHarnessTelemetryMiddleware } from "./telemetry.js";
+
+function middlewareContext(
+  provider: "claude-code" | "codex",
+  model: string
+): ChatMiddlewareContext {
+  return {
+    requestId: "request-1",
+    streamId: "stream-1",
+    runId: "run-1",
+    threadId: "thread-1",
+    phase: "init",
+    iteration: 0,
+    chunkIndex: 0,
+    abort: () => undefined,
+    context: undefined,
+    defer: () => undefined,
+    activity: "chat",
+    provider,
+    model,
+    source: "server",
+    streaming: true,
+    systemPrompts: [],
+    messageCount: 1,
+    hasTools: false,
+    currentMessageId: null,
+    accumulatedContent: "",
+    messages: [{ role: "user", content: "inspect the repository" }],
+    createId: (prefix: string) => `${prefix}-1`,
+    capabilities: new Map(),
+    get: () => {
+      throw new Error("unused");
+    },
+    getOptional: () => undefined,
+    provide: () => undefined,
+  } as unknown as ChatMiddlewareContext;
+}
+
+async function passChunk(
+  observer: ChatMiddleware,
+  telemetry: ChatMiddleware,
+  ctx: ChatMiddlewareContext,
+  chunk: StreamChunk
+): Promise<StreamChunk> {
+  const transformed = await observer.onChunk?.(ctx, chunk);
+  const normalized =
+    transformed && !Array.isArray(transformed) ? transformed : chunk;
+  await telemetry.onChunk?.(ctx, normalized);
+  // TanStack pipes the transformed chunk through later onChunk hooks, then
+  // invokes onUsage with the original adapter chunk rather than the transform.
+  if (chunk.type === EventType.RUN_FINISHED && chunk.usage) {
+    await telemetry.onUsage?.(ctx, chunk.usage);
+  }
+  return normalized;
+}
+
+test("emits GenAI spans, harness tool spans, usage, and provider cost", async () => {
+  const exporter = new InMemorySpanExporter();
+  const provider = new BasicTracerProvider({
+    spanProcessors: [new SimpleSpanProcessor(exporter)],
+  });
+  const tracer = provider.getTracer("compadre-test");
+  const [observer, telemetry] = createHarnessTelemetryMiddleware({
+    selection: {
+      provider: "claude-code",
+      model: "claude-opus-5",
+    },
+    threadId: "thread-1",
+    runId: "run-1",
+    worktreeId: "worktree-1",
+    tracer,
+    environment: { COMPADRE_API_KEY: "secret-value-123" },
+  });
+  const ctx = middlewareContext("claude-code", "claude-opus-5");
+  const config = {
+    messages: [
+      {
+        role: "user" as const,
+        content: "inspect secret-value-123 repository",
+      },
+    ],
+    systemPrompts: [],
+    tools: [],
+    modelOptions: {},
+  };
+
+  await telemetry.onConfig?.(ctx, config);
+  await telemetry.onStart?.(ctx);
+  ctx.phase = "beforeModel";
+  await telemetry.onConfig?.(ctx, config);
+
+  await passChunk(observer, telemetry, ctx, {
+    type: EventType.CUSTOM,
+    name: "claude-code.session-id",
+    value: { sessionId: "session-1" },
+    timestamp: 1_000,
+  });
+  await passChunk(observer, telemetry, ctx, {
+    type: EventType.TOOL_CALL_START,
+    toolCallId: "tool-1",
+    toolCallName: "Read",
+    toolName: "Read",
+    timestamp: 1_100,
+  });
+  await passChunk(observer, telemetry, ctx, {
+    type: EventType.TOOL_CALL_ARGS,
+    toolCallId: "tool-1",
+    delta: '{"path":"secret-value-123"}',
+    args: '{"path":"secret-value-123"}',
+    timestamp: 1_110,
+  });
+  await passChunk(observer, telemetry, ctx, {
+    type: EventType.TOOL_CALL_END,
+    toolCallId: "tool-1",
+    toolCallName: "Read",
+    input: { path: "secret-value-123" },
+    timestamp: 1_120,
+  });
+  await passChunk(observer, telemetry, ctx, {
+    type: EventType.TOOL_CALL_RESULT,
+    toolCallId: "tool-1",
+    messageId: "tool-result-1",
+    content: "package secret-value-123",
+    timestamp: 1_140,
+  });
+  await passChunk(observer, telemetry, ctx, {
+    type: EventType.TEXT_MESSAGE_CONTENT,
+    messageId: "message-1",
+    delta: "done secret-value-123",
+    content: "done secret-value-123",
+    timestamp: 1_150,
+  });
+  const rawUsage = {
+    promptTokens: 10,
+    completionTokens: 4,
+    totalTokens: 14,
+    promptTokensDetails: { cachedTokens: 3, cacheWriteTokens: 5 },
+    providerUsageDetails: { totalCostUsd: 0.12 },
+  };
+  const finished = await passChunk(observer, telemetry, ctx, {
+    type: EventType.RUN_FINISHED,
+    runId: "run-1",
+    threadId: "thread-1",
+    model: "claude-opus-5",
+    finishReason: "stop",
+    usage: rawUsage,
+    timestamp: 1_200,
+  });
+  assert.equal(finished.type, EventType.RUN_FINISHED);
+  assert.equal(finished.usage?.cost, 0.12);
+  assert.equal(finished.usage?.promptTokens, 18);
+  assert.equal(finished.usage?.totalTokens, 22);
+
+  await telemetry.onFinish?.(ctx, {
+    finishReason: "stop",
+    duration: 200,
+    content: "done",
+    // onFinish also receives the engine's untransformed aggregate usage.
+    usage: rawUsage,
+  });
+
+  const spans = exporter.getFinishedSpans();
+  const root = spans.find((span) => span.name === "chat claude-opus-5");
+  const iteration = spans.find(
+    (span) => span.name === "chat claude-opus-5 #0"
+  );
+  const tool = spans.find((span) => span.name === "execute_tool Read");
+  assert.ok(root);
+  assert.ok(iteration);
+  assert.ok(tool);
+  assert.equal(root.attributes["gen_ai.operation.name"], "invoke_agent");
+  assert.equal(root.attributes["gen_ai.provider.name"], "anthropic");
+  assert.equal(root.attributes["gen_ai.conversation.id"], "thread-1");
+  assert.equal(root.attributes["agent.session_id"], "session-1");
+  assert.equal(root.attributes["agui.thread_id"], "thread-1");
+  assert.equal(root.attributes["gen_ai.usage.cost"], 0.12);
+  assert.equal(iteration.attributes["gen_ai.usage.input_tokens"], 18);
+  assert.equal(iteration.attributes["gen_ai.usage.output_tokens"], 4);
+  assert.equal(iteration.attributes["gen_ai.usage.total_tokens"], 22);
+  assert.equal(iteration.attributes["gen_ai.usage.cost"], 0.12);
+  assert.equal(
+    iteration.attributes["gen_ai.usage.cache_read.input_tokens"],
+    3,
+  );
+  assert.equal(
+    iteration.attributes["gen_ai.usage.cache_creation.input_tokens"],
+    5,
+  );
+  assert.deepEqual(
+    JSON.parse(String(iteration.attributes["gen_ai.input.messages"])),
+    [{ role: "user", content: "inspect [REDACTED] repository" }],
+  );
+  assert.deepEqual(
+    JSON.parse(String(iteration.attributes["gen_ai.output.messages"])),
+    [{ role: "assistant", content: "done [REDACTED]" }],
+  );
+  assert.equal(
+    root.attributes["langfuse.trace.input"],
+    iteration.attributes["gen_ai.input.messages"],
+  );
+  assert.equal(
+    root.attributes["langfuse.trace.output"],
+    iteration.attributes["gen_ai.output.messages"],
+  );
+  assert.equal(tool.attributes["gen_ai.operation.name"], "execute_tool");
+  assert.equal(tool.attributes["gen_ai.tool.name"], "Read");
+  assert.equal(tool.attributes["tanstack.ai.tool.outcome"], "success");
+  assert.deepEqual(
+    JSON.parse(String(tool.attributes["gen_ai.input.messages"])),
+    [{ role: "tool", content: '{"path":"[REDACTED]"}' }],
+  );
+  assert.deepEqual(
+    JSON.parse(String(tool.attributes["gen_ai.output.messages"])),
+    [{ role: "tool", content: "package [REDACTED]" }],
+  );
+  assert.equal(
+    tool.parentSpanContext?.spanId,
+    iteration.spanContext().spanId
+  );
+
+  await provider.shutdown();
+});
+
+test("identifies Codex as OpenAI and records cache and reasoning usage", async () => {
+  const exporter = new InMemorySpanExporter();
+  const provider = new BasicTracerProvider({
+    spanProcessors: [new SimpleSpanProcessor(exporter)],
+  });
+  const [observer, telemetry] = createHarnessTelemetryMiddleware({
+    selection: {
+      provider: "codex",
+      model: "gpt-5.6-sol",
+    },
+    threadId: "thread-codex",
+    runId: "run-codex",
+    worktreeId: "worktree-codex",
+    tracer: provider.getTracer("compadre-codex-test"),
+  });
+  const ctx = middlewareContext("codex", "gpt-5.6-sol");
+  const config = {
+    messages: [{ role: "user" as const, content: "inspect" }],
+    systemPrompts: [],
+    tools: [],
+    modelOptions: {},
+  };
+
+  await telemetry.onConfig?.(ctx, config);
+  await telemetry.onStart?.(ctx);
+  ctx.phase = "beforeModel";
+  await telemetry.onConfig?.(ctx, config);
+  const finished = await passChunk(observer, telemetry, ctx, {
+    type: EventType.RUN_FINISHED,
+    runId: "run-codex",
+    threadId: "thread-codex",
+    model: "gpt-5.6-sol",
+    finishReason: "stop",
+    usage: {
+      promptTokens: 20,
+      completionTokens: 7,
+      totalTokens: 27,
+      promptTokensDetails: { cachedTokens: 11 },
+      completionTokensDetails: { reasoningTokens: 5 },
+    },
+    timestamp: Date.now(),
+  });
+  await telemetry.onFinish?.(ctx, {
+    finishReason: "stop",
+    duration: 100,
+    content: "done",
+    usage: finished.type === EventType.RUN_FINISHED ? finished.usage : undefined,
+  });
+
+  const iteration = exporter
+    .getFinishedSpans()
+    .find((span) => span.name === "chat gpt-5.6-sol #0");
+  assert.ok(iteration);
+  assert.equal(iteration.attributes["gen_ai.provider.name"], "openai");
+  assert.equal(
+    iteration.attributes["gen_ai.usage.cache_read.input_tokens"],
+    11
+  );
+  assert.equal(
+    iteration.attributes["gen_ai.usage.reasoning.output_tokens"],
+    5
+  );
+  assert.equal(iteration.attributes["gen_ai.usage.cost"], undefined);
+
+  await provider.shutdown();
+});
+
+test("logs each agent iteration and its terminal status without content", async () => {
+  const lines: string[] = [];
+  const [observer] = createHarnessTelemetryMiddleware({
+    selection: {
+      provider: "codex",
+      model: "gpt-5.6-sol",
+    },
+    threadId: "thread-log",
+    runId: "run-log",
+    worktreeId: "worktree-log",
+    logger: { log: (line) => lines.push(String(line)) },
+  });
+  const ctx = middlewareContext("codex", "gpt-5.6-sol");
+
+  await observer.onIteration?.(ctx, {
+    iteration: 0,
+    messageId: "message-secret",
+  });
+  ctx.iteration = 0;
+  await observer.onFinish?.(ctx, {
+    finishReason: "stop",
+    duration: 1_234.6,
+    content: "response-secret",
+  });
+
+  assert.deepEqual(lines, [
+    "[agent-turn] run=run-log iteration=1 status=started provider=codex model=gpt-5.6-sol",
+    "[agent-turn] run=run-log iteration=1 status=finished duration-ms=1235 finish-reason=stop",
+  ]);
+  assert.doesNotMatch(lines.join("\n"), /message-secret|response-secret|thread-log/);
+});
+
+test("logs aborted and failed agent turns", async () => {
+  const lines: string[] = [];
+  const [observer] = createHarnessTelemetryMiddleware({
+    selection: {
+      provider: "claude-code",
+      model: "claude-opus-5",
+    },
+    threadId: "thread-terminal",
+    runId: "run-terminal",
+    worktreeId: "worktree-terminal",
+    logger: { log: (line) => lines.push(String(line)) },
+  });
+  const ctx = middlewareContext("claude-code", "claude-opus-5");
+  ctx.iteration = 2;
+
+  await observer.onAbort?.(ctx, { duration: 40.4 });
+  await observer.onError?.(ctx, {
+    duration: 50.6,
+    error: new Error("provider-secret"),
+  });
+
+  assert.deepEqual(lines, [
+    "[agent-turn] run=run-terminal iteration=3 status=aborted duration-ms=40",
+    "[agent-turn] run=run-terminal iteration=3 status=error duration-ms=51",
+  ]);
+  assert.doesNotMatch(lines.join("\n"), /provider-secret|thread-terminal/);
+});

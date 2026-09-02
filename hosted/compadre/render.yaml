@@ -1,0 +1,158 @@
+services:
+  # Slack, API, auth, durable routing, and per-thread Modal fanout.
+  - type: web
+    name: compadre-api
+    runtime: node
+    region: oregon
+    plan: standard
+    buildCommand: npm ci --include=dev && npm run build
+    preDeployCommand: npm run db:migrate
+    startCommand: npm start
+    healthCheckPath: /health
+    autoDeployTrigger: commit
+    maxShutdownDelaySeconds: 300
+    envVars:
+      - fromGroup: compadre-production-shared
+      - fromGroup: compadre-production-api
+      - key: COMPADRE_PROCESS_ROLE
+        value: relay
+      - key: COMPADRE_DURABILITY_BACKEND
+        value: postgres
+      - key: COMPADRE_T3_DIRECTORY_ENABLED
+        value: "true"
+      - key: COMPADRE_T3_SLACK_ENABLED
+        value: "true"
+      - key: COMPADRE_T3_API_ENABLED
+        value: "true"
+      - key: COMPADRE_HOSTED_T3_ENABLED
+        value: "true"
+      - key: COMPADRE_HOSTED_SLACK_DELIVERY_ENABLED
+        value: "true"
+      - key: COMPADRE_PUBLIC_URL
+        value: https://compadre-api.comprehensive.io
+      - key: COMPADRE_T3_CENTRAL_URL
+        value: https://compadre.comprehensive.io
+      - key: COMPADRE_T3_HOSTED_APP_URL
+        value: https://compadre.comprehensive.io
+      - key: COMPADRE_T3_MODAL_APP
+        value: compadre
+      # 2 guaranteed cores (4 burst): at the 0.5-core default, monorepo
+      # typecheck/lint runs starved the sandbox-local T3 server so badly that
+      # snapshot reads timed out every ~2.5 minutes (2026-09-01).
+      - key: COMPADRE_MODAL_CPU
+        value: "2"
+      - key: COMPADRE_MODAL_CPU_LIMIT
+        value: "4"
+      # Worker lifetime is the code default (24 h, src/t3/runtime.ts): the
+      # sandbox lives for the whole task like toltagent's, with a live
+      # checkpoint after every terminal turn as the recovery point.
+      # 16 GiB guaranteed memory: full-monorepo ci-checks wedged both the
+      # 2 GiB and 8 GiB sandboxes so completely that even pkill could not
+      # spawn inside them (2026-09-01).
+      - key: COMPADRE_MODAL_MEMORY_MIB
+        value: "16384"
+      - key: COMPADRE_MODAL_MEMORY_LIMIT_MIB
+        value: "32768"
+      - key: COMPADRE_PREVIEW_HOST_SUFFIX
+        value: dev.compadre.comprehensive.io
+      - key: TEMPORAL_ADDRESS
+        value: compadre-temporal:7233
+      - key: TEMPORAL_NAMESPACE
+        value: compadre
+      - key: DD_ENV
+        value: production
+      - key: DD_SERVICE
+        value: compadre-api
+      - key: DD_LLMOBS_ML_APP
+        value: compadre
+    previews:
+      generation: off
+
+  # Self-hosted Temporal server: durable orchestration for native T3 runs.
+  # Reachable only on the Render private network; the compadre-api process
+  # runs the (only) Temporal worker in-process. State lives in the
+  # compadre-temporal-db Postgres, so restarting this service pauses
+  # workflows without losing them.
+  - type: pserv
+    name: compadre-temporal
+    runtime: image
+    image:
+      url: docker.io/temporalio/auto-setup:1.28.4
+    region: oregon
+    plan: standard
+    envVars:
+      - key: DB
+        value: postgres12
+      - key: DB_PORT
+        fromDatabase:
+          name: compadre-temporal-db
+          property: port
+      - key: POSTGRES_USER
+        fromDatabase:
+          name: compadre-temporal-db
+          property: user
+      - key: POSTGRES_PWD
+        fromDatabase:
+          name: compadre-temporal-db
+          property: password
+      - key: POSTGRES_SEEDS
+        fromDatabase:
+          name: compadre-temporal-db
+          property: host
+    previews:
+      generation: off
+
+  # Central, single-writer T3 UI and durable transcript store.
+  - type: web
+    name: compadre-web
+    repo: https://github.com/comprehensiveio/t3code
+    branch: main
+    runtime: node
+    region: oregon
+    plan: starter
+    buildCommand: >-
+      npm install -g pnpm@11.10.0 && pnpm install --frozen-lockfile &&
+      pnpm exec vp run --filter t3 build
+    startCommand: >-
+      mkdir -p /var/data/workspace && node apps/server/dist/bin.mjs serve
+      /var/data/workspace --mode web --host 0.0.0.0 --port "$PORT"
+      --base-dir /var/data/t3code --no-browser --auto-bootstrap-project-from-cwd
+    healthCheckPath: /
+    autoDeployTrigger: commit
+    envVars:
+      - fromGroup: compadre-production-shared
+      - fromGroup: compadre-production-web
+      - key: COMPADRE_NATIVE_T3_URL
+        value: https://compadre-api.comprehensive.io/hosted/t3/chat
+      - key: COMPADRE_CONTROLLER_URL
+        value: https://compadre-api.comprehensive.io
+      - key: COMPADRE_AUTH_COOKIE_DOMAIN
+        value: .compadre.comprehensive.io
+      - key: COMPADRE_PREVIEW_HOST_SUFFIX
+        value: dev.compadre.comprehensive.io
+      - key: VITE_COMPADRE_AUTH_ENABLED
+        value: "true"
+      - key: T3CODE_INSTALL_GH_CLI
+        value: "true"
+      - key: T3CODE_OTLP_SERVICE_NAME
+        value: compadre-web
+      - key: DD_ENV
+        value: production
+      - key: DD_SERVICE
+        value: compadre-web
+      - key: DD_LLMOBS_ML_APP
+        value: compadre
+    disk:
+      name: compadre-state
+      mountPath: /var/data
+      sizeGB: 1
+    previews:
+      generation: off
+
+databases:
+  # Temporal's persistence store. auto-setup creates the temporal and
+  # temporal_visibility databases on first boot using this owner role.
+  - name: compadre-temporal-db
+    region: oregon
+    plan: basic-1gb
+    postgresMajorVersion: "16"

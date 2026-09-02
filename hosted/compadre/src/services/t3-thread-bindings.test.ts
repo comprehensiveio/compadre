@@ -1,0 +1,116 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+import { memoryPersistence } from "@tanstack/ai-persistence";
+import {
+  T3ThreadBindingStore,
+  type T3ThreadBinding,
+} from "./t3-thread-bindings.js";
+
+const binding: T3ThreadBinding = {
+  canonicalThreadId: "slack-thread",
+  providerInstanceId: "codex",
+  t3ThreadId: "t3-codex-thread",
+  projectId: "project-1",
+  sandboxId: "sandbox-1",
+  baseUrl: "https://t3.example",
+  modelSelection: { instanceId: "codex", model: "gpt-5.6-sol" },
+  createdAt: "2026-08-26T15:00:00.000Z",
+  updatedAt: "2026-08-26T15:00:00.000Z",
+};
+
+test("persists credential-free Modal worker lifecycle state", async () => {
+  const persistence = memoryPersistence();
+  const store = new T3ThreadBindingStore(persistence.stores.metadata);
+  const lifecycleBinding: T3ThreadBinding = {
+    ...binding,
+    workerState: "suspended",
+    workerGeneration: 3,
+    workerSnapshotId: "im-worker-3",
+    sandboxStartedAt: "2026-08-26T14:00:00.000Z",
+    lastActiveAt: "2026-08-26T15:00:00.000Z",
+    warmUntil: "2026-08-26T15:30:00.000Z",
+  };
+
+  await store.bind(lifecycleBinding);
+
+  assert.deepEqual(await store.get(binding.canonicalThreadId), lifecycleBinding);
+});
+
+test("does not reassign a native T3 thread to another provider", async () => {
+  const persistence = memoryPersistence();
+  const store = new T3ThreadBindingStore(persistence.stores.metadata);
+  await store.bind(binding);
+  await assert.rejects(
+    store.bind({
+      ...binding,
+      providerInstanceId: "claudeAgent",
+      modelSelection: {
+        instanceId: "claudeAgent",
+        model: "claude-opus-4-6",
+      },
+    }),
+    /already assigned to provider codex/,
+  );
+
+  assert.equal(
+    (await store.get("slack-thread"))?.t3ThreadId,
+    "t3-codex-thread",
+  );
+  assert.equal((await store.get("slack-thread"))?.providerInstanceId, "codex");
+});
+
+test("does not silently reassign a provider conversation", async () => {
+  const persistence = memoryPersistence();
+  const store = new T3ThreadBindingStore(persistence.stores.metadata);
+  await store.bind(binding);
+  await assert.rejects(
+    store.bind({ ...binding, t3ThreadId: "different-thread" }),
+    /already assigned to t3-codex-thread/,
+  );
+});
+
+test("persists and does not reassign the protected Slack destination", async () => {
+  const persistence = memoryPersistence();
+  const store = new T3ThreadBindingStore(persistence.stores.metadata);
+  const protectedBinding = {
+    ...binding,
+    blockedSlackDestination: { channelId: "C1", threadTs: "1.0" },
+  };
+  await store.bind(protectedBinding);
+  assert.deepEqual(
+    (await store.get(binding.canonicalThreadId))?.blockedSlackDestination,
+    protectedBinding.blockedSlackDestination,
+  );
+  await assert.rejects(
+    store.bind({
+      ...protectedBinding,
+      blockedSlackDestination: { channelId: "C1", threadTs: "2.0" },
+    }),
+    /cannot change its protected Slack destination/,
+  );
+});
+
+test("lists the credential-free thread directory in most-recent order", async () => {
+  const persistence = memoryPersistence();
+  const store = new T3ThreadBindingStore(persistence.stores.metadata);
+  await store.bind(binding);
+  await store.bind({
+    ...binding,
+    canonicalThreadId: "newer-thread",
+    t3ThreadId: "newer-t3-thread",
+    title: "Newer work",
+    status: "working",
+    createdAt: "2026-08-26T16:00:00.000Z",
+    updatedAt: "2026-08-26T16:00:00.000Z",
+  });
+
+  assert.deepEqual(
+    (await store.list()).map((record) => record.canonicalThreadId),
+    ["newer-thread", "slack-thread"],
+  );
+  await store.delete("newer-thread");
+  assert.deepEqual(
+    (await store.list()).map((record) => record.canonicalThreadId),
+    ["slack-thread"],
+  );
+});

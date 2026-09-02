@@ -1,0 +1,8 @@
+node_modules/
+dist/
+dist-web/
+.env.local
+.sessions/
+datadog-mcp-creds.json
+.workflow-cache/
+.compadre-attachments-*/

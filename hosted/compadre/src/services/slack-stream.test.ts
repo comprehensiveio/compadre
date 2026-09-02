@@ -1,0 +1,603 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+import {
+  SLACK_MARKDOWN_TEXT_LIMIT,
+  SLACK_TRUNCATION_NOTICE,
+} from "./slack-markdown.js";
+import { SlackStream } from "./slack-stream.js";
+
+interface SlackCall {
+  method: string;
+  body: Record<string, unknown>;
+}
+
+const silentLogger = {
+  info() {},
+  warn() {},
+  error() {},
+};
+
+function createSlackFetch(
+  responses: Record<string, Array<Record<string, unknown>>>,
+) {
+  const calls: SlackCall[] = [];
+  const fetchImpl = (async (
+    input: string | URL | Request,
+    init?: RequestInit,
+  ) => {
+    const method = new URL(String(input)).pathname.split("/").pop() || "";
+    const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+    calls.push({ method, body });
+
+    const response = responses[method]?.shift() ?? { ok: true };
+    return new Response(JSON.stringify(response), {
+      headers: { "Content-Type": "application/json" },
+    });
+  }) as typeof fetch;
+
+  return { calls, fetchImpl };
+}
+
+function assertBoundedMarkdownCalls(calls: SlackCall[]): void {
+  for (const call of calls) {
+    if (typeof call.body.markdown_text === "string") {
+      assert.ok(
+        call.body.markdown_text.length <= SLACK_MARKDOWN_TEXT_LIMIT,
+        `${call.method} exceeded Slack's Markdown limit`,
+      );
+    }
+  }
+}
+
+test("streams standard Markdown unchanged in channel threads", async () => {
+  const { calls, fetchImpl } = createSlackFetch({
+    "chat.startStream": [{ ok: true, ts: "200.001" }],
+    "chat.appendStream": [{ ok: true }],
+    "chat.stopStream": [{ ok: true }],
+  });
+  const stream = new SlackStream({
+    channel: "C123",
+    threadTs: "100.001",
+    botToken: "xoxb-test",
+    recipientUserId: "U123",
+    recipientTeamId: "T123",
+    fetchImpl,
+    flushIntervalMs: 0,
+    logger: silentLogger,
+  });
+
+  const firstChunk = [
+    "## Results",
+    "",
+    "| Service | Status |",
+    "| --- | --- |",
+    "| API | ",
+  ].join("\n");
+  const secondChunk = [
+    "**Healthy** |",
+    "",
+    "- [x] Checked",
+    "",
+    "```ts",
+    "const ok = true;",
+    "```",
+  ].join("\n");
+
+  stream.appendText(firstChunk);
+  await new Promise((resolve) => setTimeout(resolve, 5));
+  stream.appendText(secondChunk);
+  await stream.stopStream();
+
+  assert.deepEqual(calls, [
+    {
+      method: "chat.startStream",
+      body: {
+        channel: "C123",
+        thread_ts: "100.001",
+        markdown_text: firstChunk,
+        recipient_user_id: "U123",
+        recipient_team_id: "T123",
+      },
+    },
+    {
+      method: "chat.appendStream",
+      body: {
+        channel: "C123",
+        ts: "200.001",
+        markdown_text: secondChunk,
+      },
+    },
+    {
+      method: "chat.stopStream",
+      body: {
+        channel: "C123",
+        ts: "200.001",
+      },
+    },
+  ]);
+});
+
+test("publishes channel loading states without requiring assistant view", async () => {
+  const { calls, fetchImpl } = createSlackFetch({
+    "assistant.threads.setStatus": [{ ok: true }, { ok: true }],
+  });
+  const stream = new SlackStream({
+    channel: "C123",
+    threadTs: "100.001",
+    botToken: "xoxb-test",
+    fetchImpl,
+    logger: silentLogger,
+  });
+
+  await stream.setStatus("is thinking...");
+  await stream.clearStatus();
+
+  assert.deepEqual(calls, [
+    {
+      method: "assistant.threads.setStatus",
+      body: {
+        channel_id: "C123",
+        thread_ts: "100.001",
+        status: "is thinking...",
+      },
+    },
+    {
+      method: "assistant.threads.setStatus",
+      body: {
+        channel_id: "C123",
+        thread_ts: "100.001",
+        status: "",
+      },
+    },
+  ]);
+});
+
+test("posts secondary links as compact Slack context", async () => {
+  const { calls, fetchImpl } = createSlackFetch({
+    "chat.postMessage": [{ ok: true, ts: "200.001" }],
+  });
+  const stream = new SlackStream({
+    channel: "C123",
+    threadTs: "100.001",
+    botToken: "xoxb-test",
+    fetchImpl,
+    logger: silentLogger,
+  });
+
+  await stream.postThreadContext(
+    "<https://example.test/thread|open session in Compadre web>",
+  );
+
+  assert.deepEqual(calls, [
+    {
+      method: "chat.postMessage",
+      body: {
+        channel: "C123",
+        thread_ts: "100.001",
+        text: "<https://example.test/thread|open session in Compadre web>",
+        blocks: [
+          {
+            type: "context",
+            elements: [
+              {
+                type: "mrkdwn",
+                text: "<https://example.test/thread|open session in Compadre web>",
+              },
+            ],
+          },
+        ],
+      },
+    },
+  ]);
+});
+
+test("refreshes a quiet thread status before Slack's two-minute expiry", async () => {
+  const { calls, fetchImpl } = createSlackFetch({
+    "assistant.threads.setStatus": [{ ok: true }, { ok: true }, { ok: true }],
+  });
+  const stream = new SlackStream({
+    channel: "C123",
+    threadTs: "100.001",
+    botToken: "xoxb-test",
+    fetchImpl,
+    statusRefreshIntervalMs: 50,
+    logger: silentLogger,
+  });
+
+  await stream.setStatus("is running checks...");
+  await new Promise((resolve) => setTimeout(resolve, 70));
+  await stream.clearStatus();
+  await new Promise((resolve) => setTimeout(resolve, 70));
+
+  assert.deepEqual(
+    calls.map(({ method }) => method),
+    [
+      "assistant.threads.setStatus",
+      "assistant.threads.setStatus",
+      "assistant.threads.setStatus",
+    ],
+  );
+  assert.deepEqual(
+    calls.map(({ body }) => body.status),
+    ["is running checks...", "is running checks...", ""],
+  );
+});
+
+test("successful runs clear both live and stale terminal reactions idempotently", async () => {
+  const errors: unknown[][] = [];
+  const { calls, fetchImpl } = createSlackFetch({
+    "reactions.remove": [{ ok: false, error: "no_reaction" }, { ok: true }],
+  });
+  const stream = new SlackStream({
+    channel: "C123",
+    threadTs: "100.001",
+    botToken: "xoxb-test",
+    fetchImpl,
+    logger: {
+      info() {},
+      warn() {},
+      error: (...args: unknown[]) => void errors.push(args),
+    },
+  });
+
+  await stream.markRunSucceeded("200.002");
+
+  assert.deepEqual(calls, [
+    {
+      method: "reactions.remove",
+      body: {
+        channel: "C123",
+        timestamp: "200.002",
+        name: "compadre-thinking",
+      },
+    },
+    {
+      method: "reactions.remove",
+      body: {
+        channel: "C123",
+        timestamp: "200.002",
+        name: "compadre-failure",
+      },
+    },
+  ]);
+  assert.deepEqual(errors, []);
+});
+
+test("starting a run clears a stale failure before marking it active", async () => {
+  const { calls, fetchImpl } = createSlackFetch({
+    "reactions.remove": [{ ok: true }],
+    "reactions.add": [{ ok: true }],
+  });
+  const stream = new SlackStream({
+    channel: "C123",
+    threadTs: "100.001",
+    botToken: "xoxb-test",
+    fetchImpl,
+    logger: silentLogger,
+  });
+
+  await stream.markRunStarted("200.002");
+
+  assert.deepEqual(
+    calls.map(({ method }) => method),
+    ["reactions.remove", "reactions.add"],
+  );
+  assert.equal(calls[0]?.body.name, "compadre-failure");
+  assert.equal(calls[1]?.body.name, "compadre-thinking");
+});
+
+test("falls back to a normal thread message when native streaming is unavailable", async () => {
+  const { calls, fetchImpl } = createSlackFetch({
+    "chat.startStream": [{ ok: false, error: "channel_type_not_supported" }],
+    "chat.postMessage": [{ ok: true, ts: "200.001" }],
+  });
+  const stream = new SlackStream({
+    channel: "C123",
+    threadTs: "100.001",
+    botToken: "xoxb-test",
+    recipientUserId: "U123",
+    recipientTeamId: "T123",
+    fetchImpl,
+    logger: silentLogger,
+  });
+
+  stream.appendText("Fallback response");
+  await stream.stopStream();
+
+  assert.deepEqual(calls, [
+    {
+      method: "chat.startStream",
+      body: {
+        channel: "C123",
+        thread_ts: "100.001",
+        markdown_text: "Fallback response",
+        recipient_user_id: "U123",
+        recipient_team_id: "T123",
+      },
+    },
+    {
+      method: "chat.postMessage",
+      body: {
+        channel: "C123",
+        thread_ts: "100.001",
+        markdown_text: "Fallback response",
+      },
+    },
+  ]);
+});
+
+test("finishes with message updates if Slack closes a native stream", async () => {
+  const { calls, fetchImpl } = createSlackFetch({
+    "chat.startStream": [{ ok: true, ts: "200.001" }],
+    "chat.appendStream": [{ ok: false, error: "stream_closed" }],
+    "chat.update": [{ ok: true }, { ok: true }],
+  });
+  const stream = new SlackStream({
+    channel: "C123",
+    threadTs: "100.001",
+    botToken: "xoxb-test",
+    recipientUserId: "U123",
+    recipientTeamId: "T123",
+    fetchImpl,
+    flushIntervalMs: 0,
+    logger: silentLogger,
+  });
+
+  stream.appendText("One ");
+  await new Promise((resolve) => setTimeout(resolve, 5));
+  stream.appendText("two ");
+  await new Promise((resolve) => setTimeout(resolve, 5));
+  stream.appendText("three");
+  await stream.stopStream();
+
+  assert.deepEqual(
+    calls.map(({ method }) => method),
+    ["chat.startStream", "chat.appendStream", "chat.update", "chat.update"],
+  );
+  assert.equal(calls.at(-1)?.body.markdown_text, "One two three");
+});
+
+test("keeps a quiet native stream alive without adding visible text", async () => {
+  const { calls, fetchImpl } = createSlackFetch({
+    "chat.startStream": [{ ok: true, ts: "200.001" }],
+    "chat.appendStream": [{ ok: true }, { ok: true }],
+    "chat.stopStream": [{ ok: true }],
+  });
+  const stream = new SlackStream({
+    channel: "C123",
+    threadTs: "100.001",
+    botToken: "xoxb-test",
+    recipientUserId: "U123",
+    recipientTeamId: "T123",
+    fetchImpl,
+    flushIntervalMs: 0,
+    nativeStreamKeepaliveMs: 50,
+    logger: silentLogger,
+  });
+
+  stream.appendText("Checking dependencies.");
+  await new Promise((resolve) => setTimeout(resolve, 70));
+  stream.appendText(" Done.");
+  await stream.stopStream();
+
+  assert.deepEqual(
+    calls.map(({ method }) => method),
+    [
+      "chat.startStream",
+      "chat.appendStream",
+      "chat.appendStream",
+      "chat.stopStream",
+    ],
+  );
+  assert.equal(calls[1]?.body.markdown_text, "\u200B");
+  assert.equal(calls[2]?.body.markdown_text, " Done.");
+});
+
+test("rotates an expired native stream instead of degrading to updates", async () => {
+  const { calls, fetchImpl } = createSlackFetch({
+    "chat.startStream": [
+      { ok: true, ts: "200.001" },
+      { ok: true, ts: "200.002" },
+    ],
+    "chat.appendStream": [
+      { ok: false, error: "message_not_in_streaming_state" },
+    ],
+    "chat.stopStream": [{ ok: true }],
+  });
+  const stream = new SlackStream({
+    channel: "C123",
+    threadTs: "100.001",
+    botToken: "xoxb-test",
+    recipientUserId: "U123",
+    recipientTeamId: "T123",
+    fetchImpl,
+    flushIntervalMs: 0,
+    nativeStreamKeepaliveMs: 0,
+    logger: silentLogger,
+  });
+
+  stream.appendText("First part.");
+  await new Promise((resolve) => setTimeout(resolve, 5));
+  stream.appendText(" Second part.");
+  await stream.stopStream();
+
+  assert.deepEqual(
+    calls.map(({ method }) => method),
+    [
+      "chat.startStream",
+      "chat.appendStream",
+      "chat.startStream",
+      "chat.stopStream",
+    ],
+  );
+  assert.equal(calls[2]?.body.markdown_text, " Second part.");
+  assert.equal(calls.at(-1)?.body.ts, "200.002");
+});
+
+test("salvages the final response if stopping a native stream fails", async () => {
+  const { calls, fetchImpl } = createSlackFetch({
+    "chat.startStream": [{ ok: true, ts: "200.001" }],
+    "chat.stopStream": [{ ok: false, error: "stream_closed" }],
+    "chat.update": [{ ok: true }],
+  });
+  const stream = new SlackStream({
+    channel: "C123",
+    threadTs: "100.001",
+    botToken: "xoxb-test",
+    recipientUserId: "U123",
+    recipientTeamId: "T123",
+    fetchImpl,
+    logger: silentLogger,
+  });
+
+  stream.appendText("Complete response");
+  await stream.stopStream();
+
+  assert.deepEqual(
+    calls.map(({ method }) => method),
+    ["chat.startStream", "chat.stopStream", "chat.update"],
+  );
+  assert.equal(calls.at(-1)?.body.markdown_text, "Complete response");
+});
+
+test("recovers missing text when both append and its immediate update fail", async () => {
+  const { calls, fetchImpl } = createSlackFetch({
+    "chat.startStream": [{ ok: true, ts: "200.001" }],
+    "chat.appendStream": [{ ok: false, error: "stream_closed" }],
+    "chat.update": [{ ok: false, error: "message_not_found" }, { ok: true }],
+    "chat.stopStream": [{ ok: true }],
+  });
+  const stream = new SlackStream({
+    channel: "C123",
+    threadTs: "100.001",
+    botToken: "xoxb-test",
+    recipientUserId: "U123",
+    recipientTeamId: "T123",
+    fetchImpl,
+    flushIntervalMs: 0,
+    logger: silentLogger,
+  });
+
+  stream.appendText("One ");
+  await new Promise((resolve) => setTimeout(resolve, 5));
+  stream.appendText("two");
+  await stream.stopStream();
+
+  assert.deepEqual(
+    calls.map(({ method }) => method),
+    [
+      "chat.startStream",
+      "chat.appendStream",
+      "chat.update",
+      "chat.stopStream",
+      "chat.update",
+    ],
+  );
+  assert.equal(calls.at(-1)?.body.markdown_text, "One two");
+});
+
+test("bounds an oversized initial stream chunk", async () => {
+  const { calls, fetchImpl } = createSlackFetch({
+    "chat.startStream": [{ ok: true, ts: "200.001" }],
+    "chat.stopStream": [{ ok: true }],
+  });
+  const stream = new SlackStream({
+    channel: "C123",
+    threadTs: "100.001",
+    botToken: "xoxb-test",
+    fetchImpl,
+    logger: silentLogger,
+  });
+
+  assert.equal(
+    stream.appendText("x".repeat(SLACK_MARKDOWN_TEXT_LIMIT + 1)),
+    false,
+  );
+  assert.equal(stream.hasTruncatedContent(), true);
+  assert.equal(stream.appendText("undelivered final answer"), false);
+  await stream.stopStream();
+
+  assertBoundedMarkdownCalls(calls);
+  assert.ok(
+    String(calls[0]?.body.markdown_text).endsWith(SLACK_TRUNCATION_NOTICE),
+  );
+});
+
+test("posts an incomplete-response notice separately after truncation", async () => {
+  const { calls, fetchImpl } = createSlackFetch({
+    "chat.startStream": [{ ok: true, ts: "200.001" }],
+    "chat.stopStream": [{ ok: true }],
+    "chat.postMessage": [{ ok: true, ts: "200.002" }],
+  });
+  const stream = new SlackStream({
+    channel: "C123",
+    threadTs: "100.001",
+    botToken: "xoxb-test",
+    fetchImpl,
+    logger: silentLogger,
+  });
+
+  stream.appendText("x".repeat(SLACK_MARKDOWN_TEXT_LIMIT + 1));
+  await stream.stopStream();
+  await stream.postThreadMessage("Continue the investigation.");
+
+  assert.deepEqual(calls.at(-1), {
+    method: "chat.postMessage",
+    body: {
+      channel: "C123",
+      thread_ts: "100.001",
+      markdown_text: "Continue the investigation.",
+    },
+  });
+});
+
+test("bounds accumulated Markdown during interrupted-stream recovery", async () => {
+  const { calls, fetchImpl } = createSlackFetch({
+    "chat.startStream": [{ ok: true, ts: "200.001" }],
+    "chat.appendStream": [{ ok: false, error: "stream_closed" }],
+    "chat.update": [{ ok: true }],
+  });
+  const stream = new SlackStream({
+    channel: "C123",
+    threadTs: "100.001",
+    botToken: "xoxb-test",
+    fetchImpl,
+    flushIntervalMs: 0,
+    logger: silentLogger,
+  });
+
+  stream.appendText("x".repeat(8_000));
+  await new Promise((resolve) => setTimeout(resolve, 5));
+  stream.appendText("y".repeat(8_000));
+  await stream.stopStream();
+
+  assertBoundedMarkdownCalls(calls);
+  const recovery = calls.find(({ method }) => method === "chat.update");
+  assert.ok(
+    String(recovery?.body.markdown_text).endsWith(SLACK_TRUNCATION_NOTICE),
+  );
+});
+
+test("bounds Markdown during failed-stop recovery", async () => {
+  const { calls, fetchImpl } = createSlackFetch({
+    "chat.startStream": [{ ok: true, ts: "200.001" }],
+    "chat.stopStream": [{ ok: false, error: "stream_closed" }],
+    "chat.update": [{ ok: true }],
+  });
+  const stream = new SlackStream({
+    channel: "C123",
+    threadTs: "100.001",
+    botToken: "xoxb-test",
+    fetchImpl,
+    logger: silentLogger,
+  });
+
+  stream.appendText("x".repeat(SLACK_MARKDOWN_TEXT_LIMIT + 1));
+  await stream.stopStream();
+
+  assertBoundedMarkdownCalls(calls);
+  const recovery = calls.find(({ method }) => method === "chat.update");
+  assert.ok(
+    String(recovery?.body.markdown_text).endsWith(SLACK_TRUNCATION_NOTICE),
+  );
+});
