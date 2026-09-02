@@ -61,12 +61,14 @@ authentication is exchanged through the controller and materialized as a T3
 session; client-supplied display names are never authorization data.
 
 While a hosted turn is running, another browser or Slack message is a native
-T3 steer. `CompadreAdapter` detaches from the older durable controller stream
-without cancelling it, reuses the current orchestration turn id, and opens a
-new controller stream. The thread-scoped Modal T3 session receives that second
-message and performs the provider-native Claude/Codex steer. Controller-side
-Slack delivery assigns the final response to the newest user message so older
-streams settle quietly rather than surfacing an interruption or duplicate.
+T3 steer. `CompadreAdapter` keeps the original durable controller stream as
+the single event reader, reuses the current orchestration turn id, and drains
+a second controller request only to queue the new input into the thread-scoped
+Modal T3 session. This matches T3's native Claude/Codex adapters: the provider
+loop decides when to incorporate the steer, without Compadre cancelling or
+synthetically ending the active turn. Controller-side Slack delivery assigns
+the final response to the newest user message so older delivery requests
+settle quietly rather than surfacing an interruption or duplicate.
 
 The controller and T3 fork auto-deploy independently. Cross-repository
 contracts must remain backward compatible through the rollout, and the

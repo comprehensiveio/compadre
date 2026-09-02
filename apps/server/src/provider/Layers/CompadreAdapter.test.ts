@@ -20,6 +20,7 @@ import * as Path from "effect/Path";
 import { FetchHttpClient } from "effect/unstable/http";
 
 import { makeCompadreAdapter } from "./CompadreAdapter.ts";
+import type { CompadreStreamEvent } from "./CompadreTransport.ts";
 import { remoteNativeProviderSnapshot } from "../RemoteNativeProvider.ts";
 
 it("uses the native Codex catalog instead of stale proxy model aliases", () => {
@@ -667,6 +668,7 @@ it.layer(Layer.merge(NodeServices.layer, FetchHttpClient.layer))("CompadreAdapte
       const threadId = ThreadId.make("compadre-steer-thread");
       const inputs: string[] = [];
       const cancelledRunIds: string[] = [];
+      const initialCompletion = yield* Deferred.make<ReadonlyArray<CompadreStreamEvent>>();
       const adapter = yield* makeCompadreAdapter({
         endpoint: "http://compadre.test/hosted/chat",
         instanceId: ProviderInstanceId.make("codex"),
@@ -674,23 +676,29 @@ it.layer(Layer.merge(NodeServices.layer, FetchHttpClient.layer))("CompadreAdapte
         provider: "codex",
         transport: (input) => {
           inputs.push(input.input);
-          if (input.input === "initial request") return Stream.never;
-          return Stream.fromIterable([
-            {
-              type: "TEXT_MESSAGE_START",
-              messageId: "assistant-steered",
-            },
-            {
-              type: "TEXT_MESSAGE_CONTENT",
-              messageId: "assistant-steered",
-              delta: "Steered answer",
-            },
-            {
-              type: "TEXT_MESSAGE_END",
-              messageId: "assistant-steered",
-            },
-            { type: "RUN_FINISHED" },
-          ]);
+          if (input.input === "initial request") {
+            return Stream.fromEffect(Deferred.await(initialCompletion)).pipe(
+              Stream.flatMap((events) => Stream.fromIterable(events)),
+            );
+          }
+          return Stream.unwrap(
+            Deferred.succeed(initialCompletion, [
+              {
+                type: "TEXT_MESSAGE_START",
+                messageId: "assistant-steered",
+              },
+              {
+                type: "TEXT_MESSAGE_CONTENT",
+                messageId: "assistant-steered",
+                delta: "Steered answer",
+              },
+              {
+                type: "TEXT_MESSAGE_END",
+                messageId: "assistant-steered",
+              },
+              { type: "RUN_FINISHED" },
+            ]).pipe(Effect.as(Stream.fromIterable([{ type: "RUN_FINISHED" }]))),
+          );
         },
         cancelTransport: ({ runId }) =>
           Effect.sync(() => {

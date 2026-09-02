@@ -66,7 +66,6 @@ export interface CompadreAdapterOptions {
 interface ActiveCompadreRun {
   readonly runId: string;
   readonly fiber: Fiber.Fiber<void, ProviderAdapterRequestError>;
-  superseded: boolean;
 }
 
 interface CompadreSessionContext {
@@ -403,15 +402,6 @@ export function makeCompadreAdapter(options: CompadreAdapterOptions) {
           previousRun && context.session.status === "running"
             ? context.session.activeTurnId
             : undefined;
-        if (previousRun) {
-          // The controller owns a durable producer, so disconnecting this
-          // reader does not cancel Modal work. The next request reaches the
-          // same worker T3 session and its native provider treats it as a
-          // steer. Mark the reader first so its interruption cannot close the
-          // visible T3 turn as "cancelled".
-          previousRun.superseded = true;
-          yield* Fiber.interrupt(previousRun.fiber);
-        }
 
         const turnId = steeringTurnId ?? TurnId.make(yield* randomId);
         const runId = yield* randomId;
@@ -435,6 +425,52 @@ export function makeCompadreAdapter(options: CompadreAdapterOptions) {
             turnId,
             payload: context.session.model ? { model: context.session.model } : {},
           });
+        }
+
+        const transportInput = {
+          endpoint: options.endpoint,
+          apiKey: options.apiKey,
+          threadId: input.threadId,
+          runId,
+          messageId,
+          input: text,
+          inputFiles,
+          provider: selectedProvider,
+          model: selectedModel,
+          modelOptions: selectedModelOptions,
+          attribution: input.attribution,
+        };
+
+        if (steeringTurnId) {
+          // Match T3's native adapters: sending while a turn is active queues
+          // input into that provider loop without interrupting its current
+          // reader or opening a synthetic T3 turn. Consume the second durable
+          // request so it reaches Modal and settles, while the original reader
+          // remains the single owner of visible provider events.
+          yield* Stream.runForEach(transport(transportInput), () => Effect.void).pipe(
+            Effect.catch((cause) =>
+              Effect.flatMap(makeEventStamp(), (stamp) =>
+                publish({
+                  type: "runtime.error",
+                  ...stamp,
+                  provider: runtimeProvider,
+                  providerInstanceId: boundInstanceId,
+                  threadId: input.threadId,
+                  turnId,
+                  payload: {
+                    message: cause.message,
+                    class: "transport_error",
+                  },
+                }),
+              ),
+            ),
+            Effect.forkIn(adapterScope),
+          );
+          return {
+            threadId: input.threadId,
+            turnId,
+            resumeCursor: { runId },
+          };
         }
 
         let activeRun: ActiveCompadreRun | undefined;
@@ -800,36 +836,19 @@ export function makeCompadreAdapter(options: CompadreAdapterOptions) {
               }
             });
 
-          yield* Stream.runForEach(
-            transport({
-              endpoint: options.endpoint,
-              apiKey: options.apiKey,
-              threadId: input.threadId,
-              runId,
-              messageId,
-              input: text,
-              inputFiles,
-              provider: selectedProvider,
-              model: selectedModel,
-              modelOptions: selectedModelOptions,
-              attribution: input.attribution,
-            }),
-            handleEvent,
-          ).pipe(
+          yield* Stream.runForEach(transport(transportInput), handleEvent).pipe(
             Effect.flatMap(() =>
               terminal
                 ? Effect.void
                 : failTurn("Compadre closed the stream before the run completed."),
             ),
             Effect.catch((cause) => failTurn(cause.message)),
-            Effect.onInterrupt(() =>
-              activeRun?.superseded ? completeOpenItems() : completeTurn("cancelled"),
-            ),
+            Effect.onInterrupt(() => completeTurn("cancelled")),
           );
         });
 
         const fiber = yield* worker.pipe(Effect.forkIn(adapterScope));
-        activeRun = { runId, fiber, superseded: false };
+        activeRun = { runId, fiber };
         context.activeRun = activeRun;
         yield* Fiber.await(fiber).pipe(
           Effect.tap(() =>
