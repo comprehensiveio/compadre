@@ -1,6 +1,9 @@
 import fs from "fs/promises";
 import path from "path";
-import { truncateSlackMarkdown } from "./slack-markdown.js";
+import {
+  slackMarkdownMessageContent,
+  type SlackSessionLink,
+} from "./slack-markdown.js";
 
 const SLACK_API = "https://slack.com/api";
 
@@ -65,10 +68,14 @@ export class SlackClient {
     });
   }
 
-  async postMessage(channel: string, markdown: string): Promise<SlackResponse> {
+  async postMessage(
+    channel: string,
+    markdown: string,
+    sessionLink?: SlackSessionLink,
+  ): Promise<SlackResponse> {
     return this.post("chat.postMessage", {
       channel,
-      markdown_text: truncateSlackMarkdown(markdown),
+      ...slackMarkdownMessageContent(markdown, sessionLink),
     });
   }
 
@@ -77,27 +84,13 @@ export class SlackClient {
     threadTs: string,
     markdown: string,
     clientMsgId?: string,
+    sessionLink?: SlackSessionLink,
   ): Promise<SlackResponse> {
     return this.post("chat.postMessage", {
       channel,
       thread_ts: threadTs,
-      markdown_text: truncateSlackMarkdown(markdown),
+      ...slackMarkdownMessageContent(markdown, sessionLink),
       ...(clientMsgId ? { client_msg_id: clientMsgId } : {}),
-    });
-  }
-
-  /** Post secondary context copy using Slack's intentionally smaller context style. */
-  async postContext(
-    channel: string,
-    markdown: string,
-    threadTs?: string,
-  ): Promise<SlackResponse> {
-    const text = truncateSlackMarkdown(markdown);
-    return this.post("chat.postMessage", {
-      channel,
-      ...(threadTs ? { thread_ts: threadTs } : {}),
-      text,
-      blocks: [{ type: "context", elements: [{ type: "mrkdwn", text }] }],
     });
   }
 

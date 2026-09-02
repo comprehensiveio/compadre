@@ -9,7 +9,9 @@ import { incompleteProviderStopReason } from "../t3/client.js";
 import {
   dispatchWasSuperseded,
   finalAssistantTextForDispatch,
+  t3SlackSessionLink,
 } from "./t3-slack-conversation.js";
+import type { SlackSessionLink } from "./slack-markdown.js";
 import { SlackStream } from "./slack-stream.js";
 import { slackFailureNotice } from "./terminal-response.js";
 import type {
@@ -23,8 +25,11 @@ const DELIVERY_CONCURRENCY = 4;
 export const DEFAULT_SLACK_DELIVERY_INTERVAL_MS = 15_000;
 
 export interface SlackTurnDeliveryClient {
-  postThreadMessage(text: string, clientMsgId?: string): Promise<void>;
-  postThreadContext(text: string, clientMsgId?: string): Promise<void>;
+  postThreadMessage(
+    text: string,
+    clientMsgId?: string,
+    sessionLink?: SlackSessionLink,
+  ): Promise<void>;
   clearStatus(): Promise<void>;
   markRunSucceeded(messageTs: string): Promise<void>;
   markRunFailed(messageTs: string): Promise<void>;
@@ -156,13 +161,15 @@ export async function deliverClaimedSlackTurn(input: {
       return true;
     }
 
-    await slack.postThreadMessage(response, delivery.id);
+    // The session link rides inside the answer message as a context footer
+    // rather than a second message.
+    await slack.postThreadMessage(
+      response,
+      delivery.id,
+      t3SlackSessionLink(delivery.detailsUrl),
+    );
     span.setAttribute("compadre.slack_answer_ms", Date.now() - startedAt);
     span.addEvent("slack.answer.posted");
-    await slack.postThreadContext(
-      `<${delivery.detailsUrl}|open session in Compadre web>`,
-      relatedUuid(delivery.id, "details"),
-    );
     await slack.clearStatus();
     if (failed) {
       await slack.markRunFailed(delivery.triggerMessageTs);

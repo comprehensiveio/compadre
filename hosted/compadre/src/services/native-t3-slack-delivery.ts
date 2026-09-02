@@ -1,13 +1,18 @@
 import { EventType, type StreamChunk } from "../t3/agui-protocol.js";
 import { log, serializeError } from "../logging.js";
 import type { HostedSlackBinding } from "./hosted-thread-bindings.js";
+import type { SlackSessionLink } from "./slack-markdown.js";
 import { SlackStream } from "./slack-stream.js";
+import { t3SlackSessionLink } from "./t3-slack-conversation.js";
 import { slackFailureNotice } from "./terminal-response.js";
 import { humanizeToolName } from "./tool-labels.js";
 
 export interface NativeT3SlackDeliveryStream {
-  postThreadMessage(markdownText: string): Promise<void>;
-  postThreadContext(markdownText: string): Promise<void>;
+  postThreadMessage(
+    markdownText: string,
+    clientMsgId?: string,
+    sessionLink?: SlackSessionLink,
+  ): Promise<void>;
   setStatus(text: string): Promise<void>;
   clearStatus(): Promise<void>;
 }
@@ -123,22 +128,30 @@ ${this.input.userMessage}`);
       const finalText = [...this.assistantMessages.values()]
         .reverse()
         .find((text) => text.trim().length > 0);
+      // The session link rides inside the final message as a context footer
+      // rather than a second message.
+      const sessionLink = this.input.detailsUrl
+        ? t3SlackSessionLink(this.input.detailsUrl)
+        : undefined;
       if (this.terminalError) {
         await this.slack.postThreadMessage(
           slackFailureNotice(new Error(this.terminalError)),
+          undefined,
+          sessionLink,
         );
       } else if (finalText) {
-        await this.slack.postThreadMessage(finalText.trim());
+        await this.slack.postThreadMessage(
+          finalText.trim(),
+          undefined,
+          sessionLink,
+        );
       } else {
         await this.slack.postThreadMessage(
           slackFailureNotice(
             new Error("Native T3 completed without a final response."),
           ),
-        );
-      }
-      if (this.input.detailsUrl) {
-        await this.slack.postThreadContext(
-          `<${this.input.detailsUrl}|open session in Compadre web>`,
+          undefined,
+          sessionLink,
         );
       }
     } catch (error) {
@@ -241,22 +254,26 @@ ${input.userMessage}`);
       const finalText = [...assistantMessages.values()]
         .reverse()
         .find((text) => text.trim().length > 0);
+      // The session link rides inside the final message as a context footer
+      // rather than a second message.
+      const sessionLink = input.detailsUrl
+        ? t3SlackSessionLink(input.detailsUrl)
+        : undefined;
       if (terminalError) {
         await slack.postThreadMessage(
           slackFailureNotice(new Error(terminalError)),
+          undefined,
+          sessionLink,
         );
       } else if (finalText) {
-        await slack.postThreadMessage(finalText.trim());
+        await slack.postThreadMessage(finalText.trim(), undefined, sessionLink);
       } else {
         await slack.postThreadMessage(
           slackFailureNotice(
             new Error("Native T3 completed without a final response."),
           ),
-        );
-      }
-      if (input.detailsUrl) {
-        await slack.postThreadContext(
-          `<${input.detailsUrl}|open session in Compadre web>`,
+          undefined,
+          sessionLink,
         );
       }
     }

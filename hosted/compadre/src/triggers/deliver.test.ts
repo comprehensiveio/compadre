@@ -73,7 +73,13 @@ function terminalSnapshot(input: {
 interface FakeCalls {
   startTurn: Array<Record<string, unknown>>;
   startNewThread: Array<Record<string, unknown>>;
-  posts: Array<{ kind: string; channel: string; threadTs?: string; text: string }>;
+  posts: Array<{
+    kind: string;
+    channel: string;
+    threadTs?: string;
+    text: string;
+    link?: string;
+  }>;
   bindings: Array<Record<string, unknown>>;
   aliases: Array<{ alias: string; canonical: string }>;
 }
@@ -126,16 +132,23 @@ function fakeDependencies(input: {
     },
   } as unknown as TriggeredPromptDeliveryDependencies["client"];
   const slack: TriggeredPromptSlack = {
-    async postMessage(channel, markdown) {
-      calls.posts.push({ kind: "root", channel, text: markdown });
+    async postMessage(channel, markdown, sessionLink) {
+      calls.posts.push({
+        kind: "root",
+        channel,
+        text: markdown,
+        ...(sessionLink ? { link: sessionLink.url } : {}),
+      });
       return { ok: true, ts: "1700000000.000100" };
     },
-    async replyToThread(channel, threadTs, markdown) {
-      calls.posts.push({ kind: "reply", channel, threadTs, text: markdown });
-      return { ok: true };
-    },
-    async postContext(channel, markdown, threadTs) {
-      calls.posts.push({ kind: "context", channel, threadTs, text: markdown });
+    async replyToThread(channel, threadTs, markdown, _clientMsgId, sessionLink) {
+      calls.posts.push({
+        kind: "reply",
+        channel,
+        threadTs,
+        text: markdown,
+        ...(sessionLink ? { link: sessionLink.url } : {}),
+      });
       return { ok: true };
     },
   };
@@ -179,10 +192,9 @@ test("new_thread fires post only the answer as a fresh Slack root and bind it", 
   assert.equal(root.channel, "C0123456789");
   assert.equal(root.text, "Here is the summary.");
   assert.ok(!root.text.includes("Summarize yesterday's"));
-  const context = calls.posts.find((post) => post.kind === "context");
-  assert.ok(context);
-  assert.ok(context.text.includes("open session in Compadre web"));
-  assert.equal(context.threadTs, "1700000000.000100");
+  // The session link rides inside the answer message, not a second message.
+  assert.ok(root.link?.includes("https://compadre.example.io"));
+  assert.equal(calls.posts.length, 1);
 
   assert.equal(calls.bindings.length, 1);
   assert.equal(calls.bindings[0]!.channelId, "C0123456789");
@@ -205,8 +217,9 @@ test("same_thread fires reply into the thread anchored by the first fire", async
   assert.ok(reply);
   assert.equal(reply.threadTs, "1699.42");
   assert.equal(reply.text, "Here is the summary.");
-  // Already anchored: no new root and no rebinding.
-  assert.equal(calls.posts.some((post) => post.kind === "root"), false);
+  assert.ok(reply.link?.includes("https://compadre.example.io"));
+  // Already anchored: no new root, no second message, no rebinding.
+  assert.equal(calls.posts.length, 1);
   assert.equal(calls.bindings.length, 0);
 });
 
@@ -246,6 +259,8 @@ test("existing_thread fires into the target thread and reply when Slack-linked",
   const reply = calls.posts.find((post) => post.kind === "reply");
   assert.equal(reply?.threadTs, "1699.99");
   assert.equal(reply?.text, "Here is the summary.");
+  assert.ok(reply?.link?.includes("https://compadre.example.io"));
+  assert.equal(calls.posts.length, 1);
 });
 
 test("existing_thread refuses a foreign-workspace Slack binding", async () => {

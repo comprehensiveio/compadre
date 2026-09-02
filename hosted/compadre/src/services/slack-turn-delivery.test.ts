@@ -86,9 +86,6 @@ function slackRecorder() {
     async postThreadMessage(...args) {
       calls.push(["message", ...args]);
     },
-    async postThreadContext(...args) {
-      calls.push(["context", ...args]);
-    },
     async clearStatus() {
       calls.push(["clear"]);
     },
@@ -141,10 +138,14 @@ test("delivers a recovered final answer with stable Slack idempotency keys", asy
   });
   assert.equal(completed, true);
   assert.deepEqual(marked, [job.id]);
-  assert.deepEqual(calls[0], ["message", "Durable answer", job.id]);
-  assert.equal(calls[1]?.[0], "context");
-  assert.match(String(calls[1]?.[2]), /^[0-9a-f-]{36}$/);
-  assert.deepEqual(calls.slice(2), [["clear"], ["succeeded", "1.1"]]);
+  // The session link rides inside the answer message, not a second message.
+  assert.deepEqual(calls[0], [
+    "message",
+    "Durable answer",
+    job.id,
+    { label: "open session in Compadre web", url: job.detailsUrl },
+  ]);
+  assert.deepEqual(calls.slice(1), [["clear"], ["succeeded", "1.1"]]);
 });
 
 test("keeps a transient T3 read failure pending instead of posting failure", async () => {

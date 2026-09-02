@@ -6,7 +6,7 @@ import { SlackClient } from "../services/slack-client.js";
 import {
   finalAssistantTextForDispatch,
   t3ModelSelectionForProfile,
-  t3SlackDetailsMarkdown,
+  t3SlackSessionLink,
 } from "../services/t3-slack-conversation.js";
 import {
   CENTRAL_T3_TIMEOUT_MS,
@@ -46,16 +46,14 @@ export interface TriggeredPromptSlack {
   postMessage(
     channel: string,
     markdown: string,
+    sessionLink?: { label: string; url: string },
   ): Promise<{ ts?: unknown } & Record<string, unknown>>;
   replyToThread(
     channel: string,
     threadTs: string,
     markdown: string,
-  ): Promise<Record<string, unknown>>;
-  postContext(
-    channel: string,
-    markdown: string,
-    threadTs?: string,
+    clientMsgId?: string,
+    sessionLink?: { label: string; url: string },
   ): Promise<Record<string, unknown>>;
 }
 
@@ -169,6 +167,8 @@ export async function deliverTriggeredPrompt(
     active.add(task);
   };
 
+  // The session link rides inside the answer message as a context footer
+  // rather than a second message.
   const postAnswer = async (
     channelId: string,
     threadTs: string,
@@ -176,11 +176,12 @@ export async function deliverTriggeredPrompt(
     detailsUrl: string,
   ) => {
     if (!deps.slack) return;
-    await deps.slack.replyToThread(channelId, threadTs, output);
-    await deps.slack.postContext(
+    await deps.slack.replyToThread(
       channelId,
-      t3SlackDetailsMarkdown(detailsUrl),
       threadTs,
+      output,
+      undefined,
+      t3SlackSessionLink(detailsUrl),
     );
   };
 
@@ -292,16 +293,15 @@ export async function deliverTriggeredPrompt(
       );
       return;
     }
-    const root = await deps.slack.postMessage(channelId, result.output);
+    const root = await deps.slack.postMessage(
+      channelId,
+      result.output,
+      t3SlackSessionLink(result.detailsUrl),
+    );
     const rootTs = typeof root.ts === "string" ? root.ts : undefined;
     if (!rootTs) {
       throw new Error("Slack did not return a timestamp for the answer");
     }
-    await deps.slack.postContext(
-      channelId,
-      t3SlackDetailsMarkdown(result.detailsUrl),
-      rootTs,
-    );
     // Later same_thread fires find this root and reply into it; the binding
     // also lets worker artifacts and blocked-destination guards target it.
     await deps.bindings.bindAlias(canonicalThreadId, result.t3ThreadId);
