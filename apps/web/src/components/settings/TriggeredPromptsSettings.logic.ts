@@ -63,7 +63,8 @@ export const DELIVERY_MODE_LABELS: Readonly<Record<TriggeredPromptDeliveryMode, 
 };
 
 export const DELIVERY_MODE_DESCRIPTIONS: Readonly<Record<TriggeredPromptDeliveryMode, string>> = {
-  new_thread: "Every fire starts a fresh thread (answer posts to Slack, visible here too).",
+  new_thread:
+    "Every fire starts a fresh thread. With a Slack channel the answer posts there; without one the fire is web-only.",
   same_thread: "The first fire creates a thread; later fires continue the conversation there.",
   existing_thread:
     "Fires continue a Compadre thread you point it at — web-only or Slack-linked alike.",
@@ -105,7 +106,10 @@ export function validateTriggeredPromptDraft(draft: TriggeredPromptDraft): strin
     }
     return null;
   }
-  if (!/^[CDG][A-Z0-9]+$/u.test(draft.slackChannelId.trim())) {
+  const channel = draft.slackChannelId.trim();
+  // new_thread may run web-only; same_thread is anchored by its Slack root.
+  if (!channel && draft.deliveryMode === "new_thread") return null;
+  if (!/^[CDG][A-Z0-9]+$/u.test(channel)) {
     return "Slack channel ID must look like C0123456789.";
   }
   return null;
@@ -123,7 +127,9 @@ export function draftToRequestBody(draft: TriggeredPromptDraft): Record<string, 
     deliveryMode: draft.deliveryMode,
     ...(isExistingThread
       ? { targetThreadId: parseCompadreThreadId(draft.targetThread) }
-      : { slackChannelId: draft.slackChannelId.trim() }),
+      : draft.slackChannelId.trim()
+        ? { slackChannelId: draft.slackChannelId.trim() }
+        : {}),
     enabled: true,
   };
 }

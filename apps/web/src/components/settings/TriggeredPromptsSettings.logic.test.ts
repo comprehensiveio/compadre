@@ -86,6 +86,17 @@ describe("validateTriggeredPromptDraft", () => {
       /channel ID/u,
     );
   });
+
+  it("allows a blank channel for new_thread (web-only) but not same_thread", () => {
+    expect(validateTriggeredPromptDraft({ ...VALID_DRAFT, slackChannelId: "" })).toBeNull();
+    expect(
+      validateTriggeredPromptDraft({
+        ...VALID_DRAFT,
+        deliveryMode: "same_thread",
+        slackChannelId: "",
+      }),
+    ).toMatch(/channel ID/u);
+  });
 });
 
 describe("draftToRequestBody", () => {

@@ -15,19 +15,29 @@ test("validateCronExpression accepts 5-field expressions and known macros", () =
   assert.match(validateCronExpression("") ?? "", /required/);
 });
 
-test("channel delivery modes require a Slack channel and reject thread targets", () => {
+test("channel rules per delivery mode: same_thread requires one, new_thread may run web-only", () => {
   const base = {
     name: "Daily summary",
     prompt: "Summarize yesterday's work",
     cronExpression: "0 9 * * *",
   };
-  assert.equal(triggeredPromptInputSchema.safeParse(base).success, false);
+  // new_thread without a channel is a web-only trigger.
+  const webOnly = triggeredPromptInputSchema.parse(base);
+  assert.equal(webOnly.deliveryMode, "new_thread");
+  assert.equal(webOnly.slackChannelId, undefined);
+  assert.equal(webOnly.enabled, true);
   const withChannel = triggeredPromptInputSchema.parse({
     ...base,
     slackChannelId: "C0123456789",
   });
-  assert.equal(withChannel.deliveryMode, "new_thread");
-  assert.equal(withChannel.enabled, true);
+  assert.equal(withChannel.slackChannelId, "C0123456789");
+  assert.equal(
+    triggeredPromptInputSchema.safeParse({
+      ...base,
+      deliveryMode: "same_thread",
+    }).success,
+    false,
+  );
   assert.equal(
     triggeredPromptInputSchema.safeParse({
       ...base,

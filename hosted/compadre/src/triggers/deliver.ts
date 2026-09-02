@@ -258,9 +258,11 @@ export async function deliverTriggeredPrompt(
 
   // Slack-channel modes: new_thread (fresh conversation per fire) or
   // same_thread (a stable conversation key pins one central thread, and the
-  // first answer's Slack root anchors where later answers reply).
+  // first answer's Slack root anchors where later answers reply). A
+  // new_thread trigger without a channel runs web-only — the prompt itself
+  // may have the agent deliver its own updates.
   const channelId = record.slackChannelId;
-  if (!channelId) {
+  if (!channelId && record.deliveryMode === "same_thread") {
     throw new Error(
       "Triggered prompt has neither a Slack channel nor a target thread",
     );
@@ -283,6 +285,13 @@ export async function deliverTriggeredPrompt(
         existingAnswerThread.threadTs,
         result.output,
         result.detailsUrl,
+      );
+      return;
+    }
+    if (!channelId) {
+      log.info(
+        { triggerId: record.id, centralThreadId },
+        "triggered prompt completed (web-only delivery)",
       );
       return;
     }

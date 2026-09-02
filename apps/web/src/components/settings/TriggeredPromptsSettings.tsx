@@ -112,7 +112,8 @@ function TriggeredPromptRow({
             <span aria-hidden> · </span>
             {DELIVERY_MODE_LABELS[record.deliveryMode]}
             <span aria-hidden> · </span>
-            {record.slackChannelId ?? `thread ${record.targetThreadId?.slice(0, 8) ?? "?"}…`}
+            {record.slackChannelId ??
+              (record.targetThreadId ? `thread ${record.targetThreadId.slice(0, 8)}…` : "web only")}
             <span aria-hidden> · </span>
             {record.lastFiredAt
               ? `Last fired ${timestampFormatter.format(new Date(record.lastFiredAt))}`
@@ -243,7 +244,12 @@ function TriggeredPromptDialog({
                 />
               </DraftField>
             ) : (
-              <DraftField label="Slack channel ID">
+              <DraftField
+                label="Slack channel ID"
+                {...(draft.deliveryMode === "new_thread"
+                  ? { hint: "optional — blank runs web-only" }
+                  : {})}
+              >
                 <Input
                   value={draft.slackChannelId}
                   onChange={(event) => set("slackChannelId", event.target.value)}
