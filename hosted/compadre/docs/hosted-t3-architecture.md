@@ -341,9 +341,11 @@ The production deployment uses stable Comprehensive domains and resource names:
 The T3 server runs in same-origin mode; `VITE_HOSTED_APP_CHANNEL` and
 `VITE_HOSTED_APP_URL` remain blank. The controller requires Postgres durability
 and the T3 server uses the controller's `/hosted/t3/chat` remote-provider
-endpoint. Merges to the Compadre and T3 fork `main` branches independently
-auto-deploy `compadre-api` and `compadre-web`; per-thread Modal sandboxes remain
-lazy runtime resources and are not redeployed by either merge.
+endpoint. Both services deploy from the monorepo's `main`: commits touching
+`hosted/compadre/**` auto-deploy `compadre-api`, commits touching the root T3
+stack auto-deploy `compadre-web`, and the two rollouts stay independent;
+per-thread Modal sandboxes remain lazy runtime resources and are not redeployed
+by either merge.
 
 The central T3 SQLite database is a single-writer deployment. Before treating it
 as production-critical state, add continuous encrypted backup, scheduled restore
@@ -377,8 +379,8 @@ This TODO is complete only after `compadre-web` can run overlapping old and new
 instances with graceful connection draining, a deploy can occur while a turn
 is active without losing or duplicating it, and an automated canary observes no
 HTTP 5xx or transcript unavailability throughout the rollout. Until then,
-every T3 fork merge must be treated as a user-visible maintenance event and
-verified after the replacement instance is live.
+every merge touching the root T3 stack must be treated as a user-visible
+maintenance event and verified after the replacement instance is live.
 
 The controller is also kept at one instance today. Native T3 run execution,
 events, dispatch metadata, driver-epoch fencing, and cancellation are durable

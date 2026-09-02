@@ -1,5 +1,10 @@
 # Production cutover checklist
 
+> **Historical record — predates the monorepo migration (2026-09-01).**
+> References to the separate `comprehensiveio/t3code` fork repository describe
+> the pre-monorepo layout; both halves now live in `comprehensiveio/compadre`
+> (controller under `hosted/compadre/`, T3 stack at the root).
+
 This is the running checklist for operating Compadre on the hosted T3
 architecture. Keep it current as production reveals new requirements. A
 checked item means the behavior was demonstrated against the deployed

@@ -6,36 +6,38 @@ description: Implement, ship, and verify Compadre changes across the controller,
 # Change Compadre Stack
 
 Use this skill to put a change at the correct architectural seam and carry it
-through deployed verification. Compadre spans two repositories and three
-runtime layers; a locally correct edit is incomplete if the corresponding
-service, migration, worker, or entrypoint is not updated.
+through deployed verification. Compadre lives in one monorepo but spans two
+toolchains and three runtime layers; a locally correct edit is incomplete if
+the corresponding service, migration, worker, or entrypoint is not updated.
 
 ## Start with ownership
 
 Before editing:
 
-1. Read `CONTEXT.md` and `docs/hosted-t3-architecture.md` in the Compadre
-   controller repository.
+1. Read `hosted/compadre/CONTEXT.md` and
+   `hosted/compadre/docs/hosted-t3-architecture.md`.
 2. Read [references/stack-map.md](references/stack-map.md) and classify the
    change by data owner and runtime boundary.
-3. Inspect the status and active worktrees of both repositories. Never mix a
-   change into another agent's branch; create an isolated worktree from the
-   intended base when needed.
-4. In the Compadre repository, follow `AGENTS.md` and run the TanStack Intent
-   skill discovery before substantial edits. In the T3 fork, read its complete
-   `AGENTS.md` before acting.
+3. Inspect the repository status and active worktrees. Never mix a change into
+   another agent's branch; create an isolated worktree from the intended base
+   when needed.
+4. For controller work under `hosted/compadre/`, follow
+   `hosted/compadre/AGENTS.md` and run the TanStack Intent skill discovery
+   before substantial edits. For UI/server work at the root (`apps/*`,
+   `packages/*`), read the complete root `AGENTS.md` before acting.
 5. Preserve the user's authorization boundary. Loading this skill does not
    authorize a merge, production mutation, Slack message, secret rotation, or
    destructive database operation.
 
-The common local repositories are:
+Both halves live in this monorepo (`comprehensiveio/compadre`):
 
-- Controller: `comprehensiveio/compadre`
-- Hosted UI/server fork: `comprehensiveio/t3code` (often checked out locally
-  as `t3code-experiment`)
+- Controller: `hosted/compadre/` (own npm toolchain, root `vp` does not apply)
+- Hosted UI/server (the T3 Code fork): the repo root — `apps/*`, `packages/*`,
+  pnpm + `vp`
 
-Do not treat the controller repository's legacy `web/` directory as the
-production UI. The production web application is the T3 fork.
+Do not treat the controller's legacy `hosted/compadre/web/` directory as the
+production UI. The production web application is the root `apps/web`/`apps/server`
+stack.
 
 ## Route to the relevant guide
 
@@ -51,10 +53,11 @@ Read only the references needed for the current change:
   requires end-to-end proof:
   [references/deploy-and-verify.md](references/deploy-and-verify.md)
 
-For a cross-repository protocol change, read all of stack-map, the relevant
-implementation guide, and deploy-and-verify. Keep the old protocol working
-until both sides are deployed; do not make two independently auto-deploying
-services require an atomic rollout.
+For a protocol change that crosses the controller/UI seam, read all of
+stack-map, the relevant implementation guide, and deploy-and-verify. Even in
+one repository the services deploy independently: keep the old protocol
+working until both sides are deployed; do not make two independently
+auto-deploying services require an atomic rollout.
 
 ## Preserve these invariants
 

@@ -23,27 +23,27 @@ expose destination-scoped tools through the authenticated bridge.
 ## Current controller seams
 
 - MCP definitions and required environment:
-  `src/mcp.ts`
+  `hosted/compadre/src/mcp.ts`
 - controller-side MCP implementations:
-  `src/mcp-servers/`
+  `hosted/compadre/src/mcp-servers/`
 - TanStack MCP client discovery and stable naming:
-  `src/tanstack/mcp.ts`
+  `hosted/compadre/src/tanstack/mcp.ts`
 - authenticated worker bridge:
-  `src/tanstack/relay-tool-bridge.ts` and
-  `src/routes/tool-bridge.ts`
+  `hosted/compadre/src/tanstack/relay-tool-bridge.ts` and
+  `hosted/compadre/src/routes/tool-bridge.ts`
 - worker environment and native T3 MCP projection:
-  `src/t3/modal-worker.ts`
+  `hosted/compadre/src/t3/modal-worker.ts`
 - projected Compadre skills:
-  source `skills/<name>/SKILL.md`, registry `src/compadre-skills.ts`
+  source `hosted/compadre/skills/<name>/SKILL.md`, registry `hosted/compadre/src/compadre-skills.ts`
 - agent instructions:
-  `src/prompts/index.ts`
+  `hosted/compadre/src/prompts/index.ts`
 - Modal packages and baked CLIs:
-  `src/tanstack/modal-sandbox.ts`
+  `hosted/compadre/src/tanstack/modal-sandbox.ts`
 - reproducible provider executable resolution:
-  `src/tanstack/codex-executable.ts` and
-  `src/tanstack/claude-executable.ts`
+  `hosted/compadre/src/tanstack/codex-executable.ts` and
+  `hosted/compadre/src/tanstack/claude-executable.ts`
 - T3-side controller bridge:
-  `apps/server/src/mcp/CompadreMcpBridge.ts` in the fork
+  `apps/server/src/mcp/CompadreMcpBridge.ts` at the monorepo root
 
 Search for the current seam before editing; keep this guide current when it
 moves.
@@ -66,7 +66,7 @@ moves.
 6. Add configuration/absence tests, discovery tests, bridge authorization
    tests, and focused tool behavior tests.
 7. Add the secret only to the canonical Comprehensive Render environment group
-   or other documented source of truth. Update `docs/production-secrets.md`
+   or other documented source of truth. Update `hosted/compadre/docs/production-secrets.md`
    with owner and rotation behavior; never commit the value.
 8. Verify with an actual fresh Modal turn for both Codex and Claude when parity
    is claimed. Confirm the named call and result appear centrally, Slack status
@@ -78,8 +78,9 @@ destination, or environment.
 
 ## Add a projected skill
 
-1. Create `skills/<name>/SKILL.md` in the controller repository.
-2. Register it in `COMPADRE_SKILL_NAMES` in `src/compadre-skills.ts`.
+1. Create `hosted/compadre/skills/<name>/SKILL.md` (runtime skills projected
+   into workers live there, not in the repo-level `.agents/skills/`).
+2. Register it in `COMPADRE_SKILL_NAMES` in `hosted/compadre/src/compadre-skills.ts`.
 3. Ensure projection reaches both `.agents/skills` and `.claude/skills` in
    new and restored workers.
 4. Update prompt routing only when discoverable frontmatter is insufficient.
@@ -92,7 +93,7 @@ maintainer skill or controller operational credentials into those workers.
 
 If the binary must operate on the isolated repository, bake a pinned or
 checksum-verified version into the Modal base image in
-`src/tanstack/modal-sandbox.ts`. Avoid downloading mutable `latest` binaries
+`hosted/compadre/src/tanstack/modal-sandbox.ts`. Avoid downloading mutable `latest` binaries
 for every run.
 
 Then:
@@ -126,5 +127,5 @@ For prompt changes:
 - test prompt-injection boundaries around Slack history and attribution;
 - run both providers when the instructions mention provider tools or skills.
 
-For provider protocol changes, also follow the cross-repository rollout in
+For provider protocol changes, also follow the cross-layer rollout in
 stack-map and verify replay after a dropped connection.

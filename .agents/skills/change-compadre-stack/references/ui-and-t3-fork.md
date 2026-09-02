@@ -1,14 +1,15 @@
 # UI and hosted T3 fork changes
 
-Read the T3 fork's complete `AGENTS.md` and
-`docs/internals/compadre-fork.md` before changing it. Its instructions about
+Read the complete root `AGENTS.md` and
+`docs/internals/compadre-fork.md` before changing the UI/server stack. Their
+instructions about
 worktree safety, live T3 data, contracts, surfaces, and focused verification
 apply in addition to this skill.
 
 ## Pick the correct surface
 
-Production Compadre UI and central conversation state live in
-`comprehensiveio/t3code`:
+Production Compadre UI and central conversation state live at the monorepo
+root (the T3 Code fork layer):
 
 - `apps/web`: React/Vite web UI deployed at
   `compadre.comprehensive.io`
@@ -17,7 +18,7 @@ Production Compadre UI and central conversation state live in
 - `packages/contracts`: typed wire contracts shared by server and clients
 - `packages/client-runtime`: behavior shared by clients
 
-The `web/` and `dist-web/` paths in the controller repository are not the
+The `hosted/compadre/web/` and `hosted/compadre/dist-web/` paths are not the
 production hosted T3 UI. Do not implement a product UI change there.
 
 Upstream T3 supports web, desktop, and mobile. Compadre production currently
@@ -70,7 +71,7 @@ moves.
    selector when upstream behavior should remain intact.
 4. Test the logic/state helper and the rendered behavior at the narrowest
    useful level.
-5. Run focused T3 commands as directed by its `AGENTS.md`, for example:
+5. Run focused T3 commands as directed by the root `AGENTS.md`, for example:
 
    ```bash
    vp test run <changed-test-files>
@@ -78,6 +79,7 @@ moves.
    ```
 
    Do not run the fork's repo-wide checks unless requested; CI owns them.
+
 6. For a visible change, verify in an authenticated production-like web client
    when the task authorizes browser use. Exercise populated data, hover and
    empty states, narrow layouts, and a Slack-linked thread when relevant.
@@ -100,8 +102,8 @@ For auth changes, preserve:
 
 ## Deployment result
 
-Merging the T3 fork's `main` branch auto-deploys Render service
-`compadre-web`. It does not redeploy `compadre-api` or existing Modal
+Merging `main` auto-deploys Render service `compadre-web` (which builds from
+the monorepo root). It does not redeploy `compadre-api` or existing Modal
 workers. Central SQLite migrations run when the server starts against the
 persistent disk.
 

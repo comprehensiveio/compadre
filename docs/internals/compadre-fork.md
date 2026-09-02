@@ -1,16 +1,17 @@
-# Comprehensive's T3 fork
+# Comprehensive's T3 fork layer
 
-This repository is an intentional product fork of T3 Code. Comprehensive uses
-the native T3 server, web application, Codex provider, and Claude Code provider
-as the conversation system for Compadre. Compadre routes provider execution to
-one isolated Modal environment per thread and exposes Slack and HTTP as equal
-entrypoints to the same central T3 conversation.
+The root of this monorepo is an intentional product fork of T3 Code.
+Comprehensive uses the native T3 server, web application, Codex provider, and
+Claude Code provider as the conversation system for Compadre. Compadre routes
+provider execution to one isolated Modal environment per thread and exposes
+Slack and HTTP as equal entrypoints to the same central T3 conversation. The
+Compadre controller lives in the same repository under `hosted/compadre/`.
 
-The companion Compadre controller repository owns the canonical cross-stack
-change guide at `.agents/skills/change-compadre-stack/SKILL.md`. Load it before
-changing a Compadre seam, database, deployment, or production flow. If a T3
-change makes that guide verifiably inaccurate, update it in a paired controller
-change; do not duplicate the guide in this repository.
+The canonical cross-stack change guide is
+`.agents/skills/change-compadre-stack/SKILL.md` at the repo root. Load it
+before changing a Compadre seam, database, deployment, or production flow. If
+a T3 change makes that guide verifiably inaccurate, update it in the same
+change; do not duplicate the guide here.
 
 The fork should be capable of meaningful product changes while remaining cheap
 to update from `pingdotgg/t3code`. The rule is not “never change upstream code.”
@@ -70,7 +71,8 @@ synthetically ending the active turn. Controller-side Slack delivery assigns
 the final response to the newest user message so older delivery requests
 settle quietly rather than surfacing an interruption or duplicate.
 
-The controller and T3 fork auto-deploy independently. Cross-repository
-contracts must remain backward compatible through the rollout, and the
+The controller (`compadre-api`) and T3 fork stack (`compadre-web`)
+auto-deploy independently even from the same repository. Contracts crossing
+that seam must remain backward compatible through the rollout, and the
 cross-stack skill defines the safe deployment order and live verification
 requirements.

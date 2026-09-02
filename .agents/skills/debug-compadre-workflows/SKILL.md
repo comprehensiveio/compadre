@@ -104,10 +104,10 @@ Prefer exact identifiers and narrow time windows. Render service instance suffix
   Correlate the activity timestamp to the requested message so an older stopped
   session is not mistaken for the new request's outcome.
 - A Claude turn that is assigned and then immediately reaches `latestTurn.state
-  = error` with `Claude runtime stream failed` has crossed the pre-turn boundary.
+= error` with `Claude runtime stream failed` has crossed the pre-turn boundary.
   Inspect the sandbox for the presence (never the value) of
   `ANTHROPIC_API_KEY` or `CLAUDE_CODE_OAUTH_TOKEN`, then run `claude auth
-  status`. Missing projected credentials together with `loggedIn: false` is an
+status`. Missing projected credentials together with `loggedIn: false` is an
   authentication failure, not a permission-mode or central projection failure.
   If credentials are present and a direct Claude CLI request succeeds,
   reproduce the failure with T3's Agent SDK options. Claude rejects
@@ -148,7 +148,7 @@ Prefer exact identifiers and narrow time windows. Render service instance suffix
   the worker projection by default), while an absolute deadline remains capped
   by the worker's remaining Modal lifetime (normally about 115 minutes). A
   timeout message distinguishes `made no durable progress` from `exceeded its
-  absolute deadline`; check snapshot sequence history before assigning cause.
+absolute deadline`; check snapshot sequence history before assigning cause.
 - A controller startup scans `working` T3 bindings with `activeRunId` and
   reattaches the exact existing provider run. Check
   `[native-t3-recovery] startup reconciliation`, the binding marker, durable

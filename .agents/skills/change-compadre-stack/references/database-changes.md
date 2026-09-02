@@ -5,11 +5,11 @@ Compadre deliberately has two durable databases with different jobs.
 
 ## Decision table
 
-| Data | Database |
-| --- | --- |
-| Messages, turns, activities, tool history, approvals, central usage projections, T3 sessions and UI read models | Central T3 SQLite |
-| Canonical people/Slack identities, auth handoff records, Slack/external bindings, run lifecycle and event delivery, worker leases/recovery, delivery outbox | Compadre Postgres |
-| Checkout files, local dev database, provider-native transcript | Modal worker filesystem/snapshot; never the central authority |
+| Data                                                                                                                                                        | Database                                                      |
+| ----------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------- |
+| Messages, turns, activities, tool history, approvals, central usage projections, T3 sessions and UI read models                                             | Central T3 SQLite                                             |
+| Canonical people/Slack identities, auth handoff records, Slack/external bindings, run lifecycle and event delivery, worker leases/recovery, delivery outbox | Compadre Postgres                                             |
+| Checkout files, local dev database, provider-native transcript                                                                                              | Modal worker filesystem/snapshot; never the central authority |
 
 If a proposed table mixes conversation content with worker leases or Slack
 delivery, split the model at the existing boundary instead of choosing one
@@ -19,18 +19,18 @@ database arbitrarily.
 
 Authoritative files:
 
-- schema: `src/db/schema.ts`
+- schema: `hosted/compadre/src/db/schema.ts`
 - Drizzle config: `drizzle.config.ts`
-- generated migrations and snapshots: `drizzle/`
-- migration execution tests: `src/db/migrations.test.ts`
-- persistence/conformance tests: `src/persistence` and `src/durability`
+- generated migrations and snapshots: `hosted/compadre/drizzle/`
+- migration execution tests: `hosted/compadre/src/db/migrations.test.ts`
+- persistence/conformance tests: `hosted/compadre/src/persistence` and `hosted/compadre/src/durability`
 
 Before reading or editing Drizzle files, load the matching Drizzle Intent
 skills required by the root `AGENTS.md`.
 
 Workflow:
 
-1. Change `src/db/schema.ts`.
+1. Change `hosted/compadre/src/db/schema.ts`.
 2. Generate a committed migration with `npm run db:generate`; do not hand-edit
    a Drizzle snapshot to manufacture the desired diff.
 3. Inspect the SQL. Confirm nullability, defaults, constraints, indexes,
@@ -61,7 +61,7 @@ and credentials.
 
 ## Central T3 SQLite
 
-Authoritative files in the T3 fork:
+Authoritative files at the monorepo root:
 
 - migrations: `apps/server/src/persistence/Migrations/NNN_Name.ts`
 - registry/order: `apps/server/src/persistence/Migrations.ts`
@@ -89,11 +89,12 @@ Workflow:
    `migrate-dev-db` rebuilds the worktree's `.t3` state from a consistent
    snapshot and detects migration-slot collisions. Never point a development
    server or migration command at `~/.t3/userdata` or the production disk.
-6. Follow the T3 fork's focused typecheck/build guidance.
+
+6. Follow the root `AGENTS.md` focused typecheck/build guidance.
 
 Before a risky production migration, verify the authenticated online SQLite
-backup is current and that `docs/runbooks/central-t3-restore.md` in the
-controller repository is usable. A persistent disk is not a backup.
+backup is current and that `hosted/compadre/docs/runbooks/central-t3-restore.md`
+is usable. A persistent disk is not a backup.
 
 Live proof should show:
 

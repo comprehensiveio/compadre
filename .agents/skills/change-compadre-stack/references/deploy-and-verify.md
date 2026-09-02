@@ -3,12 +3,15 @@
 Use this reference whenever a Compadre change is expected to reach a deployed
 environment.
 
-## Repository-to-service fanout
+## Merge-to-service fanout
 
-| Merge | What redeploys | Domain | What does not redeploy |
-| --- | --- | --- | --- |
-| `comprehensiveio/compadre` `main` | Render `compadre-api` controller | `compadre-api.comprehensive.io` | central T3 web and already-running worker files |
-| `comprehensiveio/t3code` `main` | Render `compadre-web` T3 server/UI | `compadre.comprehensive.io` | controller and already-running worker files |
+Both services deploy from `comprehensiveio/compadre` `main`; Render decides
+what to build from the paths a commit touches.
+
+| Merge touches               | What redeploys                                                      | Domain                          | What does not redeploy                          |
+| --------------------------- | ------------------------------------------------------------------- | ------------------------------- | ----------------------------------------------- |
+| `hosted/compadre/**`        | Render `compadre-api` controller (root directory `hosted/compadre`) | `compadre-api.comprehensive.io` | central T3 web and already-running worker files |
+| root `apps/*`, `packages/*` | Render `compadre-web` T3 server/UI (builds from the repo root)      | `compadre.comprehensive.io`     | controller and already-running worker files     |
 
 Per-thread Modal workers are lazy runtime resources. Controller changes affect
 new requests after the API rollout; baked image/skill/T3-package changes may
@@ -25,8 +28,9 @@ require a new or restored worker generation before they are observable.
 5. Create/merge a PR only when the user's request authorizes it. Address
    concrete review findings against current code.
 
-For cross-repository changes, keep each PR independently deployable and state
-the safe order. Deploy tolerant consumers before new producers.
+For changes crossing the controller/UI seam, remember the services still
+deploy independently: keep each side independently deployable and state the
+safe order. Deploy tolerant consumers before new producers.
 
 ## Render safety
 
@@ -122,11 +126,11 @@ Verify:
 - verify Slack status/final behavior if Slack is in scope;
 - repeat for Codex and Claude before claiming provider parity;
 - run the applicable focused lifecycle gates in
-  `docs/modal-lifecycle-testing.md` and prove the capability is reprojected
+  `hosted/compadre/docs/modal-lifecycle-testing.md` and prove the capability is reprojected
   after hibernation and restore.
 
 For changes to worker failure handling, bridge locality, or recovery, also run
-the relevant destructive canaries from `docs/modal-harness-cutover.md`:
+the relevant destructive canaries from `hosted/compadre/docs/modal-harness-cutover.md`:
 
 - prove a Postgres-backed tool connection originates on Render, not Modal;
 - force sandbox deletion during a run; and
