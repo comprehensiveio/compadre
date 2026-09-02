@@ -16,13 +16,15 @@ delivery layer (`src/triggers/deliver.ts`):
    from the trusted-requester prompt context
    (`src/routes/t3-directory.ts`), so the agent sees the prompt verbatim and
    the mirror cannot leak it.
-2. Answer delivery: `new_thread` posts the answer as a fresh Slack root;
-   `same_thread` uses a stable per-trigger conversation key
+2. Answer delivery: `new_thread` posts the answer as a fresh Slack root when
+   a channel is configured; without one the fire is web-only (useful when the
+   prompt itself has the agent deliver its own updates through its Slack
+   tools). `same_thread` uses a stable per-trigger conversation key
    (`trigger:<id>`) so every fire continues one central thread, with the
    first answer's Slack root (recorded as a hosted thread binding) anchoring
-   where later answers reply. `existing_thread` targets a central T3 thread
-   id: Slack-linked threads get the answer as a thread reply, web-only
-   threads get nothing in Slack. Answer posting is fire-and-forget beyond
+   where later answers reply — it therefore always requires a channel.
+   `existing_thread` targets a central T3 thread id: Slack-linked threads get
+   the answer as a thread reply, web-only threads get nothing in Slack. Answer posting is fire-and-forget beyond
    dispatch — failures log and post one failure notice to the known Slack
    thread; in-flight posts are drained on controller shutdown.
 3. The agent receives the prompt text verbatim — trigger metadata never

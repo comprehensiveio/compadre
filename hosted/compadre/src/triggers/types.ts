@@ -32,7 +32,12 @@ export interface TriggeredPromptRecord {
   triggerType: TriggerType;
   triggerConfig: CronTriggerConfig;
   deliveryMode: DeliveryMode;
-  /** Slack channel for new_thread/same_thread fires; absent for existing_thread. */
+  /**
+   * Slack channel the answer posts to. Required for same_thread (the first
+   * answer's Slack root anchors the conversation), optional for new_thread
+   * (a web-only fire — useful when the prompt has the agent deliver its own
+   * updates), absent for existing_thread.
+   */
   slackChannelId?: string;
   /**
    * existing_thread only: the central T3 thread to fire into. Web-only
@@ -139,11 +144,13 @@ export const triggeredPromptInputSchema = z
         });
       }
     } else {
-      if (!value.slackChannelId) {
+      // same_thread is anchored by the first answer's Slack root, so it needs
+      // a channel; new_thread may run web-only (no Slack answer delivery).
+      if (value.deliveryMode === "same_thread" && !value.slackChannelId) {
         context.addIssue({
           code: "custom",
           path: ["slackChannelId"],
-          message: `slackChannelId is required for ${value.deliveryMode} delivery`,
+          message: "slackChannelId is required for same_thread delivery",
         });
       }
       if (value.targetThreadId) {

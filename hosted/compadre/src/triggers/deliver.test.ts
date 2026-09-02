@@ -202,6 +202,22 @@ test("new_thread fires post only the answer as a fresh Slack root and bind it", 
   assert.equal(calls.aliases.length, 1);
 });
 
+test("new_thread fires without a channel run web-only", async () => {
+  const { deps, calls } = fakeDependencies({});
+  const result = await deliverTriggeredPrompt(
+    record({ slackChannelId: undefined }),
+    deps,
+  );
+  await drainTriggeredPromptDeliveries();
+
+  assert.equal(result.delivery, "new_thread");
+  assert.equal(calls.startNewThread.length, 1);
+  // Web-only: nothing posts to Slack and no thread binding is created.
+  assert.equal(calls.posts.length, 0);
+  assert.equal(calls.bindings.length, 0);
+  assert.equal(calls.aliases.length, 0);
+});
+
 test("same_thread fires reply into the thread anchored by the first fire", async () => {
   const { deps, calls } = fakeDependencies({
     boundSlack: { channelId: "C0123456789", threadTs: "1699.42" },
