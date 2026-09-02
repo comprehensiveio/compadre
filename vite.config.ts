@@ -22,8 +22,10 @@ export default defineConfig({
     testTimeout: 60_000,
   },
   staged: {
-    // Formatter only for now — no lint or typecheck on commit.
-    "*": "vp fmt",
+    // Formatter only for now — no lint or typecheck on commit. The unmatched
+    // flag keeps commits touching only fmt-ignored paths (hosted/compadre)
+    // from failing on "no target files".
+    "*": "vp fmt --no-error-on-unmatched-pattern",
   },
   fmt: {
     ignorePatterns: [
