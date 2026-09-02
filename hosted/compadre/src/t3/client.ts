@@ -26,11 +26,20 @@ export interface T3ModelSelection {
   options?: ReadonlyArray<T3ProviderOptionSelection>;
 }
 
+/** Provenance for machine-triggered turns (origin "trigger"). */
+export interface T3TriggerAttribution {
+  triggerId: string;
+  name: string;
+  triggerType: "cron";
+  cronExpression: string;
+  timezone?: string;
+}
+
 export interface T3MessageAttribution {
   userId: string;
   displayName: string;
   avatarUrl?: string;
-  origin: "web" | "slack" | "api";
+  origin: "web" | "slack" | "api" | "trigger";
   slack?: {
     workspaceId: string;
     userId: string;
@@ -42,9 +51,11 @@ export interface T3MessageAttribution {
       userId: string;
       displayName: string;
       avatarUrl?: string;
-      origins: ReadonlyArray<"web" | "slack" | "api">;
+      origins: ReadonlyArray<"web" | "slack" | "api" | "trigger">;
     }>;
   };
+  /** Present when origin is "trigger": machine provenance shown in the web UI. */
+  trigger?: T3TriggerAttribution;
 }
 
 export interface T3InputFile {

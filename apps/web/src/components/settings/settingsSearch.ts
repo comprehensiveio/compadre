@@ -1,4 +1,10 @@
 import { isElectron } from "~/env";
+import { COMPADRE_AUTH_ENABLED } from "~/branding";
+
+// Triggered prompts live on the Compadre controller, so the section only
+// exists on hosted deployments (and in dev, where the proxy can be pointed at
+// a local controller).
+export const TRIGGERED_PROMPTS_SETTINGS_AVAILABLE = COMPADRE_AUTH_ENABLED || import.meta.env.DEV;
 
 export type SettingsPath =
   | "/settings/general"
@@ -8,6 +14,7 @@ export type SettingsPath =
   | "/settings/integrations"
   | "/settings/source-control"
   | "/settings/connections"
+  | "/settings/triggered-prompts"
   | "/settings/archived";
 
 export interface SettingsSearchItem {
@@ -18,6 +25,8 @@ export interface SettingsSearchItem {
   // Its row only renders in the desktop app, so a browser result would land on
   // an anchor that isn't there.
   readonly desktopOnly?: boolean;
+  // Its section only exists on hosted Compadre deployments.
+  readonly hostedOnly?: boolean;
 }
 
 /**
@@ -32,6 +41,7 @@ export const SETTINGS_SECTION_LABELS: Readonly<Record<SettingsPath, string>> = {
   "/settings/integrations": "Integrations",
   "/settings/source-control": "Source Control",
   "/settings/connections": "Connections",
+  "/settings/triggered-prompts": "Triggered Prompts",
   "/settings/archived": "Archive",
 };
 
@@ -249,6 +259,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     to: "/settings/connections",
   },
   {
+    id: "triggered-prompts",
+    title: "Triggered prompts",
+    to: "/settings/triggered-prompts",
+    hostedOnly: true,
+  },
+  {
     id: "archive",
     title: "Archived threads",
     to: "/settings/archived",
@@ -293,6 +309,7 @@ export function searchSettings(
   return items.filter(
     (item) =>
       (isElectron || item.desktopOnly !== true) &&
+      (TRIGGERED_PROMPTS_SETTINGS_AVAILABLE || item.hostedOnly !== true) &&
       normalizeSearchText(item.title).includes(normalizedQuery),
   );
 }

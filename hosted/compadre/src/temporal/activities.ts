@@ -9,6 +9,12 @@ import {
 import { getConfiguredThreadPersistence } from "../persistence/runtime.js";
 import { getConfiguredNativeT3RunDriverDependencies } from "../t3/runtime.js";
 import { buildT3WorkerTemplate } from "../t3/worker-templates.js";
+import { deliverTriggeredPrompt } from "../triggers/deliver.js";
+import { getConfiguredTriggeredPromptStore } from "../triggers/store.js";
+import type {
+  TriggeredPromptDeliveryResult,
+  TriggeredPromptRecord,
+} from "../triggers/types.js";
 import type { NativeT3RunWorkflowInput } from "./shared.js";
 
 const HEARTBEAT_INTERVAL_MS = 30_000;
@@ -100,4 +106,34 @@ export async function buildT3WorkerTemplateActivity(): Promise<{
   } finally {
     clearInterval(heartbeatTimer);
   }
+}
+
+async function requiredTriggeredPromptStore() {
+  const store = await getConfiguredTriggeredPromptStore();
+  if (!store) {
+    throw ApplicationFailure.nonRetryable(
+      "Triggered prompts require Postgres thread persistence",
+      "NativeT3RunStateError",
+    );
+  }
+  return store;
+}
+
+export async function loadTriggeredPromptActivity(
+  triggerId: string,
+): Promise<TriggeredPromptRecord | null> {
+  return (await requiredTriggeredPromptStore()).get(triggerId);
+}
+
+export async function deliverTriggeredPromptActivity(
+  record: TriggeredPromptRecord,
+): Promise<TriggeredPromptDeliveryResult> {
+  return deliverTriggeredPrompt(record);
+}
+
+export async function recordTriggerFiredActivity(
+  triggerId: string,
+  result: TriggeredPromptDeliveryResult,
+): Promise<void> {
+  await (await requiredTriggeredPromptStore()).recordFired(triggerId, result);
 }

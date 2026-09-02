@@ -21,6 +21,10 @@ import { slackAuthRoutes } from "./routes/slack-auth.js";
 import { previewGatewayRoutes } from "./routes/preview-gateway.js";
 import { devBackupRoutes } from "./routes/dev-backups.js";
 import { t3OperationsRoutes } from "./routes/t3-operations.js";
+import { triggerRoutes } from "./routes/triggers.js";
+import { drainTriggeredPromptDeliveries } from "./triggers/deliver.js";
+import { ensureTriggeredPromptSchedules } from "./triggers/schedule-sync.js";
+import { getConfiguredTriggeredPromptStore } from "./triggers/store.js";
 import { validateConversationConfiguration } from "./conversation.js";
 import {
   createSingleFlightSlackRecovery,
@@ -97,6 +101,7 @@ app.route("/", slackAuthRoutes);
 app.route("/", previewGatewayRoutes);
 app.route("/", devBackupRoutes);
 app.route("/", t3OperationsRoutes);
+app.route("/", triggerRoutes);
 
 const SLACK_RECOVERY_DELAY_MS = 15_000;
 
@@ -133,6 +138,16 @@ async function start() {
           );
         });
       }
+      // Reconcile triggered-prompt rows with their Temporal Schedules. Never
+      // fatal: a failed sync only delays fires until the next boot.
+      void getConfiguredTriggeredPromptStore()
+        .then((store) => (store ? ensureTriggeredPromptSchedules(store) : null))
+        .catch((error) =>
+          log.warn(
+            serializeError(error),
+            "triggered prompt schedules could not be reconciled",
+          ),
+        );
     }
   }
   const agent = validateConversationConfiguration();
@@ -291,7 +306,11 @@ async function start() {
           console.error("[shutdown] Temporal worker drain failed", error);
         })
       : Promise.resolve();
-    void Promise.all([closeHttpServer(server), drainTemporal]).then(
+    void Promise.all([
+      closeHttpServer(server),
+      drainTemporal,
+      drainTriggeredPromptDeliveries(),
+    ]).then(
       () => {
         clearTimeout(forceExit);
         console.log("[shutdown] in-flight requests drained");

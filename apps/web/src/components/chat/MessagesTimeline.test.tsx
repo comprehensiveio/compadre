@@ -270,6 +270,49 @@ describe("MessagesTimeline", () => {
     expect(markup).toContain("https://example.com/isaac.png");
   });
 
+  it("shows trigger provenance in place of a user on machine-triggered messages", () => {
+    const entry = buildUserTimelineEntry("Summarize yesterday's merged PRs.");
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        // A canonical participant must not override per-message trigger
+        // identity: triggers are per message, not per thread.
+        participants={[
+          {
+            userId: "trigger:trig-1",
+            displayName: "Renamed elsewhere",
+            origins: ["trigger"],
+          },
+        ]}
+        timelineEntries={[
+          {
+            ...entry,
+            message: {
+              ...entry.message,
+              attribution: {
+                userId: "trigger:trig-1",
+                displayName: "Daily PR digest",
+                origin: "trigger" as const,
+                trigger: {
+                  triggerId: "trig-1",
+                  name: "Daily PR digest",
+                  triggerType: "cron" as const,
+                  cronExpression: "0 9 * * 1-5",
+                  timezone: "America/Chicago",
+                },
+              },
+            },
+          },
+        ]}
+      />,
+    );
+
+    expect(markup).toContain("Daily PR digest");
+    expect(markup).toContain("triggered");
+    expect(markup).not.toContain("via Slack");
+    expect(markup).not.toContain("Renamed elsewhere");
+  });
+
   it("renders one canonical participant identity across message origins", () => {
     const entry = buildUserTimelineEntry("Sent before the canonical profile refresh.");
     const markup = renderToStaticMarkup(

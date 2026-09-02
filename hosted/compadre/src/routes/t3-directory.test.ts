@@ -10,6 +10,7 @@ import { NativeT3RunCoordinator } from "../t3/run-coordinator.js";
 import { InProcessNativeT3RunService } from "../t3/run-service.js";
 import {
   createT3DirectoryRoutes,
+  isSlackOwnedNativeT3Run,
   shouldMirrorNativeT3RunToSlack,
   withTrustedRequesterContext,
   type T3DirectoryRoutesDependencies,
@@ -65,6 +66,41 @@ test("leaves Slack-originated final delivery to the controller outbox", () => {
     }),
     true,
     "trusted web attribution takes precedence over a stale legacy message prefix",
+  );
+});
+
+test("triggered prompts are neither mirrored nor Slack-owned", () => {
+  const attribution = {
+    userId: "trigger:trigger-1",
+    displayName: "Daily summary",
+    origin: "trigger",
+    trigger: {
+      triggerId: "trigger-1",
+      name: "Daily summary",
+      triggerType: "cron",
+      cronExpression: "0 9 * * *",
+    },
+  };
+  // The mirror would post the prompt to Slack; the trigger delivery layer
+  // owns the answer instead, and no binding is required to dispatch.
+  assert.equal(
+    shouldMirrorNativeT3RunToSlack({
+      messageId: "slack-entrypoint:trigger-turn",
+      attribution,
+    }),
+    false,
+  );
+  assert.equal(
+    isSlackOwnedNativeT3Run({
+      messageId: "slack-entrypoint:trigger-turn",
+      attribution,
+    }),
+    false,
+  );
+  // Trigger metadata never reaches the agent prompt.
+  assert.equal(
+    withTrustedRequesterContext("Fix the issue", attribution),
+    "Fix the issue",
   );
 });
 
