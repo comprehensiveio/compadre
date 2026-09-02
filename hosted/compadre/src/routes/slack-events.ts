@@ -30,7 +30,7 @@ import {
   canonicalSlackThreadId,
   nativeT3SlackEnabled,
   t3ModelSelectionForProfile,
-  t3SlackDetailsMarkdown,
+  t3SlackSessionLink,
 } from "../services/t3-slack-conversation.js";
 import {
   configuredCentralT3Client,
@@ -653,9 +653,10 @@ async function handleAIMessage(
             });
           }
         } else if (slackStream) {
-          await slackStream.postThreadMessage(result.output);
-          await slackStream.postThreadContext(
-            t3SlackDetailsMarkdown(result.detailsUrl),
+          await slackStream.postThreadMessage(
+            result.output,
+            undefined,
+            t3SlackSessionLink(result.detailsUrl),
           );
           await slackStream.clearStatus();
         }

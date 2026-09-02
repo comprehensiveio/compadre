@@ -1,7 +1,8 @@
 import {
   SLACK_STREAM_CONTENT_LIMIT,
   SLACK_TRUNCATION_NOTICE,
-  truncateSlackMarkdown,
+  slackMarkdownMessageContent,
+  type SlackSessionLink,
 } from "./slack-markdown.js";
 
 const SLACK_API = "https://slack.com/api";
@@ -230,32 +231,13 @@ export class SlackStream {
   async postThreadMessage(
     markdownText: string,
     clientMsgId?: string,
+    sessionLink?: SlackSessionLink,
   ): Promise<void> {
     await this.call("chat.postMessage", {
       channel: this.channel,
       thread_ts: this.threadTs,
-      markdown_text: truncateSlackMarkdown(markdownText),
+      ...slackMarkdownMessageContent(markdownText, sessionLink),
       ...(clientMsgId ? { client_msg_id: clientMsgId } : {}),
-    });
-  }
-
-  /** Post secondary context copy using Slack's intentionally smaller context style. */
-  async postThreadContext(
-    markdownText: string,
-    clientMsgId?: string,
-  ): Promise<void> {
-    const text = truncateSlackMarkdown(markdownText);
-    await this.call("chat.postMessage", {
-      channel: this.channel,
-      thread_ts: this.threadTs,
-      text,
-      ...(clientMsgId ? { client_msg_id: clientMsgId } : {}),
-      blocks: [
-        {
-          type: "context",
-          elements: [{ type: "mrkdwn", text }],
-        },
-      ],
     });
   }
 

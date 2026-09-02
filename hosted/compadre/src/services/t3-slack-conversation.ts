@@ -224,6 +224,16 @@ export async function runT3SlackConversation(input: {
   };
 }
 
+export const T3_SLACK_DETAILS_LABEL = "open session in Compadre web";
+
 export function t3SlackDetailsMarkdown(detailsUrl: string): string {
-  return `<${detailsUrl}|open session in Compadre web>`;
+  return `<${detailsUrl}|${T3_SLACK_DETAILS_LABEL}>`;
+}
+
+/** The session link posted as a context footer inside the answer message. */
+export function t3SlackSessionLink(detailsUrl: string): {
+  label: string;
+  url: string;
+} {
+  return { label: T3_SLACK_DETAILS_LABEL, url: detailsUrl };
 }

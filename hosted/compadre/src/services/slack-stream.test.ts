@@ -152,7 +152,7 @@ test("publishes channel loading states without requiring assistant view", async 
   ]);
 });
 
-test("posts secondary links as compact Slack context", async () => {
+test("the session link rides inside the answer message as a context footer", async () => {
   const { calls, fetchImpl } = createSlackFetch({
     "chat.postMessage": [{ ok: true, ts: "200.001" }],
   });
@@ -164,9 +164,10 @@ test("posts secondary links as compact Slack context", async () => {
     logger: silentLogger,
   });
 
-  await stream.postThreadContext(
-    "<https://example.test/thread|open session in Compadre web>",
-  );
+  await stream.postThreadMessage("The answer.", undefined, {
+    label: "open session in Compadre web",
+    url: "https://example.test/thread",
+  });
 
   assert.deepEqual(calls, [
     {
@@ -174,8 +175,9 @@ test("posts secondary links as compact Slack context", async () => {
       body: {
         channel: "C123",
         thread_ts: "100.001",
-        text: "<https://example.test/thread|open session in Compadre web>",
+        text: "The answer.\n\nopen session in Compadre web: https://example.test/thread",
         blocks: [
+          { type: "markdown", text: "The answer." },
           {
             type: "context",
             elements: [
@@ -186,6 +188,8 @@ test("posts secondary links as compact Slack context", async () => {
             ],
           },
         ],
+        unfurl_links: false,
+        unfurl_media: false,
       },
     },
   ]);

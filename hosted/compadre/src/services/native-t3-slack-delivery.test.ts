@@ -68,11 +68,10 @@ async function* chunks(): AsyncIterable<StreamChunk> {
 test("a native web turn is mirrored into the bound Slack thread without changing its T3 stream", async () => {
   const calls: string[] = [];
   const slack: NativeT3SlackDeliveryStream = {
-    async postThreadMessage(message) {
-      calls.push(`post:${message}`);
-    },
-    async postThreadContext(message) {
-      calls.push(`context:${message}`);
+    async postThreadMessage(message, _clientMsgId, sessionLink) {
+      calls.push(
+        sessionLink ? `post:${message} [${sessionLink.url}]` : `post:${message}`,
+      );
     },
     async setStatus(status) {
       calls.push(`status:${status}`);
@@ -113,8 +112,7 @@ test("a native web turn is mirrored into the bound Slack thread without changing
     "post:*From Compadre web:*\nQuestion from the browser",
     "status:is thinking...",
     "status:is github.get_repo...",
-    "post:Hello from the web",
-    "context:<https://central.example/project/thread|open session in Compadre web>",
+    "post:Hello from the web [https://central.example/project/thread]",
     "clear",
   ]);
 });
@@ -124,7 +122,6 @@ test("a Slack delivery outage does not interrupt the central T3 stream", async (
     async postThreadMessage() {
       throw new Error("Slack unavailable");
     },
-    async postThreadContext() {},
     async setStatus() {},
     async clearStatus() {},
   };
@@ -146,11 +143,10 @@ test("a Slack delivery outage does not interrupt the central T3 stream", async (
 test("a superseded web mirror leaves final Slack delivery to the newest steer", async () => {
   const calls: string[] = [];
   const slack: NativeT3SlackDeliveryStream = {
-    async postThreadMessage(message) {
-      calls.push(`post:${message}`);
-    },
-    async postThreadContext(message) {
-      calls.push(`context:${message}`);
+    async postThreadMessage(message, _clientMsgId, sessionLink) {
+      calls.push(
+        sessionLink ? `post:${message} [${sessionLink.url}]` : `post:${message}`,
+      );
     },
     async setStatus(status) {
       calls.push(`status:${status}`);
