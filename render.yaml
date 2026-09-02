@@ -1,8 +1,10 @@
 services:
   # Slack, API, auth, durable routing, and per-thread Modal fanout.
+  # Lives under hosted/compadre in the monorepo; all commands run there.
   - type: web
     name: compadre-api
     runtime: node
+    rootDir: hosted/compadre
     region: oregon
     plan: standard
     buildCommand: npm ci --include=dev && npm run build
@@ -103,9 +105,10 @@ services:
       generation: off
 
   # Central, single-writer T3 UI and durable transcript store.
+  # Builds from the monorepo root (the UI stack lives at the top level).
   - type: web
     name: compadre-web
-    repo: https://github.com/comprehensiveio/t3code
+    repo: https://github.com/comprehensiveio/compadre
     branch: main
     runtime: node
     region: oregon

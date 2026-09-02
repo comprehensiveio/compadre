@@ -1,15 +1,30 @@
-name: CI
+name: Compadre CI
 
 on:
   pull_request:
+    paths:
+      - hosted/compadre/**
+      - .github/workflows/compadre-ci.yml
   push:
     branches: [main]
+    paths:
+      - hosted/compadre/**
+      - .github/workflows/compadre-ci.yml
 
 permissions:
   contents: read
 
+concurrency:
+  group: compadre-ci-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+defaults:
+  run:
+    working-directory: hosted/compadre
+
 jobs:
   test:
+    name: Compadre Test
     runs-on: ubuntu-latest
     services:
       postgres:
@@ -35,6 +50,7 @@ jobs:
         with:
           node-version: 22
           cache: npm
+          cache-dependency-path: hosted/compadre/package-lock.json
       - run: npm ci
       - run: npm run typecheck
       - run: npm test

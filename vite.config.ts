@@ -12,6 +12,7 @@ export default defineConfig({
     environment: "node",
     exclude: [
       "**/.repos/**",
+      "hosted/compadre/**",
       "**/node_modules/**",
       "**/dist/**",
       "**/dist-electron/**",
@@ -28,6 +29,9 @@ export default defineConfig({
     ignorePatterns: [
       ".reference",
       ".repos/**",
+      // hosted/compadre is its own npm toolchain with its own formatting,
+      // lint config, and tests; root vp never touches it.
+      "hosted/compadre/**",
       ".alchemy",
       "dist",
       "dist-electron",
@@ -56,6 +60,7 @@ export default defineConfig({
     ignorePatterns: [
       ".repos",
       ".repos/**",
+      "hosted/compadre/**",
       "dist",
       "dist-electron",
       "node_modules",

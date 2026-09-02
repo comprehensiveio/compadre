@@ -12,6 +12,10 @@ concurrency:
   group: monitor-hosted-compadre
   cancel-in-progress: true
 
+defaults:
+  run:
+    working-directory: hosted/compadre
+
 jobs:
   probe:
     name: Probe production
