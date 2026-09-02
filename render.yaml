@@ -122,6 +122,11 @@ services:
       --base-dir /var/data/t3code --no-browser --auto-bootstrap-project-from-cwd
     healthCheckPath: /
     autoDeployTrigger: commit
+    # Controller-only commits must not restart the single-writer web service:
+    # every compadre-web rollout is a user-visible maintenance event.
+    buildFilter:
+      ignoredPaths:
+        - hosted/compadre/**
     envVars:
       - fromGroup: compadre-production-shared
       - fromGroup: compadre-production-web
