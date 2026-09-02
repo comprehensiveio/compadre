@@ -24,9 +24,10 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
-          persist-credentials: false
-          # .repos/ holds vendored references with bare gitlinks that plain
-          # checkout cannot resolve; the root CI excludes it the same way.
+          # No persist-credentials: false here: the credential cleanup it
+          # triggers runs `git submodule foreach`, which fails on the bare
+          # gitlink under .repos/ (no .gitmodules entry). The root CI omits
+          # it for the same reason.
           sparse-checkout: |
             /*
             !/.repos/
