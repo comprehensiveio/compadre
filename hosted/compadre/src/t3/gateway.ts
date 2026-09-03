@@ -20,7 +20,10 @@ import {
   collectT3OutputArtifacts,
   type T3OutputArtifact,
 } from "./output-artifacts.js";
-import type { CodexSubscriptionLane } from "./codex-subscription-lane.js";
+import type {
+  CodexAuthRoute,
+  CodexSubscriptionLane,
+} from "./codex-subscription-lane.js";
 import {
   configureWorkerCodexAuthRoute,
   readWorkerCodexAuthJson,
@@ -202,6 +205,30 @@ const workerLifecycleTransitions = metrics
   .createCounter("compadre.t3.worker.lifecycle.transitions", {
     description: "Native T3 worker lifecycle transitions",
   });
+const codexAuthRouteSelections = metrics
+  .getMeter("compadre.runtime")
+  .createCounter("compadre.codex.auth.route.selections", {
+    description: "Codex authentication route selections",
+  });
+const codexAuthHandoffPhases = metrics
+  .getMeter("compadre.runtime")
+  .createCounter("compadre.codex.auth.handoff.phases", {
+    description: "Codex authentication handoff phase outcomes",
+  });
+const codexAuthHandoffDuration = metrics
+  .getMeter("compadre.runtime")
+  .createHistogram("compadre.codex.auth.handoff.duration", {
+    unit: "ms",
+    description: "Codex authentication handoff phase duration",
+  });
+
+type CodexAuthHandoffPhase =
+  | "provider_session_stop"
+  | "worker_auth_configure"
+  | "api_route_release"
+  | "refreshed_auth_read"
+  | "refreshed_auth_persist"
+  | "worker_api_reset";
 
 export function buildT3HostedThreadUrl(input: {
   hostedAppUrl: string;
@@ -248,6 +275,69 @@ export class T3Gateway {
 
   private lockKey(canonicalThreadId: string) {
     return `compadre:t3-environment:${canonicalThreadId}`;
+  }
+
+  private async observeCodexAuthHandoff<T>(input: {
+    canonicalThreadId: string;
+    runId: string;
+    route: CodexAuthRoute;
+    phase: CodexAuthHandoffPhase;
+    failureLaneState:
+      "retained_for_safety" | "unaffected" | "released_worker_stopped";
+    operation(): Promise<T>;
+  }): Promise<T> {
+    const startedAt = Date.now();
+    try {
+      const result = await input.operation();
+      const durationMs = Date.now() - startedAt;
+      codexAuthHandoffPhases.add(1, {
+        route: input.route,
+        phase: input.phase,
+        outcome: "success",
+      });
+      codexAuthHandoffDuration.record(durationMs, {
+        route: input.route,
+        phase: input.phase,
+        outcome: "success",
+      });
+      log.info(
+        {
+          canonicalThreadId: input.canonicalThreadId,
+          runId: input.runId,
+          codexAuthRoute: input.route,
+          codexAuthHandoffPhase: input.phase,
+          durationMs,
+        },
+        "Codex auth handoff phase completed",
+      );
+      return result;
+    } catch (error) {
+      const durationMs = Date.now() - startedAt;
+      codexAuthHandoffPhases.add(1, {
+        route: input.route,
+        phase: input.phase,
+        outcome: "error",
+        lane_state: input.failureLaneState,
+      });
+      codexAuthHandoffDuration.record(durationMs, {
+        route: input.route,
+        phase: input.phase,
+        outcome: "error",
+      });
+      log.error(
+        {
+          canonicalThreadId: input.canonicalThreadId,
+          runId: input.runId,
+          codexAuthRoute: input.route,
+          codexAuthHandoffPhase: input.phase,
+          codexLaneState: input.failureLaneState,
+          durationMs,
+          ...serializeError(error),
+        },
+        "Codex auth handoff phase failed",
+      );
+      throw error;
+    }
   }
 
   private recordWorkerTransition(
@@ -376,10 +466,7 @@ export class T3Gateway {
       let environment: T3EnvironmentConnection | undefined;
       let phase: "provision" | "start" | "wait" = "provision";
       try {
-        const remainingMs = Math.max(
-          1,
-          deadline - this.now().getTime(),
-        );
+        const remainingMs = Math.max(1, deadline - this.now().getTime());
         const deadlineSignal = AbortSignal.timeout(remainingMs);
         const attemptSignal = input.signal
           ? AbortSignal.any([input.signal, deadlineSignal])
@@ -393,8 +480,7 @@ export class T3Gateway {
             providerInstanceId: input.modelSelection.instanceId,
           }),
           attemptSignal,
-          (lateEnvironment) =>
-            this.environments.discard!(lateEnvironment),
+          (lateEnvironment) => this.environments.discard!(lateEnvironment),
         );
         phase = "start";
         const threadId = this.idFactory();
@@ -410,10 +496,7 @@ export class T3Gateway {
           attemptSignal,
         );
         phase = "wait";
-        const waitRemainingMs = Math.max(
-          1,
-          deadline - this.now().getTime(),
-        );
+        const waitRemainingMs = Math.max(1, deadline - this.now().getTime());
         const snapshot = await environment.client.waitForTurnTerminal({
           threadId,
           minimumSequence: dispatch.sequence,
@@ -423,10 +506,7 @@ export class T3Gateway {
           signal: attemptSignal,
         });
         const state = snapshot.thread.latestTurn?.state;
-        const startFailure = preTurnStartFailure(
-          snapshot,
-          dispatch.messageId,
-        );
+        const startFailure = preTurnStartFailure(snapshot, dispatch.messageId);
         if (state === "error" || startFailure) {
           throw new Error(
             startFailure?.message ||
@@ -719,21 +799,29 @@ export class T3Gateway {
         );
         return {
           route: "api" as const,
+          reason: "lane_error" as const,
           requiresConfiguration: true,
           authJson: undefined,
         };
       });
     const currentRoute = await readWorkerCodexAuthRoute(environment.sandbox);
+    const routeChanged = currentRoute !== claim.route;
+    codexAuthRouteSelections.add(1, {
+      route: claim.route,
+      reason: claim.reason,
+      route_changed: routeChanged,
+    });
     log.info(
       {
         canonicalThreadId: binding.canonicalThreadId,
         runId,
         codexAuthRoute: claim.route,
-        routeChanged: currentRoute !== claim.route,
+        codexAuthRouteReason: claim.reason,
+        routeChanged,
       },
       "Codex auth route selected",
     );
-    if (currentRoute === claim.route) return;
+    if (!routeChanged) return;
     // A provider process may cache credentials. Stop it before changing the
     // file so one process can never straddle API and subscription billing.
     const existing = await environment.client
@@ -743,13 +831,31 @@ export class T3Gateway {
       existing?.thread.session &&
       existing.thread.session.status !== "stopped"
     ) {
-      await this.waitForSessionStopped(environment, binding.t3ThreadId);
+      await this.observeCodexAuthHandoff({
+        canonicalThreadId: binding.canonicalThreadId,
+        runId,
+        route: claim.route,
+        phase: "provider_session_stop",
+        failureLaneState:
+          claim.route === "subscription" ? "retained_for_safety" : "unaffected",
+        operation: () =>
+          this.waitForSessionStopped(environment, binding.t3ThreadId),
+      });
     }
-    await configureWorkerCodexAuthRoute(
-      environment.sandbox,
-      claim.route,
-      claim.authJson,
-    );
+    await this.observeCodexAuthHandoff({
+      canonicalThreadId: binding.canonicalThreadId,
+      runId,
+      route: claim.route,
+      phase: "worker_auth_configure",
+      failureLaneState:
+        claim.route === "subscription" ? "retained_for_safety" : "unaffected",
+      operation: () =>
+        configureWorkerCodexAuthRoute(
+          environment.sandbox!,
+          claim.route,
+          claim.authJson,
+        ),
+    });
   }
 
   async releaseCodexAuth(input: {
@@ -774,7 +880,13 @@ export class T3Gateway {
     const route = await this.codexSubscriptionLane.routeForRun(input);
     if (!route) return;
     if (route === "api") {
-      await this.codexSubscriptionLane.release(input);
+      await this.observeCodexAuthHandoff({
+        ...input,
+        route,
+        phase: "api_route_release",
+        failureLaneState: "unaffected",
+        operation: () => this.codexSubscriptionLane!.release(input),
+      });
       return;
     }
     const binding = await this.bindings.get(input.canonicalThreadId);
@@ -783,22 +895,48 @@ export class T3Gateway {
     if (!environment.sandbox) {
       throw new Error("Codex auth release requires the Modal sandbox handle");
     }
-    await this.waitForSessionStopped(environment, binding.t3ThreadId);
-    const refreshedAuthJson = await readWorkerCodexAuthJson(
-      environment.sandbox,
-    );
-    const released = await this.codexSubscriptionLane.release({
+    await this.observeCodexAuthHandoff({
       ...input,
-      refreshedAuthJson,
+      route,
+      phase: "provider_session_stop",
+      failureLaneState: "retained_for_safety",
+      operation: () =>
+        this.waitForSessionStopped(environment, binding.t3ThreadId),
+    });
+    const refreshedAuthJson = await this.observeCodexAuthHandoff({
+      ...input,
+      route,
+      phase: "refreshed_auth_read",
+      failureLaneState: "retained_for_safety",
+      operation: () => readWorkerCodexAuthJson(environment.sandbox!),
+    });
+    const released = await this.observeCodexAuthHandoff({
+      ...input,
+      route,
+      phase: "refreshed_auth_persist",
+      failureLaneState: "retained_for_safety",
+      operation: () =>
+        this.codexSubscriptionLane!.release({
+          ...input,
+          refreshedAuthJson,
+        }),
     });
     if (released) {
       // Return the idle worker to the unambiguous default before another turn.
-      await configureWorkerCodexAuthRoute(environment.sandbox, "api");
+      await this.observeCodexAuthHandoff({
+        ...input,
+        route,
+        phase: "worker_api_reset",
+        failureLaneState: "released_worker_stopped",
+        operation: () =>
+          configureWorkerCodexAuthRoute(environment.sandbox!, "api"),
+      });
       log.info(
         {
           canonicalThreadId: input.canonicalThreadId,
           runId: input.runId,
           codexAuthRoute: "subscription",
+          codexLaneState: "available",
         },
         "Codex subscription lane released",
       );
@@ -840,9 +978,9 @@ export class T3Gateway {
             ? "error"
             : startFailure
               ? "error"
-            : latestState === "interrupted"
-              ? "interrupted"
-              : "ready";
+              : latestState === "interrupted"
+                ? "interrupted"
+                : "ready";
       const updated: T3ThreadBinding = {
         ...binding,
         title: snapshot.thread.title || binding.title,
@@ -949,7 +1087,9 @@ export class T3Gateway {
     const remainingWorkerLifetime = Number.isFinite(workerStartedAt)
       ? Math.max(
           1,
-          workerStartedAt + this.maxLiveMs - WATCH_LIFETIME_SAFETY_MS -
+          workerStartedAt +
+            this.maxLiveMs -
+            WATCH_LIFETIME_SAFETY_MS -
             this.now().getTime(),
         )
       : this.maxLiveMs - WATCH_LIFETIME_SAFETY_MS;
@@ -980,7 +1120,7 @@ export class T3Gateway {
     // written. Merge terminal state onto the latest binding so this waiter
     // cannot erase a newer marker with its stale pre-dispatch copy.
     const currentBinding =
-      await this.bindings.get(input.turn.binding.canonicalThreadId) ??
+      (await this.bindings.get(input.turn.binding.canonicalThreadId)) ??
       input.turn.binding;
     const updated: T3ThreadBinding = {
       ...currentBinding,
@@ -1024,17 +1164,21 @@ export class T3Gateway {
   }
 
   async markActiveRun(canonicalThreadId: string, runId: string): Promise<void> {
-    await this.locks.withLock(this.lockKey(canonicalThreadId), async (signal) => {
-      if (signal.aborted) throw signal.reason;
-      const binding = await this.bindings.get(canonicalThreadId);
-      if (!binding) throw new Error(`T3 thread ${canonicalThreadId} is not bound`);
-      await this.bindings.bindRecord({
-        ...binding,
-        activeRunId: runId,
-        status: "working",
-        updatedAt: this.now().toISOString(),
-      });
-    });
+    await this.locks.withLock(
+      this.lockKey(canonicalThreadId),
+      async (signal) => {
+        if (signal.aborted) throw signal.reason;
+        const binding = await this.bindings.get(canonicalThreadId);
+        if (!binding)
+          throw new Error(`T3 thread ${canonicalThreadId} is not bound`);
+        await this.bindings.bindRecord({
+          ...binding,
+          activeRunId: runId,
+          status: "working",
+          updatedAt: this.now().toISOString(),
+        });
+      },
+    );
   }
 
   async clearActiveRun(
@@ -1042,19 +1186,22 @@ export class T3Gateway {
     runId: string,
     terminalStatus?: T3ThreadBinding["status"],
   ): Promise<void> {
-    await this.locks.withLock(this.lockKey(canonicalThreadId), async (signal) => {
-      if (signal.aborted) throw signal.reason;
-      const binding = await this.bindings.get(canonicalThreadId);
-      if (!binding || binding.activeRunId !== runId) return;
-      const { activeRunId: _activeRunId, ...cleared } = binding;
-      await this.bindings.bindRecord({
-        ...cleared,
-        status:
-          terminalStatus ??
-          (binding.status === "working" ? "error" : binding.status),
-        updatedAt: this.now().toISOString(),
-      });
-    });
+    await this.locks.withLock(
+      this.lockKey(canonicalThreadId),
+      async (signal) => {
+        if (signal.aborted) throw signal.reason;
+        const binding = await this.bindings.get(canonicalThreadId);
+        if (!binding || binding.activeRunId !== runId) return;
+        const { activeRunId: _activeRunId, ...cleared } = binding;
+        await this.bindings.bindRecord({
+          ...cleared,
+          status:
+            terminalStatus ??
+            (binding.status === "working" ? "error" : binding.status),
+          updatedAt: this.now().toISOString(),
+        });
+      },
+    );
   }
 
   /**

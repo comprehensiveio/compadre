@@ -48,6 +48,24 @@ and the encryption key like passwords. Never auto-clear an apparently stale
 subscription owner: an uncertain owner intentionally sends all new work to the
 API key until an operator confirms the old provider process is stopped.
 
+Operational telemetry is emitted without credential contents:
+
+- `Codex auth routing initialized` identifies legacy, managed API-only, or
+  subscription-canary startup mode.
+- `Codex auth route selected` includes `codexAuthRouteReason` so API fallback
+  distinguishes a busy lane, the kill switch, an existing route, and a lane
+  error.
+- `Codex auth handoff phase completed|failed` identifies the exact stop, read,
+  persist, configure, release, or reset phase and its duration. A failure with
+  `codexLaneState=retained_for_safety` means new threads intentionally remain
+  on API auth until an operator investigates; `released_worker_stopped` means
+  the lane is available but an idle stopped worker still needs API reset on
+  its next turn.
+- `compadre.codex.auth.route.selections`,
+  `compadre.codex.auth.handoff.phases`, and
+  `compadre.codex.auth.handoff.duration` provide route counts, phase outcomes,
+  and latency in Datadog.
+
 The older Modal-side `compadre-t3-codex-auth-experiment` secret is not an auth
 source while the flag is explicitly `true` or `false`; managed workers select
 only the Render/Postgres subscription lane or the Render-projected API key.

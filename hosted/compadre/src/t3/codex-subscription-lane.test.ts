@@ -38,7 +38,11 @@ test("absent experiment configuration needs no secrets and preserves legacy mode
 
   assert.deepEqual(
     await lane.claim({ canonicalThreadId: "thread-a", runId: "run-a" }),
-    { route: "api", requiresConfiguration: false },
+    {
+      route: "api",
+      reason: "legacy_unmanaged",
+      requiresConfiguration: false,
+    },
   );
   assert.equal(values.size, 0);
 });
@@ -52,7 +56,11 @@ test("explicit kill switch routes warm workers back to API", async () => {
   assert.equal(lane.managed, true);
   assert.deepEqual(
     await lane.claim({ canonicalThreadId: "thread-a", runId: "run-a" }),
-    { route: "api", requiresConfiguration: true },
+    {
+      route: "api",
+      reason: "experiment_disabled",
+      requiresConfiguration: true,
+    },
   );
 });
 
@@ -72,6 +80,10 @@ test("parallel threads allocate exactly one subscription route", async () => {
   assert.deepEqual(claims.map((claim) => claim.route).sort(), [
     "api",
     "subscription",
+  ]);
+  assert.deepEqual(claims.map((claim) => claim.reason).sort(), [
+    "lane_available",
+    "lane_busy",
   ]);
 });
 
@@ -95,6 +107,7 @@ test("steers retain the thread route and stale finalizers cannot release it", as
   });
 
   assert.equal(steer.route, "subscription");
+  assert.equal(steer.reason, "existing_route");
   assert.equal(steer.requiresConfiguration, false);
   assert.equal(staleRelease, false);
   assert.equal(

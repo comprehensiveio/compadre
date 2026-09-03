@@ -11,6 +11,14 @@ const STATE_KEY = "state";
 const LOCK_KEY = "compadre:codex-subscription-lane:v1";
 
 export type CodexAuthRoute = "api" | "subscription";
+export type CodexAuthRouteReason =
+  | "legacy_unmanaged"
+  | "experiment_disabled"
+  | "existing_route"
+  | "owner_recovered"
+  | "lane_busy"
+  | "lane_available"
+  | "lane_error";
 
 interface EncryptedAuth {
   version: 1;
@@ -36,6 +44,7 @@ interface LaneState {
 
 export interface CodexSubscriptionClaim {
   route: CodexAuthRoute;
+  reason: CodexAuthRouteReason;
   authJson?: string;
   /** False for a steer/retry already owned by this thread. */
   requiresConfiguration: boolean;
@@ -159,8 +168,7 @@ export class CodexSubscriptionLane {
     environment: NodeJS.ProcessEnv = process.env,
     private readonly now: () => Date = () => new Date(),
   ) {
-    const setting =
-      environment.COMPADRE_CODEX_SUBSCRIPTION_EXPERIMENT_ENABLED;
+    const setting = environment.COMPADRE_CODEX_SUBSCRIPTION_EXPERIMENT_ENABLED;
     this.enabled = setting === "true";
     this.managed = setting === "true" || setting === "false";
     if (!this.enabled) return;
@@ -174,7 +182,11 @@ export class CodexSubscriptionLane {
     runId: string;
   }): Promise<CodexSubscriptionClaim> {
     if (!this.enabled) {
-      return { route: "api", requiresConfiguration: this.managed };
+      return {
+        route: "api",
+        reason: this.managed ? "experiment_disabled" : "legacy_unmanaged",
+        requiresConfiguration: this.managed,
+      };
     }
     return this.locks.withLock(LOCK_KEY, async (signal) => {
       if (signal.aborted) throw signal.reason;
@@ -202,6 +214,7 @@ export class CodexSubscriptionLane {
         });
         return {
           route: existingRoute.route,
+          reason: "existing_route",
           ...(existingRoute.route === "subscription"
             ? { authJson: decrypt(state.auth, this.key!) }
             : {}),
@@ -223,6 +236,7 @@ export class CodexSubscriptionLane {
         });
         return {
           route: "subscription",
+          reason: "owner_recovered",
           authJson: decrypt(state.auth, this.key!),
           requiresConfiguration: false,
         };
@@ -239,7 +253,11 @@ export class CodexSubscriptionLane {
             },
           },
         });
-        return { route: "api", requiresConfiguration: true };
+        return {
+          route: "api",
+          reason: "lane_busy",
+          requiresConfiguration: true,
+        };
       }
       const claimed: LaneState = {
         ...state,
@@ -260,6 +278,7 @@ export class CodexSubscriptionLane {
       await this.write(claimed);
       return {
         route: "subscription",
+        reason: "lane_available",
         authJson: decrypt(claimed.auth, this.key!),
         requiresConfiguration: true,
       };
