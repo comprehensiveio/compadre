@@ -738,6 +738,21 @@ export class T3Client {
     );
   }
 
+  async stopSession(input: {
+    threadId: string;
+    signal?: AbortSignal;
+  }): Promise<number> {
+    return this.dispatch(
+      {
+        type: "thread.session.stop",
+        commandId: this.idFactory(),
+        threadId: input.threadId,
+        createdAt: this.now().toISOString(),
+      },
+      input.signal,
+    );
+  }
+
   async waitForTurnTerminal(input: {
     threadId: string;
     minimumSequence: number;

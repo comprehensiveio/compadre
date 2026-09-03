@@ -1,6 +1,9 @@
 import { createHash, randomUUID } from "node:crypto";
 import fs from "node:fs/promises";
-import { COMPADRE_SKILL_NAMES, compadreSkillUploads } from "../compadre-skills.js";
+import {
+  COMPADRE_SKILL_NAMES,
+  compadreSkillUploads,
+} from "../compadre-skills.js";
 import { gitAuthenticationEnvironment } from "../repo.js";
 import {
   ModalHandle,
@@ -30,6 +33,11 @@ const T3_INSTALL_ROOT = "/opt/compadre-runtime/node_modules/t3";
 const T3_FORK_ARCHIVE = "/tmp/compadre-t3-fork.tgz";
 const MAX_T3_FORK_ARCHIVE_BYTES = 50 * 1024 * 1024;
 const T3_FORK_DOWNLOAD_TIMEOUT_MS = 30_000;
+const CODEX_AUTH_PATH = "/home/node/.codex/auth.json";
+const CODEX_AUTH_SEED_DIGEST_PATH =
+  "/home/node/.codex/compadre-auth-seed.sha256";
+const CODEX_AUTH_ROUTE_PATH = "/home/node/.codex/compadre-auth-route";
+const MAX_CODEX_AUTH_JSON_BYTES = 32 * 1024;
 export const T3_GATEWAY_CREDENTIAL_PATH =
   "/var/lib/t3/compadre-gateway-access-token";
 export const T3_SLACK_DESTINATION_PATH =
@@ -166,7 +174,40 @@ export function projectedProviderEnvironment(
   return result;
 }
 
-export function nativeHarnessAuthenticationCommand(): string {
+export function codexAuthJsonFromEnvironment(
+  environment: NodeJS.ProcessEnv,
+): string | undefined {
+  const encoded = environment.CODEX_AUTH_JSON_BASE64?.trim();
+  if (!encoded) return undefined;
+  if (encoded.length % 4 !== 0 || !/^[A-Za-z0-9+/]+={0,2}$/.test(encoded)) {
+    throw new Error("CODEX_AUTH_JSON_BASE64 must contain valid base64");
+  }
+  const decoded = Buffer.from(encoded, "base64");
+  if (decoded.byteLength > MAX_CODEX_AUTH_JSON_BYTES) {
+    throw new Error("CODEX_AUTH_JSON_BASE64 exceeds the 32 KiB limit");
+  }
+  try {
+    const parsed = JSON.parse(decoded.toString("utf8")) as Record<
+      string,
+      unknown
+    >;
+    const tokens = parsed.tokens as Record<string, unknown> | undefined;
+    if (
+      parsed.auth_mode !== "chatgpt" ||
+      typeof tokens?.refresh_token !== "string" ||
+      !tokens.refresh_token
+    ) {
+      throw new Error("not ChatGPT-managed auth");
+    }
+  } catch {
+    throw new Error(
+      "CODEX_AUTH_JSON_BASE64 must encode ChatGPT-managed Codex auth.json",
+    );
+  }
+  return decoded.toString("utf8");
+}
+
+export function nativeHarnessAuthenticationPreparationCommand(): string {
   return [
     "set -e",
     "install -d -m 700 -o node -g node /home/node/.codex",
@@ -175,20 +216,134 @@ export function nativeHarnessAuthenticationCommand(): string {
     // ownership; normalize it before the node-user login on every restore.
     "chown -R node:node /home/node/.codex",
     "chmod 700 /home/node/.codex",
-    'if [ -n "${CODEX_AUTH_JSON_BASE64:-}" ]; then',
-    "printf '%s' \"$CODEX_AUTH_JSON_BASE64\" | base64 -d > /home/node/.codex/auth.json &&",
-    "chown node:node /home/node/.codex/auth.json &&",
-    "chmod 600 /home/node/.codex/auth.json",
-    'elif [ -n "${OPENAI_API_KEY:-}" ]; then',
-    `printf '%s' "$OPENAI_API_KEY" | setpriv --reuid=node --regid=node --init-groups codex login --with-api-key >/dev/null`,
-    "fi",
   ].join("\n");
 }
 
-async function configureNativeHarnessAuthentication(
+export function nativeHarnessAuthenticationCommand(
+  hasProjectedAuthJson = false,
+): string {
+  return hasProjectedAuthJson
+    ? [
+        "set -e",
+        `chown node:node ${CODEX_AUTH_PATH}`,
+        `chmod 600 ${CODEX_AUTH_PATH}`,
+      ].join("\n")
+    : [
+        "set -e",
+        // Preserve the named Modal-secret path during the Render migration.
+        // The Render-owned path above never exposes this variable to Modal.
+        'if [ -n "${CODEX_AUTH_JSON_BASE64:-}" ]; then',
+        `printf '%s' "$CODEX_AUTH_JSON_BASE64" | base64 -d > ${CODEX_AUTH_PATH} &&`,
+        `chown node:node ${CODEX_AUTH_PATH} &&`,
+        `chmod 600 ${CODEX_AUTH_PATH}`,
+        'elif [ -n "${OPENAI_API_KEY:-}" ]; then',
+        `printf '%s' "$OPENAI_API_KEY" | setpriv --reuid=node --regid=node --init-groups codex login --with-api-key >/dev/null`,
+        "fi",
+      ].join("\n");
+}
+
+export type WorkerCodexAuthRoute = "api" | "subscription";
+
+export async function readWorkerCodexAuthRoute(
   handle: T3SandboxHandle,
+): Promise<WorkerCodexAuthRoute | undefined> {
+  try {
+    const route = (await handle.fs.read(CODEX_AUTH_ROUTE_PATH)).trim();
+    return route === "api" || route === "subscription" ? route : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/** Configure file-backed Codex auth without putting credential bytes in argv. */
+export async function configureWorkerCodexAuthRoute(
+  handle: T3SandboxHandle,
+  route: WorkerCodexAuthRoute,
+  authJson?: string,
 ): Promise<void> {
-  const login = await handle.process.exec(nativeHarnessAuthenticationCommand());
+  const prepared = await handle.process.exec(
+    nativeHarnessAuthenticationPreparationCommand(),
+  );
+  if (prepared.exitCode !== 0) {
+    throw new Error(
+      `Codex CLI authentication preparation failed: ${prepared.stderr || prepared.stdout}`,
+    );
+  }
+  if (route === "subscription") {
+    if (!authJson) throw new Error("Subscription Codex auth JSON is required");
+    await handle.fs.write(CODEX_AUTH_PATH, authJson);
+    const secured = await handle.process.exec(
+      nativeHarnessAuthenticationCommand(true),
+    );
+    if (secured.exitCode !== 0) {
+      throw new Error(
+        `Codex subscription authentication failed: ${secured.stderr || secured.stdout}`,
+      );
+    }
+  } else {
+    const login = await handle.process.exec(
+      [
+        "set -e",
+        'key="${CODEX_API_KEY:-${OPENAI_API_KEY:-}}"',
+        'test -n "$key"',
+        "printf '%s' \"$key\" | setpriv --reuid=node --regid=node --init-groups codex login --with-api-key >/dev/null",
+      ].join("\n"),
+    );
+    if (login.exitCode !== 0) {
+      throw new Error(
+        `Codex API authentication failed: ${login.stderr || login.stdout}`,
+      );
+    }
+  }
+  await handle.fs.write(CODEX_AUTH_ROUTE_PATH, route);
+}
+
+export function readWorkerCodexAuthJson(
+  handle: T3SandboxHandle,
+): Promise<string> {
+  return handle.fs.read(CODEX_AUTH_PATH);
+}
+
+export async function configureNativeHarnessAuthentication(
+  handle: T3SandboxHandle,
+  environment: NodeJS.ProcessEnv,
+): Promise<void> {
+  const experiment = environment.COMPADRE_CODEX_SUBSCRIPTION_EXPERIMENT_ENABLED;
+  // Explicit false is the operational kill switch: workers start API-only.
+  // Absence preserves the pre-experiment bootstrap path for code rollback.
+  if (experiment === "true" || experiment === "false") {
+    await configureWorkerCodexAuthRoute(handle, "api");
+    return;
+  }
+  const prepared = await handle.process.exec(
+    nativeHarnessAuthenticationPreparationCommand(),
+  );
+  if (prepared.exitCode !== 0) {
+    throw new Error(
+      `Codex CLI authentication preparation failed: ${prepared.stderr || prepared.stdout}`,
+    );
+  }
+  const authJson = codexAuthJsonFromEnvironment(environment);
+  if (authJson) {
+    const seedDigest = createHash("sha256").update(authJson).digest("hex");
+    let existingSeedDigest: string | undefined;
+    let hasExistingAuth = false;
+    try {
+      existingSeedDigest = (
+        await handle.fs.read(CODEX_AUTH_SEED_DIGEST_PATH)
+      ).trim();
+      hasExistingAuth = Boolean((await handle.fs.read(CODEX_AUTH_PATH)).trim());
+    } catch {
+      // A new worker, or a snapshot created before Render owned this secret.
+    }
+    if (existingSeedDigest !== seedDigest || !hasExistingAuth) {
+      await handle.fs.write(CODEX_AUTH_PATH, authJson);
+      await handle.fs.write(CODEX_AUTH_SEED_DIGEST_PATH, seedDigest);
+    }
+  }
+  const login = await handle.process.exec(
+    nativeHarnessAuthenticationCommand(authJson !== undefined),
+  );
   if (login.exitCode !== 0) {
     throw new Error(
       `Codex CLI authentication failed: ${login.stderr || login.stdout}`,
@@ -430,7 +585,7 @@ async function projectWorkerRuntimeEnvironment(
   if (prepare.exitCode !== 0) {
     throw new Error(prepare.stderr || prepare.stdout);
   }
-  await configureNativeHarnessAuthentication(handle);
+  await configureNativeHarnessAuthentication(handle, workerEnvironment);
 }
 
 export function t3ServerLaunchCommands(workspaceRoot: string): {
@@ -438,7 +593,7 @@ export function t3ServerLaunchCommands(workspaceRoot: string): {
   launch: string;
 } {
   const command = [
-    "env -u CODEX_AUTH_JSON_BASE64 t3 serve",
+    "env -u CODEX_AUTH_JSON_BASE64 -u CODEX_API_KEY -u OPENAI_API_KEY t3 serve",
     "--host 0.0.0.0",
     `--port ${DEFAULT_T3_PORT}`,
     `--base-dir ${quote(DEFAULT_T3_BASE_DIR)}`,

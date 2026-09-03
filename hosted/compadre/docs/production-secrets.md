@@ -22,6 +22,56 @@ both services must receive exactly the same value. Worker processes receive
 only the allowlisted subset projected by the controller; Modal is not a second
 secret store.
 
+The optional Codex subscription experiment uses three values in
+`compadre-production-api`:
+
+- `COMPADRE_CODEX_SUBSCRIPTION_EXPERIMENT_ENABLED=true`
+- `CODEX_AUTH_JSON_BASE64`, the base64 encoding of the dedicated
+  ChatGPT-managed Codex `auth.json`
+- `COMPADRE_CODEX_AUTH_ENCRYPTION_KEY`, the base64 encoding of 32 random bytes
+
+The controller serializes one subscription-backed Codex thread at a time.
+Concurrent Codex threads use `OPENAI_API_KEY`. A thread's route is fixed while
+its current run (including steers and retries) is active. Before handing the
+subscription lane to another thread, the controller stops the old Codex
+provider session, reads its refreshed auth file, encrypts that refresh chain in
+Compadre Postgres, and changes the idle worker back to API auth. Auth bytes are
+written through the Modal filesystem API and never placed in command arguments
+or the T3 server environment.
+
+Set `COMPADRE_CODEX_SUBSCRIPTION_EXPERIMENT_ENABLED=false` for an immediate
+API-only kill switch. The metadata is namespaced under
+`compadre.codex-subscription-lane.v1` and requires no schema migration; leaving
+it in place is inert while disabled. Code rollback preserves the older startup
+behavior when the flag is absent. Treat the source auth file, its encoded value,
+and the encryption key like passwords. Never auto-clear an apparently stale
+subscription owner: an uncertain owner intentionally sends all new work to the
+API key until an operator confirms the old provider process is stopped.
+
+Operational telemetry is emitted without credential contents:
+
+- `Codex auth routing initialized` identifies legacy, managed API-only, or
+  subscription-canary startup mode.
+- `Codex auth route selected` includes `codexAuthRouteReason` so API fallback
+  distinguishes a busy lane, the kill switch, an existing route, and a lane
+  error.
+- `Codex auth handoff phase completed|failed` identifies the exact stop, read,
+  persist, configure, release, or reset phase and its duration. A failure with
+  `codexLaneState=retained_for_safety` means new threads intentionally remain
+  on API auth until an operator investigates; `released_worker_stopped` means
+  the lane is available but an idle stopped worker still needs API reset on
+  its next turn.
+- `compadre.codex.auth.route.selections`,
+  `compadre.codex.auth.handoff.phases`, and
+  `compadre.codex.auth.handoff.duration` provide route counts, phase outcomes,
+  and latency in Datadog.
+
+The older Modal-side `compadre-t3-codex-auth-experiment` secret is not an auth
+source while the flag is explicitly `true` or `false`; managed workers select
+only the Render/Postgres subscription lane or the Render-projected API key.
+Keep that Modal secret only as a short rollback bridge until the experiment is
+accepted, then remove it so there is one unambiguous control plane.
+
 ## Rotation
 
 1. Identify every consumer from the group links and the projection allowlist.

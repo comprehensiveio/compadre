@@ -1,4 +1,5 @@
 import crypto from "node:crypto";
+import { log } from "../logging.js";
 import { getConfiguredAgentRunDurability } from "../durability/runtime.js";
 import { getConfiguredThreadPersistence } from "../persistence/runtime.js";
 import { recoverCentralT3DurableRuns } from "../services/central-t3-run.js";
@@ -7,12 +8,16 @@ import { T3ThreadSnapshotStore } from "../services/t3-thread-snapshots.js";
 import { NATIVE_T3_RUN_ORCHESTRATOR } from "../temporal/mode.js";
 import { collectNativeT3ArtifactEvents } from "./artifact-events.js";
 import { T3Gateway } from "./gateway.js";
+import { CodexSubscriptionLane } from "./codex-subscription-lane.js";
 import { configuredCentralT3Client } from "./central-conversation.js";
 import { T3ModalEnvironmentManager } from "./modal-environments.js";
 import { readWorkerTemplate } from "./worker-templates.js";
 import type { NativeT3RunDriverDependencies } from "./native-t3-run-driver.js";
 import { NativeT3RunCoordinator } from "./run-coordinator.js";
-import { recoverNativeT3Runs, type NativeT3RecoverySummary } from "./run-recovery.js";
+import {
+  recoverNativeT3Runs,
+  type NativeT3RecoverySummary,
+} from "./run-recovery.js";
 import { NativeT3RunRequestStore } from "./run-request-store.js";
 import {
   createTemporalNativeT3WorkflowLauncher,
@@ -20,13 +25,11 @@ import {
   TemporalNativeT3RunService,
   type NativeT3RunService,
 } from "./run-service.js";
-import {
-  S3T3ArtifactObjectStore,
-  T3ArtifactStore,
-} from "./artifact-store.js";
+import { S3T3ArtifactObjectStore, T3ArtifactStore } from "./artifact-store.js";
 
 let configuredGateway: Promise<T3Gateway | null> | undefined;
-let configuredRunCoordinator: Promise<NativeT3RunCoordinator | null> | undefined;
+let configuredRunCoordinator:
+  Promise<NativeT3RunCoordinator | null> | undefined;
 let configuredArtifactStore: Promise<T3ArtifactStore | null> | undefined;
 let configuredRunService: Promise<NativeT3RunService | null> | undefined;
 
@@ -58,23 +61,26 @@ function positiveDurationSetting(
 
 export async function getConfiguredT3ArtifactStore(): Promise<T3ArtifactStore | null> {
   if (!configuredArtifactStore) {
-    const initialization = getConfiguredThreadPersistence().then(async (runtime) => {
-      const bucket = process.env.COMPADRE_T3_ARTIFACT_BUCKET?.trim();
-      const region =
-        process.env.COMPADRE_T3_ARTIFACT_REGION?.trim() ||
-        process.env.AWS_REGION?.trim() ||
-        process.env.AWS_DEFAULT_REGION?.trim();
-      if (!runtime || !bucket || !region) return null;
-      const store = new T3ArtifactStore(
-        new S3T3ArtifactObjectStore(bucket, { region }),
-        runtime.persistence.stores.metadata,
-      );
-      await store.check();
-      return store;
-    }).catch((error) => {
-      if (configuredArtifactStore === initialization) configuredArtifactStore = undefined;
-      throw error;
-    });
+    const initialization = getConfiguredThreadPersistence()
+      .then(async (runtime) => {
+        const bucket = process.env.COMPADRE_T3_ARTIFACT_BUCKET?.trim();
+        const region =
+          process.env.COMPADRE_T3_ARTIFACT_REGION?.trim() ||
+          process.env.AWS_REGION?.trim() ||
+          process.env.AWS_DEFAULT_REGION?.trim();
+        if (!runtime || !bucket || !region) return null;
+        const store = new T3ArtifactStore(
+          new S3T3ArtifactObjectStore(bucket, { region }),
+          runtime.persistence.stores.metadata,
+        );
+        await store.check();
+        return store;
+      })
+      .catch((error) => {
+        if (configuredArtifactStore === initialization)
+          configuredArtifactStore = undefined;
+        throw error;
+      });
     configuredArtifactStore = initialization;
   }
   return configuredArtifactStore;
@@ -94,6 +100,23 @@ export async function getConfiguredT3Gateway(): Promise<T3Gateway | null> {
           runtime.persistence.stores.metadata,
           runtime.locks,
         );
+        const codexSubscriptionLane = new CodexSubscriptionLane(
+          runtime.persistence.stores.metadata,
+          runtime.locks,
+          process.env,
+        );
+        log.info(
+          {
+            codexAuthMode: codexSubscriptionLane.enabled
+              ? "subscription_canary"
+              : codexSubscriptionLane.managed
+                ? "managed_api_only"
+                : "legacy_unmanaged",
+            codexSubscriptionExperimentEnabled: codexSubscriptionLane.enabled,
+            codexSubscriptionExperimentManaged: codexSubscriptionLane.managed,
+          },
+          "Codex auth routing initialized",
+        );
         const gateway = new T3Gateway(
           bindings,
           new T3ModalEnvironmentManager(process.env, undefined, {
@@ -112,6 +135,7 @@ export async function getConfiguredT3Gateway(): Promise<T3Gateway | null> {
               DEFAULT_MODAL_TIMEOUT_MS,
             ),
           },
+          codexSubscriptionLane,
         );
         return gateway;
       })
