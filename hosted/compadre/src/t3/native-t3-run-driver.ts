@@ -44,6 +44,7 @@ const CANCELLED_CODE = "NATIVE_T3_RUN_CANCELLED";
  */
 export interface NativeT3DriverGateway {
   send(input: {
+    runId?: string;
     canonicalThreadId: string;
     title: string;
     text: string;
@@ -86,6 +87,10 @@ export interface NativeT3DriverGateway {
     runId: string,
     terminalStatus?: T3ThreadBinding["status"],
   ): Promise<void>;
+  releaseCodexAuth?(input: {
+    canonicalThreadId: string;
+    runId: string;
+  }): Promise<void>;
 }
 
 export interface NativeT3RunDriverDependencies {
@@ -294,6 +299,17 @@ export async function driveNativeT3Run(
     });
     await stream.close();
     await deps.gateway
+      .releaseCodexAuth?.({
+        canonicalThreadId: request.canonicalThreadId,
+        runId,
+      })
+      .catch((authError) =>
+        console.error("[native-t3-driver] Codex auth lane not released", {
+          runId,
+          error: authError,
+        }),
+      );
+    await deps.gateway
       .clearActiveRun?.(
         request.canonicalThreadId,
         runId,
@@ -343,6 +359,7 @@ export async function driveNativeT3Run(
   } else {
     heartbeat("dispatching native T3 turn");
     turn = await deps.gateway.send({
+      runId,
       canonicalThreadId: request.canonicalThreadId,
       title: request.title,
       text: request.text,
@@ -802,6 +819,17 @@ export async function finalizeNativeT3Run(
         : outcome.cancelled
           ? ("interrupted" as const)
           : ("error" as const);
+    await deps.gateway
+      ?.releaseCodexAuth?.({
+        canonicalThreadId: request.canonicalThreadId,
+        runId,
+      })
+      .catch((error) =>
+        console.error("[native-t3-driver] finalize Codex auth lane not released", {
+          runId,
+          error,
+        }),
+      );
     await deps.gateway
       ?.clearActiveRun?.(request.canonicalThreadId, runId, markerStatus)
       .catch((error) =>

@@ -3,8 +3,9 @@ import test from "node:test";
 import { memoryPersistence } from "@tanstack/ai-persistence";
 import { T3ThreadBindingStore } from "../services/t3-thread-bindings.js";
 import { T3ThreadSnapshotStore } from "../services/t3-thread-snapshots.js";
-import type { LockStore } from "./storage.js";
+import { InMemoryLockStore, type LockStore } from "./storage.js";
 import type { SandboxHandle } from "@tanstack/ai-sandbox";
+import { CodexSubscriptionLane } from "./codex-subscription-lane.js";
 import {
   buildT3HostedThreadUrl,
   T3EnvironmentUnavailableError,
@@ -107,6 +108,181 @@ test("builds one-time hosted T3 links that retain the native thread target", () 
   assert.equal(url.searchParams.has("token"), false);
   assert.equal(url.hash, "#token=secret-once");
 });
+
+test("hands one subscription lane between workers while concurrent work stays on API", async () => {
+  const persistence = memoryPersistence();
+  const bindings = new T3ThreadBindingStore(persistence.stores.metadata);
+  const locks = new InMemoryLockStore();
+  const authJson = JSON.stringify({
+    auth_mode: "chatgpt",
+    tokens: { refresh_token: "refresh-token" },
+  });
+  const lane = new CodexSubscriptionLane(persistence.stores.metadata, locks, {
+    COMPADRE_CODEX_SUBSCRIPTION_EXPERIMENT_ENABLED: "true",
+    COMPADRE_CODEX_AUTH_ENCRYPTION_KEY: Buffer.alloc(32, 3).toString("base64"),
+    CODEX_AUTH_JSON_BASE64: Buffer.from(authJson).toString("base64"),
+  });
+  const workers = new Map<
+    string,
+    {
+      files: Map<string, string>;
+      commands: string[];
+      stopped: boolean;
+      connection: T3EnvironmentConnection;
+    }
+  >();
+  const environments: T3EnvironmentConnectionManager = {
+    async provision(input) {
+      const files = new Map([
+        ["/home/node/.codex/compadre-auth-route", "api"],
+        ["/home/node/.codex/auth.json", '{"auth_mode":"apikey"}'],
+      ]);
+      const commands: string[] = [];
+      const worker = {
+        files,
+        commands,
+        stopped: false,
+        connection: undefined as unknown as T3EnvironmentConnection,
+      };
+      const client: T3CommandClient = {
+        baseUrl: `https://${input.canonicalThreadId}.example`,
+        async startNewThread(turn) {
+          worker.stopped = false;
+          return {
+            sequence: 1,
+            commandId: `command-${input.canonicalThreadId}`,
+            messageId: `message-${input.canonicalThreadId}`,
+            threadId: turn.threadId!,
+            createdAt: "2026-09-03T12:00:00.000Z",
+          };
+        },
+        async startTurn() {
+          throw new Error("unused");
+        },
+        async interruptTurn() {
+          return 1;
+        },
+        async stopSession() {
+          worker.stopped = true;
+          return 2;
+        },
+        async threadSnapshot() {
+          return {
+            ...completedSnapshot,
+            thread: {
+              ...completedSnapshot.thread,
+              session: worker.stopped
+                ? {
+                    status: "stopped" as const,
+                    activeTurnId: null,
+                    lastError: null,
+                  }
+                : {
+                    status: "ready" as const,
+                    activeTurnId: null,
+                    lastError: null,
+                  },
+            },
+          };
+        },
+        async waitForTurnTerminal() {
+          throw new Error("unused");
+        },
+        async mintPairingCredential() {
+          throw new Error("unused");
+        },
+      };
+      const sandbox = {
+        process: {
+          async exec(command: string | string[]) {
+            commands.push(Array.isArray(command) ? command.join(" ") : command);
+            return { exitCode: 0, stdout: "", stderr: "" };
+          },
+        },
+        fs: {
+          async read(path: string) {
+            const value = files.get(path);
+            if (value === undefined) throw new Error("not found");
+            return value;
+          },
+          async write(path: string, contents: string) {
+            files.set(path, contents);
+          },
+        },
+      } as unknown as SandboxHandle;
+      worker.connection = {
+        sandboxId: `sandbox-${input.canonicalThreadId}`,
+        projectId: `project-${input.canonicalThreadId}`,
+        client,
+        sandbox,
+      };
+      workers.set(input.canonicalThreadId, worker);
+      return worker.connection;
+    },
+    async reconnect(binding) {
+      return workers.get(binding.canonicalThreadId)!.connection;
+    },
+  };
+  let id = 0;
+  const gateway = new T3Gateway(
+    bindings,
+    environments,
+    () => `thread-${++id}`,
+    undefined,
+    locks,
+    undefined,
+    undefined,
+    undefined,
+    lane,
+  );
+
+  await gateway.send({
+    runId: "run-subscription",
+    canonicalThreadId: "owner",
+    title: "owner",
+    text: "first",
+    modelSelection: { instanceId: "codex", model: "gpt-5.6-sol" },
+  });
+  await gateway.send({
+    runId: "run-api",
+    canonicalThreadId: "concurrent",
+    title: "concurrent",
+    text: "second",
+    modelSelection: { instanceId: "codex", model: "gpt-5.6-sol" },
+  });
+
+  assert.equal(
+    workers.get("owner")!.files.get("/home/node/.codex/compadre-auth-route"),
+    "subscription",
+  );
+  assert.equal(
+    workers
+      .get("concurrent")!
+      .files.get("/home/node/.codex/compadre-auth-route"),
+    "api",
+  );
+
+  await lane.claim({ canonicalThreadId: "owner", runId: "run-steer" });
+  await gateway.releaseCodexAuth({
+    canonicalThreadId: "owner",
+    runId: "run-subscription",
+  });
+  assert.equal(
+    workers.get("owner")!.stopped,
+    false,
+    "a stale finalizer must not stop a newer steer",
+  );
+  await gateway.releaseCodexAuth({
+    canonicalThreadId: "owner",
+    runId: "run-steer",
+  });
+  assert.equal(workers.get("owner")!.stopped, true);
+  assert.equal(
+    workers.get("owner")!.files.get("/home/node/.codex/compadre-auth-route"),
+    "api",
+  );
+});
+
 
 test("routes model changes through the same provider-native T3 thread", async () => {
   const persistence = memoryPersistence();
@@ -1435,4 +1611,3 @@ test("markWorkerLost parks only the confirmed sandbox and never a restorable one
     "a restorable worker is never parked",
   );
 });
-

@@ -7,6 +7,7 @@ import { T3ThreadSnapshotStore } from "../services/t3-thread-snapshots.js";
 import { NATIVE_T3_RUN_ORCHESTRATOR } from "../temporal/mode.js";
 import { collectNativeT3ArtifactEvents } from "./artifact-events.js";
 import { T3Gateway } from "./gateway.js";
+import { CodexSubscriptionLane } from "./codex-subscription-lane.js";
 import { configuredCentralT3Client } from "./central-conversation.js";
 import { T3ModalEnvironmentManager } from "./modal-environments.js";
 import { readWorkerTemplate } from "./worker-templates.js";
@@ -112,6 +113,11 @@ export async function getConfiguredT3Gateway(): Promise<T3Gateway | null> {
               DEFAULT_MODAL_TIMEOUT_MS,
             ),
           },
+          new CodexSubscriptionLane(
+            runtime.persistence.stores.metadata,
+            runtime.locks,
+            process.env,
+          ),
         );
         return gateway;
       })

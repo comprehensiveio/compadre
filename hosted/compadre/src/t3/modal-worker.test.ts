@@ -1,8 +1,12 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import test from "node:test";
 import {
   blockedSlackDestinationFromEnvironment,
+  codexAuthJsonFromEnvironment,
+  configureNativeHarnessAuthentication,
   nativeHarnessAuthenticationCommand,
+  nativeHarnessAuthenticationPreparationCommand,
   parseT3StartupToken,
   parseT3SlackDestinationMarker,
   projectedProviderEnvironment,
@@ -45,15 +49,166 @@ test("records only a complete protected Slack destination", () => {
 });
 
 test("repairs Codex config ownership before authenticating a restored worker", () => {
+  const preparation = nativeHarnessAuthenticationPreparationCommand();
   const command = nativeHarnessAuthenticationCommand();
-  const ownershipRepair = command.indexOf(
+  const ownershipRepair = preparation.indexOf(
     "chown -R node:node /home/node/.codex",
   );
   const login = command.indexOf("codex login --with-api-key");
 
   assert.ok(ownershipRepair >= 0);
-  assert.ok(login > ownershipRepair);
-  assert.match(command, /install -d -m 700 -o node -g node/);
+  assert.ok(login >= 0);
+  assert.match(preparation, /install -d -m 700 -o node -g node/);
+});
+
+test("projects Render-owned ChatGPT auth as a protected file without exposing it in commands", async () => {
+  const authJson = JSON.stringify({
+    auth_mode: "chatgpt",
+    tokens: { refresh_token: "refresh-secret" },
+  });
+  const commands: string[] = [];
+  const writes: Array<{ path: string; contents: string }> = [];
+  await configureNativeHarnessAuthentication(
+    {
+      id: "sandbox",
+      process: {
+        exec: async (command) => {
+          commands.push(Array.isArray(command) ? command.join(" ") : command);
+          return { exitCode: 0, stdout: "", stderr: "" };
+        },
+      },
+      fs: {
+        read: async () => "",
+        write: async (path, contents) => {
+          writes.push({ path, contents });
+        },
+      },
+      env: { set: async () => undefined },
+      ports: { connect: async () => ({ url: "https://example.test" }) },
+      destroy: async () => undefined,
+    },
+    { CODEX_AUTH_JSON_BASE64: Buffer.from(authJson).toString("base64") },
+  );
+
+  assert.deepEqual(writes, [
+    { path: "/home/node/.codex/auth.json", contents: authJson },
+    {
+      path: "/home/node/.codex/compadre-auth-seed.sha256",
+      contents: createHash("sha256").update(authJson).digest("hex"),
+    },
+  ]);
+  assert.equal(
+    commands.some((command) => command.includes(authJson)),
+    false,
+  );
+  assert.equal(
+    commands.some((command) => command.includes("refresh-secret")),
+    false,
+  );
+  assert.equal(
+    commands.some((command) => command.includes("CODEX_AUTH_JSON_BASE64")),
+    false,
+  );
+  assert.match(commands.at(-1) ?? "", /chmod 600/);
+});
+
+test("preserves refreshed Codex auth when the Render seed has not rotated", async () => {
+  const authJson = JSON.stringify({
+    auth_mode: "chatgpt",
+    tokens: { refresh_token: "seed-refresh-token" },
+  });
+  const seedDigest = createHash("sha256").update(authJson).digest("hex");
+  const writes: Array<{ path: string; contents: string }> = [];
+  await configureNativeHarnessAuthentication(
+    {
+      id: "restored-sandbox",
+      process: {
+        exec: async () => ({ exitCode: 0, stdout: "", stderr: "" }),
+      },
+      fs: {
+        read: async (path) =>
+          path.endsWith(".sha256")
+            ? seedDigest
+            : JSON.stringify({
+                auth_mode: "chatgpt",
+                tokens: { refresh_token: "newer-refreshed-token" },
+              }),
+        write: async (path, contents) => {
+          writes.push({ path, contents });
+        },
+      },
+      env: { set: async () => undefined },
+      ports: { connect: async () => ({ url: "https://example.test" }) },
+      destroy: async () => undefined,
+    },
+    { CODEX_AUTH_JSON_BASE64: Buffer.from(authJson).toString("base64") },
+  );
+
+  assert.deepEqual(writes, []);
+});
+
+test("keeps the named Modal secret as a rollout fallback", () => {
+  const command = nativeHarnessAuthenticationCommand();
+
+  assert.match(command, /CODEX_AUTH_JSON_BASE64/);
+  assert.ok(
+    command.indexOf("CODEX_AUTH_JSON_BASE64") <
+      command.indexOf("OPENAI_API_KEY"),
+  );
+});
+
+test("explicitly disabled subscription experiment initializes API-only auth", async () => {
+  const commands: string[] = [];
+  const writes: Array<{ path: string; contents: string }> = [];
+  await configureNativeHarnessAuthentication(
+    {
+      id: "sandbox",
+      process: {
+        exec: async (command) => {
+          commands.push(Array.isArray(command) ? command.join(" ") : command);
+          return { exitCode: 0, stdout: "", stderr: "" };
+        },
+      },
+      fs: {
+        read: async () => "",
+        write: async (path, contents) => {
+          writes.push({ path, contents });
+        },
+      },
+      env: { set: async () => undefined },
+      ports: { connect: async () => ({ url: "https://example.test" }) },
+      destroy: async () => undefined,
+    },
+    {
+      COMPADRE_CODEX_SUBSCRIPTION_EXPERIMENT_ENABLED: "false",
+      CODEX_AUTH_JSON_BASE64:
+        Buffer.from("should-not-be-used").toString("base64"),
+      OPENAI_API_KEY: "api-secret",
+    },
+  );
+
+  assert.match(commands.join("\n"), /codex login --with-api-key/);
+  assert.equal(commands.join("\n").includes("api-secret"), false);
+  assert.deepEqual(writes.at(-1), {
+    path: "/home/node/.codex/compadre-auth-route",
+    contents: "api",
+  });
+});
+
+test("rejects malformed or non-ChatGPT Codex auth before projection", () => {
+  assert.throws(
+    () => codexAuthJsonFromEnvironment({ CODEX_AUTH_JSON_BASE64: "%%%" }),
+    /valid base64/,
+  );
+  assert.throws(
+    () =>
+      codexAuthJsonFromEnvironment({
+        CODEX_AUTH_JSON_BASE64: Buffer.from(
+          JSON.stringify({ auth_mode: "apikey" }),
+        ).toString("base64"),
+      }),
+    /ChatGPT-managed/,
+  );
 });
 
 test("cleans stale T3 launch artifacts before starting and recording the new pid", () => {
