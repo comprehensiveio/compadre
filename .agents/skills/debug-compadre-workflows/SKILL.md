@@ -103,6 +103,11 @@ Prefer exact identifiers and narrow time windows. Render service instance suffix
   `session.lastError` as terminal evidence; do not keep polling for a turn ID.
   Correlate the activity timestamp to the requested message so an older stopped
   session is not mistaken for the new request's outcome.
+- A Codex subscription canary is not complete at `RUN_FINISHED`. Correlate the
+  subsequent `provider_session_stop`, `refreshed_auth_read`,
+  `refreshed_auth_persist`, and `worker_api_reset` handoff phases. A successful
+  refresh persist with a failed API reset releases the shared lane safely, but
+  leaves that stopped worker needing repair before its next API-routed turn.
 - A Claude turn that is assigned and then immediately reaches `latestTurn.state
 = error` with `Claude runtime stream failed` has crossed the pre-turn boundary.
   Inspect the sandbox for the presence (never the value) of

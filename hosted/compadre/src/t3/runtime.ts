@@ -11,6 +11,7 @@ import { T3Gateway } from "./gateway.js";
 import { CodexSubscriptionLane } from "./codex-subscription-lane.js";
 import { configuredCentralT3Client } from "./central-conversation.js";
 import { T3ModalEnvironmentManager } from "./modal-environments.js";
+import { codexApiAuthJsonFromEnvironment } from "./modal-worker.js";
 import { readWorkerTemplate } from "./worker-templates.js";
 import type { NativeT3RunDriverDependencies } from "./native-t3-run-driver.js";
 import { NativeT3RunCoordinator } from "./run-coordinator.js";
@@ -136,6 +137,7 @@ export async function getConfiguredT3Gateway(): Promise<T3Gateway | null> {
             ),
           },
           codexSubscriptionLane,
+          codexApiAuthJsonFromEnvironment(process.env),
         );
         return gateway;
       })

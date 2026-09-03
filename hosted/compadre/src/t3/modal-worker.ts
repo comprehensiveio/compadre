@@ -207,6 +207,16 @@ export function codexAuthJsonFromEnvironment(
   return decoded.toString("utf8");
 }
 
+export function codexApiAuthJsonFromEnvironment(
+  environment: NodeJS.ProcessEnv,
+): string | undefined {
+  const apiKey =
+    environment.CODEX_API_KEY?.trim() || environment.OPENAI_API_KEY?.trim();
+  return apiKey
+    ? JSON.stringify({ auth_mode: "apikey", OPENAI_API_KEY: apiKey })
+    : undefined;
+}
+
 export function nativeHarnessAuthenticationPreparationCommand(): string {
   return [
     "set -e",
@@ -280,6 +290,19 @@ export async function configureWorkerCodexAuthRoute(
         `Codex subscription authentication failed: ${secured.stderr || secured.stdout}`,
       );
     }
+  } else if (authJson) {
+    // Avoid starting another Codex process solely to replace auth immediately
+    // after app-server stops. The handoff already stopped the provider, so
+    // replace the same CLI-owned file directly through the sandbox FS API.
+    await handle.fs.write(CODEX_AUTH_PATH, authJson);
+    const secured = await handle.process.exec(
+      nativeHarnessAuthenticationCommand(true),
+    );
+    if (secured.exitCode !== 0) {
+      throw new Error(
+        `Codex API authentication failed: ${secured.stderr || secured.stdout}`,
+      );
+    }
   } else {
     const login = await handle.process.exec(
       [
@@ -312,7 +335,11 @@ export async function configureNativeHarnessAuthentication(
   // Explicit false is the operational kill switch: workers start API-only.
   // Absence preserves the pre-experiment bootstrap path for code rollback.
   if (experiment === "true" || experiment === "false") {
-    await configureWorkerCodexAuthRoute(handle, "api");
+    await configureWorkerCodexAuthRoute(
+      handle,
+      "api",
+      codexApiAuthJsonFromEnvironment(environment),
+    );
     return;
   }
   const prepared = await handle.process.exec(
