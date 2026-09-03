@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import test from "node:test";
 import {
   blockedSlackDestinationFromEnvironment,
+  codexApiAuthJsonFromEnvironment,
   codexAuthJsonFromEnvironment,
   configureNativeHarnessAuthentication,
   nativeHarnessAuthenticationCommand,
@@ -187,12 +188,37 @@ test("explicitly disabled subscription experiment initializes API-only auth", as
     },
   );
 
-  assert.match(commands.join("\n"), /codex login --with-api-key/);
+  assert.doesNotMatch(commands.join("\n"), /codex login --with-api-key/);
   assert.equal(commands.join("\n").includes("api-secret"), false);
+  assert.deepEqual(writes.at(-2), {
+    path: "/home/node/.codex/auth.json",
+    contents: JSON.stringify({
+      auth_mode: "apikey",
+      OPENAI_API_KEY: "api-secret",
+    }),
+  });
   assert.deepEqual(writes.at(-1), {
     path: "/home/node/.codex/compadre-auth-route",
     contents: "api",
   });
+});
+
+test("builds file-backed API auth without putting the key in a command", () => {
+  assert.equal(
+    codexApiAuthJsonFromEnvironment({ CODEX_API_KEY: " codex-secret " }),
+    JSON.stringify({
+      auth_mode: "apikey",
+      OPENAI_API_KEY: "codex-secret",
+    }),
+  );
+  assert.equal(
+    codexApiAuthJsonFromEnvironment({ OPENAI_API_KEY: "openai-secret" }),
+    JSON.stringify({
+      auth_mode: "apikey",
+      OPENAI_API_KEY: "openai-secret",
+    }),
+  );
+  assert.equal(codexApiAuthJsonFromEnvironment({}), undefined);
 });
 
 test("rejects malformed or non-ChatGPT Codex auth before projection", () => {

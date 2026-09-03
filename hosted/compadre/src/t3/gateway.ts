@@ -266,6 +266,7 @@ export class T3Gateway {
     private readonly snapshots?: T3ThreadSnapshotStore,
     workerLifecycle: T3WorkerLifecycleOptions = {},
     private readonly codexSubscriptionLane?: CodexSubscriptionLane,
+    private readonly codexApiAuthJson?: string,
   ) {
     this.maxLiveMs = workerLifecycle.maxLiveMs ?? DEFAULT_WORKER_MAX_LIVE_MS;
     if (!Number.isFinite(this.maxLiveMs) || this.maxLiveMs <= 0) {
@@ -853,7 +854,9 @@ export class T3Gateway {
         configureWorkerCodexAuthRoute(
           environment.sandbox!,
           claim.route,
-          claim.authJson,
+          claim.route === "subscription"
+            ? claim.authJson
+            : this.codexApiAuthJson,
         ),
     });
   }
@@ -929,7 +932,11 @@ export class T3Gateway {
         phase: "worker_api_reset",
         failureLaneState: "released_worker_stopped",
         operation: () =>
-          configureWorkerCodexAuthRoute(environment.sandbox!, "api"),
+          configureWorkerCodexAuthRoute(
+            environment.sandbox!,
+            "api",
+            this.codexApiAuthJson,
+          ),
       });
       log.info(
         {

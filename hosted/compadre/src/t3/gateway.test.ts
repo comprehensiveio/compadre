@@ -234,6 +234,10 @@ test("hands one subscription lane between workers while concurrent work stays on
     undefined,
     undefined,
     lane,
+    JSON.stringify({
+      auth_mode: "apikey",
+      OPENAI_API_KEY: "api-secret",
+    }),
   );
 
   await gateway.send({
@@ -280,6 +284,13 @@ test("hands one subscription lane between workers while concurrent work stays on
   assert.equal(
     workers.get("owner")!.files.get("/home/node/.codex/compadre-auth-route"),
     "api",
+  );
+  assert.equal(
+    workers.get("owner")!.files.get("/home/node/.codex/auth.json"),
+    JSON.stringify({
+      auth_mode: "apikey",
+      OPENAI_API_KEY: "api-secret",
+    }),
   );
 });
 
