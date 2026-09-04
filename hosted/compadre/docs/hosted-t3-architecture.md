@@ -431,6 +431,7 @@ SLACK_CLIENT_ID=<Sign in with Slack client ID>
 SLACK_CLIENT_SECRET=<Sign in with Slack client secret>
 SLACK_OIDC_REDIRECT_URI=https://compadre-api.comprehensive.io/auth/slack/callback
 COMPADRE_AUTH_EXCHANGE_SECRET=<random shared controller/T3 credential>
+COMPADRE_DEV_ENVIRONMENT_ENABLED=true
 COMPADRE_PREVIEW_HOST_SUFFIX=dev.compadre.comprehensive.io
 COMPADRE_PREVIEW_GATEWAY_SECRET=<random preview resolver credential>
 COMPADRE_T3_PACKAGE_URL=<pinned fork release>

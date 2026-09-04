@@ -806,15 +806,83 @@ test("inspects preview readiness without starting the development server", async
   assert.match(commands[0] ?? "", /127\.0\.0\.1:3000/);
 });
 
+test("reprojects the dev environment before starting preview in a running worker", async () => {
+  const persistence = memoryPersistence();
+  const bindings = new T3ThreadBindingStore(persistence.stores.metadata);
+  const operations: string[] = [];
+  const client = { baseUrl: "https://t3.example" } as T3CommandClient;
+  const sandbox = {
+    id: "sandbox-1",
+    workspaceRoot: "/workspace",
+    env: {
+      set: async () => {
+        operations.push("environment");
+      },
+    },
+    process: {
+      exec: async () => {
+        operations.push("start");
+        return { exitCode: 0, stdout: "DEV_ENV_READY", stderr: "" };
+      },
+    },
+    ports: {
+      connect: async () => {
+        operations.push("port");
+        return { url: "https://sandbox-3000.modal.host" };
+      },
+    },
+  } as unknown as SandboxHandle;
+  const gateway = new T3Gateway(bindings, {
+    async provision() {
+      throw new Error("unused");
+    },
+    async reconnect() {
+      return {
+        sandboxId: "sandbox-1",
+        projectId: "project-1",
+        client,
+        sandbox,
+      };
+    },
+  });
+  await bindings.bindRecord({
+    canonicalThreadId: "canonical-thread",
+    providerInstanceId: "codex",
+    sandboxId: "sandbox-1",
+    projectId: "project-1",
+    t3ThreadId: "t3-thread-1",
+    baseUrl: "https://t3.example",
+    modelSelection: { instanceId: "codex", model: "gpt-5.6-sol" },
+    status: "ready",
+    workerState: "running",
+    workerGeneration: 1,
+    createdAt: "2026-08-30T12:00:00.000Z",
+    updatedAt: "2026-08-30T12:00:00.000Z",
+  });
+
+  const target = await gateway.activatePreview({
+    canonicalThreadId: "canonical-thread",
+  });
+
+  assert.deepEqual(operations, ["port", "environment", "start"]);
+  assert.equal(target?.url, "https://sandbox-3000.modal.host");
+});
+
 test("restores a suspended worker and starts its dev server for preview activation", async () => {
   const persistence = memoryPersistence();
   const bindings = new T3ThreadBindingStore(persistence.stores.metadata);
   const phases: string[] = [];
   const commands: Array<{ command: string; cwd?: string }> = [];
+  const projectedEnvironment: Array<Record<string, string>> = [];
   const client = { baseUrl: "https://restored-t3.example" } as T3CommandClient;
   const sandbox = {
     id: "sandbox-2",
     workspaceRoot: "/workspace",
+    env: {
+      set: async (environment: Record<string, string>) => {
+        projectedEnvironment.push(environment);
+      },
+    },
     process: {
       exec: async (command: string, options?: { cwd?: string }) => {
         commands.push({ command, cwd: options?.cwd });
@@ -867,6 +935,13 @@ test("restores a suspended worker and starts its dev server for preview activati
   });
 
   assert.deepEqual(phases, ["restoring", "starting"]);
+  assert.deepEqual(projectedEnvironment, [
+    {
+      COMPADRE_DEV_PREVIEW_URL: "https://restored-3000.modal.host",
+      COMPADRE_DEV_PORT: "3000",
+      AGENT_BROWSER_EXECUTABLE_PATH: "/usr/bin/chromium",
+    },
+  ]);
   assert.deepEqual(commands, [
     { command: "scripts/compadre-dev-up.sh up", cwd: "/workspace" },
   ]);
