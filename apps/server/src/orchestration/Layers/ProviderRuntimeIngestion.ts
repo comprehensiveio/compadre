@@ -100,6 +100,7 @@ const BUFFERED_PROPOSED_PLAN_BY_ID_TTL = Duration.minutes(120);
 const TASK_DESCRIPTION_BY_TASK_CACHE_CAPACITY = 10_000;
 const TASK_DESCRIPTION_BY_TASK_TTL = Duration.minutes(120);
 const MAX_BUFFERED_ASSISTANT_CHARS = 24_000;
+const MAX_BUFFERED_REASONING_CHARS = 24_000;
 const STRICT_PROVIDER_LIFECYCLE_GUARD = process.env.T3CODE_STRICT_PROVIDER_LIFECYCLE_GUARD !== "0";
 
 type TurnStartRequestedDomainEvent = Extract<
@@ -365,6 +366,7 @@ function taskLinkageActivityFields(payload: Record<string, unknown>): Record<str
 export function runtimeEventToActivities(
   event: ProviderRuntimeEvent,
   taskTitle?: string,
+  reasoningText?: string,
 ): ReadonlyArray<OrchestrationThreadActivity> {
   const maybeSequence = (() => {
     const eventWithSequence = event as ProviderRuntimeEvent & { sessionSequence?: number };
@@ -813,7 +815,55 @@ export function runtimeEventToActivities(
       ];
     }
 
+    case "content.delta": {
+      if (
+        (event.payload.streamKind !== "reasoning_text" &&
+          event.payload.streamKind !== "reasoning_summary_text") ||
+        !reasoningText
+      ) {
+        return [];
+      }
+      return [
+        {
+          id: EventId.make(
+            `reasoning:${event.threadId}:${event.turnId ?? "no-turn"}:${event.itemId ?? "turn"}`,
+          ),
+          createdAt: event.createdAt,
+          tone: "info",
+          kind: "reasoning.updated",
+          summary: "Thinking",
+          payload: {
+            detail: reasoningText,
+            streamKind: event.payload.streamKind,
+          },
+          turnId: toTurnId(event.turnId) ?? null,
+          ...maybeSequence,
+        },
+      ];
+    }
+
     case "item.updated": {
+      if (event.payload.itemType === "reasoning") {
+        const detail = event.payload.detail?.trim();
+        if (!detail) return [];
+        return [
+          {
+            id: EventId.make(
+              `reasoning:${event.threadId}:${event.turnId ?? "no-turn"}:${event.itemId ?? "turn"}`,
+            ),
+            createdAt: event.createdAt,
+            tone: "info",
+            kind: "reasoning.updated",
+            summary: event.payload.title ?? "Thinking",
+            payload: {
+              detail,
+              streamKind: "reasoning_summary_text",
+            },
+            turnId: toTurnId(event.turnId) ?? null,
+            ...maybeSequence,
+          },
+        ];
+      }
       if (!isToolLifecycleItemType(event.payload.itemType)) {
         return [];
       }
@@ -935,6 +985,15 @@ const make = Effect.gen(function* () {
     capacity: BUFFERED_MESSAGE_TEXT_BY_MESSAGE_ID_CACHE_CAPACITY,
     timeToLive: BUFFERED_MESSAGE_TEXT_BY_MESSAGE_ID_TTL,
     lookup: () => Effect.succeed(""),
+  });
+
+  const bufferedReasoningTextByItemKey = yield* Cache.make<
+    string,
+    { summary: string; text: string }
+  >({
+    capacity: BUFFERED_MESSAGE_TEXT_BY_MESSAGE_ID_CACHE_CAPACITY,
+    timeToLive: BUFFERED_MESSAGE_TEXT_BY_MESSAGE_ID_TTL,
+    lookup: () => Effect.succeed({ summary: "", text: "" }),
   });
 
   const assistantSegmentStateByTurnKey = yield* Cache.make<string, AssistantSegmentState>({
@@ -2058,7 +2117,24 @@ const make = Effect.gen(function* () {
         }
       }
 
-      const activities = runtimeEventToActivities(event, taskTitle);
+      let reasoningText: string | undefined;
+      if (
+        event.type === "content.delta" &&
+        (event.payload.streamKind === "reasoning_text" ||
+          event.payload.streamKind === "reasoning_summary_text")
+      ) {
+        const key = `${event.threadId}:${event.turnId ?? "no-turn"}:${event.itemId ?? "turn"}`;
+        const buffered = yield* Cache.get(bufferedReasoningTextByItemKey, key);
+        const field = event.payload.streamKind === "reasoning_summary_text" ? "summary" : "text";
+        const nextValue = `${buffered[field]}${event.payload.delta}`.slice(
+          -MAX_BUFFERED_REASONING_CHARS,
+        );
+        const next = { ...buffered, [field]: nextValue };
+        yield* Cache.set(bufferedReasoningTextByItemKey, key, next);
+        reasoningText = next.summary || next.text;
+      }
+
+      const activities = runtimeEventToActivities(event, taskTitle, reasoningText);
       yield* Effect.forEach(activities, (activity) =>
         providerCommandId(event, "thread-activity-append").pipe(
           Effect.flatMap((commandId) =>

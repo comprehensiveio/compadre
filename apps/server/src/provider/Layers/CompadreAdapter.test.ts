@@ -282,6 +282,12 @@ it.layer(Layer.merge(NodeServices.layer, FetchHttpClient.layer))("CompadreAdapte
           forwardedUserId = request.attribution?.userId;
           return Stream.fromIterable([
             {
+              type: "REASONING_CONTENT",
+              messageId: "reasoning-1",
+              content: "Inspecting the repository",
+              streamKind: "reasoning_summary_text",
+            },
+            {
               type: "TOOL_CALL_START",
               toolCallId: "command-1",
               toolName: "Bash",
@@ -365,6 +371,14 @@ it.layer(Layer.merge(NodeServices.layer, FetchHttpClient.layer))("CompadreAdapte
       const toolEvents = events.filter(
         (event) => event.type === "item.started" || event.type === "item.completed",
       );
+      const reasoningEvent = events.find(
+        (event) => event.type === "item.updated" && event.payload.itemType === "reasoning",
+      );
+      assert.deepInclude(reasoningEvent?.payload, {
+        itemType: "reasoning",
+        title: "Thinking",
+        detail: "Inspecting the repository",
+      });
       assert.deepInclude(toolEvents[0]?.payload, {
         itemType: "command_execution",
         title: "Command run",

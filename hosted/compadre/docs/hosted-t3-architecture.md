@@ -180,8 +180,11 @@ status, and web link. Older Slack outbox rows and browser mirrors settle as
 superseded without posting failure warnings, duplicate answers, or clearing a
 newer turn's status.
 
-Version 2 carries text, named tool calls, normalized token usage, and initiating
-message attribution. The remaining production-hardening work is:
+Version 2 carries text, durable provider reasoning, named tool calls, normalized
+token usage, and initiating message attribution. Reasoning is
+retained as one replaceable activity per provider item so snapshot polling and
+run recovery do not lose it or grow the transcript once per token. The
+remaining production-hardening work is:
 
 - Approvals and user-input requests.
 - Workspace diffs, checkpoints, attachments, and shell lifecycle.

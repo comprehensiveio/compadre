@@ -234,6 +234,35 @@ function makeThread(
 }
 
 describe("buildThreadFeed", () => {
+  it("keeps provider reasoning visible after the turn settles", () => {
+    const thread = makeThread({
+      id: ThreadId.make("thread-reasoning"),
+      projectId: ProjectId.make("project-1"),
+      title: "Reasoning",
+      activities: [
+        makeActivity({
+          id: EventId.make("reasoning-1"),
+          kind: "reasoning.updated",
+          summary: "Thinking",
+          createdAt: "2026-04-01T00:00:01.000Z",
+          turnId: TurnId.make("turn-1"),
+          payload: { detail: "Inspecting the implementation" },
+        }),
+      ],
+    });
+
+    const group = buildThreadFeed(thread)[0];
+    expect(group).toMatchObject({ type: "activity-group" });
+    if (!group || group.type !== "activity-group") return;
+    expect(group.activities).toHaveLength(1);
+    expect(group.activities[0]).toMatchObject({
+      summary: "Thinking",
+      detail: "Inspecting the implementation",
+      icon: "agent",
+      status: null,
+    });
+  });
+
   it("keeps older local feedback before newer messages returned by the server", () => {
     const submission = {
       id: MessageId.make("feedback-command-ordering"),

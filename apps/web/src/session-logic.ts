@@ -311,6 +311,11 @@ export function workEntryIndicatesToolNeutralStatus(entry: WorkLogEntry): boolea
   if (entry.agentSpawn !== undefined) {
     return false;
   }
+  // Provider reasoning is durable transcript content, not an incomplete tool
+  // marker. Keep it visible after the turn settles as well as while it runs.
+  if (entry.sourceActivityKind === "reasoning.updated") {
+    return false;
+  }
   if (!workLogEntryIsToolLike(entry)) {
     return false;
   }
@@ -952,7 +957,7 @@ function toDerivedWorkLogEntry(activity: OrchestrationThreadActivity): DerivedWo
     turnId: activity.turnId,
     label: taskLabel || activity.summary,
     tone:
-      activity.kind === "task.progress"
+      activity.kind === "task.progress" || activity.kind === "reasoning.updated"
         ? "thinking"
         : activity.tone === "approval"
           ? "info"

@@ -11,6 +11,7 @@ export const EventType = {
   TEXT_MESSAGE_START: "TEXT_MESSAGE_START",
   TEXT_MESSAGE_CONTENT: "TEXT_MESSAGE_CONTENT",
   TEXT_MESSAGE_END: "TEXT_MESSAGE_END",
+  REASONING_CONTENT: "REASONING_CONTENT",
   TOOL_CALL_START: "TOOL_CALL_START",
   TOOL_CALL_ARGS: "TOOL_CALL_ARGS",
   TOOL_CALL_RESULT: "TOOL_CALL_RESULT",
@@ -39,6 +40,7 @@ export interface StreamChunk {
   role?: string;
   delta?: string;
   content?: string;
+  streamKind?: "reasoning_text" | "reasoning_summary_text";
   toolCallId?: string;
   toolCallName?: string;
   toolName?: string;
