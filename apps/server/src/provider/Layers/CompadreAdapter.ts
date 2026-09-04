@@ -721,6 +721,29 @@ export function makeCompadreAdapter(options: CompadreAdapterOptions) {
                   });
                   return;
                 }
+                case "REASONING_CONTENT": {
+                  const content = stringField(event, "content");
+                  if (!content) return;
+                  const itemId = RuntimeItemId.make(
+                    stringField(event, "messageId") ?? `reasoning-${runId}`,
+                  );
+                  yield* publish({
+                    type: "item.updated",
+                    ...(yield* makeEventStamp()),
+                    provider: runtimeProvider,
+                    providerInstanceId: boundInstanceId,
+                    threadId: input.threadId,
+                    turnId,
+                    itemId,
+                    payload: {
+                      itemType: "reasoning",
+                      status: "inProgress",
+                      title: "Thinking",
+                      detail: content,
+                    },
+                  });
+                  return;
+                }
                 case "TOOL_CALL_START": {
                   const sourceId = stringField(event, "toolCallId");
                   if (!sourceId || items.has(sourceId)) return;

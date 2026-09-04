@@ -9,6 +9,7 @@ import {
   ProviderRuntimeEvent,
   ProviderSession,
   ProviderInstanceId,
+  RuntimeItemId,
 } from "@t3tools/contracts";
 import {
   ApprovalRequestId,
@@ -405,6 +406,46 @@ describe("ProviderRuntimeIngestion", () => {
     );
     expect(thread.session?.status).toBe("error");
     expect(thread.session?.lastError).toBe("turn failed");
+  });
+
+  it("accumulates reasoning deltas into one durable activity", async () => {
+    const harness = await createHarness();
+    const itemId = RuntimeItemId.make("reasoning-1");
+    const turnId = asTurnId("turn-1");
+
+    harness.emit({
+      type: "content.delta",
+      eventId: asEventId("evt-reasoning-1"),
+      provider: ProviderDriverKind.make("codex"),
+      threadId: asThreadId("thread-1"),
+      turnId,
+      itemId,
+      createdAt: "2026-01-01T00:00:00.100Z",
+      payload: { streamKind: "reasoning_summary_text", delta: "Inspecting " },
+    });
+    harness.emit({
+      type: "content.delta",
+      eventId: asEventId("evt-reasoning-2"),
+      provider: ProviderDriverKind.make("codex"),
+      threadId: asThreadId("thread-1"),
+      turnId,
+      itemId,
+      createdAt: "2026-01-01T00:00:00.200Z",
+      payload: { streamKind: "reasoning_summary_text", delta: "the implementation" },
+    });
+
+    const thread = await waitForThread(harness.readModel, (entry) => {
+      const reasoning = entry.activities.find((activity) => activity.kind === "reasoning.updated");
+      return (
+        typeof reasoning?.payload === "object" &&
+        reasoning.payload !== null &&
+        "detail" in reasoning.payload &&
+        reasoning.payload.detail === "Inspecting the implementation"
+      );
+    });
+    const reasoning = thread.activities.filter((activity) => activity.kind === "reasoning.updated");
+    expect(reasoning).toHaveLength(1);
+    expect(reasoning[0]?.id).toBe("reasoning:thread-1:turn-1:reasoning-1");
   });
 
   it("applies provider session.state.changed transitions directly", async () => {

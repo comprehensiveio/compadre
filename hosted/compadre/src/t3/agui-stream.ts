@@ -200,6 +200,7 @@ interface T3Activity {
   summary?: string;
   createdAt?: string;
   payload?: Record<string, unknown>;
+  sequence?: number;
 }
 
 function record(value: unknown): Record<string, unknown> | undefined {
@@ -227,6 +228,7 @@ function activities(snapshot: T3ThreadSnapshot): T3Activity[] {
       summary: stringValue(item.summary),
       createdAt: stringValue(item.createdAt),
       payload: record(item.payload),
+      sequence: nonNegativeInteger(item.sequence),
     }];
   });
 }
@@ -479,14 +481,23 @@ export class NativeT3SnapshotProjector {
     const turnRequestedAt = timestamp(snapshot.thread.latestTurn?.requestedAt);
     const isSteer = turnRequestedAt < requestedAt;
     for (const activity of activities(snapshot)) {
-      if (this.seenActivities.has(activity.id)) continue;
+      const activityVersion = activity.sequence === undefined
+        ? activity.id
+        : `${activity.id}:${activity.sequence}`;
+      // Restored v2 logs from before activity versions were carried only the
+      // raw activity id. Treat that as a wildcard for backward-compatible
+      // tool completion replay suppression.
+      if (
+        this.seenActivities.has(activityVersion) ||
+        this.seenActivities.has(activity.id)
+      ) continue;
       if (isSteer && timestamp(activity.createdAt) < requestedAt) continue;
       const unboundCurrentTurnUsage =
         activity.kind === "context-window.updated" &&
         activity.turnId === undefined &&
         timestamp(activity.createdAt) >= requestedAt;
       if (activity.turnId !== this.turnId && !unboundCurrentTurnUsage) continue;
-      this.seenActivities.add(activity.id);
+      this.seenActivities.add(activityVersion);
       const usage = projectedUsage(activity, snapshot);
       if (usage) {
         chunks.push({
@@ -494,6 +505,22 @@ export class NativeT3SnapshotProjector {
           usage,
           timestamp: timestamp(activity.createdAt),
         });
+        continue;
+      }
+      if (activity.kind === "reasoning.updated") {
+        const content = stringValue(activity.payload?.detail);
+        if (content) {
+          chunks.push({
+            type: EventType.REASONING_CONTENT,
+            messageId: activity.id,
+            content,
+            streamKind:
+              activity.payload?.streamKind === "reasoning_text"
+                ? "reasoning_text"
+                : "reasoning_summary_text",
+            timestamp: timestamp(activity.createdAt),
+          });
+        }
         continue;
       }
       if (!activity.kind.startsWith("tool.")) continue;

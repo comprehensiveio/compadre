@@ -143,6 +143,51 @@ test("projects native T3 text and tool snapshots incrementally", () => {
   assert.deepEqual(toolResult?.data, { command: "pwd" });
 });
 
+test("projects replaced reasoning activities whenever their sequence advances", () => {
+  const projector = new NativeT3SnapshotProjector("run-1", "central-thread", "user-1");
+  const first = projector.project(snapshot({
+    sequence: 4,
+    state: "running",
+    text: "",
+    streaming: true,
+    activities: [{
+      id: "reasoning:worker-thread:turn-1:item-1",
+      kind: "reasoning.updated",
+      turnId: "turn-1",
+      summary: "Thinking",
+      createdAt: "2026-08-26T16:00:00.400Z",
+      sequence: 3,
+      payload: { detail: "Inspecting", streamKind: "reasoning_summary_text" },
+    }],
+  }));
+  const second = projector.project(snapshot({
+    sequence: 5,
+    state: "running",
+    text: "",
+    streaming: true,
+    activities: [{
+      id: "reasoning:worker-thread:turn-1:item-1",
+      kind: "reasoning.updated",
+      turnId: "turn-1",
+      summary: "Thinking",
+      createdAt: "2026-08-26T16:00:00.500Z",
+      sequence: 4,
+      payload: {
+        detail: "Inspecting the implementation",
+        streamKind: "reasoning_summary_text",
+      },
+    }],
+  }));
+
+  const reasoning = [...first, ...second].filter(
+    (event) => event.type === EventType.REASONING_CONTENT,
+  );
+  assert.deepEqual(reasoning.map((event) => event.content), [
+    "Inspecting",
+    "Inspecting the implementation",
+  ]);
+});
+
 test("a restored projector continues where the persisted chunks stopped", () => {
   const startActivity = {
     id: "activity-start",

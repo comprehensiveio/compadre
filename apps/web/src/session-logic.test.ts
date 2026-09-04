@@ -61,6 +61,26 @@ function makeActivity(overrides: {
   };
 }
 
+it("renders provider reasoning activities with thinking tone", () => {
+  const [entry] = deriveWorkLogEntries([
+    makeActivity({
+      id: "reasoning-1",
+      kind: "reasoning.updated",
+      summary: "Thinking",
+      tone: "info",
+      payload: { detail: "Inspecting the implementation" },
+      turnId: "turn-1",
+    }),
+  ]);
+
+  expect(entry).toMatchObject({
+    label: "Thinking",
+    detail: "Inspecting the implementation",
+    tone: "thinking",
+  });
+  expect(workEntryIndicatesToolNeutralStatus(entry!)).toBe(false);
+});
+
 describe("derivePendingApprovals", () => {
   it("tracks open approvals and removes resolved ones", () => {
     const activities: OrchestrationThreadActivity[] = [
