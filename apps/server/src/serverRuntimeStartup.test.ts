@@ -20,6 +20,7 @@ it("uses the canonical Codex default for auto-bootstrapped model selection", () 
   assert.deepStrictEqual(ServerRuntimeStartup.getAutoBootstrapDefaultModelSelection(), {
     instanceId: ProviderInstanceId.make("codex"),
     model: DEFAULT_MODEL,
+    options: [{ id: "reasoningEffort", value: "high" }],
   });
 });
 

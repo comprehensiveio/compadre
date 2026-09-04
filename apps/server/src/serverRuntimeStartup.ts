@@ -170,6 +170,7 @@ export const launchStartupHeartbeat = recordStartupHeartbeat.pipe(
 export const getAutoBootstrapDefaultModelSelection = (): ModelSelection => ({
   instanceId: ProviderInstanceId.make("codex"),
   model: DEFAULT_MODEL,
+  options: [{ id: "reasoningEffort", value: "high" }],
 });
 
 export const resolveWelcomeBase = Effect.gen(function* () {
@@ -226,7 +227,9 @@ export const resolveAutoBootstrapWelcomeTargets = Effect.gen(function* () {
         if (
           isCompadreAuthEnabled() &&
           (existingDefault?.instanceId !== hostedDefault.instanceId ||
-            existingDefault.model !== hostedDefault.model)
+            existingDefault.model !== hostedDefault.model ||
+            existingDefault.options?.find((option) => option.id === "reasoningEffort")?.value !==
+              "high")
         ) {
           yield* orchestrationEngine.dispatch({
             type: "project.meta.update",
