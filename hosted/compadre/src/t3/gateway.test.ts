@@ -294,7 +294,6 @@ test("hands one subscription lane between workers while concurrent work stays on
   );
 });
 
-
 test("routes model changes through the same provider-native T3 thread", async () => {
   const persistence = memoryPersistence();
   const bindings = new T3ThreadBindingStore(persistence.stores.metadata);
@@ -422,7 +421,9 @@ test("durably records and conditionally clears the active provider run", async (
   const gateway = new T3Gateway(
     bindings,
     {
-      async provision() { throw new Error("unused"); },
+      async provision() {
+        throw new Error("unused");
+      },
       async reconnect() {
         return { sandboxId: "sandbox-1", projectId: "project-1", client };
       },
@@ -452,7 +453,10 @@ test("durably records and conditionally clears the active provider run", async (
   await gateway.clearActiveRun("thread-active-run", "older-run");
   assert.equal((await bindings.get("thread-active-run"))?.activeRunId, "run-1");
   await gateway.clearActiveRun("thread-active-run", "run-1");
-  assert.equal((await bindings.get("thread-active-run"))?.activeRunId, undefined);
+  assert.equal(
+    (await bindings.get("thread-active-run"))?.activeRunId,
+    undefined,
+  );
 });
 
 test("restores a suspended Modal worker before continuing the same T3 thread", async () => {
@@ -681,7 +685,7 @@ test("checkpoints a terminal turn, survives a restart, and restores after worker
   assert.equal(resumedTurn.binding.workerGeneration, 2);
   assert.equal(resumedTurn.binding.workerState, "running");
 });
-test("resolves a preview from the bound sandbox without provisioning", async () => {
+test("reports a ready preview from the bound sandbox without provisioning", async () => {
   const persistence = memoryPersistence();
   const bindings = new T3ThreadBindingStore(persistence.stores.metadata);
   const client = {
@@ -691,6 +695,9 @@ test("resolves a preview from the bound sandbox without provisioning", async () 
   const connectedPorts: number[] = [];
   const sandbox = {
     id: "sandbox-1",
+    process: {
+      exec: async () => ({ exitCode: 0, stdout: "", stderr: "" }),
+    },
     ports: {
       connect: async (port: number) => {
         connectedPorts.push(port);
@@ -725,18 +732,146 @@ test("resolves a preview from the bound sandbox without provisioning", async () 
     updatedAt: "2026-08-30T12:00:00.000Z",
   });
 
-  const target = await gateway.previewTarget({
+  const target = await gateway.inspectPreview({
     canonicalThreadId: "canonical-thread",
   });
 
   assert.equal(provisions, 0);
   assert.deepEqual(connectedPorts, [3000]);
-  assert.equal(target?.url, "https://sandbox-3000.modal.host");
+  assert.equal(target?.state, "ready");
+  assert.equal(
+    target?.state === "ready" ? target.url : null,
+    "https://sandbox-3000.modal.host",
+  );
   assert.equal(target?.binding.sandboxId, "sandbox-1");
   assert.equal(
-    await gateway.previewTarget({ canonicalThreadId: "missing-thread" }),
+    await gateway.inspectPreview({ canonicalThreadId: "missing-thread" }),
     null,
   );
+});
+
+test("inspects preview readiness without starting the development server", async () => {
+  const persistence = memoryPersistence();
+  const bindings = new T3ThreadBindingStore(persistence.stores.metadata);
+  const commands: string[] = [];
+  const connectedPorts: number[] = [];
+  const sandbox = {
+    id: "sandbox-1",
+    process: {
+      exec: async (command: string) => {
+        commands.push(command);
+        return { exitCode: 1, stdout: "", stderr: "offline" };
+      },
+    },
+    ports: {
+      connect: async (port: number) => {
+        connectedPorts.push(port);
+        return { url: `https://sandbox-${port}.modal.host` };
+      },
+    },
+  } as unknown as SandboxHandle;
+  const client = { baseUrl: "https://t3.example" } as T3CommandClient;
+  const gateway = new T3Gateway(bindings, {
+    async provision() {
+      throw new Error("unused");
+    },
+    async reconnect() {
+      return {
+        sandboxId: "sandbox-1",
+        projectId: "project-1",
+        client,
+        sandbox,
+      };
+    },
+  });
+  await bindings.bindRecord({
+    canonicalThreadId: "canonical-thread",
+    providerInstanceId: "codex",
+    sandboxId: "sandbox-1",
+    projectId: "project-1",
+    t3ThreadId: "t3-thread-1",
+    baseUrl: "https://t3.example",
+    modelSelection: { instanceId: "codex", model: "gpt-5.6-sol" },
+    status: "ready",
+    createdAt: "2026-08-30T12:00:00.000Z",
+    updatedAt: "2026-08-30T12:00:00.000Z",
+  });
+
+  const inspection = await gateway.inspectPreview({
+    canonicalThreadId: "canonical-thread",
+  });
+
+  assert.equal(inspection?.state, "idle");
+  assert.deepEqual(connectedPorts, []);
+  assert.match(commands[0] ?? "", /127\.0\.0\.1:3000/);
+});
+
+test("restores a suspended worker and starts its dev server for preview activation", async () => {
+  const persistence = memoryPersistence();
+  const bindings = new T3ThreadBindingStore(persistence.stores.metadata);
+  const phases: string[] = [];
+  const commands: Array<{ command: string; cwd?: string }> = [];
+  const client = { baseUrl: "https://restored-t3.example" } as T3CommandClient;
+  const sandbox = {
+    id: "sandbox-2",
+    workspaceRoot: "/workspace",
+    process: {
+      exec: async (command: string, options?: { cwd?: string }) => {
+        commands.push({ command, cwd: options?.cwd });
+        return { exitCode: 0, stdout: "DEV_ENV_READY", stderr: "" };
+      },
+    },
+    ports: {
+      connect: async (port: number) => ({
+        url: `https://restored-${port}.modal.host`,
+      }),
+    },
+  } as unknown as SandboxHandle;
+  const gateway = new T3Gateway(bindings, {
+    async provision() {
+      throw new Error("unused");
+    },
+    async reconnect() {
+      throw new T3EnvironmentUnavailableError("sandbox-1");
+    },
+    async restore() {
+      return {
+        sandboxId: "sandbox-2",
+        projectId: "project-1",
+        client,
+        sandbox,
+      };
+    },
+  });
+  await bindings.bindRecord({
+    canonicalThreadId: "canonical-thread",
+    providerInstanceId: "codex",
+    sandboxId: "sandbox-1",
+    projectId: "project-1",
+    t3ThreadId: "t3-thread-1",
+    baseUrl: "https://t3.example",
+    modelSelection: { instanceId: "codex", model: "gpt-5.6-sol" },
+    status: "ready",
+    workerState: "suspended",
+    workerSnapshotId: "snapshot-1",
+    workerGeneration: 1,
+    createdAt: "2026-08-30T12:00:00.000Z",
+    updatedAt: "2026-08-30T12:00:00.000Z",
+  });
+
+  const target = await gateway.activatePreview({
+    canonicalThreadId: "canonical-thread",
+    onPhase: (phase) => {
+      phases.push(phase);
+    },
+  });
+
+  assert.deepEqual(phases, ["restoring", "starting"]);
+  assert.deepEqual(commands, [
+    { command: "scripts/compadre-dev-up.sh up", cwd: "/workspace" },
+  ]);
+  assert.equal(target?.url, "https://restored-3000.modal.host");
+  assert.equal(target?.binding.sandboxId, "sandbox-2");
 });
 
 test("does not nest directory-index locks inside first-turn environment locks", async () => {
@@ -1127,7 +1262,8 @@ test("retries internal text generation once in a fresh disposable environment", 
       const client = {
         baseUrl: `https://t3-${attempt}.example`,
         async startNewThread(input: { threadId?: string }) {
-          if (attempt === 1) throw new Error("transient worker startup failure");
+          if (attempt === 1)
+            throw new Error("transient worker startup failure");
           return {
             sequence: 10,
             commandId: "command-generate",
@@ -1158,15 +1294,17 @@ test("retries internal text generation once in a fresh disposable environment", 
                 completedAt: "2026-08-27T15:00:01.000Z",
                 assistantMessageId: "assistant-generate",
               },
-              messages: [{
-                id: "assistant-generate",
-                role: "assistant" as const,
-                text: '{"title":"Retried title"}',
-                turnId: "turn-generate",
-                streaming: false,
-                createdAt: "2026-08-27T15:00:01.000Z",
-                updatedAt: "2026-08-27T15:00:01.000Z",
-              }],
+              messages: [
+                {
+                  id: "assistant-generate",
+                  role: "assistant" as const,
+                  text: '{"title":"Retried title"}',
+                  turnId: "turn-generate",
+                  streaming: false,
+                  createdAt: "2026-08-27T15:00:01.000Z",
+                  updatedAt: "2026-08-27T15:00:01.000Z",
+                },
+              ],
               session: {
                 status: "ready" as const,
                 activeTurnId: null,
@@ -1220,10 +1358,7 @@ test("retries internal text generation once in a fresh disposable environment", 
     generated.snapshot.thread.messages[0]?.text,
     '{"title":"Retried title"}',
   );
-  assert.deepEqual(provisioned, [
-    firstGenerationId,
-    secondGenerationId,
-  ]);
+  assert.deepEqual(provisioned, [firstGenerationId, secondGenerationId]);
   assert.deepEqual(discarded, ["sandbox-1", "sandbox-2"]);
 });
 
@@ -1258,25 +1393,29 @@ test("does not retry after a text-generation turn has been dispatched", async ()
           title: "Internal text generation",
           modelSelection: { instanceId: "codex", model: "gpt-5.6-luna" },
           latestTurn: null,
-          messages: [{
-            id: "message-generate",
-            role: "user" as const,
-            text: "Return JSON",
-            turnId: null,
-            streaming: false,
-            createdAt: "2026-08-27T15:00:00.000Z",
-            updatedAt: "2026-08-27T15:00:00.000Z",
-          }],
+          messages: [
+            {
+              id: "message-generate",
+              role: "user" as const,
+              text: "Return JSON",
+              turnId: null,
+              streaming: false,
+              createdAt: "2026-08-27T15:00:00.000Z",
+              updatedAt: "2026-08-27T15:00:00.000Z",
+            },
+          ],
           session: {
             status: "stopped" as const,
             activeTurnId: null,
             lastError: "provider startup failed",
           },
-          activities: [{
-            id: "activity-failed",
-            kind: "provider.turn.start.failed",
-            createdAt: "2026-08-27T15:00:00.100Z",
-          }],
+          activities: [
+            {
+              id: "activity-failed",
+              kind: "provider.turn.start.failed",
+              createdAt: "2026-08-27T15:00:00.100Z",
+            },
+          ],
         },
       };
     },
@@ -1328,11 +1467,9 @@ test("bounds text-generation provisioning and discards a late environment", asyn
     projectId: string;
     client: T3CommandClient;
   }) => void;
-  const pendingProvision = new Promise<T3EnvironmentConnection>(
-    (resolve) => {
-      resolveProvision = resolve;
-    },
-  );
+  const pendingProvision = new Promise<T3EnvironmentConnection>((resolve) => {
+    resolveProvision = resolve;
+  });
   const unusedClient = {
     baseUrl: "https://late-t3.example",
     async startNewThread() {

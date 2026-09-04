@@ -16,6 +16,11 @@ export interface NativeT3RunWorkflowResult {
   status: "completed" | "failed" | "aborted";
 }
 
+export interface PreviewActivationWorkflowInput {
+  canonicalThreadId: string;
+  activationId: string;
+}
+
 export function temporalAddress(
   environment: NodeJS.ProcessEnv = process.env,
 ): string {
@@ -38,4 +43,8 @@ export function nativeT3RunWorkflowId(runId: string): string {
     .digest("base64url")
     .slice(0, 32);
   return `compadre-t3-${digest}`;
+}
+
+export function previewActivationWorkflowId(activationId: string): string {
+  return `compadre-preview-${activationId}`;
 }

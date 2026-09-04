@@ -27,12 +27,20 @@ import {
   type NativeT3RunService,
 } from "./run-service.js";
 import { S3T3ArtifactObjectStore, T3ArtifactStore } from "./artifact-store.js";
+import {
+  PreviewActivationService,
+  PreviewActivationStore,
+} from "../services/preview-activation.js";
 
 let configuredGateway: Promise<T3Gateway | null> | undefined;
 let configuredRunCoordinator:
-  Promise<NativeT3RunCoordinator | null> | undefined;
+  | Promise<NativeT3RunCoordinator | null>
+  | undefined;
 let configuredArtifactStore: Promise<T3ArtifactStore | null> | undefined;
 let configuredRunService: Promise<NativeT3RunService | null> | undefined;
+let configuredPreviewActivationService:
+  | Promise<PreviewActivationService | null>
+  | undefined;
 
 const DEFAULT_MODAL_TIMEOUT_MS = 24 * 60 * 60 * 1000;
 
@@ -148,6 +156,33 @@ export async function getConfiguredT3Gateway(): Promise<T3Gateway | null> {
     configuredGateway = initialization;
   }
   return configuredGateway;
+}
+
+export async function getConfiguredPreviewActivationService(): Promise<PreviewActivationService | null> {
+  if (NATIVE_T3_RUN_ORCHESTRATOR !== "temporal") return null;
+  if (!configuredPreviewActivationService) {
+    const initialization = getConfiguredThreadPersistence()
+      .then((runtime) =>
+        runtime
+          ? new PreviewActivationService(
+              new PreviewActivationStore(
+                runtime.persistence.stores.metadata,
+                () => new Date(),
+                runtime.locks,
+              ),
+              runtime.locks,
+            )
+          : null,
+      )
+      .catch((error) => {
+        if (configuredPreviewActivationService === initialization) {
+          configuredPreviewActivationService = undefined;
+        }
+        throw error;
+      });
+    configuredPreviewActivationService = initialization;
+  }
+  return configuredPreviewActivationService;
 }
 
 /** Reclaim provider streams left behind by a previous controller process. */
