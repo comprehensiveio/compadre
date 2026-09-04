@@ -19,6 +19,7 @@ import type * as activities from "./activities.js";
 import type {
   NativeT3RunWorkflowInput,
   NativeT3RunWorkflowResult,
+  PreviewActivationWorkflowInput,
 } from "./shared.js";
 import type { TriggeredPromptWorkflowInput } from "../triggers/types.js";
 
@@ -26,19 +27,20 @@ import type { TriggeredPromptWorkflowInput } from "../triggers/types.js";
 // Its 25-minute ceiling killed legitimately long turns; see the patched()
 // selection inside the workflow. Remove after those histories drain
 // (retention is 7 days from 2026-09-01).
-const { driveNativeT3RunActivity: driveWithLegacyCeiling } =
-  proxyActivities<typeof activities>({
-    startToCloseTimeout: "25 minutes",
-    heartbeatTimeout: "2 minutes",
-    cancellationType: ActivityCancellationType.WAIT_CANCELLATION_COMPLETED,
-    retry: {
-      initialInterval: "5 seconds",
-      backoffCoefficient: 2,
-      maximumInterval: "1 minute",
-      maximumAttempts: 3,
-      nonRetryableErrorTypes: ["NativeT3RunStateError"],
-    },
-  });
+const { driveNativeT3RunActivity: driveWithLegacyCeiling } = proxyActivities<
+  typeof activities
+>({
+  startToCloseTimeout: "25 minutes",
+  heartbeatTimeout: "2 minutes",
+  cancellationType: ActivityCancellationType.WAIT_CANCELLATION_COMPLETED,
+  retry: {
+    initialInterval: "5 seconds",
+    backoffCoefficient: 2,
+    maximumInterval: "1 minute",
+    maximumAttempts: 3,
+    nonRetryableErrorTypes: ["NativeT3RunStateError"],
+  },
+});
 
 const { driveNativeT3RunActivity } = proxyActivities<typeof activities>({
   // One attempt may legitimately watch for the worker's full ~2-hour Modal
@@ -117,6 +119,41 @@ const { buildT3WorkerTemplateActivity } = proxyActivities<typeof activities>({
  */
 export async function t3WorkerTemplateBuildWorkflow(): Promise<void> {
   await buildT3WorkerTemplateActivity();
+}
+
+const { activatePreviewActivity } = proxyActivities<typeof activities>({
+  startToCloseTimeout: "20 minutes",
+  heartbeatTimeout: "2 minutes",
+  cancellationType: ActivityCancellationType.WAIT_CANCELLATION_COMPLETED,
+  retry: {
+    initialInterval: "5 seconds",
+    backoffCoefficient: 2,
+    maximumInterval: "1 minute",
+    maximumAttempts: 3,
+    nonRetryableErrorTypes: ["PreviewActivationStateError"],
+  },
+});
+
+const { recordPreviewActivationFailureActivity } = proxyActivities<
+  typeof activities
+>({
+  startToCloseTimeout: "1 minute",
+  retry: { maximumAttempts: 5 },
+  cancellationType: ActivityCancellationType.WAIT_CANCELLATION_COMPLETED,
+});
+
+export async function previewActivationWorkflow(
+  input: PreviewActivationWorkflowInput,
+): Promise<void> {
+  try {
+    await activatePreviewActivity(input);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    await CancellationScope.nonCancellable(() =>
+      recordPreviewActivationFailureActivity({ ...input, message }),
+    );
+    throw error;
+  }
 }
 
 const { loadTriggeredPromptActivity, recordTriggerFiredActivity } =

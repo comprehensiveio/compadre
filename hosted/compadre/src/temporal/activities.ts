@@ -16,6 +16,9 @@ import type {
   TriggeredPromptRecord,
 } from "../triggers/types.js";
 import type { NativeT3RunWorkflowInput } from "./shared.js";
+import type { PreviewActivationWorkflowInput } from "./shared.js";
+import { PreviewActivationStore } from "../services/preview-activation.js";
+import { getConfiguredT3Gateway } from "../t3/runtime.js";
 
 const HEARTBEAT_INTERVAL_MS = 30_000;
 
@@ -106,6 +109,66 @@ export async function buildT3WorkerTemplateActivity(): Promise<{
   } finally {
     clearInterval(heartbeatTimer);
   }
+}
+
+export async function activatePreviewActivity(
+  input: PreviewActivationWorkflowInput,
+): Promise<void> {
+  const context = Context.current();
+  const runtime = await getConfiguredThreadPersistence();
+  const gateway = await getConfiguredT3Gateway();
+  if (!runtime || !gateway) {
+    throw ApplicationFailure.nonRetryable(
+      "Preview activation requires configured thread persistence",
+      "PreviewActivationStateError",
+    );
+  }
+  const store = new PreviewActivationStore(
+    runtime.persistence.stores.metadata,
+    () => new Date(),
+    runtime.locks,
+  );
+  const heartbeatTimer = setInterval(
+    () => context.heartbeat("activating preview environment"),
+    HEARTBEAT_INTERVAL_MS,
+  );
+  heartbeatTimer.unref();
+  try {
+    const target = await gateway.activatePreview({
+      canonicalThreadId: input.canonicalThreadId,
+      onPhase: async (phase) => {
+        await store.update(input.canonicalThreadId, input.activationId, phase);
+      },
+    });
+    if (!target) {
+      throw ApplicationFailure.nonRetryable(
+        "Preview thread was not found",
+        "PreviewActivationStateError",
+      );
+    }
+    await store.update(input.canonicalThreadId, input.activationId, "ready");
+  } finally {
+    clearInterval(heartbeatTimer);
+  }
+}
+
+export async function recordPreviewActivationFailureActivity(input: {
+  canonicalThreadId: string;
+  activationId: string;
+  message: string;
+}): Promise<void> {
+  const runtime = await getConfiguredThreadPersistence();
+  if (!runtime) return;
+  await new PreviewActivationStore(
+    runtime.persistence.stores.metadata,
+    () => new Date(),
+    runtime.locks,
+  ).update(
+    input.canonicalThreadId,
+    input.activationId,
+    "failed",
+    "The development environment could not be restored or started.",
+  );
 }
 
 async function requiredTriggeredPromptStore() {

@@ -17,6 +17,10 @@ import * as Socket from "effect/unstable/socket/Socket";
 
 import * as SessionStore from "./SessionStore.ts";
 import { decodeCompadreUserSubject, isAllowedCompadreSession } from "./CompadreAuth.ts";
+import {
+  previewActivationHtml,
+  type PreviewActivationState,
+} from "./CompadrePreviewActivationPage.ts";
 
 const TARGET_CACHE_MS = 30_000;
 const MAX_BUFFERED_REQUEST_BYTES = 25 * 1024 * 1024;
@@ -32,6 +36,13 @@ interface CachedTarget {
   url: string;
   expiresAt: number;
 }
+
+type PreviewResolution =
+  | { readonly state: "ready"; readonly url: string }
+  | {
+      readonly state: PreviewActivationState;
+      readonly error?: string;
+    };
 
 const targetCache = new Map<string, CachedTarget>();
 
@@ -150,29 +161,51 @@ export function rewritePreviewResponse(
   });
 }
 
-function fetchPreviewTarget(
+function fetchPreviewResolution(
   config: PreviewGatewayConfig,
   canonicalThreadId: string,
   httpClient: HttpClient.HttpClient,
   now: number,
+  useCache = true,
 ) {
-  const cached = targetCache.get(canonicalThreadId);
-  if (cached && cached.expiresAt > now) return Effect.succeed(cached.url);
-  const endpoint = new URL(
-    `/internal/previews/${encodeURIComponent(canonicalThreadId)}/target`,
-    config.controllerUrl,
-  );
-  const request = HttpClientRequest.get(endpoint).pipe(
-    HttpClientRequest.bearerToken(config.serviceToken),
-  );
   return Effect.gen(function* () {
+    const cached = targetCache.get(canonicalThreadId);
+    if (useCache && cached && cached.expiresAt > now) {
+      return { state: "ready", url: cached.url } satisfies PreviewResolution;
+    }
+    const endpoint = new URL(
+      `/internal/previews/${encodeURIComponent(canonicalThreadId)}/target`,
+      config.controllerUrl,
+    );
+    const request = HttpClientRequest.get(endpoint).pipe(
+      HttpClientRequest.bearerToken(config.serviceToken),
+    );
     const response = yield* httpClient.execute(request);
+    const body = (yield* response.json) as {
+      ok?: unknown;
+      state?: unknown;
+      targetUrl?: unknown;
+      error?: unknown;
+    };
+    if (response.status === 202 || response.status === 410) {
+      const state = String(body.state);
+      if (
+        !["idle", "requested", "restoring", "starting", "failed", "unavailable"].includes(state)
+      ) {
+        return yield* new PreviewGatewayError({
+          message: "Preview activation state was invalid",
+        });
+      }
+      return {
+        state: state as PreviewActivationState,
+        ...(typeof body.error === "string" ? { error: body.error } : {}),
+      } satisfies PreviewResolution;
+    }
     if (response.status !== 200) {
       return yield* new PreviewGatewayError({
         message: `Preview target resolution failed (${response.status})`,
       });
     }
-    const body = (yield* response.json) as { ok?: unknown; targetUrl?: unknown };
     if (body.ok !== true || typeof body.targetUrl !== "string") {
       return yield* new PreviewGatewayError({ message: "Preview target response was invalid" });
     }
@@ -187,7 +220,30 @@ function fetchPreviewTarget(
       url: target.origin,
       expiresAt: now + TARGET_CACHE_MS,
     });
-    return target.origin;
+    return { state: "ready", url: target.origin } satisfies PreviewResolution;
+  });
+}
+
+function requestPreviewActivation(
+  config: PreviewGatewayConfig,
+  canonicalThreadId: string,
+  httpClient: HttpClient.HttpClient,
+) {
+  targetCache.delete(canonicalThreadId);
+  const endpoint = new URL(
+    `/internal/previews/${encodeURIComponent(canonicalThreadId)}/activate`,
+    config.controllerUrl,
+  );
+  const request = HttpClientRequest.post(endpoint).pipe(
+    HttpClientRequest.bearerToken(config.serviceToken),
+  );
+  return Effect.gen(function* () {
+    const response = yield* httpClient.execute(request);
+    if (response.status !== 200 && response.status !== 202) {
+      return yield* new PreviewGatewayError({
+        message: `Preview activation failed (${response.status})`,
+      });
+    }
   });
 }
 
@@ -283,9 +339,10 @@ function proxyWebSocketRequest(input: {
         .map((value) => value.trim())
         .filter(Boolean);
       const downstream = yield* input.request.upgrade;
-      const upstream = yield* Socket.makeWebSocket(targetUrl.toString(), {
-        ...(protocols && protocols.length > 0 ? { protocols } : {}),
-      }).pipe(Effect.provide(Socket.layerWebSocketConstructorGlobal));
+      const upstream = yield* Socket.makeWebSocket(
+        targetUrl.toString(),
+        protocols && protocols.length > 0 ? { protocols } : {},
+      ).pipe(Effect.provide(Socket.layerWebSocketConstructorGlobal));
       const writeDownstream = yield* downstream.writer;
       const writeUpstream = yield* upstream.writer;
       yield* Effect.raceFirst(
@@ -338,11 +395,37 @@ export const compadrePreviewGatewayLayer = Layer.unwrap(
             }
 
             const startedAt = yield* Clock.currentTimeMillis;
-            const targetOrigin = yield* fetchPreviewTarget(
+            if (previewUrl.pathname === "/.compadre/preview/activate") {
+              if (
+                request.method !== "POST" ||
+                request.headers["x-compadre-preview-action"] !== "start"
+              ) {
+                return HttpServerResponse.text("Method not allowed.", { status: 405 });
+              }
+              const activated = yield* requestPreviewActivation(
+                config,
+                canonicalThreadId,
+                httpClient,
+              ).pipe(
+                Effect.match({
+                  onFailure: () =>
+                    HttpServerResponse.jsonUnsafe({ ok: false, state: "failed" }, { status: 503 }),
+                  onSuccess: () =>
+                    HttpServerResponse.jsonUnsafe(
+                      { ok: true, state: "requested" },
+                      { status: 202 },
+                    ),
+                }),
+              );
+              return activated;
+            }
+
+            const resolution: PreviewResolution = yield* fetchPreviewResolution(
               config,
               canonicalThreadId,
               httpClient,
               startedAt,
+              previewUrl.pathname !== "/.compadre/preview/status",
             ).pipe(
               Effect.catch((cause) =>
                 Effect.logWarning("Compadre preview target unavailable", {
@@ -350,15 +433,41 @@ export const compadrePreviewGatewayLayer = Layer.unwrap(
                   actorId: user.id,
                   cause,
                 }).pipe(
-                  Effect.as(
-                    HttpServerResponse.text("This development environment is unavailable.", {
-                      status: 503,
-                    }),
-                  ),
+                  Effect.as<PreviewResolution>({
+                    state: "unavailable",
+                    error: "This development environment is unavailable.",
+                  }),
                 ),
               ),
             );
-            if (typeof targetOrigin !== "string") return targetOrigin;
+            if (previewUrl.pathname === "/.compadre/preview/status") {
+              return HttpServerResponse.jsonUnsafe(
+                resolution.state === "ready"
+                  ? { ok: true, state: "ready" }
+                  : { ok: false, ...resolution },
+                { status: resolution.state === "unavailable" ? 410 : 200 },
+              );
+            }
+            if (resolution.state !== "ready") {
+              if (request.method !== "GET" && request.method !== "HEAD") {
+                return HttpServerResponse.text("The development environment is starting.", {
+                  status: 503,
+                });
+              }
+              return HttpServerResponse.text(
+                previewActivationHtml(resolution.state, resolution.error),
+                {
+                  status: resolution.state === "unavailable" ? 410 : 200,
+                  contentType: "text/html; charset=utf-8",
+                  headers: {
+                    "cache-control": "no-store",
+                    "content-security-policy":
+                      "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'self'",
+                  },
+                },
+              );
+            }
+            const targetOrigin = resolution.url;
 
             yield* Effect.logInfo("Compadre preview request", {
               canonicalThreadId,
@@ -392,16 +501,29 @@ export const compadrePreviewGatewayLayer = Layer.unwrap(
                   httpClient,
                 }).pipe(
                   Effect.catchCause((cause) =>
-                    Effect.logWarning("Compadre preview HTTP proxy failed", {
-                      canonicalThreadId,
-                      actorId: user.id,
-                      cause,
-                    }).pipe(
+                    Effect.sync(() => targetCache.delete(canonicalThreadId)).pipe(
+                      Effect.andThen(
+                        Effect.logWarning("Compadre preview HTTP proxy failed", {
+                          canonicalThreadId,
+                          actorId: user.id,
+                          cause,
+                        }),
+                      ),
                       Effect.as(
-                        HttpServerResponse.text(
-                          "The development environment could not be reached.",
-                          { status: 502 },
-                        ),
+                        request.method === "GET" || request.method === "HEAD"
+                          ? HttpServerResponse.text(previewActivationHtml("idle"), {
+                              status: 200,
+                              contentType: "text/html; charset=utf-8",
+                              headers: {
+                                "cache-control": "no-store",
+                                "content-security-policy":
+                                  "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'self'",
+                              },
+                            })
+                          : HttpServerResponse.text(
+                              "The development environment could not be reached.",
+                              { status: 502 },
+                            ),
                       ),
                     ),
                   ),

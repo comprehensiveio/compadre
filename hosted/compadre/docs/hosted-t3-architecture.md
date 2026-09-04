@@ -44,14 +44,14 @@ against Render's bootstrap workspace is not an authoritative substitute.
 
 ## Durable ownership
 
-| Data | Owner |
-| --- | --- |
-| Conversation events, messages, tools, turns, approvals | Central T3 SQLite |
-| Canonical users and workspace-scoped Slack identities | Compadre Postgres |
-| External-thread binding, worker identity, lease and recovery metadata | Compadre Postgres |
-| Checkout, live terminal, provider process and native transcript | Modal worker |
-| Attachments and large artifacts | Central object storage |
-| Logs, traces, model usage and cost telemetry | Datadog |
+| Data                                                                  | Owner                  |
+| --------------------------------------------------------------------- | ---------------------- |
+| Conversation events, messages, tools, turns, approvals                | Central T3 SQLite      |
+| Canonical users and workspace-scoped Slack identities                 | Compadre Postgres      |
+| External-thread binding, worker identity, lease and recovery metadata | Compadre Postgres      |
+| Checkout, live terminal, provider process and native transcript       | Modal worker           |
+| Attachments and large artifacts                                       | Central object storage |
+| Logs, traces, model usage and cost telemetry                          | Datadog                |
 
 ## Worker lifecycle
 
@@ -95,6 +95,16 @@ The drive activity's watch ceiling is capped five minutes before Modal's
 configured hard sandbox timeout. After the checkpoint TTL expires (seven
 days by default), the central transcript remains readable, but the worker
 filesystem can no longer be restored from that image.
+
+An authenticated visit to the stable per-thread preview hostname is also an
+explicit write path. If port 3000 is stopped or the bound sandbox must be
+restored, central T3 serves a startup interstitial and requests a deterministic
+Temporal preview-activation workflow. Its activity uses the same per-thread
+environment lock as agent turns, restores the existing checkpoint when needed,
+starts the idempotent development stack, and records a narrow status projection
+in Postgres metadata for polling. Ordinary conversation and operations-page
+reads remain read-only and never wake Modal. A binding without a restorable
+checkpoint is reported as unavailable rather than replaced with a blank worker.
 
 Modal sandboxes receive credential-free cost tags for environment, purpose,
 provider, dev-environment status, worker generation, and a hashed thread key.

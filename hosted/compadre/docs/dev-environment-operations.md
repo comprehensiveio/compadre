@@ -23,11 +23,20 @@ each hosted T3 thread. The safety and ownership rules in
   requires a Comprehensive Slack-backed browser session, resolves the existing
   sandbox through a service-authenticated controller endpoint, and proxies HTTP
   and WebSocket traffic without exposing the raw Modal URL.
-- Preview resolution never provisions or restores a sandbox. A suspended or
-  expired thread returns an unavailable response. Sending a new message
-  restores a new sandbox from the thread's snapshot; the dev server remains
-  stopped until the agent runs `scripts/compadre-dev-up.sh up` again, while its
-  checkout and local database files resume from the snapshot.
+- Preview target lookup remains read-only. When the target is stopped or its
+  sandbox is suspended, the authenticated preview host serves a Compadre-owned
+  startup page. That page explicitly requests one deterministic Temporal
+  activation workflow, polls its durable status, and reloads the original URL
+  when ready. The activity shares the thread's environment lock with agent
+  turns, restores the latest worker checkpoint when necessary, and runs the
+  idempotent `scripts/compadre-dev-up.sh up` command. Concurrent tabs join the
+  same activation instead of allocating competing sandbox generations.
+- Wake-on-open uses the default Temporal orchestrator. The `in-process` native
+  run rollback mode preserves the previous read-only preview behavior and does
+  not start background preview activations.
+- A dead worker without a restorable checkpoint remains unavailable. Preview
+  activation never silently provisions a blank replacement, because that would
+  present a different checkout and database under the old review URL.
 - The outer T3 session controls access to the preview. Comp's independent
   `connect.sid` cookie stays scoped to the thread host, so developers can still
   use Comp's dev-login routes to impersonate any sandbox-local user inside
@@ -122,6 +131,10 @@ the deployed Comprehensive canary:
 6. Confirm the review URL remains reachable after the agent turn completes.
 7. Run Compadre tests, typecheck, build, and `git diff --check` before a canary
    deploy.
+8. For wake-on-open changes, stop the dev stack in a live worker and verify the
+   startup page progresses through activation to the originally requested path.
+   Repeat after restoring from a worker checkpoint and confirm only one sandbox
+   generation is created when two browser tabs activate concurrently.
 
 The first deployed end-to-end validation on 2026-08-30 completed successfully:
 

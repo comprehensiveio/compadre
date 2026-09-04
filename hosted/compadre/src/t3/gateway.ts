@@ -106,6 +106,18 @@ export interface T3EnvironmentConnectionManager {
   discard?(connection: T3EnvironmentConnection): Promise<void>;
 }
 
+export type T3PreviewInspection =
+  | {
+      state: "ready";
+      binding: T3ThreadBinding;
+      url: string;
+    }
+  | {
+      state: "idle";
+      binding: T3ThreadBinding;
+      reason: "worker_unavailable" | "server_stopped";
+    };
+
 export class T3EnvironmentUnavailableError extends Error {
   readonly canonicalThreadId?: string;
   readonly reason?: string;
@@ -284,7 +296,9 @@ export class T3Gateway {
     route: CodexAuthRoute;
     phase: CodexAuthHandoffPhase;
     failureLaneState:
-      "retained_for_safety" | "unaffected" | "released_worker_stopped";
+      | "retained_for_safety"
+      | "unaffected"
+      | "released_worker_stopped";
     operation(): Promise<T>;
   }): Promise<T> {
     const startedAt = Date.now();
@@ -1043,25 +1057,68 @@ export class T3Gateway {
     };
   }
 
-  /**
-   * Resolves the existing thread sandbox's development server without ever
-   * provisioning a replacement environment. The returned Modal URL is an
-   * internal routing detail and must only be exposed to the authenticated
-   * preview gateway.
-   */
-  async previewTarget(input: {
+  /** Read-only preview readiness check. It never restores a worker or starts processes. */
+  async inspectPreview(input: {
     canonicalThreadId: string;
-  }): Promise<T3PreviewTarget | null> {
+  }): Promise<T3PreviewInspection | null> {
     const binding = await this.bindings.get(input.canonicalThreadId);
     if (!binding) return null;
-    const environment = await this.environments.reconnect(binding);
+    let environment: T3EnvironmentConnection;
+    try {
+      environment = await this.environments.reconnect(binding);
+    } catch (error) {
+      if (!(error instanceof T3EnvironmentUnavailableError)) throw error;
+      return { state: "idle", binding, reason: "worker_unavailable" };
+    }
     if (!environment.sandbox) {
-      throw new Error(
-        `T3 Modal sandbox ${binding.sandboxId} does not expose a development server`,
-      );
+      return { state: "idle", binding, reason: "server_stopped" };
+    }
+    const ready = await environment.sandbox.process.exec(
+      "curl --fail --silent --show-error --max-time 2 http://127.0.0.1:3000/ >/dev/null",
+    );
+    if (ready.exitCode !== 0) {
+      return { state: "idle", binding, reason: "server_stopped" };
     }
     const channel = await environment.sandbox.ports.connect(3000);
-    return { binding, url: channel.url };
+    return { state: "ready", binding, url: channel.url };
+  }
+
+  /** Restore/reconnect the bound worker and idempotently start its Comp dev stack. */
+  async activatePreview(input: {
+    canonicalThreadId: string;
+    onPhase?(phase: "restoring" | "starting"): void | Promise<void>;
+  }): Promise<T3PreviewTarget | null> {
+    return this.locks.withLock(
+      this.lockKey(input.canonicalThreadId),
+      async (lockSignal) => {
+        if (lockSignal.aborted) throw lockSignal.reason;
+        const binding = await this.bindings.get(input.canonicalThreadId);
+        if (!binding) return null;
+        await input.onPhase?.("restoring");
+        const connected = await this.connectForTurn(binding);
+        const sandbox = connected.environment.sandbox;
+        if (!sandbox) {
+          throw new Error(
+            `T3 Modal sandbox ${connected.binding.sandboxId} does not expose a development server`,
+          );
+        }
+        await input.onPhase?.("starting");
+        const started = await sandbox.process.exec(
+          "scripts/compadre-dev-up.sh up",
+          { cwd: sandbox.workspaceRoot ?? "/workspace" },
+        );
+        if (started.exitCode !== 0) {
+          const detail = (started.stderr || started.stdout)
+            .trim()
+            .slice(-2_000);
+          throw new Error(
+            `Comp development server failed to start${detail ? `: ${detail}` : ""}`,
+          );
+        }
+        const channel = await sandbox.ports.connect(3000);
+        return { binding: connected.binding, url: channel.url };
+      },
+    );
   }
 
   async cancel(input: {

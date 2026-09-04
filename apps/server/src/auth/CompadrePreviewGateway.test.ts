@@ -6,6 +6,7 @@ import {
   rewritePreviewResponse,
   withoutCookie,
 } from "./CompadrePreviewGateway.ts";
+import { previewActivationHtml } from "./CompadrePreviewActivationPage.ts";
 
 const threadId = "e160a306-b842-57ba-a8f2-04de157e5366";
 const suffix = "dev.compadre.comprehensive.io";
@@ -72,5 +73,17 @@ describe("CompadrePreviewGateway", () => {
     );
     expect(response.headers.get("set-cookie")).toContain("connect.sid=value");
     expect(response.headers.get("set-cookie")).not.toContain("Domain=");
+  });
+
+  it("renders a self-starting interstitial without reflecting unsafe error markup", () => {
+    const starting = previewActivationHtml("idle");
+    expect(starting).toContain("Waking up your environment");
+    expect(starting).toContain("/.compadre/preview/activate");
+    expect(starting).toContain("/.compadre/preview/status");
+
+    const failed = previewActivationHtml("failed", '<script>alert("x")</script>');
+    expect(failed).toContain("Preview could not start");
+    expect(failed).toContain("&lt;script&gt;");
+    expect(failed).not.toContain('<script>alert("x")</script>');
   });
 });
