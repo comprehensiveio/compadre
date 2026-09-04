@@ -57,6 +57,8 @@ services:
         value: "32768"
       - key: COMPADRE_PREVIEW_HOST_SUFFIX
         value: dev.compadre.comprehensive.io
+      - key: COMPADRE_DEV_ENVIRONMENT_ENABLED
+        value: "true"
       - key: TEMPORAL_ADDRESS
         value: compadre-temporal:7233
       - key: TEMPORAL_NAMESPACE

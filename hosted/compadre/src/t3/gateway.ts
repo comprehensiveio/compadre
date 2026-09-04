@@ -29,6 +29,10 @@ import {
   readWorkerCodexAuthJson,
   readWorkerCodexAuthRoute,
 } from "./modal-worker.js";
+import {
+  authenticatedDevPreviewUrl,
+  COMP_DEV_SERVER_PORT,
+} from "./dev-environment.js";
 
 export interface T3CommandClient {
   readonly baseUrl: string;
@@ -1103,6 +1107,17 @@ export class T3Gateway {
           );
         }
         await input.onPhase?.("starting");
+        const channel = await sandbox.ports.connect(COMP_DEV_SERVER_PORT);
+        const previewUrl =
+          authenticatedDevPreviewUrl({
+            ...process.env,
+            COMPADRE_CANONICAL_THREAD_ID: connected.binding.canonicalThreadId,
+          }) ?? channel.url.replace(/\/$/, "");
+        await sandbox.env.set({
+          COMPADRE_DEV_PREVIEW_URL: previewUrl,
+          COMPADRE_DEV_PORT: String(COMP_DEV_SERVER_PORT),
+          AGENT_BROWSER_EXECUTABLE_PATH: "/usr/bin/chromium",
+        });
         const started = await sandbox.process.exec(
           "scripts/compadre-dev-up.sh up",
           { cwd: sandbox.workspaceRoot ?? "/workspace" },
@@ -1115,7 +1130,6 @@ export class T3Gateway {
             `Comp development server failed to start${detail ? `: ${detail}` : ""}`,
           );
         }
-        const channel = await sandbox.ports.connect(3000);
         return { binding: connected.binding, url: channel.url };
       },
     );
