@@ -25,6 +25,10 @@ import {
   type ServerSettings,
   type ServerProviderState,
 } from "@t3tools/contracts";
+import {
+  buildProviderOptionSelectionsFromDescriptors,
+  createModelSelection,
+} from "@t3tools/shared/model";
 
 import { formatProviderDriverKindLabel } from "./providerModels";
 
@@ -372,20 +376,35 @@ export function resolveSelectableProviderInstance(
 }
 
 /**
- * Resolve the model selection persisted for a project or new thread. A valid
- * stored selection is preserved byte-for-byte. Falling back to another
- * instance also resets the model to that instance's own default, avoiding
+ * Resolve the model selection persisted for a project or new thread. New
+ * projects prefer the built-in Codex instance when it can run; a valid stored
+ * selection is preserved byte-for-byte. Falling back to another instance also
+ * resets the model and options to that instance's own defaults, avoiding
  * cross-provider instance/model pairs.
  */
 export function resolveDefaultProviderModelSelection(
   providers: ReadonlyArray<ServerProvider>,
   selection: ModelSelection | null | undefined,
 ): ModelSelection | null {
-  const instanceId = resolveSelectableProviderInstance(providers, selection?.instanceId);
+  const entries = deriveProviderInstanceEntries(providers);
+  const defaultCodex = entries.find(
+    (entry) =>
+      entry.instanceId === ProviderInstanceId.make("codex") &&
+      isSelectableProviderInstanceEntry(entry) &&
+      entry.status !== "error",
+  );
+  const instanceId = resolveSelectableProviderInstance(
+    providers,
+    selection?.instanceId ?? defaultCodex?.instanceId,
+  );
   if (instanceId === undefined) return null;
   if (selection?.instanceId === instanceId) return selection;
   const model = getDefaultProviderInstanceModel(providers, instanceId);
-  return model ? { instanceId, model } : null;
+  if (!model) return null;
+  const entry = getProviderInstanceEntry(providers, instanceId);
+  const capabilities = entry?.models.find((candidate) => candidate.slug === model)?.capabilities;
+  const options = buildProviderOptionSelectionsFromDescriptors(capabilities?.optionDescriptors);
+  return createModelSelection(instanceId, model, options);
 }
 
 /**
