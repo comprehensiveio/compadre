@@ -9,7 +9,7 @@ describe("appQueries", () => {
     expect(normalizeComposerPathSearchQuery(null)).toBe("");
   });
 
-  it("routes the first turn range through the full-thread diff query", () => {
+  it("routes cumulative ranges through the full-thread diff query", () => {
     const environmentId = EnvironmentId.make("environment-a");
     const threadId = ThreadId.make("thread-a");
 
@@ -34,29 +34,35 @@ describe("appQueries", () => {
     });
   });
 
-  it("routes later ranges through the incremental turn diff query", () => {
-    const environmentId = EnvironmentId.make("environment-a");
-    const threadId = ThreadId.make("thread-a");
+  it.each([
+    [0, 1],
+    [3, 4],
+  ])(
+    "routes the individual range %i–%i through the turn diff query",
+    (fromTurnCount, toTurnCount) => {
+      const environmentId = EnvironmentId.make("environment-a");
+      const threadId = ThreadId.make("thread-a");
 
-    expect(
-      buildCheckpointDiffTargets({
-        environmentId,
-        threadId,
-        fromTurnCount: 3,
-        toTurnCount: 4,
-        ignoreWhitespace: false,
-      }),
-    ).toEqual({
-      fullThread: null,
-      turn: {
-        environmentId,
-        input: {
+      expect(
+        buildCheckpointDiffTargets({
+          environmentId,
           threadId,
-          fromTurnCount: 3,
-          toTurnCount: 4,
+          fromTurnCount,
+          toTurnCount,
           ignoreWhitespace: false,
+        }),
+      ).toEqual({
+        fullThread: null,
+        turn: {
+          environmentId,
+          input: {
+            threadId,
+            fromTurnCount,
+            toTurnCount,
+            ignoreWhitespace: false,
+          },
         },
-      },
-    });
-  });
+      });
+    },
+  );
 });
