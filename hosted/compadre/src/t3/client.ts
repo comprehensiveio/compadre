@@ -1043,8 +1043,17 @@ const reviewCheckpointSchema = z.object({
 
 /** Locate the checkpoint belonging to this dispatch, including a steered worker turn. */
 export function reviewCheckpointForMessage(snapshot: T3ThreadSnapshot, messageId?: string) {
-  const turnId = messageId ? snapshot.thread.messages.find((message) => message.id === messageId)?.turnId
-    : snapshot.thread.latestTurn?.turnId;
+  const message = snapshot.thread.messages.find((message) => message.id === messageId && message.role === "user");
+  const latest = snapshot.thread.latestTurn;
+  let turnId = messageId ? message?.turnId : latest?.turnId;
+  // Worker releases can leave user-message turnId null. Their server-stamped
+  // timestamp still identifies the completed turn window, including steers.
+  if (message && turnId == null && latest?.completedAt) {
+    const created = Date.parse(message.createdAt);
+    if (created >= Date.parse(latest.requestedAt) && created <= Date.parse(latest.completedAt)) {
+      turnId = latest.turnId;
+    }
+  }
   const checkpoints = z.array(reviewCheckpointSchema).safeParse(snapshot.thread.checkpoints);
   return checkpoints.success ? checkpoints.data.find((checkpoint) => checkpoint.turnId === turnId) : undefined;
 }
