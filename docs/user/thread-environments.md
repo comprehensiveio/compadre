@@ -1,12 +1,17 @@
 # Thread environments
 
-Open **Thread environments** from the main sidebar, or search for it in the
+Open **Thread environments** from the sidebar footer beside Usage and Sign out, or search for it in the
 command palette. The hosted Compadre page remains at `/operations/threads`.
 
 The list defaults to latest thread activity first. Container housekeeping and
 readiness checks do not change this order. Select **Newest created** to browse
 by thread creation instead. Filters and search work together; the compact count
 shows matching threads without a separate summary dashboard.
+
+Status labels use blue for active agent work, green for ready resources, amber
+for waiting or transitions, red for failures, and gray for stopped or unknown
+states. Text labels remain visible, so color is never the only indication.
+Stale readiness observations are not shown as green.
 
 Each row separates agent activity (starting, thinking, generating, using a tool,
 waiting for approval/input, idle, or a terminal outcome) from the container,
