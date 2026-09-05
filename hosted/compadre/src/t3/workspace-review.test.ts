@@ -18,6 +18,7 @@ import {
   WorkspaceReviewStore,
   readWorkspaceReview,
   readWorkspaceReviewFile,
+  reviewDigest,
 } from "./workspace-review.js";
 
 test("captures immutable checkpoints and serves context after the entire checkout disappears", async (t) => {
@@ -134,7 +135,23 @@ test("captures immutable checkpoints and serves context after the entire checkou
       metadata,
     );
     const store = new WorkspaceReviewStore(artifacts, metadata);
+    const outputBytes = Buffer.from("new\n");
+    const outputId = reviewDigest(outputBytes);
+    await artifacts.publish({
+      runId: "run-1",
+      artifactId: outputId,
+      bytes: outputBytes,
+      path: "new file.txt",
+      name: "new file.txt",
+      title: "User output",
+      mimetype: "text/custom-output",
+    });
     const saved = await store.publish("run-1", "thread-1", capture);
+    assert.equal(
+      (await artifacts.read("run-1", outputId))?.metadata.mimetype,
+      "text/custom-output",
+      "saved context must not overwrite metadata for an identical output artifact",
+    );
     const originalPuts = puts;
     assert.deepEqual(await store.publish("run-1", "thread-1", capture), saved);
     assert.equal(puts, originalPuts, "delivery retry reuses the publication");

@@ -18,7 +18,8 @@ in a new agent turn.
 `workspace-review-capture.ts` runs a bounded Python exporter on the existing
 worker. The controller uploads deduplicated SHA-256 text blobs before a version
 1 JSON manifest through `T3ArtifactStore`, using the existing private encrypted
-artifact bucket. Source text is in object storage, not the conversation database.
+artifact bucket. A `workspace-review:` storage scope prevents identical source
+text from overwriting user-facing output-artifact metadata. Source text is in object storage, not the conversation database.
 A small publication record in controller metadata namespace
 `compadre.t3.workspace-reviews.v1` associates the run and canonical thread with
 its immutable manifest. Delivery retries reuse that publication. Concurrent

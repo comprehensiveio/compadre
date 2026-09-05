@@ -49,6 +49,10 @@ export function parseReviewReference(reference: string) {
   return { runId: match[1]!, artifactId: match[2]! };
 }
 
+// Keep source-context metadata separate from user-facing output artifacts even
+// when both contain identical bytes during the same run.
+const reviewStorageRunId = (runId: string) => `workspace-review:${runId}`;
+
 /** Upload contents before the manifest. The event is published only after every object is durable. */
 export async function publishWorkspaceReview(
   store: T3ArtifactStore,
@@ -65,7 +69,7 @@ export async function publishWorkspaceReview(
         if (reviewDigest(bytes) !== artifactId)
           throw new Error("Review file integrity mismatch");
         await store.publish({
-          runId,
+          runId: reviewStorageRunId(runId),
           artifactId,
           bytes,
           path: `review/blobs/${artifactId}`,
@@ -79,7 +83,7 @@ export async function publishWorkspaceReview(
   const bytes = Buffer.from(JSON.stringify(manifest));
   const artifactId = reviewDigest(bytes);
   await store.publish({
-    runId,
+    runId: reviewStorageRunId(runId),
     artifactId,
     bytes,
     path: "review/manifest.json",
@@ -107,7 +111,7 @@ export async function readWorkspaceReview(
   reference: string,
 ) {
   const { runId, artifactId } = parseReviewReference(reference);
-  const artifact = await store.read(runId, artifactId);
+  const artifact = await store.read(reviewStorageRunId(runId), artifactId);
   if (!artifact || artifact.metadata.mimetype !== REVIEW_MIMETYPE)
     throw new Error("Saved review is unavailable");
   if (reviewDigest(artifact.bytes) !== artifactId)
@@ -143,7 +147,7 @@ export async function readWorkspaceReviewFile(
   const { runId } = parseReviewReference(reference);
   const read = async (id: string | null) => {
     if (id === null) return "";
-    const object = await store.read(runId, id);
+    const object = await store.read(reviewStorageRunId(runId), id);
     if (!object || reviewDigest(object.bytes) !== id)
       throw new Error("Saved file contents are unavailable");
     return Buffer.from(object.bytes).toString("utf8");
