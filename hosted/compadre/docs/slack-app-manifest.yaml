@@ -1,8 +1,12 @@
 display_information:
   name: Compadre
-  description: Comprehensive's internal coding agent
-  background_color: "#111111"
+  description: comprehensive slack bot
+  background_color: "#1b701b"
 features:
+  app_home:
+    home_tab_enabled: true
+    messages_tab_enabled: false
+    messages_tab_read_only_enabled: false
   bot_user:
     display_name: Compadre
     always_online: true
@@ -18,31 +22,58 @@ oauth_config:
     bot:
       - app_mentions:read
       - assistant:write
+      - canvases:read
+      - canvases:write
       - channels:history
+      - channels:join
       - channels:read
+      - channels:write.topic
       - chat:write
+      - chat:write.customize
+      - chat:write.public
+      - emoji:read
       - files:read
       - files:write
       - groups:history
       - groups:read
+      - groups:write
       - im:history
       - im:read
+      - im:write
+      - incoming-webhook
+      - links.embed:write
+      - links:read
       - mpim:history
       - mpim:read
+      - mpim:write
       - reactions:read
       - reactions:write
+      - search:read.public
+      - search:read.users
+      - usergroups:read
+      - users.profile:read
       - users:read
-    user:
-      - openid
-      - profile
-      - email
+      - users:read.email
+      - search:read.files
+  pkce_enabled: false
 settings:
   event_subscriptions:
     request_url: https://compadre-api.comprehensive.io/slack/events
     bot_events:
       - agent_session_stopped
       - app_mention
+      - app_home_opened
+      - emoji_changed
+      - link_shared
+      - message.channels
+      - message.groups
       - message.im
+      - message.mpim
+      - reaction_added
+  interactivity:
+    is_enabled: true
+    request_url: https://app.comprehensive.io/api/v1/slack/interactions
   org_deploy_enabled: false
   socket_mode_enabled: false
   token_rotation_enabled: false
+  is_mcp_enabled: false
