@@ -109,3 +109,24 @@ it.effect("reports missing old snapshots and storage outages without a worker fa
     assert.equal(makeCompadreReview(projection, {}), undefined);
   }),
 );
+
+it.effect("distinguishes an individual first saved slot from the worker's full history", () =>
+  Effect.gen(function* () {
+    const review = makeCompadreReview(
+      projection,
+      { COMPADRE_NATIVE_T3_URL: "https://controller.example" },
+      async () =>
+        Response.json({
+          ...manifest,
+          checkpointTurnCount: 2,
+          comparisons: manifest.comparisons.map((comparison) => ({
+            ...comparison,
+            diff: comparison.kind === "turn" ? "+line 20 updated" : "+all 40 lines",
+          })),
+        }),
+    )!;
+    const input = { threadId, fromTurnCount: 0, toTurnCount: 1, ignoreWhitespace: false };
+    assert.equal((yield* review.getTurnDiff(input)).diff, "+line 20 updated");
+    assert.equal((yield* review.getTurnDiff(input, true)).diff, "+all 40 lines");
+  }),
+);
