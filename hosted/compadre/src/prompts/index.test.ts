@@ -76,5 +76,13 @@ test("points harnesses at projected provider-neutral skills", () => {
     prompt,
     /\/opt\/compadre-skills\/integration-debugging\/SKILL\.md/,
   );
+  assert.match(
+    prompt,
+    /\/opt\/compadre-skills\/dev-environment\/SKILL\.md/,
+  );
+  assert.match(prompt, /full Comp dev-login URL/);
+  assert.match(prompt, /best demonstrate the functionality discussed in the thread/);
+  assert.match(prompt, /not a bare preview URL or an `auto_impersonate` link/);
+  assert.match(prompt, /company ID 9/);
   assert.doesNotMatch(prompt, /\/opt\/render\/project/);
 });
