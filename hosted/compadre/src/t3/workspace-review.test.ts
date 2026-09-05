@@ -1,18 +1,23 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, writeFileSync, rmSync, renameSync } from "node:fs";
+import {
+  mkdtempSync,
+  writeFileSync,
+  readFileSync,
+  rmSync,
+  renameSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { createT3DirectoryRoutes } from "../routes/t3-directory.js";
 import { memoryPersistence } from "@tanstack/ai-persistence";
 import { T3ArtifactStore } from "./artifact-store.js";
-import { WORKSPACE_REVIEW_CAPTURE_SCRIPT } from "./workspace-review-capture.js";
+import { captureWorkspaceReview } from "./workspace-review-capture.js";
 import {
   WorkspaceReviewStore,
   readWorkspaceReview,
   readWorkspaceReviewFile,
-  workspaceReviewSchema,
 } from "./workspace-review.js";
 
 test("captures immutable checkpoints and serves context after the entire checkout disappears", async (t) => {
@@ -64,25 +69,34 @@ test("captures immutable checkpoints and serves context after the entire checkou
     git("update-ref", "refs/review/1", checkpoint);
     // The mutable working tree is intentionally different from the checkpoint.
     writeFileSync(join(cwd, "context.ts"), "later unsaved work\n");
-    const capture = workspaceReviewSchema.parse(
-      JSON.parse(
-        execFileSync(
-          "python3",
-          [
-            "-c",
-            WORKSPACE_REVIEW_CAPTURE_SCRIPT,
-            JSON.stringify({
-              cwd,
-              fromRef: "refs/review/0",
-              initialRef: "refs/review/0",
-              toRef: "refs/review/1",
-              turnId: "turn-1",
-              turnCount: 1,
-            }),
-          ],
-          { encoding: "utf8", maxBuffer: 30 * 1024 * 1024 },
-        ),
-      ),
+    const capture = await captureWorkspaceReview(
+      {
+        process: {
+          async exec(command) {
+            const stdout = execFileSync("/bin/sh", ["-c", command], {
+              encoding: "utf8",
+              maxBuffer: 30 * 1024 * 1024,
+            });
+            return { stdout, stderr: "", exitCode: 0 };
+          },
+        },
+        fs: {
+          async readBytes(path) {
+            return readFileSync(path);
+          },
+          async remove(path) {
+            rmSync(path);
+          },
+        },
+      },
+      {
+        cwd,
+        fromRef: "refs/review/0",
+        initialRef: "refs/review/0",
+        toRef: "refs/review/1",
+        turnId: "turn-1",
+        turnCount: 1,
+      },
     );
     const turn = capture.comparisons.find((c) => c.kind === "turn")!;
     assert.match(turn.diff, /count = 2/);

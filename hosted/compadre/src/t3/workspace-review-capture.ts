@@ -70,7 +70,10 @@ else: print(output)
 const quote = (value: string) => `'${value.replaceAll("'", `'\\''`)}'`;
 
 export async function captureWorkspaceReview(
-  sandbox: SandboxHandle,
+  sandbox: {
+    process: Pick<SandboxHandle["process"], "exec">;
+    fs: Pick<SandboxHandle["fs"], "readBytes" | "remove">;
+  },
   input: {
     cwd: string;
     fromRef: string;
