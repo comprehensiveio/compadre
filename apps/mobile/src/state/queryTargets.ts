@@ -22,7 +22,7 @@ export function buildCheckpointDiffTargets(target: CheckpointDiffTarget) {
     return { fullThread: null, turn: null } as const;
   }
 
-  if (target.fromTurnCount === 0) {
+  if (target.fromTurnCount === 0 && target.toTurnCount > 1) {
     return {
       fullThread: {
         environmentId: target.environmentId,
