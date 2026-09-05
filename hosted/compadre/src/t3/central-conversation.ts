@@ -1,6 +1,7 @@
 import crypto from "node:crypto";
 import { SpanStatusCode, trace } from "@opentelemetry/api";
 import type { AgentProfile } from "../tanstack/protocol.js";
+import { AGENT_STOPPED_NOTICE } from "../services/terminal-response.js";
 import {
   finalAssistantTextForDispatch,
   t3ModelSelectionForProfile,
@@ -65,6 +66,7 @@ export interface CentralT3ConversationPrepared {
   detailsUrl: string;
   modelSelection: T3ModelSelection;
   resumed: boolean;
+  steered?: boolean;
 }
 
 export interface CentralT3ConversationResult extends CentralT3ConversationPrepared {
@@ -229,6 +231,8 @@ export async function runCentralT3Conversation(input: {
   onSnapshot?(snapshot: T3ThreadSnapshot): void | Promise<void>;
   onTextDelta?(text: string): void | Promise<void>;
   onToolStart?(name: string): void | Promise<void>;
+  /** Slack keeps the original observer when this request steers its turn. */
+  returnAfterSteer?: boolean;
 }): Promise<CentralT3ConversationResult> {
   const environment = input.environment ?? process.env;
   const idFactory = input.idFactory ?? crypto.randomUUID;
@@ -274,6 +278,9 @@ export async function runCentralT3Conversation(input: {
     }),
     modelSelection,
     resumed: existing !== undefined,
+    ...(input.returnAfterSteer && existing?.latestTurn?.state === "running"
+      ? { steered: true }
+      : {}),
   };
   span.setAttributes({
     "t3.environment_id": prepared.environmentId,
@@ -332,6 +339,21 @@ export async function runCentralT3Conversation(input: {
     "t3.dispatch_sequence": dispatch.sequence,
     "t3.message_id": dispatch.messageId,
   });
+
+  if (prepared.steered) {
+    // The existing observer owns the shared status and final answer. The
+    // follow-up has already entered the active native T3 turn, so do not add
+    // a second terminal waiter or duplicate its Slack delivery.
+    return {
+      ...prepared,
+      output: "",
+      dispatch,
+      snapshot: {
+        snapshotSequence: orchestration.snapshotSequence,
+        thread: existing!,
+      },
+    };
+  }
 
   const deliveredToolStarts = new Set<string>();
   let sawSnapshot = false;
@@ -397,8 +419,10 @@ export async function runCentralT3Conversation(input: {
       snapshot.thread.session?.lastError || "The central T3 run failed.",
     );
   }
-  if (state === "interrupted")
-    throw new Error("The central T3 run was interrupted.");
+  if (state === "interrupted") {
+    await input.onTextDelta?.(AGENT_STOPPED_NOTICE);
+    return { ...prepared, output: AGENT_STOPPED_NOTICE, dispatch, snapshot };
+  }
   const incompleteReason = incompleteProviderStopReason(
     snapshot,
     snapshot.thread.latestTurn?.turnId,

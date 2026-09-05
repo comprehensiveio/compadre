@@ -56,14 +56,24 @@ record by a retried finalize step.
    turns, not managed per-run.
 5. Cancellation: `POST /hosted/t3/runs/:id/cancel` records durable cancel
    intent and cancels the workflow; the drive activity's cancellation signal
-   interrupts the worker turn and terminalizes the run as `aborted`.
+   interrupts the worker turn, drains the interrupted terminal snapshot, saves
+   the worker checkpoint, and terminalizes the run as `aborted`. The cancel
+   request waits for that workflow cleanup before reporting success, preserving
+   Stop/continue ordering.
    A Temporal activity cancellation is deliberately NOT sufficient on its
    own: it also fires for attempt timeouts, retry supersession, and worker
    drain, so the driver interrupts the billed worker turn only when the run
    record carries `cancelRequested`. Any other cancellation is a silent
    handoff — the attempt stops watching and the next attempt (possibly on a
    replacement instance) reattaches.
-6. Worker loss: when reattaches see consecutive `unavailable` errors and the
+6. Steering: `POST /hosted/t3/runs/:id/steer` sends an idempotent
+   `steerNativeT3Run` Workflow Update. Update handlers are serialized and
+   completion waits for them. Instructions received before dispatch are stored
+   in the durable run-control mailbox and folded into the initial prompt in
+   order; after dispatch, the control activity calls the worker T3 server's
+   native steering command. Delivery receipts prevent replayed updates from
+   applying the same instruction twice.
+7. Worker loss: when reattaches see consecutive `unavailable` errors and the
    binding has no restorable checkpoint (the sandbox hit its lifetime
    mid-turn, or crashed before its first checkpoint), the driver converges
    the run as failed within about a minute, parks the binding

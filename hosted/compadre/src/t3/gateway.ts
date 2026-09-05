@@ -35,6 +35,7 @@ import {
   authenticatedDevPreviewUrl,
   COMP_DEV_SERVER_PORT,
 } from "./dev-environment.js";
+import { appendSetupSteering } from "./run-control.js";
 
 export interface T3CommandClient {
   snapshot?(signal?: AbortSignal): Promise<T3OrchestrationSnapshot>;
@@ -51,6 +52,7 @@ export interface T3CommandClient {
   }): Promise<T3TurnDispatch>;
   startTurn(input: {
     threadId: string;
+    messageId?: string;
     text: string;
     displayText?: string;
     modelSelection: T3ModelSelection;
@@ -60,6 +62,7 @@ export interface T3CommandClient {
   interruptTurn(input: {
     threadId: string;
     turnId?: string;
+    commandId?: string;
     signal?: AbortSignal;
   }): Promise<number>;
   stopSession?(input: {
@@ -577,6 +580,7 @@ export class T3Gateway {
       channelId: string;
       threadTs: string;
     };
+    loadInitialSteering?: () => Promise<ReadonlyArray<string>>;
     signal?: AbortSignal;
   }): Promise<T3GatewayTurn> {
     const turn = await this.locks.withLock(
@@ -605,6 +609,7 @@ export class T3Gateway {
       channelId: string;
       threadTs: string;
     };
+    loadInitialSteering?: () => Promise<ReadonlyArray<string>>;
     signal?: AbortSignal;
   }): Promise<T3GatewayTurn> {
     const providerInstanceId = input.modelSelection.instanceId;
@@ -701,6 +706,7 @@ export class T3Gateway {
         channelId: string;
         threadTs: string;
       };
+      loadInitialSteering?: () => Promise<ReadonlyArray<string>>;
       signal?: AbortSignal;
     },
     replacing?: T3ThreadBinding,
@@ -722,11 +728,15 @@ export class T3Gateway {
         },
         input.runId,
       );
+      const initialSteering = await input.loadInitialSteering?.() ?? [];
       const dispatch = await environment.client.startNewThread({
         threadId: t3ThreadId,
         projectId: environment.projectId,
         title: input.title,
-        text: input.text,
+        text: appendSetupSteering(
+          input.text,
+          initialSteering.map((text) => ({ text })),
+        ),
         displayText: input.displayText,
         inputFiles: input.inputFiles,
         modelSelection: input.modelSelection,
@@ -762,6 +772,44 @@ export class T3Gateway {
       await this.environments.discard?.(environment).catch(() => undefined);
       throw error;
     }
+  }
+
+  /** Queue input into the provider turn already running in this worker. */
+  async steer(input: {
+    canonicalThreadId: string;
+    id: string;
+    text: string;
+    signal?: AbortSignal;
+  }): Promise<boolean> {
+    return this.locks.withLock(
+      this.lockKey(input.canonicalThreadId),
+      async (lockSignal) => {
+        if (lockSignal.aborted) throw lockSignal.reason;
+        const binding = await this.bindings.get(input.canonicalThreadId);
+        if (!binding || binding.status !== "working") return false;
+        const environment = await this.environments.reconnect(binding);
+        const snapshot = await environment.client.threadSnapshot(
+          binding.t3ThreadId,
+          input.signal,
+        );
+        if (snapshot.thread.latestTurn?.state !== "running") return false;
+        await environment.client.startTurn({
+          threadId: binding.t3ThreadId,
+          messageId: input.id,
+          text: input.text,
+          modelSelection: binding.modelSelection,
+          signal: input.signal,
+        });
+        const timestamp = this.now().toISOString();
+        await this.bindings.bindRecord({
+          ...binding,
+          status: "working",
+          lastActiveAt: timestamp,
+          updatedAt: timestamp,
+        });
+        return true;
+      },
+    );
   }
 
   private async waitForSessionStopped(

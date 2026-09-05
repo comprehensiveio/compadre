@@ -7,7 +7,10 @@ import type { T3GatewayTurn } from "../t3/gateway.js";
 import type { T3ArtifactStore } from "../t3/artifact-store.js";
 import { createAgentRunDurability } from "../durability/runtime.js";
 import { NativeT3RunCoordinator } from "../t3/run-coordinator.js";
-import { InProcessNativeT3RunService } from "../t3/run-service.js";
+import {
+  InProcessNativeT3RunService,
+  type NativeT3RunService,
+} from "../t3/run-service.js";
 import {
   createT3DirectoryRoutes,
   isSlackOwnedNativeT3Run,
@@ -159,6 +162,58 @@ function authorized(body?: unknown): RequestInit {
     },
   };
 }
+
+test("accepts authenticated run steering and reports closed runs", async (t) => {
+  const previousApiKey = process.env.COMPADRE_API_KEY;
+  process.env.COMPADRE_API_KEY = "test-key";
+  t.after(() => {
+    if (previousApiKey === undefined) delete process.env.COMPADRE_API_KEY;
+    else process.env.COMPADRE_API_KEY = previousApiKey;
+  });
+  const calls: Array<{ runId: string; id: string; text: string }> = [];
+  let accepted = true;
+  const service = {
+    async steer(runId: string, input: { id: string; text: string }) {
+      calls.push({ runId, ...input });
+      return accepted;
+    },
+  } as unknown as NativeT3RunService;
+  const app = new Hono();
+  app.route("/", createT3DirectoryRoutes({
+    enabled: () => true,
+    createId: () => "generated",
+    getGateway: async () => null,
+    getRunService: async () => service,
+    watchTurn() {},
+  }));
+  const path = "/hosted/t3/runs/run-1/steer";
+
+  assert.equal((await app.request(path, { method: "POST" })).status, 401);
+  assert.equal(
+    (await app.request(path, authorized({ id: "", text: "focus" }))).status,
+    400,
+  );
+  const response = await app.request(
+    path,
+    authorized({ id: "instruction-1", text: "focus on cancellation" }),
+  );
+  assert.equal(response.status, 200);
+  assert.deepEqual(await response.json(), { accepted: true });
+  assert.deepEqual(calls, [{
+    runId: "run-1",
+    id: "instruction-1",
+    text: "focus on cancellation",
+  }]);
+
+  accepted = false;
+  assert.equal(
+    (await app.request(
+      path,
+      authorized({ id: "instruction-2", text: "too late" }),
+    )).status,
+    409,
+  );
+});
 
 test("lists directory metadata without waking a T3 sandbox", async (t) => {
   const previousApiKey = process.env.COMPADRE_API_KEY;

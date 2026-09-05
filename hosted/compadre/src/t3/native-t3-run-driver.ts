@@ -29,6 +29,11 @@ import {
   NativeT3RunRequestStore,
   type NativeT3RunRequest,
 } from "./run-request-store.js";
+import {
+  NativeT3RunControlStore,
+  type NativeT3SteeringEntry,
+  type NativeT3SteeringInput,
+} from "./run-control.js";
 
 export const DEFAULT_TERMINAL_WAIT_TIMEOUT_MS = 20 * 60 * 1000;
 const CANCELLED_MESSAGE = "The native T3 run was cancelled.";
@@ -54,8 +59,15 @@ export interface NativeT3DriverGateway {
     modelSelection: T3ModelSelection;
     inputFiles?: ReadonlyArray<T3InputFile>;
     blockedSlackDestination?: { channelId: string; threadTs: string };
+    loadInitialSteering?: () => Promise<ReadonlyArray<string>>;
     signal?: AbortSignal;
   }): Promise<T3GatewayTurn>;
+  steer?(input: {
+    canonicalThreadId: string;
+    id: string;
+    text: string;
+    signal?: AbortSignal;
+  }): Promise<boolean>;
   resumeTurn(
     canonicalThreadId: string,
     dispatch: T3TurnDispatch,
@@ -100,6 +112,7 @@ export interface NativeT3RunDriverDependencies {
   gateway: NativeT3DriverGateway;
   durability: AgentRunDurability;
   requests: NativeT3RunRequestStore;
+  controls?: NativeT3RunControlStore;
   /**
    * Serializes driver-epoch claims with in-process drivers. Fresh attempts
    * claim `driverEpoch + 1` under the same lock key the coordinator uses, so
@@ -141,6 +154,55 @@ export class NativeT3RunStateError extends Error {
   constructor(message: string) {
     super(message);
     this.name = "NativeT3RunStateError";
+  }
+}
+
+export async function deliverNativeT3Steering(
+  deps: NativeT3RunDriverDependencies,
+  runId: string,
+  input: NativeT3SteeringInput,
+  signal?: AbortSignal,
+): Promise<boolean> {
+  if (!deps.controls || !deps.gateway.steer) return false;
+  return deps.controls.withDeliveryLock(runId, input.id, async (lockSignal) => {
+    if (lockSignal.aborted) throw lockSignal.reason;
+    signal?.throwIfAborted();
+    const existing = await deps.controls!.entry(runId, input.id);
+    if (existing?.state === "delivered") return true;
+    if (existing?.state === "rejected") return false;
+    const run = await deps.durability.runs.get(runId);
+    if (!run || isTerminalRunStatus(run.status) || run.cancelRequested) {
+      await deps.controls!.settle(runId, input.id, "rejected");
+      return false;
+    }
+    const request = await deps.requests.getRequest(runId);
+    if (!request) {
+      await deps.controls!.settle(runId, input.id, "rejected");
+      return false;
+    }
+    const accepted = await deps.gateway.steer!({
+      canonicalThreadId: request.canonicalThreadId,
+      id: input.id,
+      text: input.text,
+      ...(signal ? { signal } : {}),
+    });
+    await deps.controls!.settle(
+      runId,
+      input.id,
+      accepted ? "delivered" : "rejected",
+    );
+    return accepted;
+  });
+}
+
+async function deliverPendingNativeT3Steering(
+  deps: NativeT3RunDriverDependencies,
+  runId: string,
+  signal?: AbortSignal,
+): Promise<void> {
+  const pending = await deps.controls?.pending(runId) ?? [];
+  for (const input of pending) {
+    await deliverNativeT3Steering(deps, runId, input, signal);
   }
 }
 
@@ -368,6 +430,7 @@ export async function driveNativeT3Run(
     turn = resumed;
   } else {
     heartbeat("dispatching native T3 turn");
+    let setupSteering: NativeT3SteeringEntry[] = [];
     turn = await deps.gateway.send({
       runId,
       canonicalThreadId: request.canonicalThreadId,
@@ -378,14 +441,32 @@ export async function driveNativeT3Run(
       ...(request.blockedSlackDestination
         ? { blockedSlackDestination: request.blockedSlackDestination }
         : {}),
+      ...(deps.controls
+        ? {
+            loadInitialSteering: async () => {
+              setupSteering = await deps.controls!.pending(runId);
+              return setupSteering.map((entry) => entry.text);
+            },
+          }
+        : {}),
       ...(options.signal ? { signal: options.signal } : {}),
     });
+    // Mark prompt-folded instructions before publishing the dispatch marker.
+    // A concurrent Update only attempts live delivery after that marker exists,
+    // so an instruction cannot be included and steered a second time.
+    for (const entry of setupSteering) {
+      await deps.controls?.settle(runId, entry.id, "delivered");
+    }
     await deps.requests.saveDispatch(runId, {
       canonicalThreadId: request.canonicalThreadId,
       dispatch: turn.dispatch,
       dispatchedAt: new Date(now()).toISOString(),
     });
   }
+
+  // Covers steering queued after the setup callback but before the dispatch
+  // marker, plus controls restored with a retried activity attempt.
+  await deliverPendingNativeT3Steering(deps, runId, options.signal);
 
   await deps.gateway
     .markActiveRun?.(request.canonicalThreadId, runId)
@@ -458,12 +539,13 @@ export async function driveNativeT3Run(
       const current = await runs.get(runId).catch(() => null);
       if (current?.cancelRequested) {
         cancelled = true;
-        await deps.gateway
+        const interrupted = await deps.gateway
           .cancel({
             canonicalThreadId: request.canonicalThreadId,
             providerInstanceId: turn.binding.providerInstanceId,
           })
-          .catch((error) =>
+          .then((sequence) => sequence !== null)
+          .catch((error) => {
             log.warn(
               {
                 runId,
@@ -472,9 +554,10 @@ export async function driveNativeT3Run(
                 ...serializeError(error),
               },
               "native t3 worker interrupt failed",
-            ),
-          );
-        watchAbort.abort(CANCELLED_MESSAGE);
+            );
+            return false;
+          });
+        if (!interrupted) watchAbort.abort(CANCELLED_MESSAGE);
       } else {
         handedOff = true;
         log.info(

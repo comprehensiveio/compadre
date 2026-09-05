@@ -13,7 +13,10 @@ import {
 } from "./t3-slack-conversation.js";
 import type { SlackSessionLink } from "./slack-markdown.js";
 import { SlackStream } from "./slack-stream.js";
-import { slackFailureNotice } from "./terminal-response.js";
+import {
+  AGENT_STOPPED_NOTICE,
+  slackFailureNotice,
+} from "./terminal-response.js";
 import type {
   SlackTurnDelivery,
   SlackTurnDeliveryStore,
@@ -122,17 +125,15 @@ export async function deliverClaimedSlackTurn(input: {
     );
     const finalText = finalAssistantTextForDispatch(snapshot, dispatch);
     const failed =
-      state === "error" ||
-      state === "interrupted" ||
-      Boolean(incompleteReason) ||
-      !finalText;
-    const response = failed
+      state !== "interrupted" &&
+      (state === "error" || Boolean(incompleteReason) || !finalText);
+    const response = state === "interrupted"
+      ? AGENT_STOPPED_NOTICE
+      : failed
       ? slackFailureNotice(
           new Error(
             snapshot.thread.session?.lastError ||
-              (state === "interrupted"
-                ? "The agent run was interrupted before it completed."
-                : incompleteReason
+              (incompleteReason
                   ? `The agent stopped before completing (${incompleteReason}).`
                 : "The agent run completed without a final response."),
           ),

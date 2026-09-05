@@ -393,6 +393,92 @@ test("routes model changes through the same provider-native T3 thread", async ()
   );
 });
 
+test("folds setup steering into provisioning and steers the active worker turn", async () => {
+  const persistence = memoryPersistence();
+  const bindings = new T3ThreadBindingStore(persistence.stores.metadata);
+  const starts: Array<{ messageId?: string; text: string }> = [];
+  const client: T3CommandClient = {
+    baseUrl: "https://t3.example",
+    async startNewThread(input) {
+      starts.push({ text: input.text });
+      return {
+        sequence: 1,
+        commandId: "command-initial",
+        messageId: "message-initial",
+        threadId: input.threadId!,
+        createdAt: "2026-09-05T16:00:00.000Z",
+      };
+    },
+    async startTurn(input) {
+      starts.push({ messageId: input.messageId, text: input.text });
+      return {
+        sequence: 2,
+        commandId: "command-steer",
+        messageId: input.messageId ?? "message-steer",
+        threadId: input.threadId,
+        createdAt: "2026-09-05T16:00:01.000Z",
+      };
+    },
+    async interruptTurn() { return 3; },
+    async waitForTurnTerminal() { throw new Error("unused"); },
+    async threadSnapshot(threadId) {
+      return {
+        ...completedSnapshot,
+        thread: {
+          ...completedSnapshot.thread,
+          id: threadId,
+          latestTurn: {
+            ...completedSnapshot.thread.latestTurn,
+            state: "running",
+            completedAt: null,
+          },
+          session: { status: "running", activeTurnId: "turn-1", lastError: null },
+        },
+      };
+    },
+    async mintPairingCredential() { throw new Error("unused"); },
+  };
+  const connection = { sandboxId: "sandbox-1", projectId: "project-1", client };
+  const gateway = new T3Gateway(
+    bindings,
+    {
+      async provision() { return connection; },
+      async reconnect() { return connection; },
+    },
+    () => "t3-thread-1",
+    () => new Date("2026-09-05T16:00:00.000Z"),
+  );
+
+  await gateway.send({
+    canonicalThreadId: "thread-steering",
+    title: "Steering",
+    text: "Original request",
+    modelSelection: { instanceId: "codex", model: "gpt-5.6-sol" },
+    async loadInitialSteering() {
+      return ["First follow-up", "Second follow-up"];
+    },
+  });
+  assert.equal(
+    await gateway.steer({
+      canonicalThreadId: "thread-steering",
+      id: "instruction-live",
+      text: "Live follow-up",
+    }),
+    true,
+  );
+
+  assert.deepEqual(starts, [
+    {
+      text: [
+        "Original request",
+        "Follow-up instruction received during setup:\nFirst follow-up",
+        "Follow-up instruction received during setup:\nSecond follow-up",
+      ].join("\n\n"),
+    },
+    { messageId: "instruction-live", text: "Live follow-up" },
+  ]);
+});
+
 test("durably records and conditionally clears the active provider run", async () => {
   const persistence = memoryPersistence();
   const bindings = new T3ThreadBindingStore(persistence.stores.metadata);

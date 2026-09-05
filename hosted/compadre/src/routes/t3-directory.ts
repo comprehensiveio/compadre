@@ -47,6 +47,7 @@ import type { NativeT3RunCoordinator } from "../t3/run-coordinator.js";
 import { inputFilesSchema, type InputFile } from "../services/input-files.js";
 import type { T3ArtifactStore } from "../t3/artifact-store.js";
 import type { T3OutputArtifact } from "../t3/output-artifacts.js";
+import { nativeT3SteeringInputSchema } from "../t3/run-control.js";
 
 const MAX_TITLE_LENGTH = 200;
 const MAX_MESSAGE_LENGTH = 100_000;
@@ -746,6 +747,24 @@ export function createT3DirectoryRoutes(
       return c.json({ error: "native T3 run not found", runId }, 404);
     }
     return c.json({ ok: true, ...result }, result.requested ? 202 : 200);
+  }));
+
+  routes.post("/hosted/t3/runs/:runId/steer", guarded(async (c) => {
+    const runId = routeParam(c, "runId");
+    const input = nativeT3SteeringInputSchema.safeParse(
+      await c.req.json().catch(() => null),
+    );
+    if (!input.success) {
+      return c.json({ error: "invalid native T3 steering input" }, 400);
+    }
+    const runService = await (
+      dependencies.getRunService?.() ?? getConfiguredNativeT3RunService()
+    );
+    if (!runService) {
+      return c.json({ error: "native T3 run durability is not configured" }, 503);
+    }
+    const accepted = await runService.steer(runId, input.data);
+    return c.json({ accepted }, accepted ? 200 : 409);
   }));
 
   routes.post(

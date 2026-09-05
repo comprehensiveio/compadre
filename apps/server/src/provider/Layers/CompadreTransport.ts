@@ -57,6 +57,14 @@ export type CompadreCancelTransport = (
   request: CompadreCancelRequest,
 ) => Effect.Effect<void, ProviderAdapterRequestError>;
 
+export type CompadreSteerTransport = (input: {
+  endpoint: string;
+  apiKey: string | undefined;
+  runId: string;
+  id: string;
+  text: string;
+}) => Effect.Effect<"accepted" | "unsupported", ProviderAdapterRequestError>;
+
 /**
  * Durable HTTP adapter for the Compadre controller protocol.
  *
@@ -237,6 +245,46 @@ export function makeCompadreCancelTransport(
             provider: runtimeProvider,
             method: "compadre/cancel",
             detail: "Could not cancel the active Compadre run.",
+            cause,
+          }),
+      ),
+    );
+  };
+}
+
+/**
+ * Send follow-up input to the durable run that already owns the provider
+ * turn. `unsupported` is reserved for the cross-service rollout window, when
+ * an older controller still expects steering as a second `/chat` request.
+ */
+export function makeCompadreSteerTransport(
+  httpClient: HttpClient.HttpClient,
+  runtimeProvider: ProviderDriverKind,
+): CompadreSteerTransport {
+  return (input) => {
+    const url = new URL(cancelEndpoint(input.endpoint, input.runId));
+    url.pathname = url.pathname.replace(/\/cancel$/u, "/steer");
+    let request = HttpClientRequest.post(url.toString(), {
+      body: HttpBody.jsonUnsafe({ id: input.id, text: input.text }),
+    });
+    if (input.apiKey) {
+      request = request.pipe(
+        HttpClientRequest.setHeader("authorization", `Bearer ${input.apiKey}`),
+      );
+    }
+    return httpClient.execute(request).pipe(
+      Effect.flatMap((response) =>
+        response.status === 404 || response.status === 405
+          ? Effect.succeed("unsupported" as const)
+          : HttpClientResponse.filterStatusOk(response).pipe(Effect.as("accepted" as const)),
+      ),
+      Effect.mapError(
+        (cause) =>
+          new ProviderAdapterRequestError({
+            provider: runtimeProvider,
+            method: "compadre/steer",
+            detail:
+              "The active turn could not accept this message. Send it again after the turn stops.",
             cause,
           }),
       ),

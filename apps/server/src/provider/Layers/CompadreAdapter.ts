@@ -46,8 +46,10 @@ import type { ProviderAdapterShape, ProviderThreadSnapshot } from "../Services/P
 import { resolveAttachmentPath, toSafeThreadAttachmentSegment } from "../../attachmentStore.ts";
 import {
   makeCompadreCancelTransport,
+  makeCompadreSteerTransport,
   makeCompadreTransport,
   type CompadreCancelTransport,
+  type CompadreSteerTransport,
   type CompadreStreamEvent,
   type CompadreTransport,
 } from "./CompadreTransport.ts";
@@ -61,6 +63,7 @@ export interface CompadreAdapterOptions {
   readonly runtimeProvider: ProviderDriverKind;
   readonly transport?: CompadreTransport;
   readonly cancelTransport?: CompadreCancelTransport;
+  readonly steerTransport?: CompadreSteerTransport;
   readonly attachmentsDir?: string;
   /** Base delay for durable stream reconnects; defaults to 250ms. */
   readonly reconnectBaseDelayMs?: number;
@@ -222,6 +225,8 @@ export function makeCompadreAdapter(options: CompadreAdapterOptions) {
     const transport =
       options.transport ??
       makeCompadreTransport(httpClient, runtimeProvider, options.reconnectBaseDelayMs ?? 250);
+    const steerTransport =
+      options.steerTransport ?? makeCompadreSteerTransport(httpClient, runtimeProvider);
     const cancelTransport =
       options.cancelTransport ?? makeCompadreCancelTransport(httpClient, runtimeProvider);
     const sessions = new Map<ThreadId, CompadreSessionContext>();
@@ -447,35 +452,53 @@ export function makeCompadreAdapter(options: CompadreAdapterOptions) {
           attribution: input.attribution,
         };
 
-        if (steeringTurnId) {
-          // Match T3's native adapters: sending while a turn is active queues
-          // input into that provider loop without interrupting its current
-          // reader or opening a synthetic T3 turn. Consume the second durable
-          // request so it reaches Modal and settles, while the original reader
-          // remains the single owner of visible provider events.
-          yield* Stream.runForEach(transport(transportInput), () => Effect.void).pipe(
-            Effect.catch((cause) =>
-              Effect.flatMap(makeEventStamp(), (stamp) =>
-                publish({
-                  type: "runtime.error",
-                  ...stamp,
-                  provider: runtimeProvider,
-                  providerInstanceId: boundInstanceId,
-                  threadId: input.threadId,
-                  turnId,
-                  payload: {
-                    message: cause.message,
-                    class: "transport_error",
-                  },
-                }),
+        if (steeringTurnId && previousRun) {
+          if (inputFiles.length > 0) {
+            return yield* new ProviderAdapterValidationError({
+              provider: runtimeProvider,
+              operation: "sendTurn",
+              issue: "Send attachments after the active turn stops.",
+            });
+          }
+          const steerResult = yield* steerTransport({
+            endpoint: options.endpoint,
+            apiKey: options.apiKey,
+            runId: previousRun.runId,
+            id: messageId,
+            text: input.attribution
+              ? `Current ${input.attribution.origin} request from ${input.attribution.displayName}:\n${text}`
+              : text,
+          });
+          if (steerResult === "unsupported") {
+            // During the independent controller/web rollout, retain the old
+            // additive `/chat` steering request until every controller serves
+            // the run-level endpoint.
+            yield* Stream.runForEach(transport(transportInput), () => Effect.void).pipe(
+              Effect.catch((cause) =>
+                Effect.flatMap(makeEventStamp(), (stamp) =>
+                  publish({
+                    type: "runtime.error",
+                    ...stamp,
+                    provider: runtimeProvider,
+                    providerInstanceId: boundInstanceId,
+                    threadId: input.threadId,
+                    turnId,
+                    payload: {
+                      message: cause.message,
+                      class: "transport_error",
+                    },
+                  }),
+                ),
               ),
-            ),
-            Effect.forkIn(adapterScope),
-          );
+              Effect.forkIn(adapterScope),
+            );
+          }
           return {
             threadId: input.threadId,
             turnId,
-            resumeCursor: { runId },
+            resumeCursor: {
+              runId: steerResult === "accepted" ? previousRun.runId : runId,
+            },
           };
         }
 
@@ -909,6 +932,10 @@ export function makeCompadreAdapter(options: CompadreAdapterOptions) {
                   return;
                 case "RUN_ERROR":
                   yield* completeOpenItems();
+                  if (stringField(event, "code") === "NATIVE_T3_RUN_CANCELLED") {
+                    yield* completeTurn("cancelled");
+                    return;
+                  }
                   yield* failTurn(stringField(event, "message") ?? "Compadre run failed.");
                   return;
               }
@@ -939,9 +966,13 @@ export function makeCompadreAdapter(options: CompadreAdapterOptions) {
         return { threadId: input.threadId, turnId, resumeCursor: { runId } };
       });
 
-    const interruptTurn: ProviderAdapterShape<ProviderAdapterError>["interruptTurn"] = (threadId) =>
+    const interruptTurn: ProviderAdapterShape<ProviderAdapterError>["interruptTurn"] = (
+      threadId,
+      turnId,
+    ) =>
       Effect.gen(function* () {
         const context = yield* requireSession(threadId);
+        if (turnId && context.session.activeTurnId !== turnId) return;
         if (context.activeRun) {
           yield* cancelActiveRun(context).pipe(
             Effect.ensuring(Fiber.interrupt(context.activeRun.fiber)),

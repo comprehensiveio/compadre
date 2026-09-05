@@ -177,11 +177,15 @@ fork reconnects a dropped stream from its last delivered cursor.
 ### Cross-entrypoint steering
 
 A message sent while a turn is already generating is a steer, whether it came
-from Slack or the browser. Central T3 stops reading the older controller stream
-without cancelling its durable producer, then sends the newer message to the
-same thread-scoped Modal T3 session. The native Claude/Codex adapter folds that
-message into the running turn. The older controller run is allowed to reach a
-durable terminal state so recovery and accounting remain trustworthy.
+from Slack or the browser. The T3 provider adapter keeps the original durable
+controller stream as the single event reader and posts the instruction to
+`/hosted/t3/runs/:runId/steer`. The controller sends a serialized Temporal
+Workflow Update. If provisioning has not published a dispatch yet, the update
+lands in a durable ordered mailbox and is folded into the initial provider
+prompt. After dispatch, the update uses the worker T3 server's native
+`thread.turn.start` steering path against the existing Claude/Codex turn.
+Steering therefore stays inside one durable controller run and one terminal
+observer.
 
 Only the newest user message in the turn owns the eventual Slack answer, thread
 status, and web link. Older Slack outbox rows and browser mirrors settle as
@@ -331,7 +335,13 @@ owns each run:
   terminal record, closes the event log, and clears the active-run marker.
   The worker itself keeps running for follow-up turns.
 - Cancellation is durable: cancel intent is recorded in Postgres and the
-  workflow is cancelled; the drive activity interrupts the worker turn.
+  workflow is cancelled; the drive activity interrupts the worker turn, keeps
+  its observer attached until the interrupted snapshot and checkpoint are
+  saved, and only then lets the cancel request return.
+- Steering is durable and ordered: `steerNativeT3Run` Workflow Updates are
+  idempotent by instruction id, serialized inside the workflow, and backed by
+  a Postgres metadata mailbox. Workflow completion waits for update handlers,
+  and ambiguous or closed-run deliveries are not blindly redelivered.
 
 The Temporal worker runs inside the `compadre-api` process on the
 `compadre-native-t3` task queue. Startup fails fast when the Temporal server is
@@ -516,9 +526,12 @@ The checked-in [production Slack manifest](./slack-app-manifest.yaml) targets th
 canonical controller hostname. It accepts direct-message, `app_mention`, and
 `agent_session_stopped` events and dynamically resolves the
 installation-specific bot identity. Stop events are currently acknowledged
-without cancelling work or changing session status; that behavior is reserved
-for the cancellation follow-up. The temporary app manifest remains only as a
-record of the dark-launch installation.
+and resolve the bound central thread before dispatching the same targeted turn
+interrupt as the web client. Workspace, channel, and binding checks apply, and
+a delayed or redelivered Stop event cannot interrupt a turn started after its
+event timestamp. The existing terminal observer clears processing status and
+posts `Stopped. Send another message to continue.` after cleanup. The temporary
+app manifest remains only as a record of the dark-launch installation.
 
 The official `Compadre` app owns production Slack ingress for the allowed
 Comprehensive workspace. Its event URL is

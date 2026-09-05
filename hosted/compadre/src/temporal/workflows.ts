@@ -9,11 +9,14 @@
  */
 import {
   ActivityCancellationType,
+  allHandlersFinished,
   CancellationScope,
+  condition,
   isCancellation,
   log,
   patched,
   proxyActivities,
+  setHandler,
 } from "@temporalio/workflow";
 import type * as activities from "./activities.js";
 import type {
@@ -22,6 +25,7 @@ import type {
   PreviewActivationWorkflowInput,
 } from "./shared.js";
 import type { TriggeredPromptWorkflowInput } from "../triggers/types.js";
+import { steerNativeT3Run } from "./controls.js";
 
 // Retained only so pre-fix workflow histories replay deterministically.
 // Its 25-minute ceiling killed legitimately long turns; see the patched()
@@ -74,12 +78,42 @@ const { finalizeNativeT3RunActivity } = proxyActivities<typeof activities>({
 export async function nativeT3RunWorkflow(
   input: NativeT3RunWorkflowInput,
 ): Promise<NativeT3RunWorkflowResult> {
+  const nativeControls = patched("native-t3-controls-v1");
+  const { steerNativeT3RunActivity } = proxyActivities<typeof activities>({
+    startToCloseTimeout: "1 minute",
+    heartbeatTimeout: "5 seconds",
+    retry: {
+      initialInterval: "1 second",
+      maximumAttempts: 3,
+    },
+    cancellationType: ActivityCancellationType.WAIT_CANCELLATION_COMPLETED,
+  });
+  let executing = true;
+  let controlQueue = Promise.resolve();
+  setHandler(steerNativeT3Run, async (steering) => {
+    if (!nativeControls || !executing) return false;
+    const previous = controlQueue;
+    let release!: () => void;
+    controlQueue = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    await previous;
+    try {
+      if (!executing) return false;
+      return await steerNativeT3RunActivity(input.runId, steering);
+    } finally {
+      release();
+    }
+  });
   try {
     const outcome = patched("drive-worker-lifetime-ceiling-v1")
       ? await driveNativeT3RunActivity(input)
       : await driveWithLegacyCeiling(input);
+    executing = false;
+    await condition(allHandlersFinished);
     return { status: outcome.status };
   } catch (error) {
+    executing = false;
     const cancelled = isCancellation(error);
     const message = cancelled
       ? "The native T3 run was cancelled."
@@ -88,13 +122,14 @@ export async function nativeT3RunWorkflow(
         : String(error);
     // The run record and event log must converge to a terminal state even
     // while this workflow is itself being cancelled.
-    await CancellationScope.nonCancellable(() =>
-      finalizeNativeT3RunActivity({
+    await CancellationScope.nonCancellable(async () => {
+      await condition(allHandlersFinished);
+      await finalizeNativeT3RunActivity({
         runId: input.runId,
         cancelled,
         message,
-      }),
-    );
+      });
+    });
     throw error;
   }
 }

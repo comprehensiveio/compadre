@@ -4,7 +4,10 @@ import type { HostedSlackBinding } from "./hosted-thread-bindings.js";
 import type { SlackSessionLink } from "./slack-markdown.js";
 import { SlackStream } from "./slack-stream.js";
 import { t3SlackSessionLink } from "./t3-slack-conversation.js";
-import { slackFailureNotice } from "./terminal-response.js";
+import {
+  AGENT_STOPPED_NOTICE,
+  slackFailureNotice,
+} from "./terminal-response.js";
 import { humanizeToolName } from "./tool-labels.js";
 
 export interface NativeT3SlackDeliveryStream {
@@ -34,6 +37,7 @@ export class SlackRunMirror {
   private readonly assistantMessages: Map<string, string>;
   private activeAssistantMessageId: string | undefined;
   private terminalError: string | undefined;
+  private terminalCancelled = false;
 
   constructor(
     private readonly input: {
@@ -104,6 +108,7 @@ ${this.input.userMessage}`);
     }
     if (chunk.type === EventType.RUN_ERROR) {
       this.terminalError = chunk.message || "Native T3 worker failed.";
+      this.terminalCancelled = chunk.code === "NATIVE_T3_RUN_CANCELLED";
     }
     if (!this.deliveryEnabled) return;
     const name = toolName(chunk);
@@ -133,7 +138,13 @@ ${this.input.userMessage}`);
       const sessionLink = this.input.detailsUrl
         ? t3SlackSessionLink(this.input.detailsUrl)
         : undefined;
-      if (this.terminalError) {
+      if (this.terminalCancelled) {
+        await this.slack.postThreadMessage(
+          AGENT_STOPPED_NOTICE,
+          undefined,
+          sessionLink,
+        );
+      } else if (this.terminalError) {
         await this.slack.postThreadMessage(
           slackFailureNotice(new Error(this.terminalError)),
           undefined,
@@ -188,6 +199,7 @@ export async function* mirrorNativeT3RunToSlack(
   const assistantMessages = new Map<string, string>();
   let activeAssistantMessageId: string | undefined;
   let terminalError: string | undefined;
+  let terminalCancelled = false;
   try {
     await slack.postThreadMessage(`*From Compadre web:*
 ${input.userMessage}`);
@@ -227,6 +239,7 @@ ${input.userMessage}`);
         }
         if (chunk.type === EventType.RUN_ERROR) {
           terminalError = chunk.message || "Native T3 worker failed.";
+          terminalCancelled = chunk.code === "NATIVE_T3_RUN_CANCELLED";
         }
         const name = toolName(chunk);
         if (name) {
@@ -259,7 +272,13 @@ ${input.userMessage}`);
       const sessionLink = input.detailsUrl
         ? t3SlackSessionLink(input.detailsUrl)
         : undefined;
-      if (terminalError) {
+      if (terminalCancelled) {
+        await slack.postThreadMessage(
+          AGENT_STOPPED_NOTICE,
+          undefined,
+          sessionLink,
+        );
+      } else if (terminalError) {
         await slack.postThreadMessage(
           slackFailureNotice(new Error(terminalError)),
           undefined,

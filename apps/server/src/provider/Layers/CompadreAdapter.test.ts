@@ -7,6 +7,7 @@ import {
   ProviderDriverKind,
   ProviderInstanceId,
   ThreadId,
+  TurnId,
   type ProviderRuntimeEvent,
   type ServerProvider,
 } from "@t3tools/contracts";
@@ -702,6 +703,7 @@ it.layer(Layer.merge(NodeServices.layer, FetchHttpClient.layer))("CompadreAdapte
     Effect.gen(function* () {
       const threadId = ThreadId.make("compadre-steer-thread");
       const inputs: string[] = [];
+      const steers: string[] = [];
       const cancelledRunIds: string[] = [];
       const initialCompletion = yield* Deferred.make<ReadonlyArray<CompadreStreamEvent>>();
       const adapter = yield* makeCompadreAdapter({
@@ -716,25 +718,12 @@ it.layer(Layer.merge(NodeServices.layer, FetchHttpClient.layer))("CompadreAdapte
               Stream.flatMap((events) => Stream.fromIterable(events)),
             );
           }
-          return Stream.unwrap(
-            Deferred.succeed(initialCompletion, [
-              {
-                type: "TEXT_MESSAGE_START",
-                messageId: "assistant-steered",
-              },
-              {
-                type: "TEXT_MESSAGE_CONTENT",
-                messageId: "assistant-steered",
-                delta: "Steered answer",
-              },
-              {
-                type: "TEXT_MESSAGE_END",
-                messageId: "assistant-steered",
-              },
-              { type: "RUN_FINISHED" },
-            ]).pipe(Effect.as(Stream.fromIterable([{ type: "RUN_FINISHED" }]))),
-          );
+          return Stream.die(new Error(`unexpected second run: ${input.input}`));
         },
+        steerTransport: ({ text }) =>
+          Effect.sync(() => {
+            steers.push(text);
+          }).pipe(Effect.as("accepted" as const)),
         cancelTransport: ({ runId }) =>
           Effect.sync(() => {
             cancelledRunIds.push(runId);
@@ -765,11 +754,30 @@ it.layer(Layer.merge(NodeServices.layer, FetchHttpClient.layer))("CompadreAdapte
         threadId,
         input: "focus on the API instead",
       });
+      yield* adapter.interruptTurn(threadId, TurnId.make("stale-turn"));
+      assert.deepStrictEqual(cancelledRunIds, []);
+      yield* Deferred.succeed(initialCompletion, [
+        {
+          type: "TEXT_MESSAGE_START",
+          messageId: "assistant-steered",
+        },
+        {
+          type: "TEXT_MESSAGE_CONTENT",
+          messageId: "assistant-steered",
+          delta: "Steered answer",
+        },
+        {
+          type: "TEXT_MESSAGE_END",
+          messageId: "assistant-steered",
+        },
+        { type: "RUN_FINISHED" },
+      ]);
       yield* Deferred.await(completed);
       yield* Fiber.interrupt(eventsFiber);
 
       assert.equal(String(steered.turnId), String(initial.turnId));
-      assert.deepStrictEqual(inputs, ["initial request", "focus on the API instead"]);
+      assert.deepStrictEqual(inputs, ["initial request"]);
+      assert.deepStrictEqual(steers, ["focus on the API instead"]);
       assert.deepStrictEqual(cancelledRunIds, []);
       assert.equal(events.filter((event) => event.type === "turn.started").length, 1);
       assert.deepStrictEqual(

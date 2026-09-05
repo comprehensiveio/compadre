@@ -45,13 +45,14 @@ function thread(input: {
   id: string;
   modelSelection?: T3ModelSelection;
   messages?: T3Thread["messages"];
+  latestTurn?: T3Thread["latestTurn"];
 }): T3Thread {
   return {
     id: input.id,
     projectId: "project-central",
     title: "Slack request",
     modelSelection: input.modelSelection ?? codex,
-    latestTurn: null,
+    latestTurn: input.latestTurn ?? null,
     messages: input.messages ?? [],
     session: null,
   };
@@ -299,6 +300,111 @@ test("a Slack continuation follows the model already selected in the web UI", as
 
   assert.deepEqual(selection, claude);
   assert.equal(result.resumed, true);
+});
+
+test("a Slack follow-up steers a running central turn without another terminal observer", async () => {
+  const threadId = centralT3ThreadId("slack:T1:C1:active");
+  let starts = 0;
+  let waits = 0;
+  const runningTurn: NonNullable<T3Thread["latestTurn"]> = {
+    turnId: "turn-active",
+    state: "running",
+    requestedAt: "2026-09-05T16:00:00.000Z",
+    startedAt: "2026-09-05T16:00:00.000Z",
+    completedAt: null,
+    assistantMessageId: "assistant-active",
+  };
+  const client: CentralT3ConversationClient = {
+    baseUrl: "https://central.example",
+    async environmentDescriptor() {
+      return { environmentId: "environment-central", label: "Central", serverVersion: "1" };
+    },
+    async snapshot() {
+      return {
+        snapshotSequence: 11,
+        projects: [],
+        threads: [thread({ id: threadId, latestTurn: runningTurn })],
+        updatedAt: "2026-09-05T16:00:01.000Z",
+      };
+    },
+    async startNewThread() {
+      throw new Error("should steer the existing thread");
+    },
+    async startTurn(input) {
+      starts += 1;
+      return {
+        sequence: 12,
+        commandId: "command-steer",
+        messageId: input.messageId!,
+        threadId: input.threadId,
+        createdAt: "2026-09-05T16:00:02.000Z",
+      };
+    },
+    async waitForTurnTerminal() {
+      waits += 1;
+      throw new Error("steering must not add another observer");
+    },
+  };
+
+  const result = await runCentralT3Conversation({
+    client,
+    canonicalThreadId: "slack:T1:C1:active",
+    title: "Follow-up",
+    prompt: "Focus on cancellation",
+    returnAfterSteer: true,
+  });
+
+  assert.equal(result.steered, true);
+  assert.equal(result.output, "");
+  assert.equal(starts, 1);
+  assert.equal(waits, 0);
+});
+
+test("an interrupted central turn returns a continuation notice", async () => {
+  let dispatch: T3TurnDispatch | undefined;
+  const client: CentralT3ConversationClient = {
+    baseUrl: "https://central.example",
+    async environmentDescriptor() {
+      return { environmentId: "environment-central", label: "Central", serverVersion: "1" };
+    },
+    async snapshot() {
+      return {
+        snapshotSequence: 1,
+        projects: [{ id: "project-central", title: "Compadre", workspaceRoot: "/workspace", defaultModelSelection: codex }],
+        threads: [],
+        updatedAt: "2026-09-05T16:00:00.000Z",
+      };
+    },
+    async startNewThread(input) {
+      dispatch = {
+        sequence: 2,
+        commandId: "command-stop",
+        messageId: input.messageId!,
+        threadId: input.threadId!,
+        createdAt: "2026-09-05T16:00:00.000Z",
+      };
+      return dispatch;
+    },
+    async startTurn() {
+      throw new Error("not used");
+    },
+    async waitForTurnTerminal() {
+      assert.ok(dispatch);
+      const stopped = terminalSnapshot(dispatch);
+      stopped.thread.latestTurn!.state = "interrupted";
+      stopped.thread.messages = stopped.thread.messages.slice(0, 1);
+      stopped.thread.session = { status: "interrupted", activeTurnId: null, lastError: null };
+      return stopped;
+    },
+  };
+
+  const result = await runCentralT3Conversation({
+    client,
+    canonicalThreadId: "slack:T1:C1:stopped",
+    title: "Stop me",
+    prompt: "Long task",
+  });
+  assert.equal(result.output, "Stopped. Send another message to continue.");
 });
 
 test("Slack history is hidden initial context only when creating a central thread", async () => {

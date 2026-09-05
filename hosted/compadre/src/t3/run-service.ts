@@ -4,7 +4,10 @@ import {
   type RunRecord,
   type StreamChunk as CoreStreamChunk,
 } from "@tanstack/ai";
-import { WorkflowExecutionAlreadyStartedError } from "@temporalio/client";
+import {
+  WorkflowExecutionAlreadyStartedError,
+  WorkflowFailedError,
+} from "@temporalio/client";
 import { getTemporalClient } from "../temporal/client.js";
 import {
   NATIVE_T3_TASK_QUEUE,
@@ -34,6 +37,7 @@ import {
   type NativeT3RunRequest,
 } from "./run-request-store.js";
 import type { T3ThreadSnapshot } from "./client.js";
+import type { NativeT3SteeringInput } from "./run-control.js";
 
 /**
  * The producer surface for native T3 runs. `startTurn` accepts a fully
@@ -49,6 +53,7 @@ export interface NativeT3RunService {
   run(runId: string): Promise<RunRecord | null>;
   activeRun(threadId: string): Promise<RunRecord | null>;
   cancel(runId: string): Promise<NativeT3RunCancelResult>;
+  steer(runId: string, input: NativeT3SteeringInput): Promise<boolean>;
   /**
    * Give a replay subscriber a producer when the run has none. The Temporal
    * implementation is a no-op — the workflow's retried drive activity is the
@@ -64,6 +69,7 @@ export interface NativeT3WorkflowLauncher {
     input: NativeT3RunWorkflowInput;
   }): Promise<{ started: boolean }>;
   cancel(workflowId: string): Promise<boolean>;
+  steer(workflowId: string, input: NativeT3SteeringInput): Promise<boolean>;
 }
 
 export function createTemporalNativeT3WorkflowLauncher(
@@ -77,7 +83,14 @@ export function createTemporalNativeT3WorkflowLauncher(
           args: [NativeT3RunWorkflowInput];
         },
       ): Promise<unknown>;
-      getHandle(workflowId: string): { cancel(): Promise<unknown> };
+      getHandle(workflowId: string): {
+        cancel(): Promise<unknown>;
+        result?(): Promise<unknown>;
+        executeUpdate?<T>(
+          name: string,
+          options: { args: [NativeT3SteeringInput]; updateId: string },
+        ): Promise<T>;
+      };
     };
   }> = getTemporalClient,
 ): NativeT3WorkflowLauncher {
@@ -98,10 +111,25 @@ export function createTemporalNativeT3WorkflowLauncher(
         throw error;
       }
     },
+    async steer(workflowId, input) {
+      const client = await getClient();
+      const handle = client.workflow.getHandle(workflowId);
+      if (!handle.executeUpdate) return false;
+      return handle.executeUpdate<boolean>("steerNativeT3Run", {
+        args: [input],
+        updateId: input.id,
+      });
+    },
     async cancel(workflowId) {
       const client = await getClient();
       try {
-        await client.workflow.getHandle(workflowId).cancel();
+        const handle = client.workflow.getHandle(workflowId);
+        await handle.cancel();
+        // T3 must not advertise the session as ready until provider cleanup,
+        // interrupted snapshot persistence, and workspace checkpointing end.
+        await handle.result?.().catch((error: unknown) => {
+          if (!(error instanceof WorkflowFailedError)) throw error;
+        });
         return true;
       } catch (error) {
         console.warn("[native-t3-run] workflow cancel dispatch failed", {
@@ -207,6 +235,17 @@ export class TemporalNativeT3RunService implements NativeT3RunService {
     return { ...result, local: result.local || dispatched };
   }
 
+  async steer(
+    runId: string,
+    input: NativeT3SteeringInput,
+  ): Promise<boolean> {
+    const run = await this.run(runId);
+    if (!run || isTerminalRunStatus(run.status) || run.cancelRequested) {
+      return false;
+    }
+    return this.launcher.steer(nativeT3RunWorkflowId(runId), input);
+  }
+
   async ensureSubscriberRecovery(): Promise<void> {
     // Temporal owns production: the drive activity's retries already
     // reattach after controller loss, and a second in-process producer would
@@ -215,6 +254,12 @@ export class TemporalNativeT3RunService implements NativeT3RunService {
 }
 
 export interface InProcessNativeT3RunGateway extends NativeT3AguiGateway {
+  steer?(input: {
+    canonicalThreadId: string;
+    id: string;
+    text: string;
+    signal?: AbortSignal;
+  }): Promise<boolean>;
   cancel(input: {
     canonicalThreadId: string;
     providerInstanceId: string;
@@ -351,6 +396,28 @@ export class InProcessNativeT3RunService implements NativeT3RunService {
 
   cancel(runId: string): Promise<NativeT3RunCancelResult> {
     return this.deps.coordinator.cancel(runId);
+  }
+
+  async steer(
+    runId: string,
+    input: NativeT3SteeringInput,
+  ): Promise<boolean> {
+    const run = await this.deps.coordinator.run(runId);
+    const turn = this.activeTurns.get(runId);
+    if (
+      !run ||
+      isTerminalRunStatus(run.status) ||
+      run.cancelRequested ||
+      !turn ||
+      !this.deps.gateway.steer
+    ) {
+      return false;
+    }
+    return this.deps.gateway.steer({
+      canonicalThreadId: turn.binding.canonicalThreadId,
+      id: input.id,
+      text: input.text,
+    });
   }
 
   /** Reattach a producer-less run for a replay subscriber (startup-recovery parity). */

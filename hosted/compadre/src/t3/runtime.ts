@@ -21,6 +21,7 @@ import {
   type NativeT3RecoverySummary,
 } from "./run-recovery.js";
 import { NativeT3RunRequestStore } from "./run-request-store.js";
+import { NativeT3RunControlStore } from "./run-control.js";
 import {
   createTemporalNativeT3WorkflowLauncher,
   InProcessNativeT3RunService,
@@ -239,6 +240,15 @@ async function buildRunRequestStore(): Promise<NativeT3RunRequestStore | null> {
   return new NativeT3RunRequestStore(runtime.persistence.stores.metadata);
 }
 
+async function buildRunControlStore(): Promise<NativeT3RunControlStore | null> {
+  const runtime = await getConfiguredThreadPersistence();
+  if (!runtime) return null;
+  return new NativeT3RunControlStore(
+    runtime.persistence.stores.metadata,
+    runtime.locks,
+  );
+}
+
 async function buildCollectArtifactEvents(
   gateway: T3Gateway,
 ): Promise<NativeT3RunDriverDependencies["collectArtifactEvents"]> {
@@ -292,18 +302,20 @@ export function setNativeT3RunDriverDependenciesForTests(
 /** Dependencies for the durable drive/finalize activities. */
 export async function getConfiguredNativeT3RunDriverDependencies(): Promise<NativeT3RunDriverDependencies | null> {
   if (overriddenDriverDependencies) return overriddenDriverDependencies;
-  const [gateway, durability, requests, persistence] = await Promise.all([
+  const [gateway, durability, requests, controls, persistence] = await Promise.all([
     getConfiguredT3Gateway(),
     getConfiguredAgentRunDurability(),
     buildRunRequestStore(),
+    buildRunControlStore(),
     getConfiguredThreadPersistence(),
   ]);
-  if (!gateway || !durability || !requests || !persistence) return null;
+  if (!gateway || !durability || !requests || !controls || !persistence) return null;
   const collectArtifactEvents = await buildCollectArtifactEvents(gateway);
   return {
     gateway,
     durability,
     requests,
+    controls,
     locks: persistence.locks,
     ...(collectArtifactEvents ? { collectArtifactEvents } : {}),
   };

@@ -665,8 +665,13 @@ export class NativeT3SnapshotProjector {
         type: EventType.RUN_ERROR,
         runId: this.runId,
         message:
-          snapshot.thread.session?.lastError ??
-          `Native T3 turn ${latestTurn.state}.`,
+          latestTurn.state === "interrupted"
+            ? "The native T3 run was cancelled."
+            : snapshot.thread.session?.lastError ??
+              `Native T3 turn ${latestTurn.state}.`,
+        ...(latestTurn.state === "interrupted"
+          ? { code: "NATIVE_T3_RUN_CANCELLED" }
+          : {}),
         timestamp: timestamp(latestTurn.completedAt ?? undefined),
       });
     }

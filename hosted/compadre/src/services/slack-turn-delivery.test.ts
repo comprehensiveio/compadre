@@ -35,7 +35,7 @@ function delivery(): SlackTurnDelivery {
   };
 }
 
-function snapshot(state: "completed" | "error" = "completed"): T3ThreadSnapshot {
+function snapshot(state: "completed" | "error" | "interrupted" = "completed"): T3ThreadSnapshot {
   return {
     snapshotSequence: 50,
     thread: {
@@ -72,7 +72,7 @@ function snapshot(state: "completed" | "error" = "completed"): T3ThreadSnapshot 
         },
       ],
       session: {
-        status: state === "error" ? "error" : "ready",
+        status: state === "error" ? "error" : state === "interrupted" ? "interrupted" : "ready",
         activeTurnId: null,
         lastError: state === "error" ? "provider failed" : null,
       },
@@ -146,6 +146,38 @@ test("delivers a recovered final answer with stable Slack idempotency keys", asy
     { label: "open session in Compadre web", url: job.detailsUrl },
   ]);
   assert.deepEqual(calls.slice(1), [["clear"], ["succeeded", "1.1"]]);
+});
+
+test("presents an interrupted Slack turn as stopped rather than failed", async () => {
+  const job = delivery();
+  const stopped = snapshot("interrupted");
+  stopped.thread.messages = stopped.thread.messages.slice(0, 1);
+  const { slack, calls } = slackRecorder();
+  await deliverClaimedSlackTurn({
+    delivery: job,
+    store: {
+      async markDelivered() { return true; },
+      async markFailed() { assert.fail("interruption is a completed delivery"); },
+    },
+    t3: {
+      baseUrl: "https://t3.example",
+      async environmentDescriptor() { throw new Error("not used"); },
+      async snapshot() { throw new Error("not used"); },
+      async startNewThread() { throw new Error("not used"); },
+      async startTurn() { throw new Error("not used"); },
+      async waitForTurnTerminal() { return stopped; },
+    },
+    slack,
+  });
+
+  assert.deepEqual(calls, [
+    ["message", "Stopped. Send another message to continue.", job.id, {
+      label: "open session in Compadre web",
+      url: job.detailsUrl,
+    }],
+    ["clear"],
+    ["succeeded", job.triggerMessageTs],
+  ]);
 });
 
 test("keeps a transient T3 read failure pending instead of posting failure", async () => {

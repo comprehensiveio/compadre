@@ -63,6 +63,7 @@ export async function startNativeT3TemporalWorker(): Promise<RunningTemporalWork
     namespace,
     taskQueue: NATIVE_T3_TASK_QUEUE,
     workflowBundle: await workflowBundle(),
+    maxHeartbeatThrottleInterval: "1 second",
     activities,
     shutdownGraceTime: shutdownGraceMs(),
   });

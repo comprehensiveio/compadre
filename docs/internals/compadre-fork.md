@@ -73,13 +73,13 @@ session; client-supplied display names are never authorization data.
 
 While a hosted turn is running, another browser or Slack message is a native
 T3 steer. `CompadreAdapter` keeps the original durable controller stream as
-the single event reader, reuses the current orchestration turn id, and drains
-a second controller request only to queue the new input into the thread-scoped
-Modal T3 session. This matches T3's native Claude/Codex adapters: the provider
-loop decides when to incorporate the steer, without Compadre cancelling or
-synthetically ending the active turn. Controller-side Slack delivery assigns
-the final response to the newest user message so older delivery requests
-settle quietly rather than surfacing an interruption or duplicate.
+the single event reader, reuses the current orchestration turn id, and sends an
+idempotent instruction to the controller run's `/steer` endpoint. The
+controller queues setup-time instructions durably and otherwise forwards them
+through the thread-scoped Modal T3 server's native Claude/Codex steering path.
+No second controller run or terminal observer is created. During independent
+controller/web rollout only, the adapter falls back to the older additive
+`/chat` request when the controller reports that `/steer` is unsupported.
 
 The controller (`compadre-api`) and T3 fork stack (`compadre-web`)
 auto-deploy independently even from the same repository. Contracts crossing

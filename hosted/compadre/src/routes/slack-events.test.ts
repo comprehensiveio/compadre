@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import crypto from "node:crypto";
 import test from "node:test";
+import { centralT3ThreadId } from "../t3/central-conversation.js";
 import {
   isAgentSessionStoppedEvent,
   isAllowedSlackWorkspace,
@@ -8,6 +9,7 @@ import {
   resolveSlackBotUserId,
   slackMessageTextForAgent,
   slackEventsRoutes,
+  stopHostedSlackSession,
   stripSlackBotMention,
   type SlackEvent,
 } from "./slack-events.js";
@@ -121,9 +123,11 @@ test("acknowledges a signed agent session stop event", async () => {
   const previousSigningSecret = process.env.SLACK_SIGNING_SECRET;
   const previousWorkspaceId = process.env.COMPADRE_SLACK_WORKSPACE_ID;
   const previousAppId = process.env.COMPADRE_SLACK_APP_ID;
+  const previousNativeT3Slack = process.env.COMPADRE_T3_SLACK_ENABLED;
   process.env.SLACK_SIGNING_SECRET = signingSecret;
   process.env.COMPADRE_SLACK_WORKSPACE_ID = "T123";
   process.env.COMPADRE_SLACK_APP_ID = "A123";
+  delete process.env.COMPADRE_T3_SLACK_ENABLED;
 
   try {
     const response = await slackEventsRoutes.request(
@@ -144,13 +148,101 @@ test("acknowledges a signed agent session stop event", async () => {
     restoreEnvironment("SLACK_SIGNING_SECRET", previousSigningSecret);
     restoreEnvironment("COMPADRE_SLACK_WORKSPACE_ID", previousWorkspaceId);
     restoreEnvironment("COMPADRE_SLACK_APP_ID", previousAppId);
+    restoreEnvironment("COMPADRE_T3_SLACK_ENABLED", previousNativeT3Slack);
   }
+});
+
+test("Slack Stop interrupts only the bound running generation", async () => {
+  const event = {
+    channel: "C123",
+    thread_ts: "1782234671.392669",
+    event_ts: "1783536983.783769",
+  };
+  const canonical = "slack:T123:C123:1782234671.392669";
+  const expectedThreadId = centralT3ThreadId(canonical);
+  let requestedAt = "2026-07-08T01:00:00.000Z";
+  let interrupted:
+    | { threadId: string; turnId?: string; commandId?: string }
+    | undefined;
+  const dependencies = {
+    configuredWorkspaceId: "T123",
+    bindings: {
+      async slack() {
+        return {
+          channelId: "C123",
+          threadTs: event.thread_ts,
+          recipientTeamId: "T123",
+        };
+      },
+    },
+    centralClient: {
+      async snapshot() {
+        return {
+          snapshotSequence: 9,
+          projects: [],
+          updatedAt: new Date().toISOString(),
+          threads: [
+            {
+              id: expectedThreadId,
+              projectId: "project-1",
+              title: "Slack thread",
+              modelSelection: { instanceId: "codex", model: "gpt-5" },
+              messages: [],
+              session: null,
+              latestTurn: {
+                turnId: "turn-1",
+                state: "running",
+                requestedAt,
+                startedAt: requestedAt,
+                completedAt: null,
+                assistantMessageId: "assistant-1",
+              },
+            },
+          ],
+        } as never;
+      },
+      async interruptTurn(input: {
+        threadId: string;
+        turnId?: string;
+        commandId?: string;
+      }) {
+        interrupted = input;
+        return 10;
+      },
+    },
+  };
+
+  assert.equal(
+    await stopHostedSlackSession(event, "T123", dependencies),
+    true,
+  );
+  assert.equal(interrupted?.threadId, expectedThreadId);
+  assert.equal(interrupted?.turnId, "turn-1");
+
+  interrupted = undefined;
+  requestedAt = "2026-07-09T01:00:00.000Z";
+  assert.equal(
+    await stopHostedSlackSession(event, "T123", dependencies),
+    false,
+  );
+  assert.equal(interrupted, undefined);
 });
 
 test("recognizes Slack agent session stop events", () => {
   assert.equal(
-    isAgentSessionStoppedEvent({ type: "agent_session_stopped" }),
+    isAgentSessionStoppedEvent({
+      type: "agent_session_stopped",
+      channel: "C123",
+      user: "U123",
+      event_ts: "1783536983.783769",
+      thread_ts: "1782234671.392669",
+      streaming_message_ts: [],
+    }),
     true,
+  );
+  assert.equal(
+    isAgentSessionStoppedEvent({ type: "agent_session_stopped" }),
+    false,
   );
   assert.equal(isAgentSessionStoppedEvent({ type: "message" }), false);
 });

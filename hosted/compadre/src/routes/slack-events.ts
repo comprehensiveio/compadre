@@ -33,9 +33,11 @@ import {
   t3SlackSessionLink,
 } from "../services/t3-slack-conversation.js";
 import {
+  centralT3ThreadId,
   configuredCentralT3Client,
   runCentralT3Conversation,
 } from "../t3/central-conversation.js";
+import type { T3Client } from "../t3/client.js";
 import {
   downloadSlackInputFiles,
   mergeSlackFileReferences,
@@ -111,11 +113,16 @@ export interface AgentSessionStoppedEvent {
 export function isAgentSessionStoppedEvent(
   event: unknown,
 ): event is AgentSessionStoppedEvent {
+  if (typeof event !== "object" || event === null) return false;
+  const record = event as Record<string, unknown>;
   return (
-    typeof event === "object" &&
-    event !== null &&
-    "type" in event &&
-    event.type === "agent_session_stopped"
+    record.type === "agent_session_stopped" &&
+    typeof record.channel === "string" &&
+    typeof record.user === "string" &&
+    typeof record.event_ts === "string" &&
+    typeof record.thread_ts === "string" &&
+    Array.isArray(record.streaming_message_ts) &&
+    record.streaming_message_ts.every((value) => typeof value === "string")
   );
 }
 
@@ -175,6 +182,60 @@ export function isAllowedSlackWorkspace(input: {
       input.eventWorkspaceId &&
       input.eventWorkspaceId === configuredWorkspaceId,
   );
+}
+
+/** Interrupt the exact central T3 turn represented by Slack's native Stop. */
+export async function stopHostedSlackSession(
+  event: Pick<
+    AgentSessionStoppedEvent,
+    "channel" | "thread_ts" | "event_ts"
+  >,
+  workspaceId: string,
+  dependencies: {
+    configuredWorkspaceId: string;
+    bindings: Pick<HostedThreadBindingStore, "slack">;
+    centralClient: Pick<T3Client, "snapshot" | "interruptTurn">;
+  },
+): Promise<boolean> {
+  if (workspaceId !== dependencies.configuredWorkspaceId) return false;
+  const canonicalThreadId = canonicalSlackThreadId({
+    teamId: workspaceId,
+    channel: event.channel,
+    threadTs: event.thread_ts,
+  });
+  const threadId = centralT3ThreadId(canonicalThreadId);
+  const binding = await dependencies.bindings.slack(threadId);
+  if (
+    !binding ||
+    binding.channelId !== event.channel ||
+    binding.threadTs !== event.thread_ts
+  ) {
+    return false;
+  }
+
+  const snapshot = await dependencies.centralClient.snapshot();
+  const turn = snapshot.threads.find((thread) => thread.id === threadId)
+    ?.latestTurn;
+  const eventTime = Number(event.event_ts);
+  // Slack can redeliver stop events. Never let an older event cancel a newer
+  // turn that began after the user pressed Stop.
+  if (
+    !turn ||
+    turn.state !== "running" ||
+    !Number.isFinite(eventTime) ||
+    Date.parse(turn.requestedAt) > eventTime * 1_000
+  ) {
+    return false;
+  }
+
+  await dependencies.centralClient.interruptTurn({
+    threadId,
+    turnId: turn.turnId,
+    commandId: centralT3ThreadId(
+      `slack-stop:${workspaceId}:${event.channel}:${event.event_ts}`,
+    ),
+  });
+  return true;
 }
 
 slackEventsRoutes.post("/slack/events", async (c) => {
@@ -248,13 +309,40 @@ slackEventsRoutes.post("/slack/events", async (c) => {
     const event = payload.event;
     if (event && typeof event === "object") {
       if (isAgentSessionStoppedEvent(event)) {
-        // Slack needs an acknowledged subscription before it will render the
-        // native stop button. Cancellation and status cleanup follow later.
+        let interrupted = false;
+        if (nativeT3SlackEnabled()) {
+          try {
+            const client = configuredCentralT3Client();
+            if (!client) {
+              throw new Error(
+                "Slack Stop requires COMPADRE_T3_CENTRAL_URL and COMPADRE_T3_CENTRAL_TOKEN.",
+              );
+            }
+            const runtime = await getRequiredThreadPersistence();
+            interrupted = await stopHostedSlackSession(event, teamId ?? "", {
+              configuredWorkspaceId,
+              bindings: new HostedThreadBindingStore(
+                runtime.persistence.stores.metadata,
+              ),
+              centralClient: client,
+            });
+          } catch (error) {
+            log.error(
+              {
+                slackChannelId: event.channel,
+                slackThreadTs: event.thread_ts,
+                ...serializeError(error),
+              },
+              "slack agent session stop request failed",
+            );
+          }
+        }
         log.info(
           {
             slackChannelId: event.channel,
             slackThreadTs: event.thread_ts,
             slackUserId: event.user,
+            interrupted,
           },
           "slack agent session stop request acknowledged",
         );
@@ -581,6 +669,7 @@ async function handleAIMessage(
         attribution,
         inputFiles: nativeSlackInputFiles.files,
         profile,
+        returnAfterSteer: true,
         ...(isThreadReply
           ? isMentionOnlyThreadReply
             ? {
@@ -619,6 +708,7 @@ async function handleAIMessage(
                 ),
             );
           }
+          if (prepared.steered) return;
           if (!slackDeliveries || !slackStream) return;
           const slackTeamId = workspaceId?.trim();
           if (!slackTeamId) {
@@ -671,6 +761,22 @@ async function handleAIMessage(
     nativeConversation
       .then(async (result) => {
         stopReservationHeartbeat();
+        if (result.steered) {
+          if (!isDM && slackStream) {
+            await slackStream.markRunSucceeded(event.ts);
+          }
+          await slackRuns.forget(event.channel, event.ts);
+          log.info(
+            {
+              slackUserId: event.user,
+              slackChannelId: event.channel,
+              slackThreadTs: event.thread_ts ?? event.ts,
+              t3ThreadId: result.t3ThreadId,
+            },
+            "slack follow-up steered active native t3 turn",
+          );
+          return;
+        }
         if (slackDeliveries && slackStream && centralClient) {
           const delivery =
             reservedSlackDelivery ??

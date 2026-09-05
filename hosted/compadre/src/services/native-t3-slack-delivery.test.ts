@@ -178,3 +178,52 @@ test("a superseded web mirror leaves final Slack delivery to the newest steer", 
     "status:is github.get_repo...",
   ]);
 });
+
+test("a cancelled native run posts a stopped notice even after partial text", async () => {
+  async function* cancelled(): AsyncIterable<StreamChunk> {
+    yield {
+      type: EventType.TEXT_MESSAGE_START,
+      messageId: "assistant-partial",
+      role: "assistant",
+      timestamp: 1,
+    };
+    yield {
+      type: EventType.TEXT_MESSAGE_CONTENT,
+      messageId: "assistant-partial",
+      delta: "Partial work",
+      content: "Partial work",
+      timestamp: 2,
+    };
+    yield {
+      type: EventType.RUN_ERROR,
+      runId: "run-cancelled",
+      code: "NATIVE_T3_RUN_CANCELLED",
+      message: "The native T3 run was cancelled.",
+      timestamp: 3,
+    };
+  }
+  const calls: string[] = [];
+  const slack: NativeT3SlackDeliveryStream = {
+    async postThreadMessage(message) { calls.push(`post:${message}`); },
+    async setStatus(status) { calls.push(`status:${status}`); },
+    async clearStatus() { calls.push("clear"); },
+  };
+  for await (const _chunk of mirrorNativeT3RunToSlack(
+    cancelled(),
+    {
+      binding: { channelId: "C1", threadTs: "123.4" },
+      userMessage: "Long task",
+      botToken: "test-token",
+    },
+    slack,
+  )) {
+    // Drain the authoritative stream.
+  }
+
+  assert.deepEqual(calls, [
+    "post:*From Compadre web:*\nLong task",
+    "status:is thinking...",
+    "post:Stopped. Send another message to continue.",
+    "clear",
+  ]);
+});

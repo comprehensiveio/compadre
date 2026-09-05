@@ -724,12 +724,13 @@ export class T3Client {
   async interruptTurn(input: {
     threadId: string;
     turnId?: string;
+    commandId?: string;
     signal?: AbortSignal;
   }): Promise<number> {
     return this.dispatch(
       {
         type: "thread.turn.interrupt",
-        commandId: this.idFactory(),
+        commandId: input.commandId ?? this.idFactory(),
         threadId: input.threadId,
         ...(input.turnId ? { turnId: input.turnId } : {}),
         createdAt: this.now().toISOString(),

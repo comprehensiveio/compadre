@@ -7,17 +7,19 @@ import type { T3ThreadSnapshot, T3TurnDispatch } from "./client.js";
 import { T3EnvironmentUnavailableError } from "./gateway.js";
 import type { T3GatewayTurn } from "./gateway.js";
 import {
+  deliverNativeT3Steering,
   driveNativeT3Run,
   finalizeNativeT3Run,
   NativeT3RunStateError,
   type NativeT3DriverGateway,
 } from "./native-t3-run-driver.js";
+import { NativeT3RunControlStore } from "./run-control.js";
 import {
   NativeT3RunRequestStore,
   type NativeT3RunRequest,
 } from "./run-request-store.js";
 import type { T3ThreadBinding } from "../services/t3-thread-bindings.js";
-import type { MetadataStore } from "./storage.js";
+import { InMemoryLockStore, type MetadataStore } from "./storage.js";
 
 const binding: T3ThreadBinding = {
   canonicalThreadId: "thread-1",
@@ -55,6 +57,7 @@ function snapshotAt(input: {
   streaming: boolean;
   terminal: boolean;
   failed?: boolean;
+  interrupted?: boolean;
 }): T3ThreadSnapshot {
   return {
     snapshotSequence: input.terminal ? 9 : 5,
@@ -65,7 +68,13 @@ function snapshotAt(input: {
       modelSelection: binding.modelSelection,
       latestTurn: {
         turnId: "turn-1",
-        state: input.terminal ? (input.failed ? "error" : "completed") : "running",
+        state: input.terminal
+          ? input.interrupted
+            ? "interrupted"
+            : input.failed
+              ? "error"
+              : "completed"
+          : "running",
         requestedAt: "2026-08-31T15:00:01.000Z",
         startedAt: "2026-08-31T15:00:01.000Z",
         completedAt: input.terminal ? "2026-08-31T15:00:05.000Z" : null,
@@ -84,7 +93,7 @@ function snapshotAt(input: {
         },
       ],
       session: {
-        status: "ready",
+        status: input.interrupted ? "interrupted" : "ready",
         activeTurnId: null,
         lastError: input.failed ? "The provider crashed." : null,
       },
@@ -120,11 +129,18 @@ function fakeGateway(waitBehaviors: WaitBehavior[]) {
     waits: 0,
     cancels: 0,
     lost: 0,
+    setupSteering: [] as string[],
+    liveSteering: [] as string[],
   };
   const gateway: NativeT3DriverGateway = {
-    async send() {
+    async send(input) {
       calls.sends += 1;
+      calls.setupSteering.push(...(await input.loadInitialSteering?.() ?? []));
       return { binding, dispatch } satisfies T3GatewayTurn;
+    },
+    async steer(input) {
+      calls.liveSteering.push(input.text);
+      return true;
     },
     async resumeTurn(canonicalThreadId, resumedDispatch) {
       calls.resumes += 1;
@@ -155,7 +171,9 @@ async function harness(runId: string, waitBehaviors: WaitBehavior[]) {
     COMPADRE_DURABILITY_BACKEND: "memory",
   });
   assert.ok(durability);
-  const requests = new NativeT3RunRequestStore(memoryMetadata());
+  const metadata = memoryMetadata();
+  const requests = new NativeT3RunRequestStore(metadata);
+  const controls = new NativeT3RunControlStore(metadata, new InMemoryLockStore());
   const { gateway, calls } = fakeGateway(waitBehaviors);
   const request: NativeT3RunRequest = {
     runId,
@@ -178,8 +196,39 @@ async function harness(runId: string, waitBehaviors: WaitBehavior[]) {
     (await durability.stream(runId).snapshot()).map(
       (entry) => entry.chunk as unknown as StreamChunk,
     );
-  return { durability, requests, gateway, calls, chunks, runId };
+  return { durability, requests, controls, gateway, calls, chunks, runId };
 }
+
+test("folds setup-time steering into the initial provider prompt in order", async (t) => {
+  const h = await harness("run-early-steer", [
+    async () => snapshotAt({ assistantText: "Counted to 50", streaming: false, terminal: true }),
+  ]);
+  t.after(() => h.durability.close());
+  await h.controls.enqueue(h.runId, { id: "second", text: "actually count to 50" });
+  await h.controls.enqueue(h.runId, { id: "third", text: "use bash" });
+
+  await driveNativeT3Run(h, h.runId);
+
+  assert.deepEqual(h.calls.setupSteering, ["actually count to 50", "use bash"]);
+  assert.deepEqual(h.calls.liveSteering, []);
+  assert.deepEqual(await h.controls.pending(h.runId), []);
+});
+
+test("delivers post-dispatch steering through the existing native turn", async (t) => {
+  const h = await harness("run-live-steer", []);
+  t.after(() => h.durability.close());
+  await h.requests.saveDispatch(h.runId, {
+    canonicalThreadId: "thread-1",
+    dispatch,
+    dispatchedAt: dispatch.createdAt,
+  });
+  const input = { id: "steer-message", text: "focus on tests" };
+  await h.controls.enqueue(h.runId, input);
+
+  assert.equal(await deliverNativeT3Steering(h, h.runId, input), true);
+  assert.deepEqual(h.calls.liveSteering, ["focus on tests"]);
+  assert.equal((await h.controls.entry(h.runId, input.id))?.state, "delivered");
+});
 
 test("drives a native T3 run to completion against durable state", async (t) => {
   const { durability, requests, gateway, calls, chunks, runId } = await harness("run-complete", [
@@ -292,6 +341,7 @@ test("a run cancelled before dispatch converges without contacting the worker", 
 test("an aborted signal interrupts the worker and terminalizes as aborted", async (t) => {
   const abort = new AbortController();
   let armCancel: () => Promise<void>;
+  let cleanupFinished = false;
   const { durability, requests, gateway, calls, chunks, runId } = await harness("run-abort", [
     async ({ onSnapshot, signal }) => {
       await onSnapshot?.(snapshotAt({ assistantText: "Working", streaming: true, terminal: false }));
@@ -299,11 +349,17 @@ test("an aborted signal interrupts the worker and terminalizes as aborted", asyn
       // therefore the activity) is cancelled.
       await armCancel();
       abort.abort();
-      return new Promise((_resolve, reject) => {
-        const fail = () => reject(new Error("watch aborted"));
-        if (signal?.aborted) return fail();
-        signal?.addEventListener("abort", fail, { once: true });
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      assert.equal(signal?.aborted, false, "the terminal observer stays attached during cleanup");
+      cleanupFinished = true;
+      const interrupted = snapshotAt({
+        assistantText: "Working",
+        streaming: false,
+        terminal: true,
+        interrupted: true,
       });
+      await onSnapshot?.(interrupted);
+      return interrupted;
     },
   ]);
   armCancel = () => requestRunCancel(durability.runs, runId).then(() => undefined);
@@ -316,6 +372,7 @@ test("an aborted signal interrupts the worker and terminalizes as aborted", asyn
   );
 
   assert.equal(outcome.status, "aborted");
+  assert.equal(cleanupFinished, true, "cancellation waits for provider cleanup and snapshot persistence");
   assert.equal(calls.cancels, 1, "the worker turn is interrupted");
   const events = await chunks();
   assert.equal(events.at(-1)?.type, EventType.RUN_ERROR);

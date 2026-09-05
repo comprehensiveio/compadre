@@ -6,6 +6,8 @@ export const INCOMPLETE_RESPONSE_NOTICE =
 export const AGENT_FAILURE_NOTICE =
   ":warning: This run stopped unexpectedly. Reply `@Compadre continue` and I'll resume from the saved investigation.";
 
+export const AGENT_STOPPED_NOTICE = "Stopped. Send another message to continue.";
+
 /**
  * Tracks whether the user-facing text stream ends with an answer rather than
  * with tool activity. Whitespace-only deltas do not count as a response.

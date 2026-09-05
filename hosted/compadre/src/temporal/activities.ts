@@ -1,11 +1,14 @@
 import { Context } from "@temporalio/activity";
 import { ApplicationFailure } from "@temporalio/common";
+import { isTerminalRunStatus } from "@tanstack/ai";
 import {
+  deliverNativeT3Steering,
   driveNativeT3Run,
   finalizeNativeT3Run,
   NativeT3RunStateError,
   type NativeT3RunOutcome,
 } from "../t3/native-t3-run-driver.js";
+import type { NativeT3SteeringInput } from "../t3/run-control.js";
 import { getConfiguredThreadPersistence } from "../persistence/runtime.js";
 import { getConfiguredNativeT3RunDriverDependencies } from "../t3/runtime.js";
 import { buildT3WorkerTemplate } from "../t3/worker-templates.js";
@@ -76,6 +79,42 @@ export async function finalizeNativeT3RunActivity(input: {
     cancelled: input.cancelled,
     message: input.message,
   });
+}
+
+/** Persist setup-time steering or deliver it into the active worker turn. */
+export async function steerNativeT3RunActivity(
+  runId: string,
+  input: NativeT3SteeringInput,
+): Promise<boolean> {
+  const context = Context.current();
+  const heartbeatTimer = setInterval(
+    () => context.heartbeat("steering native T3 run"),
+    1_000,
+  );
+  heartbeatTimer.unref();
+  try {
+    const deps = await driverDependencies();
+    if (!deps.controls) return false;
+    const run = await deps.durability.runs.get(runId);
+    if (!run || isTerminalRunStatus(run.status) || run.cancelRequested) {
+      return false;
+    }
+    const entry = await deps.controls.enqueue(runId, input);
+    if (entry.state === "delivered") return true;
+    if (entry.state === "rejected") return false;
+    // No dispatch means provisioning is still underway. The driver folds this
+    // durable instruction into the initial provider prompt before it publishes
+    // the dispatch marker.
+    if (!(await deps.requests.getDispatch(runId))) return true;
+    return deliverNativeT3Steering(
+      deps,
+      runId,
+      input,
+      context.cancellationSignal,
+    );
+  } finally {
+    clearInterval(heartbeatTimer);
+  }
 }
 
 /**
