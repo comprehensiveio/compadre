@@ -761,6 +761,7 @@ export class T3Client {
     timeoutMs?: number;
     absoluteTimeoutMs?: number;
     pollIntervalMs?: number;
+    requireCheckpoint?: boolean;
     signal?: AbortSignal;
     onSnapshot?(snapshot: T3ThreadSnapshot): void | Promise<void>;
   }): Promise<T3ThreadSnapshot> {
@@ -904,7 +905,10 @@ export class T3Client {
         snapshot,
         input.messageId,
       );
+      const requestedCheckpoint = reviewCheckpointForMessage(snapshot, input.messageId);
+      if (input.requireCheckpoint && requestedCheckpoint?.status === "ready" && snapshot.snapshotSequence >= input.minimumSequence) return snapshot;
       if (
+        (!input.requireCheckpoint || requestedCheckpoint?.status === "error" || startFailure !== undefined) &&
         snapshot.snapshotSequence >= input.minimumSequence &&
         ((matchesRequestedTurn && terminalTurn(snapshot.thread)) ||
           startFailure !== undefined)
@@ -1030,4 +1034,17 @@ export async function exchangeT3PairingToken(input: {
     expiresIn: result.expires_in,
     scopes: result.scope.split(/\s+/).filter(Boolean),
   };
+}
+
+const reviewCheckpointSchema = z.object({
+  turnId: z.string(), checkpointTurnCount: z.number().int().positive(),
+  checkpointRef: z.string(), status: z.enum(["ready", "missing", "error"]),
+});
+
+/** Locate the checkpoint belonging to this dispatch, including a steered worker turn. */
+export function reviewCheckpointForMessage(snapshot: T3ThreadSnapshot, messageId?: string) {
+  const turnId = messageId ? snapshot.thread.messages.find((message) => message.id === messageId)?.turnId
+    : snapshot.thread.latestTurn?.turnId;
+  const checkpoints = z.array(reviewCheckpointSchema).safeParse(snapshot.thread.checkpoints);
+  return checkpoints.success ? checkpoints.data.find((checkpoint) => checkpoint.turnId === turnId) : undefined;
 }

@@ -102,3 +102,7 @@ repository contracts on both backends. Do not copy Tolty or upstream migrations
 without comparing Compadre’s attribution/participants and authentication fields.
 The parity test intentionally fails when the SQLite migration tip changes. Keep
 runtime persistence selection dynamic and server composition hooks additive.
+
+Hosted diff reads use [durable workspace reviews](hosted-workspace-reviews.md).
+The controller publishes immutable checkpoint patches and file context; the
+central server's `CompadreReview` adapter reads them without accessing Modal.

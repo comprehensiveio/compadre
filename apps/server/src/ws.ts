@@ -1,3 +1,4 @@
+import { makeCompadreReview } from "./review/CompadreReview.ts";
 import * as Cause from "effect/Cause";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
@@ -479,6 +480,7 @@ const makeWsRpcLayer = (
       const providerMaintenanceRunner = yield* ProviderMaintenanceRunner.ProviderMaintenanceRunner;
       const serverSelfUpdate = yield* ServerSelfUpdate.ServerSelfUpdate;
       const config = yield* ServerConfig.ServerConfig;
+      const hostedReview = makeCompadreReview(projectionSnapshotQuery);
       const lifecycleEvents = yield* ServerLifecycleEvents.ServerLifecycleEvents;
       const serverSettings = yield* ServerSettings.ServerSettingsService;
       const startup = yield* ServerRuntimeStartup.ServerRuntimeStartup;
@@ -1146,7 +1148,13 @@ const makeWsRpcLayer = (
           : undefined;
 
         return {
-          environment,
+          environment: {
+            ...environment,
+            capabilities: {
+              ...environment.capabilities,
+              workspaceReviewArtifacts: hostedReview !== undefined,
+            },
+          },
           auth,
           cwd: config.cwd,
           keybindingsConfigPath: config.keybindingsConfigPath,
@@ -1298,7 +1306,10 @@ const makeWsRpcLayer = (
         [ORCHESTRATION_WS_METHODS.getTurnDiff]: (input) =>
           observeRpcEffect(
             ORCHESTRATION_WS_METHODS.getTurnDiff,
-            checkpointDiffQuery.getTurnDiff(input).pipe(
+            (hostedReview
+              ? hostedReview.getTurnDiff(input)
+              : checkpointDiffQuery.getTurnDiff(input)
+            ).pipe(
               Effect.mapError(
                 (cause) =>
                   new OrchestrationGetTurnDiffError({
@@ -1312,7 +1323,10 @@ const makeWsRpcLayer = (
         [ORCHESTRATION_WS_METHODS.getFullThreadDiff]: (input) =>
           observeRpcEffect(
             ORCHESTRATION_WS_METHODS.getFullThreadDiff,
-            checkpointDiffQuery.getFullThreadDiff(input).pipe(
+            (hostedReview
+              ? hostedReview.getTurnDiff({ ...input, fromTurnCount: 0 }, true)
+              : checkpointDiffQuery.getFullThreadDiff(input)
+            ).pipe(
               Effect.mapError(
                 (cause) =>
                   new OrchestrationGetFullThreadDiffError({
@@ -2207,13 +2221,17 @@ const makeWsRpcLayer = (
             { "rpc.aggregate": "vcs" },
           ),
         [WS_METHODS.reviewGetDiffPreview]: (input) =>
-          observeRpcEffect(WS_METHODS.reviewGetDiffPreview, review.getDiffPreview(input), {
-            "rpc.aggregate": "review",
-          }),
+          observeRpcEffect(
+            WS_METHODS.reviewGetDiffPreview,
+            (hostedReview ?? review).getDiffPreview(input),
+            {
+              "rpc.aggregate": "review",
+            },
+          ),
         [WS_METHODS.reviewGetDiffFileContents]: (input) =>
           observeRpcEffect(
             WS_METHODS.reviewGetDiffFileContents,
-            review.getDiffFileContents(input),
+            (hostedReview ?? review).getDiffFileContents(input),
             { "rpc.aggregate": "review" },
           ),
         [WS_METHODS.terminalOpen]: (input) =>

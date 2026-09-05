@@ -1,3 +1,4 @@
+import { SavedWorkspaceReview } from "./review.ts";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import {
@@ -406,6 +407,7 @@ export type TurnProposedCompletedPayload = typeof TurnProposedCompletedPayload.T
 
 const TurnDiffUpdatedPayload = Schema.Struct({
   unifiedDiff: Schema.String,
+  savedReview: Schema.optionalKey(SavedWorkspaceReview),
 });
 export type TurnDiffUpdatedPayload = typeof TurnDiffUpdatedPayload.Type;
 

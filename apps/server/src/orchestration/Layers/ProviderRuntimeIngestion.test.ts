@@ -2935,6 +2935,43 @@ describe("ProviderRuntimeIngestion", () => {
     });
   });
 
+  it("persists a saved worker review as a ready checkpoint without local Git", async () => {
+    const harness = await createHarness();
+    const reference = `compadre-review:run-1:${"a".repeat(64)}`;
+    harness.emit({
+      type: "turn.diff.updated",
+      eventId: asEventId("evt-saved-review"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: "2026-01-01T00:00:00.000Z",
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-saved"),
+      itemId: asItemId("saved-assistant"),
+      payload: {
+        unifiedDiff: "",
+        savedReview: {
+          reference,
+          capturedAt: "2026-01-01T00:00:00.000Z",
+          files: [{ path: "file.ts", kind: "modified", additions: 2, deletions: 1 }],
+        },
+      },
+    });
+    const thread = await waitForThread(harness.readModel, (entry) =>
+      entry.checkpoints.some(
+        (checkpoint: ProviderRuntimeTestCheckpoint) => checkpoint.turnId === "turn-saved",
+      ),
+    );
+    expect(
+      thread.checkpoints.find(
+        (checkpoint: ProviderRuntimeTestCheckpoint) => checkpoint.turnId === "turn-saved",
+      ),
+    ).toMatchObject({
+      checkpointRef: reference,
+      status: "ready",
+      assistantMessageId: "assistant:saved-assistant",
+      files: [{ path: "file.ts", kind: "modified", additions: 2, deletions: 1 }],
+    });
+  });
+
   it("consumes P1 runtime events into thread metadata, diff checkpoints, and activities", async () => {
     const harness = await createHarness();
     const now = "2026-01-01T00:00:00.000Z";

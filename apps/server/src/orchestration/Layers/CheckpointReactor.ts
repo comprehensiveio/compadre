@@ -189,6 +189,8 @@ const make = Effect.gen(function* () {
     readonly projects: ReadonlyArray<{ readonly id: ProjectId; readonly workspaceRoot: string }>;
     readonly preferSessionRuntime: boolean;
   }): Effect.fn.Return<string | undefined> {
+    // Hosted provider work owns a remote checkout; central Git is never authoritative.
+    if (process.env.COMPADRE_NATIVE_T3_URL?.trim()) return undefined;
     const fromSession = yield* resolveSessionRuntimeForThread(input.threadId);
     const fromThread = resolveThreadWorkspaceCwd({
       thread: input.thread,
@@ -532,6 +534,7 @@ const make = Effect.gen(function* () {
   const refreshLocalGitStatusFromTurnCompletion = Effect.fn(
     "refreshLocalGitStatusFromTurnCompletion",
   )(function* (event: Extract<ProviderRuntimeEvent, { type: "turn.completed" }>) {
+    if (process.env.COMPADRE_NATIVE_T3_URL?.trim()) return;
     const sessionRuntime = yield* resolveSessionRuntimeForThread(event.threadId);
     if (Option.isNone(sessionRuntime)) {
       return;
@@ -691,6 +694,17 @@ const make = Effect.gen(function* () {
     event: Extract<OrchestrationEvent, { type: "thread.checkpoint-revert-requested" }>,
   ) {
     const now = DateTime.formatIso(yield* DateTime.now);
+
+    if (process.env.COMPADRE_NATIVE_T3_URL?.trim()) {
+      yield* appendRevertFailureActivity({
+        threadId: event.payload.threadId,
+        turnCount: event.payload.turnCount,
+        detail:
+          "Saved workspace reviews are read-only. Ask the agent to undo the change in a new turn.",
+        createdAt: now,
+      });
+      return;
+    }
 
     const thread = yield* resolveThreadDetail(event.payload.threadId);
     if (!thread) {

@@ -2814,7 +2814,7 @@ function ChatViewContent(props: ChatViewProps) {
           break;
         }
         const summary = turnDiffSummaryByAssistantMessageId.get(nextEntry.message.id);
-        if (!summary) {
+        if (!summary || summary.checkpointRef?.startsWith("compadre-review:")) {
           continue;
         }
         const turnCount =

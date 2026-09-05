@@ -85,9 +85,12 @@ auto-deploying services require an atomic rollout.
 - One canonical thread maps to one isolated Modal worker/filesystem. Restoring
   a worker may change its sandbox ID or generation without changing the
   canonical or native T3 thread IDs.
-- A terminal worker stays warm for its bounded lease, then the controller
-  snapshots its stopped filesystem and records it as suspended. A later write
-  restores a new sandbox generation; a central read must not wake it.
+- A terminal worker remains alive within its sandbox lifetime (currently 24
+  hours). The controller takes a best-effort filesystem checkpoint after each
+  terminal turn. A later write can restore an unavailable worker from its
+  snapshot; a central read must not wake it. Saved workspace reviews are
+  separately published immutable objects; see
+  `docs/internals/hosted-workspace-reviews.md`.
 - Codex and Claude Code remain T3's native provider identities. Compadre is a
   transport/controller, not a model-picker option.
 - Slack, browser, and compatibility API messages enter the same central T3

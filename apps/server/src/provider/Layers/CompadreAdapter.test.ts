@@ -1,7 +1,7 @@
 // @effect-diagnostics nodeBuiltinImport:off - Exercises reconnects against a real SSE socket.
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { createServer } from "node:http";
-import { createHash } from "node:crypto";
+import * as NodeHttp from "node:http";
+import * as NodeCrypto from "node:crypto";
 import { assert, it } from "@effect/vitest";
 import {
   ProviderDriverKind,
@@ -59,7 +59,7 @@ it.layer(Layer.merge(NodeServices.layer, FetchHttpClient.layer))("CompadreAdapte
     Effect.scoped(
       Effect.gen(function* () {
         const requests: Array<{ method: string; lastEventId: string | undefined }> = [];
-        const server = createServer((request, response) => {
+        const server = NodeHttp.createServer((request, response) => {
           requests.push({
             method: request.method ?? "UNKNOWN",
             lastEventId:
@@ -181,11 +181,22 @@ it.layer(Layer.merge(NodeServices.layer, FetchHttpClient.layer))("CompadreAdapte
             model: request.model,
             modelOptions: request.modelOptions,
           });
-          return Stream.make({
-            type: "RUN_FINISHED",
-            runId: request.runId,
-            threadId: request.threadId,
-          });
+          return Stream.make(
+            {
+              type: "WORKSPACE_REVIEW",
+              data: {
+                reference: `compadre-review:run-1:${"a".repeat(64)}`,
+                capturedAt: "2026-09-05T12:00:00.000Z",
+                files: [],
+              },
+            },
+            { type: "WORKSPACE_REVIEW_UNAVAILABLE" },
+            {
+              type: "RUN_FINISHED",
+              runId: request.runId,
+              threadId: request.threadId,
+            },
+          );
         },
       });
       const events: ProviderRuntimeEvent[] = [];
@@ -225,6 +236,16 @@ it.layer(Layer.merge(NodeServices.layer, FetchHttpClient.layer))("CompadreAdapte
       assert.equal((yield* adapter.listSessions())[0]?.model, "gpt-5.6-sol");
       assert.isTrue(events.every((event) => event.provider === codex));
       assert.equal(adapter.provider, codex);
+      assert.equal(
+        events.find((event) => event.type === "turn.diff.updated")?.payload.savedReview?.reference,
+        `compadre-review:run-1:${"a".repeat(64)}`,
+      );
+      assert.equal(
+        events.find((event) => event.type === "turn.completed")?.payload.state,
+        "completed",
+      );
+      assert.isTrue(events.some((event) => event.type === "runtime.warning"));
+      assert.isFalse(events.some((event) => event.type === "runtime.error"));
     }),
   );
 
@@ -497,14 +518,14 @@ it.layer(Layer.merge(NodeServices.layer, FetchHttpClient.layer))("CompadreAdapte
           prefix: "t3-compadre-output-",
         });
         const png = new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10]);
-        const digest = createHash("sha256").update(png).digest("hex");
+        const digest = NodeCrypto.createHash("sha256").update(png).digest("hex");
         const csv = new TextEncoder().encode("service,status\napi,healthy\n");
-        const csvDigest = createHash("sha256").update(csv).digest("hex");
+        const csvDigest = NodeCrypto.createHash("sha256").update(csv).digest("hex");
         const requests: Array<{
           authorization: string | undefined;
           artifactId: string | null;
         }> = [];
-        const server = createServer((request, response) => {
+        const server = NodeHttp.createServer((request, response) => {
           const url = new URL(request.url ?? "/", "http://localhost");
           requests.push({
             authorization: request.headers.authorization,
