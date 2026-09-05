@@ -1,10 +1,10 @@
 # UI and hosted T3 fork changes
 
-> Central PostgreSQL migration is staged, not deployed. Hosted central authority
-> moves into the existing Compadre PostgreSQL compadre_t3 schema after approved cutover; SQLite
-> remains the local/desktop/Modal backend and the pre-cutover production authority.
-> Keep the Render disk and single-process deployment: reactor ownership, signing
-> secrets/configuration and workspace restore still block disk removal. See
+> Hosted central T3 uses the existing Compadre PostgreSQL database in the
+> `compadre_t3` schema (cut over 2026-09-05); controller tables remain in `public`.
+> SQLite remains the local/desktop/Modal backend. Keep the Render disk and
+> single-process deployment: reactor ownership, signing secrets/configuration
+> and workspace restore still block disk removal. See
 > `docs/internals/hosted-postgres-persistence.md` and
 > `hosted/compadre/docs/runbooks/central-t3-postgres-cutover.md`.
 
@@ -44,7 +44,7 @@ Compadre is an intentional T3 product fork, not a temporary patch set:
 - Add every new seam to `docs/internals/compadre-fork.md`.
 - Preserve native `codex` and `claudeAgent` identities. Remote execution is
   an adapter behind those providers.
-- Put durable conversation and UI concepts in central T3 persistence (hosted PostgreSQL after cutover; SQLite locally). Do not mirror
+- Put durable conversation and UI concepts in central T3 persistence (hosted PostgreSQL; SQLite locally). Do not mirror
   Compadre Postgres control tables into SQLite.
 - Keep the `upstream` remote and rehearse upstream merges periodically.
 
@@ -112,10 +112,10 @@ For auth changes, preserve:
 
 Merging `main` auto-deploys Render service `compadre-web` (which builds from
 the monorepo root). It does not redeploy `compadre-api` or existing Modal
-workers. Central SQLite migrations run when the server starts against the
-persistent disk.
+workers. Hosted PostgreSQL migrations run explicitly in Render pre-deploy;
+SQLite migrations still run at local/desktop/worker startup.
 
 Verify the deployed commit, Render health, authenticated login, an existing
 thread, a new message, and any changed live event behavior. A successful static
-asset request alone does not prove that the server, SQLite migration, or
+asset request alone does not prove that the server, persistence migration, or
 WebSocket projection works.

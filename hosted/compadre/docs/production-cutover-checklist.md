@@ -364,10 +364,11 @@ Canonical endpoints:
   services and duplicated persistence, archive migration artifacts, and update
   the architecture document to describe only the production system.
 
-## Central SQLite to PostgreSQL migration (not yet executed)
+## Central SQLite to PostgreSQL migration (completed 2026-09-05)
 
-Follow [the staged cutover runbook](./runbooks/central-t3-postgres-cutover.md).
-The candidate Blueprint must not be synced before the approved import window.
+Follow [the cutover and restore runbook](./runbooks/central-t3-postgres-cutover.md).
+The final import and single-process production canary passed. The disk remains;
+its removal is a separately approved migration.
 Reuse the existing application database and credential, with central tables in
 `compadre_t3` and controller tables in `public`; verify
 shared capacity, backup/PITR/export and monitoring policy; verify the immutable SQLite audit snapshot and complete

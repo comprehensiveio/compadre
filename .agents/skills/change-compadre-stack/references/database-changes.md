@@ -1,26 +1,26 @@
 # Database changes
 
-> Central PostgreSQL migration is staged, not deployed. Hosted central authority
-> moves into the existing Compadre PostgreSQL compadre_t3 schema after approved cutover; SQLite
-> remains the local/desktop/Modal backend and the pre-cutover production authority.
-> Keep the Render disk and single-process deployment: reactor ownership, signing
-> secrets/configuration and workspace restore still block disk removal. See
+> Hosted central T3 uses the existing Compadre PostgreSQL database in the
+> `compadre_t3` schema (cut over 2026-09-05); controller tables remain in `public`.
+> SQLite remains the local/desktop/Modal backend. Keep the Render disk and
+> single-process deployment: reactor ownership, signing secrets/configuration
+> and workspace restore still block disk removal. See
 > `docs/internals/hosted-postgres-persistence.md` and
 > `hosted/compadre/docs/runbooks/central-t3-postgres-cutover.md`.
 
 Choose table and migration ownership from the data, not from which client asks
-for the feature. After central cutover, controller and central tables share the
+for the feature. Controller and central tables share the
 existing PostgreSQL database and credential, with central tables in `compadre_t3`
 and controller tables in `public`. Temporal remains
-separate. Before cutover central production data is still in SQLite.
+separate. The central production SQLite copy is frozen audit history.
 
 ## Decision table
 
-| Data                                                                                                                                                        | Database                                                               |
-| ----------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------- |
-| Messages, turns, activities, tool history, approvals, central usage projections, T3 sessions and UI read models                                             | Central T3 tables (SQLite before cutover; shared PostgreSQL afterward) |
-| Canonical people/Slack identities, auth handoff records, Slack/external bindings, run lifecycle and event delivery, worker leases/recovery, delivery outbox | Compadre Postgres                                                      |
-| Checkout files, local dev database, provider-native transcript                                                                                              | Modal worker filesystem/snapshot; never the central authority          |
+| Data                                                                                                                                                        | Database                                                      |
+| ----------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------- |
+| Messages, turns, activities, tool history, approvals, central usage projections, T3 sessions and UI read models                                             | Central T3 PostgreSQL tables in `compadre_t3`                 |
+| Canonical people/Slack identities, auth handoff records, Slack/external bindings, run lifecycle and event delivery, worker leases/recovery, delivery outbox | Compadre Postgres                                             |
+| Checkout files, local dev database, provider-native transcript                                                                                              | Modal worker filesystem/snapshot; never the central authority |
 
 If a proposed table mixes conversation content with worker leases or Slack
 delivery, split the model at the existing boundary instead of choosing one
@@ -70,15 +70,15 @@ Live proof should include migration logs, schema/version evidence, one existing
 record path, one new write/read path, and controller health. Redact row content
 and credentials.
 
-## Central T3 SQLite
+## Local, desktop and worker T3 SQLite
 
 Authoritative files at the monorepo root:
 
 - migrations: `apps/server/src/persistence/Migrations/NNN_Name.ts`
 - registry/order: `apps/server/src/persistence/Migrations.ts`
 - projections: `apps/server/src/orchestration`
-- production database: `/var/data/t3code/userdata/state.sqlite` under the
-  central Render persistent disk configuration
+- local/worker database: `state.sqlite` under the environment userdata directory;
+  the old central Render copy is frozen and must never resume production writes
 
 T3 migrations are statically imported and run automatically at startup.
 
@@ -103,9 +103,9 @@ Workflow:
 
 6. Follow the root `AGENTS.md` focused typecheck/build guidance.
 
-Before a risky production migration, verify the authenticated online SQLite
-backup is current and that `hosted/compadre/docs/runbooks/central-t3-restore.md`
-is usable. A persistent disk is not a backup.
+Before a hosted production migration, verify managed PostgreSQL recovery and
+use `hosted/compadre/docs/runbooks/central-t3-postgres-cutover.md`. SQLite restore
+instructions apply only to local/workers or explicitly historical recovery.
 
 Live proof should show:
 
@@ -114,7 +114,7 @@ Live proof should show:
 - an existing authenticated thread still renders;
 - the new write and projection survive a reload;
 - central reads succeed without contacting Modal;
-- backup and SQLite integrity signals remain healthy.
+- backup/restore and integrity signals for the selected backend remain healthy.
 
 ## Worker-local state
 
@@ -127,7 +127,7 @@ restored filesystem image.
 Do not infer that a successful central migration proves worker snapshot
 compatibility.
 
-## Hosted central PostgreSQL (staged)
+## Hosted central PostgreSQL
 
 Use `apps/server/src/persistence/CompadrePostgresSchema.ts` and ordered
 `compadre_t3.compadre_t3_migrations`, independent of controller Drizzle or Temporal.

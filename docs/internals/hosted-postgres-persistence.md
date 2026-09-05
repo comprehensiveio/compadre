@@ -1,7 +1,7 @@
 # Compadre central PostgreSQL persistence
 
-Status: implemented locally for a **single central process**, not deployed. The
-production cutover requires separate approval. This change does **not** complete
+Status: deployed on 2026-09-05 for a **single central process** after a verified
+final SQLite import and attachment archive. This change does **not** complete
 the zero-downtime deployment TODO. Keep the Render disk and stop-before-start
 behavior until reactor ownership and the remaining disk files are resolved.
 
@@ -18,7 +18,7 @@ These environments do not inherit central PostgreSQL credentials.
 The controller and central T3 share the existing **`compadre-postgres` database,
 credential, with controller tables in `public` and central tables in
 `compadre_t3`**. No additional data database, role, password or
-migration credential is needed. The staged Blueprint references its private
+migration credential is needed. The Blueprint references its private
 connection string as `COMPADRE_T3_POSTGRES_URL` on `compadre-web`; this is another
 binding of the existing credential, not a secret rotation.
 

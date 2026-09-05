@@ -93,24 +93,23 @@ the same environment-variable contract, make Doppler the sole writer, validate
 the rendered key inventory, and only then remove values from Render. Do not run
 both systems as independent writable authorities.
 
-## Central PostgreSQL cutover (staged; provision only with approval)
+## Central PostgreSQL production bindings
 
 `compadre-web` receives `COMPADRE_T3_POSTGRES_URL` by referencing the existing
 `compadre-postgres` private connection string. The controller and central T3
 share its database and credential; controller tables stay in `public` and
 central tables use `compadre_t3`. No new database password or
 migration secret is required, and existing secret values are not rotated.
-The new environment-variable binding requires the approved cutover; this local
-change only updates the proposed wiring and documentation. Temporal keeps its
+The approved cutover installed these web bindings on 2026-09-05. Temporal keeps its
 separate database and credentials. Set `COMPADRE_T3_PERSISTENCE=postgres` and
 `COMPADRE_T3_REACTOR_MODE=single-process` explicitly.
 
 Set `COMPADRE_T3_ATTACHMENT_BUCKET=compadre` and
 `COMPADRE_T3_ATTACHMENT_REGION=us-west-2`. Web S3 credentials need only
-GetObject/PutObject for `attachments/v1/central-t3/*`. The staged Blueprint
+GetObject/PutObject for `attachments/v1/central-t3/*`. The Blueprint
 references the controller’s existing AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY
-on the web service; it does not generate or rotate them. Read-only inspection
-confirmed these keys exist on the controller and are currently absent on web.
+on the web service; it does not generate or rotate them. The live web service reuses the controller’s existing key values; no other
+service environment values or secret values were changed.
 The central object prefix stays under the already-authorized `attachments/v1/`
 path, so no IAM policy expansion is needed. The web binding does not change
 worker credential configuration. Preserve the

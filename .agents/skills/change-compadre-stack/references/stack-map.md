@@ -1,10 +1,10 @@
 # Compadre stack map
 
-> Central PostgreSQL migration is staged, not deployed. Hosted central authority
-> moves into the existing Compadre PostgreSQL compadre_t3 schema after approved cutover; SQLite
-> remains the local/desktop/Modal backend and the pre-cutover production authority.
-> Keep the Render disk and single-process deployment: reactor ownership, signing
-> secrets/configuration and workspace restore still block disk removal. See
+> Hosted central T3 uses the existing Compadre PostgreSQL database in the
+> `compadre_t3` schema (cut over 2026-09-05); controller tables remain in `public`.
+> SQLite remains the local/desktop/Modal backend. Keep the Render disk and
+> single-process deployment: reactor ownership, signing secrets/configuration
+> and workspace restore still block disk removal. See
 > `docs/internals/hosted-postgres-persistence.md` and
 > `hosted/compadre/docs/runbooks/central-t3-postgres-cutover.md`.
 
@@ -24,7 +24,7 @@ Browser --------------------------------------------------v
                                                  central T3 on Render
                                                  compadre-web
                                                  monorepo root (apps/*)
-                                                 SQLite event log + projections
+                                                 PostgreSQL event log + projections
                                                           |
                                                           | native provider command
                                                           v
@@ -52,9 +52,9 @@ Production endpoints:
 
 | Concern                                                                                             | Authoritative owner                                                     | Common implementation location                                                                                            |
 | --------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
-| Conversation events, messages, turns, activities, tool history, approvals, central usage projection | Central T3 SQLite                                                       | root `apps/server/src/orchestration`, `apps/server/src/persistence`                                                       |
+| Conversation events, messages, turns, activities, tool history, approvals, central usage projection | Central T3 PostgreSQL                                                   | root `apps/server/src/orchestration`, `apps/server/src/persistence`                                                       |
 | Web rendering and interaction                                                                       | T3 web client                                                           | root `apps/web`, shared contracts/runtime packages                                                                        |
-| Browser sessions                                                                                    | Central T3 SQLite, issued through controller-verified Slack OIDC        | root apps/server auth plus `hosted/compadre/src/routes/slack-auth.ts`                                                     |
+| Browser sessions                                                                                    | Central T3 PostgreSQL, issued through controller-verified Slack OIDC    | root apps/server auth plus `hosted/compadre/src/routes/slack-auth.ts`                                                     |
 | Canonical users and workspace-scoped Slack identities                                               | Compadre Postgres                                                       | `hosted/compadre/src/db/schema.ts`, user/auth services                                                                    |
 | Slack/API to canonical-thread binding                                                               | Compadre Postgres                                                       | hosted-thread and T3 binding services                                                                                     |
 | Native run lifecycle, ordered delivery events, cancellation                                         | Compadre Postgres                                                       | `hosted/compadre/src/durability`, `hosted/compadre/src/t3`, route adapters                                                |
@@ -83,7 +83,7 @@ remains the transcript rendered to users.
 | Provider/model UI identity                                            | root `apps/*`                                                                                                     | `compadre-web`                                       |
 | Provider execution transport/event mapping                            | Both layers (root and `hosted/compadre/`)                                                                         | coordinated web then API rollout                     |
 | Per-thread filesystem/dev server/database                             | Compadre Modal worker/runtime                                                                                     | `compadre-api`                                       |
-| Conversation schema                                                   | T3 SQLite migration                                                                                               | `compadre-web`                                       |
+| Conversation schema                                                   | T3 SQLite and PostgreSQL migrations                                                                               | `compadre-web`                                       |
 | Control-plane schema                                                  | Compadre Postgres/Drizzle migration                                                                               | `compadre-api` pre-deploy                            |
 | Run orchestration (workflow/activities/driver, retries, cancellation) | `hosted/compadre/src/temporal` + `hosted/compadre/src/t3` driver; keep running histories replayable (`patched()`) | `compadre-api`; verify with `npm run temporal:probe` |
 

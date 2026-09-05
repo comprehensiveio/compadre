@@ -1,10 +1,10 @@
 # Hosted T3 architecture
 
-> Central PostgreSQL migration is staged, not deployed. Hosted central authority
-> moves into the existing Compadre PostgreSQL compadre_t3 schema after approved cutover; SQLite
-> remains the local/desktop/Modal backend and the pre-cutover production authority.
-> Keep the Render disk and single-process deployment: reactor ownership, signing
-> secrets/configuration and workspace restore still block disk removal. See
+> Hosted central T3 uses the existing Compadre PostgreSQL database in the
+> `compadre_t3` schema (cut over 2026-09-05); controller tables remain in `public`.
+> SQLite remains the local/desktop/Modal backend. Keep the Render disk and
+> single-process deployment: reactor ownership, signing secrets/configuration
+> and workspace restore still block disk removal. See
 > `docs/internals/hosted-postgres-persistence.md` and
 > `hosted/compadre/docs/runbooks/central-t3-postgres-cutover.md`.
 
@@ -20,7 +20,7 @@ own Modal sandbox.
 Slack / API --> Compadre controller ingress --+
                 Postgres users/bindings         |
 Browser UI -------------------------------------+--> central T3 on Render
-                                                    SQLite event log + projections
+                                                    PostgreSQL event log + projections
                                                                |
                                                                v
                                                     Compadre execution bridge
@@ -54,7 +54,7 @@ against Render's bootstrap workspace is not an authoritative substitute.
 
 | Data                                                                  | Owner                  |
 | --------------------------------------------------------------------- | ---------------------- |
-| Conversation events, messages, tools, turns, approvals                | Central T3 SQLite      |
+| Conversation events, messages, tools, turns, approvals                | Central T3 PostgreSQL      |
 | Canonical users and workspace-scoped Slack identities                 | Compadre Postgres      |
 | External-thread binding, worker identity, lease and recovery metadata | Compadre Postgres      |
 | Checkout, live terminal, provider process and native transcript       | Modal worker           |
@@ -218,7 +218,7 @@ When that request reaches a controller that is not already driving the run, the
 controller reconnects to the existing Modal T3 thread, identifies the already
 dispatched turn from its worker snapshot, and reprojects the full narration and
 tool history without sending another provider request. The central T3 service's
-exclusive SQLite disk is a separate deployment-availability limitation
+retained exclusive disk is a separate deployment-availability limitation
 described below.
 
 The worker binding also records the exact active native provider run ID after
@@ -379,33 +379,25 @@ stack auto-deploy `compadre-web`, and the two rollouts stay independent;
 per-thread Modal sandboxes remain lazy runtime resources and are not redeployed
 by either merge.
 
-The central T3 SQLite database is a single-writer deployment. Before treating it
-as production-critical state, add continuous encrypted backup, scheduled restore
-verification, integrity checks, disk-capacity alerts, and a documented recovery
-time objective. Do not add another Render instance until write ownership is
-explicit.
+Central T3 persists events, projections, receipts, auth and provider runtime state
+in the existing application PostgreSQL database's `compadre_t3` schema. The
+controller uses `public` and its independent Drizzle migration history. SQLite
+remains local/desktop/worker storage. PostgreSQL migrations run in pre-deploy;
+the application fails closed if its configured database is unavailable.
+Managed PITR and an off-service final SQLite/configuration archive protect the
+cutover; follow the PostgreSQL backup/restore runbook for continuing operations.
 
 ### Known TODO: eliminate disk-coupled web deployment downtime
 
-`compadre-web` currently keeps the authoritative T3 SQLite database on one
-Render persistent disk. Render cannot attach that disk to the replacement
-instance while the old instance still owns it, so a deployment stops the old
-T3 server before the new server can mount the disk and become ready. This is a
-real outage, not only a dropped WebSocket: the custom domain and direct Render
-origin return 502s, existing browser sessions disconnect, and Slack links cannot
-open their central transcript during the gap. A 2026-08-31 UI deployment
-produced roughly two and a half minutes of 502 responses before the replacement
-started serving. Restarting the sole central process can also interrupt an
-active provider turn.
-
-Move the authoritative T3 persistence boundary to storage that does not require
-exclusive attachment to one request-serving instance, most likely a Postgres
-backend for T3's orchestration, projection, and browser-session repositories.
-An equivalent design is acceptable only if it preserves central T3 as the one
-canonical transcript and supports transactional ordering, idempotency, backup,
-restore, and migration from the existing SQLite data. Splitting static assets
-onto a CDN would keep the shell loadable but would not make conversations
-available, so it does not close this TODO.
+The 2026-09-05 PostgreSQL cutover completed the database portion of this work.
+Attachments have verified private S3 bytes with PostgreSQL metadata. However,
+`compadre-web` still retains the Render disk for signing/configuration identity
+and bootstrap/checkpoint files, and its reactors have process-local ownership.
+The disk forces stop-before-start deployment. Do not run overlapping full
+servers, remove the disk, or assume active turns survive a restart. Require
+zero active turns before planned maintenance. A leader/claim mechanism must
+cover every effectful consumer and prove safe drain/transfer before removing
+this restriction. See the central PostgreSQL architecture and cutover runbook.
 
 This TODO is complete only after `compadre-web` can run overlapping old and new
 instances with graceful connection draining, a deploy can occur while a turn
@@ -497,7 +489,7 @@ and must stay unset. The supported architecture exposes native `codex` and
 The controller authenticates service routes with scoped shared credentials and
 browser users through Slack OIDC. Canonical users and workspace-scoped Slack
 identities live in Postgres; central T3 sessions and message attribution are
-persisted in SQLite. The current internal policy grants active members of the
+persisted in central PostgreSQL. The current internal policy grants active members of the
 allowed Slack workspace access to all conversations. Thread-level membership,
 roles, and a complete administrative audit trail remain future hardening.
 

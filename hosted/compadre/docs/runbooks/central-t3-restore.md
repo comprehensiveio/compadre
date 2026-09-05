@@ -1,7 +1,7 @@
 # Central T3 state restore
 
-This is the **pre-cutover SQLite recovery** procedure. After PostgreSQL accepts
-production writes, use [PostgreSQL cutover and restore](./central-t3-postgres-cutover.md)
+This is the **historical pre-cutover SQLite recovery** procedure. Production
+uses PostgreSQL since 2026-09-05; use [PostgreSQL cutover and restore](./central-t3-postgres-cutover.md)
 and never revert to the frozen SQLite snapshot. The disk is retained during this
 migration's single-process phase.
 

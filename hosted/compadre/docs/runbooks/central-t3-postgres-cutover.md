@@ -1,6 +1,8 @@
 # Central T3 PostgreSQL cutover and restore
 
-**Prepared only; not executed. Production mutations require explicit approval.**
+**Production cutover completed 2026-09-05 with the disk retained. Future
+production mutations require explicit approval.** The procedure below documents
+the verified maintenance path and the remaining cleanup gates.
 The implementation supports one central process. The overlap gate below is
 blocked by process-local reactors. Do not remove the Render disk or declare
 zero-downtime deployment solved. Architecture and exact table inventory:
@@ -13,13 +15,13 @@ zero-downtime deployment solved. Architecture and exact table inventory:
    `compadre-postgres`, PostgreSQL 17 in Oregon, database
    `compadre_t3_experiment_postgres`, its existing credential, with controller tables in `public` and central
    tables in `compadre_t3`.
-   No new data database, role or password is required. The staged Blueprint binds
+   No new data database, role or password is required. The Blueprint binds
    that database's private connection string to `COMPADRE_T3_POSTGRES_URL` on
    `compadre-web`. Do not change the controller connection or Temporal database.
    Confirm paid backup/PITR coverage and measured capacity for controller traffic
    plus at least 13 central connections and migration/backup/admin headroom.
    Resize the existing service only if measurements require it and approval is
-   given. Bind the existing controller AWS credentials to web using the staged
+   given. Bind the existing controller AWS credentials to web using the Blueprint
    fromService references and verify access to `compadre/attachments/v1/central-t3/*`;
    any missing IAM permission is a separate approval gate, not a password rotation.
    Keep bucket public access blocked, encryption enabled, and versioning enabled.
@@ -87,8 +89,11 @@ zero-downtime deployment solved. Architecture and exact table inventory:
 6. **Deploy one PostgreSQL canary.** This is a maintenance cutover, not a blue/green
    rollout. The old SQLite writer stays stopped. Configure explicit PostgreSQL
    mode and `COMPADRE_T3_REACTOR_MODE=single-process`. Preserve the attached disk,
-   signing secrets, settings, environment ID and bootstrap workspace. Keep public
-   ingress in maintenance until the canary is proven. Never start a second full
+   signing secrets, settings, environment ID and bootstrap workspace. Verify
+   authenticated shell and historical reads over Render’s private network while
+   public ingress is in maintenance. The existing provider/auth paths use public
+   service URLs, so restore public routing after those read checks pass, then run
+   the live provider/browser canary with scheduled prompts still paused. Never start a second full
    central server against this target. Deploy the controller's tolerant backup
    caller before central stops offering SQLite backups; it retires its timer only
    after the authenticated PostgreSQL-specific 410 response.
@@ -184,7 +189,7 @@ maintenance path, not the unimplemented zero-downtime overlap proof.
 PostgreSQL becomes authority when it first accepts a production write. Configure
 managed PITR and verify the actual plan's recovery window in Render, rather than
 assuming it. Read-only inspection on 2026-09-05 reported recovery AVAILABLE,
-starting at 2026-08-28T15:37:43Z. Recheck immediately before cutover. Add a nightly custom-format `pg_dump` using the existing database credential,
+starting at 2026-08-29T15:37:43Z. Recheck immediately before cutover. Add a nightly custom-format `pg_dump` using the existing database credential,
 using a PostgreSQL 17 client and an encrypted private prefix
 `backups/t3-state/v1/postgres/`. Store its SHA-256, timestamp, schema version, source
 commit and event range with the object. Use a consistent database-wide dump containing both controller and central
