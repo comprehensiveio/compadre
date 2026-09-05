@@ -1,7 +1,13 @@
 import { describe, expect, it } from "vite-plus/test";
 import type { CompadreThreadOperation } from "@t3tools/contracts";
 
-import { filterThreadOperations, formatOperationsAge } from "./threadOperations.logic";
+import {
+  containerLabel,
+  isObservationStale,
+  lastActivityAt,
+  filterThreadOperations,
+  formatOperationsAge,
+} from "./threadOperations.logic";
 
 const base = {
   providerInstanceId: "codex",
@@ -34,8 +40,8 @@ describe("thread operations list", () => {
     expect(
       filterThreadOperations(threads, "working", "pnpm").map((thread) => thread.title),
     ).toEqual(["Database repair"]);
-    expect(filterThreadOperations(threads, "stuck", "database")).toHaveLength(1);
-    expect(filterThreadOperations(threads, "healthy", "database")).toHaveLength(0);
+    expect(filterThreadOperations(threads, "problems", "database")).toHaveLength(1);
+    expect(filterThreadOperations(threads, "running", "database")).toHaveLength(0);
   });
 
   it("formats compact ages", () => {
@@ -43,4 +49,26 @@ describe("thread operations list", () => {
     expect(formatOperationsAge("2026-08-31T13:01:00.000Z", now)).toBe("30s ago");
     expect(formatOperationsAge("2026-08-31T12:00:00.000Z", now)).toBe("1h ago");
   });
+});
+
+it("sorts by meaningful activity without promoting errors or housekeeping", () => {
+  const recent = { ...threads[0]!, lastActiveAt: "2026-09-01T12:00:00.000Z" };
+  const old = { ...threads[1]!, updatedAt: "2026-09-05T12:00:00.000Z" };
+  expect(filterThreadOperations([old, recent], "all", "").map((t) => t.canonicalThreadId)).toEqual([
+    "one",
+    "two",
+  ]);
+  expect(lastActivityAt(old)).toBe(old.createdAt);
+});
+
+it("handles old API responses and distinguishes observations from recorded state", () => {
+  const running = { ...threads[0]!, container: { ...base.container, status: "running" as const } };
+  expect(isObservationStale(running)).toBe(true);
+  expect(containerLabel(running)).toBe("Running (recorded)");
+  expect(
+    containerLabel({
+      ...running,
+      environment: { container: "stopped", devServer: "stopped", database: "stopped" },
+    }),
+  ).toBe("Stopped");
 });

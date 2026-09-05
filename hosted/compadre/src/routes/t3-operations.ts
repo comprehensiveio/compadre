@@ -1,3 +1,4 @@
+import { createEnvironmentObserver } from "../services/thread-environment-observations.js";
 import { Hono, type Context, type Handler } from "hono";
 import { getConfiguredAgentRunDurability } from "../durability/runtime.js";
 import { getConfiguredThreadPersistence } from "../persistence/runtime.js";
@@ -17,6 +18,8 @@ export interface T3OperationsRoutesDependencies {
   metadata?(): Promise<MetadataStore | null>;
   startTemplateBuild?(): Promise<string>;
 }
+
+const observeEnvironments = createEnvironmentObserver();
 
 const defaultDependencies: T3OperationsRoutesDependencies = {
   enabled: () => process.env.COMPADRE_T3_DIRECTORY_ENABLED === "true",
@@ -42,8 +45,10 @@ const defaultDependencies: T3OperationsRoutesDependencies = {
     if (!gateway || !durability) {
       throw new Error("T3 operations require the configured gateway and durability");
     }
+    const bindings = await gateway.list();
     return buildT3ThreadOperationsSnapshot({
-      bindings: await gateway.list(),
+      bindings,
+      environments: observeEnvironments(bindings),
       durability,
     });
   },

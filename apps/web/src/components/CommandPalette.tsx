@@ -32,6 +32,7 @@ import {
   type SourceControlRepositoryInfo,
   PRIMARY_LOCAL_ENVIRONMENT_ID,
 } from "@t3tools/contracts";
+import { COMPADRE_AUTH_ENABLED } from "../branding";
 import { useNavigate, useParams } from "@tanstack/react-router";
 import * as Option from "effect/Option";
 import {
@@ -1622,6 +1623,26 @@ function OpenCommandPaletteDialog(props: {
       await navigate({ to: "/settings" });
     },
   });
+
+  if (COMPADRE_AUTH_ENABLED) {
+    actionItems.push({
+      kind: "action",
+      value: "action:thread-environments",
+      searchTerms: [
+        "threads",
+        "environments",
+        "containers",
+        "operations",
+        "database",
+        "dev server",
+      ],
+      title: "Open thread environments",
+      icon: <ServerIcon className={ITEM_ICON_CLASS} />,
+      run: async () => {
+        await navigate({ to: "/operations/threads" });
+      },
+    });
+  }
 
   // There is no projects listing page; the action targets the contextual
   // project (active thread/draft, falling back to the first sidebar group).

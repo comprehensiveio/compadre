@@ -52,6 +52,26 @@ export const CompadreThreadOperationsSnapshot = Schema.Struct({
       createdAt: Schema.String,
       updatedAt: Schema.String,
       lastActiveAt: OptionalString,
+      environment: Schema.optionalKey(
+        Schema.Struct({
+          container: Schema.Literals(["running", "stopped", "unknown"]),
+          devServer: Schema.Literals(["ready", "stopped", "unresponsive", "unknown"]),
+          database: Schema.Literals(["ready", "stopped", "unknown"]),
+          checkedAt: OptionalString,
+          previewUrl: OptionalString,
+        }),
+      ),
+      activitySince: OptionalString,
+      recentEvents: Schema.optionalKey(
+        Schema.Array(
+          Schema.Struct({
+            id: OptionalString,
+            type: Schema.String,
+            at: OptionalString,
+            detail: OptionalString,
+          }),
+        ),
+      ),
       container: Schema.Struct({
         status: CompadreContainerStatus,
         workerState: Schema.optionalKey(
@@ -61,6 +81,7 @@ export const CompadreThreadOperationsSnapshot = Schema.Struct({
         generation: Schema.Number,
         startedAt: OptionalString,
         warmUntil: OptionalString,
+        hasSnapshot: Schema.optionalKey(Schema.Boolean),
       }),
       activeRun: Schema.optionalKey(
         Schema.Struct({

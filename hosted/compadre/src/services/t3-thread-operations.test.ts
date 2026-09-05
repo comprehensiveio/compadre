@@ -28,7 +28,7 @@ function binding(
   };
 }
 
-test("orders stuck work first and explains its active tool and container", async () => {
+test("orders by activity, regardless of health, and explains the active tool", async () => {
   const durability = await createAgentRunDurability({
     COMPADRE_DURABILITY_BACKEND: "memory",
   });
@@ -58,23 +58,25 @@ test("orders stuck work first and explains its active tool and container", async
       binding("thread-ready", {
         workerState: "suspended",
         status: "ready",
+        lastActiveAt: "2026-08-31T17:59:00.000Z",
       }),
       binding("thread-stuck", {
         activeRunId: "run-stuck",
         status: "working",
         updatedAt: "2026-08-31T17:29:00.000Z",
+        lastActiveAt: "2026-08-31T17:29:00.000Z",
       }),
     ],
     durability,
     now: NOW,
   });
 
-  assert.equal(snapshot.threads[0]?.canonicalThreadId, "thread-stuck");
-  assert.equal(snapshot.threads[0]?.phase, "Using Bash: select count(*) from a very large table");
-  assert.equal(snapshot.threads[0]?.health, "stuck");
-  assert.equal(snapshot.threads[0]?.activeRun?.driverEpoch, 3);
-  assert.equal(snapshot.threads[0]?.container.status, "running");
-  assert.equal(snapshot.threads[1]?.container.status, "stopped");
+  assert.equal(snapshot.threads[1]?.canonicalThreadId, "thread-stuck");
+  assert.equal(snapshot.threads[1]?.phase, "Using Bash: select count(*) from a very large table");
+  assert.equal(snapshot.threads[1]?.health, "stuck");
+  assert.equal(snapshot.threads[1]?.activeRun?.driverEpoch, 3);
+  assert.equal(snapshot.threads[1]?.container.status, "running");
+  assert.equal(snapshot.threads[0]?.container.status, "stopped");
   assert.deepEqual(snapshot.counts, {
     total: 2,
     working: 1,
@@ -102,4 +104,24 @@ test("flags a working binding that never acquired a durable run marker", async (
   assert.equal(snapshot.threads[0]?.health, "stuck");
   assert.equal(snapshot.threads[0]?.healthReason, "Working state has no durable run marker");
   assert.equal(snapshot.threads[0]?.phase, "Dispatching run");
+});
+
+test("shows generating, waiting, resumed tool work and terminal state without stale activity", async () => {
+  const durability = await createAgentRunDurability({ COMPADRE_DURABILITY_BACKEND: "memory" });
+  assert.ok(durability);
+  await durability.runs.createOrResume({ runId: "activity", threadId: "thread", startedAt: NOW.getTime() });
+  const current = binding("thread", { status: "working", activeRunId: "activity" });
+  const read = async (override: Partial<T3ThreadBinding> = {}) => (await buildT3ThreadOperationsSnapshot({ bindings: [{ ...current, ...override }], durability, now: NOW })).threads[0]!;
+  await durability.stream("activity").append([{ type: "TEXT_MESSAGE_START", timestamp: NOW.getTime() } as never]);
+  assert.equal((await read()).phase, "Generating response");
+  assert.equal((await read()).activitySince, NOW.toISOString());
+  await durability.stream("activity").append([
+    { type: "TOOL_CALL_START", toolCallId: "tool", toolCallName: "Bash", timestamp: NOW.getTime() } as never,
+    { type: "COMPADRE_AGENT_ACTIVITY", status: "approval.requested", timestamp: NOW.getTime() } as never,
+  ]);
+  assert.equal((await read()).phase, "Waiting for approval");
+  await durability.stream("activity").append([{ type: "COMPADRE_AGENT_ACTIVITY", status: "approval.resolved", timestamp: NOW.getTime() } as never]);
+  assert.equal((await read()).phase, "Using Bash");
+  assert.equal((await read({ status: "error" })).phase, "Failed");
+  assert.equal((await read({ status: "ready", activeRunId: undefined })).phase, "Idle");
 });

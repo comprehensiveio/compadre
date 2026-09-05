@@ -900,3 +900,14 @@ test("terminal compatibility takeover appends only the terminal outcome", async 
 
   assert.deepEqual(events.map((event) => event.type), [EventType.RUN_FINISHED]);
 });
+
+test("projects approval and user-input transitions once for operations observers", () => {
+  const projector = new NativeT3SnapshotProjector("run-1", "central-thread", "user-1");
+  const activities = ["approval.requested", "approval.resolved", "user-input.requested", "user-input.resolved"].map((kind, i) => ({ id: `waiting-${i}`, kind, turnId: "turn-1", summary: kind, createdAt: "2026-08-26T16:00:00.400Z", payload: { requestId: "request-1" } }));
+  const state = snapshot({ sequence: 5, state: "running", text: "", streaming: false, activities });
+  const events = projector.project(state);
+  assert.deepEqual(events.filter(event => event.type === "COMPADRE_AGENT_ACTIVITY").map(event => event.status), activities.map(activity => activity.kind));
+  const restored = NativeT3SnapshotProjector.restore("run-1", "central-thread", "user-1", events);
+  assert.equal(restored.project(state).filter(event => event.type === "COMPADRE_AGENT_ACTIVITY").length, 0);
+  assert.equal(projector.project(state).filter(event => event.type === "COMPADRE_AGENT_ACTIVITY").length, 0);
+});

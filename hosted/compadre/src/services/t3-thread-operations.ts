@@ -1,3 +1,4 @@
+import type { ThreadEnvironmentObservation } from "./thread-environment-observations.js";
 import type { RunRecord } from "@tanstack/ai";
 import type { AgentRunDurability } from "../durability/runtime.js";
 import type {
@@ -17,6 +18,7 @@ export type T3ContainerStatus =
   | "unknown";
 
 export interface T3ThreadOperationEvent {
+  id?: string;
   type: string;
   at?: string;
   detail?: string;
@@ -35,6 +37,9 @@ export interface T3ThreadOperation {
   createdAt: string;
   updatedAt: string;
   lastActiveAt?: string;
+  environment?: ThreadEnvironmentObservation;
+  activitySince?: string;
+  recentEvents?: T3ThreadOperationEvent[];
   container: {
     status: T3ContainerStatus;
     workerState?: T3WorkerState;
@@ -42,6 +47,7 @@ export interface T3ThreadOperation {
     generation: number;
     startedAt?: string;
     warmUntil?: string;
+    hasSnapshot?: boolean;
   };
   activeRun?: {
     runId: string;
@@ -145,8 +151,9 @@ function meaningfulEvent(events: readonly StoredEvent[]): StoredEvent | undefine
 function activeTool(events: readonly StoredEvent[]): {
   name: string;
   detail?: string;
+  since?: string;
 } | undefined {
-  const tools = new Map<string, { name: string; detail?: string }>();
+  const tools = new Map<string, { name: string; detail?: string; since?: string }>();
   for (const event of events) {
     const type = stringValue(event.chunk.type);
     const id = eventToolId(event.chunk);
@@ -154,6 +161,7 @@ function activeTool(events: readonly StoredEvent[]): {
     if (type === "TOOL_CALL_START") {
       tools.set(id, {
         name: eventToolName(event.chunk) ?? "Tool",
+        ...(event.at ? { since: event.at } : {}),
         ...(eventDetail(event.chunk) ? { detail: eventDetail(event.chunk) } : {}),
       });
     } else if (type === "TOOL_CALL_ARGS") {
@@ -174,7 +182,7 @@ function activeTool(events: readonly StoredEvent[]): {
 function phaseFor(
   binding: T3ThreadBinding,
   events: readonly StoredEvent[],
-): { phase: string; lastEvent?: T3ThreadOperationEvent } {
+): { phase: string; since?: string; lastEvent?: T3ThreadOperationEvent } {
   const latest = meaningfulEvent(events);
   const tool = activeTool(events);
   const event = latest
@@ -184,22 +192,41 @@ function phaseFor(
         ...(eventDetail(latest.chunk) ? { detail: eventDetail(latest.chunk) } : {}),
       }
     : undefined;
+  if (binding.status === "error") return { phase: "Failed", ...(event ? { lastEvent: event } : {}) };
+  if (binding.status === "interrupted") return { phase: "Interrupted", ...(event ? { lastEvent: event } : {}) };
+  if (binding.status === "unavailable") return { phase: "Unavailable", ...(event ? { lastEvent: event } : {}) };
+  if (binding.status !== "working") return { phase: latest?.chunk.type === "RUN_FINISHED" ? "Completed" : "Idle", ...(event ? { lastEvent: event } : {}) };
+  const requests = new Map<string, StoredEvent>();
+  for (const entry of events) {
+    if (entry.chunk.type !== "COMPADRE_AGENT_ACTIVITY") continue;
+    const status = stringValue(entry.chunk.status) ?? "";
+    const id = stringValue(entry.chunk.toolCallId) ?? status.split(".")[0]!;
+    if (status.endsWith(".requested")) requests.set(id, entry);
+    if (status.endsWith(".resolved")) requests.delete(id);
+  }
+  const waiting = [...requests.values()].at(-1);
+  if (waiting) {
+    return { phase: waiting.chunk.status === "approval.requested" ? "Waiting for approval" : "Waiting for your input", ...(waiting.at ? { since: waiting.at } : {}), ...(event ? { lastEvent: event } : {}) };
+  }
   if (tool) {
     return {
+      ...(tool.since ? { since: tool.since } : {}),
       phase: `Using ${tool.name}${tool.detail ? `: ${tool.detail}` : ""}`,
       ...(event ? { lastEvent: event } : {}),
     };
   }
   const type = event?.type;
   if (type === "RUN_STARTED") return { phase: "Starting provider", lastEvent: event };
+  const streamStart = [...events].reverse().find(entry => entry.chunk.type === "TEXT_MESSAGE_START");
+  if (type === "REASONING_CONTENT") return { phase: "Thinking", lastEvent: event };
   if (type?.startsWith("TEXT_MESSAGE_")) {
-    return { phase: "Generating response", lastEvent: event };
+    return { phase: "Generating response", ...(streamStart?.at ? { since: streamStart.at } : {}), lastEvent: event };
   }
   if (type === "TOOL_CALL_RESULT") {
     return { phase: "Processing tool result", lastEvent: event };
   }
   if (type === "RUN_ERROR") return { phase: "Run failed", lastEvent: event };
-  if (type === "RUN_FINISHED") return { phase: "Run finished", lastEvent: event };
+  if (type === "RUN_FINISHED") return { phase: "Completed", lastEvent: event };
   if (binding.workerState === "restoring") return { phase: "Restoring container" };
   if (binding.workerState === "hibernating") return { phase: "Saving container snapshot" };
   if (binding.status === "working") {
@@ -325,6 +352,7 @@ async function eventsForRuns(
         .map((entry, index) => ({
           sequence: index,
           chunk: record(entry.chunk) ?? ({ type: "UNKNOWN" } as Record<string, unknown>),
+          ...(typeof record(entry.chunk)?.timestamp === "number" ? { at: new Date(record(entry.chunk)!.timestamp as number).toISOString() } : {}),
         }));
       byRun.set(runId, events);
     }),
@@ -336,6 +364,7 @@ export async function buildT3ThreadOperationsSnapshot(input: {
   bindings: readonly T3ThreadBinding[];
   durability: AgentRunDurability;
   now?: Date;
+  environments?: ReadonlyMap<string, ThreadEnvironmentObservation>;
 }): Promise<T3ThreadOperationsSnapshot> {
   const now = input.now ?? new Date();
   const nowMs = now.getTime();
@@ -362,7 +391,7 @@ export async function buildT3ThreadOperationsSnapshot(input: {
       lastProgressMs !== undefined && Number.isFinite(lastProgressMs)
         ? Math.max(0, nowMs - lastProgressMs)
         : undefined;
-    const health = healthFor({ binding, run, idleMs, nowMs });
+    const health = phase.phase.startsWith("Waiting for ") ? { health: "healthy" as const, reason: phase.phase } : healthFor({ binding, run, idleMs, nowMs });
     return {
       canonicalThreadId: binding.canonicalThreadId,
       providerInstanceId: binding.providerInstanceId,
@@ -371,12 +400,16 @@ export async function buildT3ThreadOperationsSnapshot(input: {
       modelSelection: binding.modelSelection,
       status: binding.status ?? "ready",
       phase: phase.phase,
+      recentEvents: runEvents.filter(event => !["TEXT_MESSAGE_CONTENT", "REASONING_CONTENT", "TOOL_CALL_ARGS", "THREAD_TOKEN_USAGE_UPDATED"].includes(String(event.chunk.type))).slice(-8).map(event => ({ id: String(event.sequence), type: String(event.chunk.type), ...(event.at ? { at: event.at } : {}), ...(eventDetail(event.chunk) ? { detail: eventDetail(event.chunk) } : {}) })),
       health: health.health,
       healthReason: health.reason,
       createdAt: binding.createdAt,
       updatedAt: binding.updatedAt,
       ...(binding.lastActiveAt ? { lastActiveAt: binding.lastActiveAt } : {}),
+      ...(input.environments?.get(binding.canonicalThreadId) ? { environment: input.environments.get(binding.canonicalThreadId) } : {}),
+      ...(phase.since ? { activitySince: phase.since } : {}),
       container: {
+        hasSnapshot: Boolean(binding.workerSnapshotId),
         status: containerStatus(binding.workerState),
         ...(binding.workerState ? { workerState: binding.workerState } : {}),
         sandboxId: binding.sandboxId,
@@ -401,11 +434,10 @@ export async function buildT3ThreadOperationsSnapshot(input: {
         : {}),
     };
   });
+  const activityAt = (thread: T3ThreadOperation) => [thread.activeRun?.lastEvent?.at, thread.activeRun?.startedAt, thread.lastActiveAt, thread.createdAt].filter((at): at is string => Boolean(at)).sort().at(-1)!;
   threads.sort((left, right) => {
-    const priority = { stuck: 0, attention: 1, healthy: 2 } as const;
     return (
-      priority[left.health] - priority[right.health] ||
-      right.updatedAt.localeCompare(left.updatedAt) ||
+      activityAt(right).localeCompare(activityAt(left)) ||
       left.canonicalThreadId.localeCompare(right.canonicalThreadId)
     );
   });
