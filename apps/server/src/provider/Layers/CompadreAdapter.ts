@@ -1,3 +1,5 @@
+import * as Schema from "effect/Schema";
+import { SavedWorkspaceReview } from "@t3tools/contracts";
 import { CompadreAttachmentStore } from "../../assets/CompadreAttachmentStore.ts";
 import {
   ApprovalRequestId,
@@ -155,6 +157,8 @@ function usageSnapshot(event: CompadreStreamEvent): ThreadTokenUsageSnapshot | u
     ...(model ? { model } : {}),
   };
 }
+
+const decodeSavedReview = Schema.decodeUnknownEffect(SavedWorkspaceReview);
 
 function artifactAttachmentId(threadId: ThreadId, digest: string): string | undefined {
   const segment = toSafeThreadAttachmentSegment(threadId);
@@ -634,6 +638,44 @@ export function makeCompadreAdapter(options: CompadreAdapterOptions) {
                     turnId,
                     itemId: item.id,
                     payload: { itemType: "assistant_message", status: "completed" },
+                  });
+                  return;
+                }
+                case "WORKSPACE_REVIEW": {
+                  const savedReview = yield* decodeSavedReview(event.data).pipe(
+                    Effect.mapError(
+                      () =>
+                        new ProviderAdapterRequestError({
+                          provider: runtimeProvider,
+                          method: "compadre/workspace-review",
+                          detail: "Invalid saved workspace review metadata.",
+                        }),
+                    ),
+                  );
+                  yield* publish({
+                    type: "turn.diff.updated",
+                    ...(yield* makeEventStamp()),
+                    provider: runtimeProvider,
+                    providerInstanceId: boundInstanceId,
+                    threadId: input.threadId,
+                    turnId,
+                    ...(lastAssistantItemId ? { itemId: lastAssistantItemId } : {}),
+                    payload: { unifiedDiff: "", savedReview },
+                  });
+                  return;
+                }
+                case "WORKSPACE_REVIEW_UNAVAILABLE": {
+                  yield* publish({
+                    type: "runtime.warning",
+                    ...(yield* makeEventStamp()),
+                    provider: runtimeProvider,
+                    providerInstanceId: boundInstanceId,
+                    threadId: input.threadId,
+                    turnId,
+                    payload: {
+                      message:
+                        "Changes could not be saved for this turn. Previously saved diffs remain available.",
+                    },
                   });
                   return;
                 }

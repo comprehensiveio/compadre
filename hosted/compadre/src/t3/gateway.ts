@@ -1,3 +1,5 @@
+import { captureWorkspaceReview } from "./workspace-review-capture.js";
+import { reviewCheckpointForMessage, type T3OrchestrationSnapshot } from "./client.js";
 import { randomUUID } from "node:crypto";
 import { metrics } from "@opentelemetry/api";
 import { log, serializeError } from "../logging.js";
@@ -35,6 +37,7 @@ import {
 } from "./dev-environment.js";
 
 export interface T3CommandClient {
+  snapshot?(signal?: AbortSignal): Promise<T3OrchestrationSnapshot>;
   readonly baseUrl: string;
   startNewThread(input: {
     threadId?: string;
@@ -70,6 +73,7 @@ export interface T3CommandClient {
     requestedAt?: string;
     timeoutMs?: number;
     absoluteTimeoutMs?: number;
+    requireCheckpoint?: boolean;
     signal?: AbortSignal;
     onSnapshot?(snapshot: T3ThreadSnapshot): void | Promise<void>;
   }): Promise<T3ThreadSnapshot>;
@@ -1331,6 +1335,32 @@ export class T3Gateway {
         this.recordWorkerTransition("worker.lost", lost, { phase: "run" });
       },
     );
+  }
+
+  /** Called only during completion. Reconnect never provisions/restores a worker. */
+  async captureWorkspaceReview(turn: T3GatewayTurn) {
+    const environment = await this.environments.reconnect(turn.binding);
+    if (!environment.sandbox || !environment.client.snapshot) throw new Error("Worker review capture is unavailable");
+    const snapshot = await environment.client.waitForTurnTerminal({
+      threadId: turn.binding.t3ThreadId,
+      minimumSequence: turn.dispatch.sequence,
+      messageId: turn.dispatch.messageId,
+      requestedAt: turn.dispatch.createdAt,
+      requireCheckpoint: true,
+      timeoutMs: 60_000, absoluteTimeoutMs: 60_000,
+    });
+    const checkpoint = reviewCheckpointForMessage(snapshot, turn.dispatch.messageId);
+    if (checkpoint?.status !== "ready") throw new Error("Worker checkpoint was not captured");
+    const projects = await environment.client.snapshot();
+    const cwd = typeof snapshot.thread.worktreePath === "string" ? snapshot.thread.worktreePath
+      : projects.projects.find((project) => project.id === snapshot.thread.projectId)?.workspaceRoot;
+    if (!cwd) throw new Error("Worker checkout is unavailable");
+    const prefix = `refs/t3/checkpoints/${Buffer.from(turn.binding.t3ThreadId).toString("base64url")}/turn/`;
+    return captureWorkspaceReview(environment.sandbox, {
+      cwd, turnId: checkpoint.turnId, turnCount: checkpoint.checkpointTurnCount,
+      toRef: checkpoint.checkpointRef, fromRef: `${prefix}${checkpoint.checkpointTurnCount - 1}`,
+      initialRef: `${prefix}0`,
+    });
   }
 
   async collectOutputArtifacts(

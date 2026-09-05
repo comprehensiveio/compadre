@@ -145,8 +145,9 @@ export default function DiffPanel({
     serverConfig?.availableEditors ?? [],
   );
   const getDiffFileContents = useAtomCommand(reviewEnvironment.diffFileContents);
+  const usesSavedReview = serverConfig?.environment.capabilities.workspaceReviewArtifacts === true;
   const gitStatusQuery = useEnvironmentQuery(
-    activeThread !== null && activeThread !== undefined && activeCwd != null
+    !usesSavedReview && activeThread !== null && activeThread !== undefined && activeCwd != null
       ? vcsEnvironment.status({
           environmentId: activeThread.environmentId,
           input: { cwd: activeCwd },
@@ -160,7 +161,7 @@ export default function DiffPanel({
       initialGitScope === "unstaged",
     ),
   );
-  const isGitRepo = gitStatusQuery.data?.isRepo ?? true;
+  const isGitRepo = usesSavedReview || (gitStatusQuery.data?.isRepo ?? true);
   const { turnDiffSummaries, inferredCheckpointTurnCountByTurnId } =
     useTurnDiffSummaries(activeThread);
   const orderedTurnDiffSummaries = useMemo(
@@ -250,13 +251,15 @@ export default function DiffPanel({
           environmentId: activeThread.environmentId,
           input: {
             cwd: activeCwd,
-            ...(selectedBaseRef ? { baseRef: selectedBaseRef } : {}),
+            threadId: activeThread.id,
+            ...(!usesSavedReview && selectedBaseRef ? { baseRef: selectedBaseRef } : {}),
             ignoreWhitespace: diffIgnoreWhitespace,
           },
         })
       : null,
   );
   const shouldRetryBranchDiffAtEnvironmentCwd =
+    !usesSavedReview &&
     selectedTurnId === null &&
     primaryBranchDiffPreview.error?.includes("configured workspace root") === true &&
     serverConfig?.cwd !== undefined &&
@@ -267,7 +270,7 @@ export default function DiffPanel({
           environmentId: activeThread.environmentId,
           input: {
             cwd: serverConfig.cwd,
-            ...(selectedBaseRef ? { baseRef: selectedBaseRef } : {}),
+            ...(!usesSavedReview && selectedBaseRef ? { baseRef: selectedBaseRef } : {}),
             ignoreWhitespace: diffIgnoreWhitespace,
           },
         })
@@ -320,6 +323,8 @@ export default function DiffPanel({
     return createGitDiffFileContentsLoader(getDiffFileContents, {
       environmentId: activeThread.environmentId,
       cwd: preview.cwd,
+      threadId: activeThread.id,
+      ...(preview.snapshot ? { snapshotRef: preview.snapshot.reference } : {}),
       sourceKind: selectedGitSource.kind,
       baseRef: selectedGitSource.baseRef,
       headRef: selectedGitSource.headRef,
@@ -333,7 +338,8 @@ export default function DiffPanel({
     selectedTurnId,
   ]);
   const localBranchRefs = useEnvironmentQuery(
-    selectedTurnId === null &&
+    !usesSavedReview &&
+      selectedTurnId === null &&
       selectedGitScope === "branch" &&
       activeThread &&
       branchDiffPreview.data?.cwd
@@ -350,7 +356,8 @@ export default function DiffPanel({
       : null,
   );
   const remoteBranchRefs = useEnvironmentQuery(
-    selectedTurnId === null &&
+    !usesSavedReview &&
+      selectedTurnId === null &&
       selectedGitScope === "branch" &&
       activeThread &&
       branchDiffPreview.data?.cwd
@@ -383,13 +390,19 @@ export default function DiffPanel({
   const gitDiff = selectedGitSource?.diff;
 
   const selectedPatch = selectedTurn ? activeCheckpointDiff.data?.diff : gitDiff;
-  const isSelectedPatchTruncated = !selectedTurn && selectedGitSource?.truncated === true;
+  const isSelectedPatchTruncated = selectedTurn
+    ? activeCheckpointDiff.data?.truncated === true
+    : selectedGitSource?.truncated === true;
+  const capturedAt = selectedTurn
+    ? activeCheckpointDiff.data?.capturedAt
+    : branchDiffPreview.data?.snapshot?.capturedAt;
   const isLoadingSelectedPatch = selectedTurn
     ? activeCheckpointDiff.isPending
     : branchDiffPreview.isPending;
   const selectedPatchError = selectedTurn ? activeCheckpointDiff.error : branchDiffPreview.error;
   const hasResolvedPatch = typeof selectedPatch === "string";
-  const hasNoNetChanges = hasResolvedPatch && selectedPatch.trim().length === 0;
+  const hasNoNetChanges =
+    hasResolvedPatch && selectedPatch.trim().length === 0 && !isSelectedPatchTruncated;
   const renderablePatch = useMemo(
     () =>
       getRenderablePatch(selectedPatch, `diff-panel:${resolvedTheme}`, {
@@ -588,7 +601,7 @@ export default function DiffPanel({
             <Tooltip>
               <TooltipTrigger render={<span className="flex min-w-0 items-center gap-2" />}>
                 <span className="min-w-0 max-w-48 truncate">
-                  {selectedGitSource.headRef ?? "HEAD"}
+                  {usesSavedReview ? "Saved workspace" : (selectedGitSource.headRef ?? "HEAD")}
                 </span>
                 <ArrowRightIcon className="size-3.5 shrink-0 opacity-70" />
               </TooltipTrigger>
@@ -609,10 +622,13 @@ export default function DiffPanel({
               }}
             >
               <ComboboxTrigger
+                disabled={usesSavedReview}
                 className="inline-flex min-w-0 max-w-48 items-center gap-1 overflow-hidden rounded-md px-1.5 py-1 outline-none transition-colors hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
                 aria-label={`Change comparison target. Currently ${selectedGitSource.baseRef}`}
               >
-                <span className="min-w-0 truncate">{selectedGitSource.baseRef}</span>
+                <span className="min-w-0 truncate">
+                  {usesSavedReview ? selectedGitSource.title : selectedGitSource.baseRef}
+                </span>
                 <ChevronDownIcon className="size-3.5 shrink-0 opacity-70" />
               </ComboboxTrigger>
               <ComboboxPopup
@@ -846,6 +862,18 @@ export default function DiffPanel({
       ) : (
         <>
           <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-background">
+            {usesSavedReview && capturedAt && (
+              <p className="px-3 py-2 text-[11px] text-muted-foreground">
+                Saved {new Date(capturedAt).toLocaleString()}. Updates after each turn.
+              </p>
+            )}
+            {usesSavedReview &&
+              !selectedTurn &&
+              selectedGitSource?.unavailableFiles?.map((file) => (
+                <p key={file.path} className="px-3 py-1 text-[11px] text-muted-foreground">
+                  {file.path}: {file.reason}
+                </p>
+              ))}
             {isSelectedPatchTruncated && (
               <p className="shrink-0 border-b border-border/70 bg-muted/40 px-3 py-1.5 text-[11px] text-muted-foreground">
                 This diff was truncated because it exceeded the preview limit. The changes shown are

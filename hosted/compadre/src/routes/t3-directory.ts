@@ -1,3 +1,5 @@
+import { readWorkspaceReview, readWorkspaceReviewFile, type WorkspaceReviewStore } from "../t3/workspace-review.js";
+import { getConfiguredWorkspaceReviewStore } from "../t3/runtime.js";
 import crypto from "node:crypto";
 import {
   chatParamsFromRequestBody,
@@ -110,6 +112,7 @@ export interface T3DirectoryRoutesDependencies {
   getRunCoordinator?(): Promise<NativeT3RunCoordinator | null>;
   getRunService?(): Promise<NativeT3RunService | null>;
   getArtifactStore?(): Promise<T3ArtifactStore | null>;
+  getReviewStore?(): Promise<WorkspaceReviewStore | null>;
   createId(): string;
   watchTurn(gateway: T3DirectoryGateway, turn: T3GatewayTurn): void;
   getSlackBinding?(threadId: string): Promise<HostedSlackBinding | null>;
@@ -121,6 +124,7 @@ const defaultDependencies: T3DirectoryRoutesDependencies = {
   getRunCoordinator: getConfiguredNativeT3RunCoordinator,
   getRunService: getConfiguredNativeT3RunService,
   getArtifactStore: getConfiguredT3ArtifactStore,
+  getReviewStore: getConfiguredWorkspaceReviewStore,
   createId: crypto.randomUUID,
   watchTurn(gateway, turn) {
     void gateway
@@ -422,6 +426,30 @@ export function createT3DirectoryRoutes(
       return c.json({ error: "thread persistence requires durability" }, 503);
     }
     return c.json({ threads: (await gateway.list()).map(publicBinding) });
+  }));
+
+  routes.post("/hosted/t3/review", guarded(async (c) => {
+    const body = await requestBody(c.req.raw);
+    const threadId = nonEmptyString(body?.threadId, 200);
+    const reference = nonEmptyString(body?.reference, 400);
+    if (!threadId || !reference) return c.json({ error: "A thread and saved review reference are required" }, 400);
+    const store = await dependencies.getReviewStore?.();
+    if (!store) return c.json({ error: "Saved review storage is unavailable" }, 503);
+    try { await store.authorize(threadId, reference); }
+    catch { return c.json({ error: "Saved review not found for this thread" }, 404); }
+    c.header("Cache-Control", "no-store");
+    if (body?.operation === "contents") {
+      const oldPath = nonEmptyString(body.oldPath, 4096);
+      const newPath = nonEmptyString(body.newPath, 4096);
+      if (!oldPath || !newPath || typeof body.sourceKind !== "string" ||
+          typeof body.baseRef !== "string" || typeof body.headRef !== "string") {
+        return c.json({ error: "Invalid saved file request" }, 400);
+      }
+      return c.json(await readWorkspaceReviewFile(store.artifacts, reference, {
+        oldPath, newPath, sourceKind: body.sourceKind, baseRef: body.baseRef, headRef: body.headRef,
+      }));
+    }
+    return c.json(await readWorkspaceReview(store.artifacts, reference));
   }));
 
   routes.get("/hosted/t3/artifacts", guarded(async (c) => {

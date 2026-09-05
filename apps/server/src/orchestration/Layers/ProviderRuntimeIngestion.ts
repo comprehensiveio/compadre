@@ -2022,7 +2022,30 @@ const make = Effect.gen(function* () {
           : undefined;
         const workspaceCwd =
           checkpointContext?.worktreePath ?? checkpointContext?.workspaceRoot ?? undefined;
-        if (turnId && checkpointContext && workspaceCwd && isGitRepository(workspaceCwd)) {
+        if (turnId && checkpointContext && event.payload.savedReview) {
+          const existing = checkpointContext.checkpoints.find(
+            (checkpoint) => checkpoint.turnId === turnId,
+          );
+          if (existing?.status !== "ready") {
+            yield* orchestrationEngine.dispatch({
+              type: "thread.turn.diff.complete",
+              commandId: yield* providerCommandId(event, "thread-turn-diff-complete"),
+              threadId: thread.id,
+              turnId,
+              completedAt: event.payload.savedReview.capturedAt,
+              checkpointRef: CheckpointRef.make(event.payload.savedReview.reference),
+              status: "ready",
+              files: event.payload.savedReview.files,
+              assistantMessageId: MessageId.make(
+                `assistant:${event.itemId ?? event.turnId ?? event.eventId}`,
+              ),
+              checkpointTurnCount:
+                existing?.checkpointTurnCount ??
+                maxCheckpointTurnCount(checkpointContext.checkpoints) + 1,
+              createdAt: now,
+            });
+          }
+        } else if (turnId && checkpointContext && workspaceCwd && isGitRepository(workspaceCwd)) {
           // Skip if a checkpoint already exists for this turn. A real
           // (non-placeholder) capture from CheckpointReactor should not
           // be clobbered, and dispatching a duplicate placeholder for the

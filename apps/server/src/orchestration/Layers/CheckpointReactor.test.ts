@@ -530,6 +530,39 @@ describe("CheckpointReactor", () => {
     ).toBe("v2\n");
   });
 
+  it("does not capture a central filesystem checkpoint in hosted transport mode", async () => {
+    vi.stubEnv("COMPADRE_NATIVE_T3_URL", "https://controller.example");
+    try {
+      const harness = await createHarness({ seedFilesystemCheckpoints: false });
+      harness.provider.emit({
+        type: "turn.started",
+        eventId: EventId.make("hosted-turn-start"),
+        provider: ProviderDriverKind.make("codex"),
+        createdAt: "2026-01-01T00:00:00.000Z",
+        threadId: ThreadId.make("thread-1"),
+        turnId: asTurnId("hosted-turn"),
+      });
+      harness.provider.emit({
+        type: "turn.completed",
+        eventId: EventId.make("hosted-turn-complete"),
+        provider: ProviderDriverKind.make("codex"),
+        createdAt: "2026-01-01T00:00:00.000Z",
+        threadId: ThreadId.make("thread-1"),
+        turnId: asTurnId("hosted-turn"),
+        payload: { state: "completed" },
+      });
+      await harness.drain();
+      expect(
+        gitRefExists(harness.cwd, checkpointRefForThreadTurn(ThreadId.make("thread-1"), 0)),
+      ).toBe(false);
+      expect(
+        gitRefExists(harness.cwd, checkpointRefForThreadTurn(ThreadId.make("thread-1"), 1)),
+      ).toBe(false);
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
   it("refreshes local git status state on turn completion using the session cwd", async () => {
     const gitStatusRefreshCalls: string[] = [];
     const harness = await createHarness({

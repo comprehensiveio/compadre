@@ -515,3 +515,19 @@ test("a confirmed-dead worker terminalizes the run promptly instead of burning r
   assert.equal(terminal?.code, "NATIVE_T3_WORKER_LOST");
   assert.equal((await durability.runs.get(runId))?.status, "failed");
 });
+
+test("persists the saved review before announcing terminal completion", async (t) => {
+  const h = await harness("review-completion", [async () => snapshotAt({ assistantText: "Done", streaming: false, terminal: true })]);
+  t.after(() => h.durability.close());
+  const request = await h.requests.getRequest(h.runId);
+  assert.ok(request);
+  await h.requests.saveRequest({ ...request, collectArtifacts: true });
+  const reference = `compadre-review:review-completion:${"a".repeat(64)}`;
+  await driveNativeT3Run({ ...h, async collectArtifactEvents() {
+    return [{ type: "WORKSPACE_REVIEW", timestamp: Date.now(), data: { reference } }];
+  } }, h.runId);
+  const events = await h.chunks();
+  const review = events.findIndex((event) => event.type === "WORKSPACE_REVIEW");
+  assert.ok(review >= 0);
+  assert.equal(events[review + 1]?.type, "RUN_FINISHED");
+});

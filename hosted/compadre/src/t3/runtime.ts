@@ -1,3 +1,4 @@
+import { WorkspaceReviewStore } from "./workspace-review.js";
 import crypto from "node:crypto";
 import { log } from "../logging.js";
 import { getConfiguredAgentRunDurability } from "../durability/runtime.js";
@@ -93,6 +94,11 @@ export async function getConfiguredT3ArtifactStore(): Promise<T3ArtifactStore | 
     configuredArtifactStore = initialization;
   }
   return configuredArtifactStore;
+}
+
+export async function getConfiguredWorkspaceReviewStore() {
+  const [artifacts, persistence] = await Promise.all([getConfiguredT3ArtifactStore(), getConfiguredThreadPersistence()]);
+  return artifacts && persistence ? new WorkspaceReviewStore(artifacts, persistence.persistence.stores.metadata) : null;
 }
 
 /** Shared native-T3 coordinator used by HTTP, Slack, and simulations. */
@@ -241,8 +247,10 @@ async function buildCollectArtifactEvents(
     return null;
   });
   if (!artifactStore) return undefined;
-  return (turn, request) =>
-    collectNativeT3ArtifactEvents({
+  const reviews = process.env.COMPADRE_T3_WORKSPACE_REVIEWS_ENABLED === "true"
+    ? await getConfiguredWorkspaceReviewStore() : null;
+  return async (turn, request) => {
+    const events = await collectNativeT3ArtifactEvents({
       gateway,
       artifactStore,
       turn,
@@ -253,7 +261,23 @@ async function buildCollectArtifactEvents(
       ...(process.env.SLACK_BOT_TOKEN?.trim()
         ? { botToken: process.env.SLACK_BOT_TOKEN.trim() }
         : {}),
+    }).catch((error) => {
+      log.warn({ runId: request.runId, error }, "output artifact collection failed");
+      return [] as import("./agui-protocol.js").StreamChunk[];
     });
+    if (reviews) {
+      try {
+        const saved = await reviews.published(request.runId)
+          ?? await reviews.publish(request.runId, request.canonicalThreadId, await gateway.captureWorkspaceReview(turn));
+        events.push({ type: "WORKSPACE_REVIEW", timestamp: Date.now(), data: saved });
+      } catch (error) {
+        log.warn({ runId: request.runId, error }, "workspace review capture failed");
+        events.push({ type: "WORKSPACE_REVIEW_UNAVAILABLE", timestamp: Date.now(),
+          message: "Changes could not be saved for this turn. Previously saved diffs remain available." });
+      }
+    }
+    return events;
+  };
 }
 
 let overriddenDriverDependencies: NativeT3RunDriverDependencies | undefined;

@@ -789,3 +789,24 @@ test("does not let snapshot delivery overrun the turn deadline", async () => {
   );
   assert.equal(delivered, true);
 });
+
+test("review completion waits past a missing checkpoint and never accepts another message's checkpoint", async () => {
+  let calls = 0;
+  const client = new T3Client("https://t3.example", "secret", { fetch: async () => {
+    calls++;
+    return json({ snapshotSequence: calls, thread: {
+      id: "thread-1", projectId: "project-1", title: "Thread",
+      modelSelection: { instanceId: "codex", model: "gpt-5.6-sol" },
+      latestTurn: { turnId: "turn-1", state: "completed", requestedAt: now.toISOString(),
+        startedAt: now.toISOString(), completedAt: now.toISOString(), assistantMessageId: "assistant-1" },
+      messages: calls === 1 ? [] : [{ id: "requested", role: "user", text: "edit", turnId: "turn-1",
+        streaming: false, createdAt: now.toISOString(), updatedAt: now.toISOString() }],
+      session: null, checkpoints: [{ turnId: "turn-1", checkpointTurnCount: 1,
+        checkpointRef: "refs/checkpoint/1", status: calls === 2 ? "missing" : "ready" }],
+    } });
+  } });
+  const result = await client.waitForTurnTerminal({ threadId: "thread-1", messageId: "requested",
+    minimumSequence: 1, requireCheckpoint: true, pollIntervalMs: 0, timeoutMs: 1000 });
+  assert.equal(calls, 3);
+  assert.equal(result.snapshotSequence, 3);
+});
