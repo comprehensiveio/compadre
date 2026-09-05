@@ -25,7 +25,7 @@ interface SlackApiResponse {
   error?: string;
   user_id?: string;
   items?: SlackReactionItem[];
-  response_metadata?: { next_cursor?: string };
+  response_metadata?: { next_cursor?: string; warnings?: string[] };
 }
 
 export interface SlackRunRecoveryResult {
@@ -301,17 +301,24 @@ export async function recoverStaleSlackRuns({
       if (!mutationSucceeded) break;
 
       if (!active) {
-        await slackCall(
+        const statusResponse = await slackCall(
           fetchImpl,
           botToken,
-          "assistant.threads.setStatus",
+          "agents.sessions.setStatus",
           boundedTimeoutMs,
           {
             channel_id: run.channel,
             thread_ts: run.threadTs,
-            status: "",
+            status: "active",
           },
         );
+        if (statusResponse.response_metadata?.warnings?.length) {
+          logger.warn("[slack-recovery] agents.sessions.setStatus warnings", {
+            channel: run.channel,
+            threadTs: run.threadTs,
+            warnings: statusResponse.response_metadata.warnings,
+          });
+        }
         await forgetRun?.(run.channel, run.messageTs);
         reconciled = true;
         break;

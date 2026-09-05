@@ -7,10 +7,9 @@ import {
 
 const SLACK_API = "https://slack.com/api";
 const FLUSH_INTERVAL_MS = 500;
-// Slack removes assistant thread statuses after two minutes when no message has
-// been sent. Refresh comfortably inside that window so long-running tool work
-// remains visibly active before the first response text is available.
-const STATUS_REFRESH_INTERVAL_MS = 90 * 1_000;
+// Slack expires a processing agent session after one hour. Refresh before that
+// deadline so unusually long runs keep the native Stop control available.
+const STATUS_REFRESH_INTERVAL_MS = 45 * 60 * 1_000;
 const NATIVE_STREAM_KEEPALIVE_MS = 4 * 60 * 1_000;
 const NATIVE_STREAM_KEEPALIVE = "\u200B";
 
@@ -90,10 +89,10 @@ export class SlackStream {
     if (text === this.lastStatus) return;
     this.lastStatus = text;
     this.statusUpdating = this.statusUpdating.then(async () => {
-      await this.call("assistant.threads.setStatus", {
+      await this.call("agents.sessions.setStatus", {
         channel_id: this.channel,
         thread_ts: this.threadTs,
-        status: text,
+        status: "processing",
       });
       if (this.lastStatus === text && !this.streamEnded) {
         this.scheduleStatusRefresh();
@@ -110,10 +109,10 @@ export class SlackStream {
     }
     this.lastStatus = "";
     this.statusUpdating = this.statusUpdating.then(async () => {
-      await this.call("assistant.threads.setStatus", {
+      await this.call("agents.sessions.setStatus", {
         channel_id: this.channel,
         thread_ts: this.threadTs,
-        status: "",
+        status: "active",
       });
     });
     await this.statusUpdating;
@@ -141,10 +140,10 @@ export class SlackStream {
   private async refreshCurrentStatus(): Promise<void> {
     const status = this.lastStatus;
     if (this.streamEnded || !status) return;
-    await this.call("assistant.threads.setStatus", {
+    await this.call("agents.sessions.setStatus", {
       channel_id: this.channel,
       thread_ts: this.threadTs,
-      status,
+      status: "processing",
     });
     if (this.lastStatus === status && !this.streamEnded) {
       this.scheduleStatusRefresh();
@@ -530,6 +529,19 @@ export class SlackStream {
         this.logger.error(`[slack-stream] ${method} failed`, {
           ...this.logContext(),
           error: data.error,
+        });
+      }
+      const metadata = data.response_metadata;
+      const warnings =
+        metadata && typeof metadata === "object"
+          ? (metadata as Record<string, unknown>).warnings
+          : undefined;
+      if (Array.isArray(warnings) && warnings.length > 0) {
+        this.logger.warn(`[slack-stream] ${method} warnings`, {
+          ...this.logContext(),
+          warnings: warnings.filter(
+            (warning): warning is string => typeof warning === "string",
+          ),
         });
       }
       return data;

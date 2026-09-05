@@ -54,7 +54,7 @@ against Render's bootstrap workspace is not an authoritative substitute.
 
 | Data                                                                  | Owner                  |
 | --------------------------------------------------------------------- | ---------------------- |
-| Conversation events, messages, tools, turns, approvals                | Central T3 PostgreSQL      |
+| Conversation events, messages, tools, turns, approvals                | Central T3 PostgreSQL  |
 | Canonical users and workspace-scoped Slack identities                 | Compadre Postgres      |
 | External-thread binding, worker identity, lease and recovery metadata | Compadre Postgres      |
 | Checkout, live terminal, provider process and native transcript       | Modal worker           |
@@ -531,7 +531,11 @@ interrupt as the web client. Workspace, channel, and binding checks apply, and
 a delayed or redelivered Stop event cannot interrupt a turn started after its
 event timestamp. The existing terminal observer clears processing status and
 posts `Stopped. Send another message to continue.` after cleanup. The temporary
-app manifest remains only as a record of the dark-launch installation.
+app manifest remains only as a record of the dark-launch installation. The
+controller publishes Slack's native agent-session lifecycle through
+`agents.sessions.setStatus`, using `processing` while a run is live and
+`active` after it terminates. Slack API response warnings are logged so a
+missing event subscription or other manifest drift is visible in production.
 
 The official `Compadre` app owns production Slack ingress for the allowed
 Comprehensive workspace. Its event URL is

@@ -64,7 +64,7 @@ test("marks a durably failed run as failed across paginated reactions", async ()
     ],
     "reactions.remove": [{ ok: true }],
     "reactions.add": [{ ok: true }],
-    "assistant.threads.setStatus": [{ ok: true }],
+    "agents.sessions.setStatus": [{ ok: true }],
   });
 
   const result = await recoverStaleSlackRuns({
@@ -83,7 +83,7 @@ test("marks a durably failed run as failed across paginated reactions", async ()
       "reactions.list",
       "reactions.remove",
       "reactions.add",
-      "assistant.threads.setStatus",
+      "agents.sessions.setStatus",
     ],
   );
   assert.equal(calls[2]?.cursor, "next");
@@ -100,7 +100,7 @@ test("marks a durably failed run as failed across paginated reactions", async ()
   assert.deepEqual(calls[5]?.body, {
     channel_id: "C123",
     thread_ts: "100.001",
-    status: "",
+    status: "active",
   });
 });
 
@@ -200,7 +200,7 @@ test("clears both reactions and durable correlation for a completed run", async 
       },
     ],
     "reactions.remove": [{ ok: true }, { ok: true }],
-    "assistant.threads.setStatus": [{ ok: true }],
+    "agents.sessions.setStatus": [{ ok: true }],
   });
 
   const result = await recoverStaleSlackRuns({
@@ -221,7 +221,7 @@ test("clears both reactions and durable correlation for a completed run", async 
       "reactions.list",
       "reactions.remove",
       "reactions.remove",
-      "assistant.threads.setStatus",
+      "agents.sessions.setStatus",
     ],
   );
   assert.deepEqual(forgotten, ["C123:100.001"]);
@@ -248,7 +248,7 @@ test("rechecks durable state when a run finishes during reconciliation", async (
     ],
     "reactions.remove": [{ ok: true }, { ok: true }],
     "reactions.add": [{ ok: true }],
-    "assistant.threads.setStatus": [{ ok: true }],
+    "agents.sessions.setStatus": [{ ok: true }],
   });
 
   const result = await recoverStaleSlackRuns({
@@ -267,7 +267,7 @@ test("rechecks durable state when a run finishes during reconciliation", async (
       "reactions.remove",
       "reactions.add",
       "reactions.remove",
-      "assistant.threads.setStatus",
+      "agents.sessions.setStatus",
     ],
   );
 });
@@ -335,7 +335,7 @@ test("treats an already-present target reaction as reconciled", async () => {
     ],
     "reactions.remove": [{ ok: true }],
     "reactions.add": [{ ok: false, error: "already_reacted" }],
-    "assistant.threads.setStatus": [{ ok: true }],
+    "agents.sessions.setStatus": [{ ok: true }],
   });
 
   const result = await recoverStaleSlackRuns({

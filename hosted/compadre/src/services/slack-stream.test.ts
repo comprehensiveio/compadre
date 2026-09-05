@@ -117,9 +117,9 @@ test("streams standard Markdown unchanged in channel threads", async () => {
   ]);
 });
 
-test("publishes channel loading states without requiring assistant view", async () => {
+test("publishes native agent session lifecycle states", async () => {
   const { calls, fetchImpl } = createSlackFetch({
-    "assistant.threads.setStatus": [{ ok: true }, { ok: true }],
+    "agents.sessions.setStatus": [{ ok: true }, { ok: true }],
   });
   const stream = new SlackStream({
     channel: "C123",
@@ -134,19 +134,19 @@ test("publishes channel loading states without requiring assistant view", async 
 
   assert.deepEqual(calls, [
     {
-      method: "assistant.threads.setStatus",
+      method: "agents.sessions.setStatus",
       body: {
         channel_id: "C123",
         thread_ts: "100.001",
-        status: "is thinking...",
+        status: "processing",
       },
     },
     {
-      method: "assistant.threads.setStatus",
+      method: "agents.sessions.setStatus",
       body: {
         channel_id: "C123",
         thread_ts: "100.001",
-        status: "",
+        status: "active",
       },
     },
   ]);
@@ -195,9 +195,9 @@ test("the session link rides inside the answer message as a context footer", asy
   ]);
 });
 
-test("refreshes a quiet thread status before Slack's two-minute expiry", async () => {
+test("refreshes a quiet processing session before Slack's expiry", async () => {
   const { calls, fetchImpl } = createSlackFetch({
-    "assistant.threads.setStatus": [{ ok: true }, { ok: true }, { ok: true }],
+    "agents.sessions.setStatus": [{ ok: true }, { ok: true }, { ok: true }],
   });
   const stream = new SlackStream({
     channel: "C123",
@@ -216,15 +216,56 @@ test("refreshes a quiet thread status before Slack's two-minute expiry", async (
   assert.deepEqual(
     calls.map(({ method }) => method),
     [
-      "assistant.threads.setStatus",
-      "assistant.threads.setStatus",
-      "assistant.threads.setStatus",
+      "agents.sessions.setStatus",
+      "agents.sessions.setStatus",
+      "agents.sessions.setStatus",
     ],
   );
   assert.deepEqual(
     calls.map(({ body }) => body.status),
-    ["is running checks...", "is running checks...", ""],
+    ["processing", "processing", "active"],
   );
+});
+
+test("logs Slack agent session warnings", async () => {
+  const warnings: unknown[][] = [];
+  const { fetchImpl } = createSlackFetch({
+    "agents.sessions.setStatus": [
+      {
+        ok: true,
+        response_metadata: {
+          warnings: ["missing_agent_session_stopped_event_subscription"],
+        },
+      },
+    ],
+  });
+  const stream = new SlackStream({
+    channel: "C123",
+    threadTs: "100.001",
+    botToken: "xoxb-test",
+    fetchImpl,
+    logger: {
+      info() {},
+      warn: (...args: unknown[]) => void warnings.push(args),
+      error() {},
+    },
+  });
+
+  await stream.setStatus("is thinking...");
+  await stream.stopStream();
+
+  assert.equal(warnings.length, 1);
+  assert.equal(
+    warnings[0]?.[0],
+    "[slack-stream] agents.sessions.setStatus warnings",
+  );
+  assert.deepEqual(warnings[0]?.[1], {
+    channel: "C123",
+    threadTs: "100.001",
+    streamTs: null,
+    deliveryMode: "unstarted",
+    warnings: ["missing_agent_session_stopped_event_subscription"],
+  });
 });
 
 test("successful runs clear both live and stale terminal reactions idempotently", async () => {
