@@ -99,6 +99,26 @@ export interface SlackEvent {
   files?: SlackEventFile[];
 }
 
+export interface AgentSessionStoppedEvent {
+  type: "agent_session_stopped";
+  channel: string;
+  user: string;
+  event_ts: string;
+  thread_ts: string;
+  streaming_message_ts: string[];
+}
+
+export function isAgentSessionStoppedEvent(
+  event: unknown,
+): event is AgentSessionStoppedEvent {
+  return (
+    typeof event === "object" &&
+    event !== null &&
+    "type" in event &&
+    event.type === "agent_session_stopped"
+  );
+}
+
 /** Accept ordinary user messages, including messages with attached files. */
 export function isSupportedUserMessage(event: SlackEvent): boolean {
   if (event.bot_id) return false;
@@ -227,6 +247,19 @@ slackEventsRoutes.post("/slack/events", async (c) => {
 
     const event = payload.event;
     if (event && typeof event === "object") {
+      if (isAgentSessionStoppedEvent(event)) {
+        // Slack needs an acknowledged subscription before it will render the
+        // native stop button. Cancellation and status cleanup follow later.
+        log.info(
+          {
+            slackChannelId: event.channel,
+            slackThreadTs: event.thread_ts,
+            slackUserId: event.user,
+          },
+          "slack agent session stop request acknowledged",
+        );
+        return c.json({ ok: true });
+      }
       const botUserId = resolveSlackBotUserId({
         configured: process.env.SLACK_BOT_USER_ID,
         authorizations: Array.isArray(payload.authorizations)

@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import crypto from "node:crypto";
 import test from "node:test";
 import {
+  isAgentSessionStoppedEvent,
   isAllowedSlackWorkspace,
   isSupportedUserMessage,
   resolveSlackBotUserId,
@@ -10,6 +11,17 @@ import {
   stripSlackBotMention,
   type SlackEvent,
 } from "./slack-events.js";
+
+function restoreEnvironment(
+  name: string,
+  previousValue: string | undefined,
+): void {
+  if (previousValue === undefined) {
+    delete process.env[name];
+  } else {
+    process.env[name] = previousValue;
+  }
+}
 
 test("allows Slack events only from the configured workspace", () => {
   assert.equal(
@@ -84,6 +96,63 @@ test("rejects a validly signed event callback from another workspace", async () 
       process.env.COMPADRE_SLACK_WORKSPACE_ID = previousWorkspaceId;
     }
   }
+});
+
+test("acknowledges a signed agent session stop event", async () => {
+  const signingSecret = "test-signing-secret";
+  const timestamp = String(Math.floor(Date.now() / 1000));
+  const body = JSON.stringify({
+    type: "event_callback",
+    team_id: "T123",
+    api_app_id: "A123",
+    event: {
+      type: "agent_session_stopped",
+      channel: "C123",
+      user: "U123",
+      event_ts: "1783536983.783769",
+      thread_ts: "1782234671.392669",
+      streaming_message_ts: ["1782234987.693923"],
+    },
+  });
+  const signature = `v0=${crypto
+    .createHmac("sha256", signingSecret)
+    .update(`v0:${timestamp}:${body}`)
+    .digest("hex")}`;
+  const previousSigningSecret = process.env.SLACK_SIGNING_SECRET;
+  const previousWorkspaceId = process.env.COMPADRE_SLACK_WORKSPACE_ID;
+  const previousAppId = process.env.COMPADRE_SLACK_APP_ID;
+  process.env.SLACK_SIGNING_SECRET = signingSecret;
+  process.env.COMPADRE_SLACK_WORKSPACE_ID = "T123";
+  process.env.COMPADRE_SLACK_APP_ID = "A123";
+
+  try {
+    const response = await slackEventsRoutes.request(
+      "https://controller.example/slack/events",
+      {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-slack-request-timestamp": timestamp,
+          "x-slack-signature": signature,
+        },
+        body,
+      },
+    );
+    assert.equal(response.status, 200);
+    assert.deepEqual(await response.json(), { ok: true });
+  } finally {
+    restoreEnvironment("SLACK_SIGNING_SECRET", previousSigningSecret);
+    restoreEnvironment("COMPADRE_SLACK_WORKSPACE_ID", previousWorkspaceId);
+    restoreEnvironment("COMPADRE_SLACK_APP_ID", previousAppId);
+  }
+});
+
+test("recognizes Slack agent session stop events", () => {
+  assert.equal(
+    isAgentSessionStoppedEvent({ type: "agent_session_stopped" }),
+    true,
+  );
+  assert.equal(isAgentSessionStoppedEvent({ type: "message" }), false);
 });
 
 function message(overrides: Partial<SlackEvent> = {}): SlackEvent {

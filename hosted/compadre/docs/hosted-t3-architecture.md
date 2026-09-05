@@ -513,9 +513,12 @@ inventory.
 ## Slack application
 
 The checked-in [production Slack manifest](./slack-app-manifest.yaml) targets the
-canonical controller hostname. It accepts direct-message and `app_mention`
-events and dynamically resolves the installation-specific bot identity. The
-temporary app manifest remains only as a record of the dark-launch installation.
+canonical controller hostname. It accepts direct-message, `app_mention`, and
+`agent_session_stopped` events and dynamically resolves the
+installation-specific bot identity. Stop events are currently acknowledged
+without cancelling work or changing session status; that behavior is reserved
+for the cancellation follow-up. The temporary app manifest remains only as a
+record of the dark-launch installation.
 
 The official `Compadre` app owns production Slack ingress for the allowed
 Comprehensive workspace. Its event URL is
