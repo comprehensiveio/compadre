@@ -121,7 +121,7 @@ services:
     # Apply only during the approved cutover, after the final import. The
     # pre-deploy instance cannot access the disk and must never run the importer.
     preDeployCommand: node apps/server/dist/bin.mjs migrate-postgres
-    maxShutdownDelaySeconds: 300
+    # Render does not support a custom shutdown delay with an attached disk.
     startCommand: >-
       mkdir -p /var/data/workspace && node apps/server/dist/bin.mjs serve
       /var/data/workspace --mode web --host 0.0.0.0 --port "$PORT"

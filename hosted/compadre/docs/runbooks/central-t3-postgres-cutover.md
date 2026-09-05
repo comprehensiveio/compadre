@@ -112,7 +112,8 @@ zero-downtime deployment solved. Architecture and exact table inventory:
    Require zero HTTP 5xx, no transcript outage, no lost turn and no duplicate
    launch/steer/cancel/checkpoint/Slack effect. Kill the retiring process at claim,
    send and completion boundaries, and prove safe recovery within Render's
-   configured 300-second shutdown window. This branch has no such proof. A
+   supported shutdown window after disk removal. Render rejects a custom
+   shutdown delay while the disk is attached. This branch has no such proof. A
    separately approved single-process maintenance cutover may proceed without
    completing this gate, but must keep the disk and availability TODO.
 
