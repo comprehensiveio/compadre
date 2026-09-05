@@ -4,6 +4,7 @@ import {
   GitPullRequestIcon,
   LogOutIcon,
   SettingsIcon,
+  ServerIcon,
 } from "lucide-react";
 import type { ReactNode } from "react";
 import { memo, useCallback } from "react";
@@ -141,7 +142,9 @@ export const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
           ? "usage"
           : location.pathname === "/pull-requests"
             ? "pull-requests"
-            : null,
+            : location.pathname === "/operations/threads"
+              ? "thread-environments"
+              : null,
   });
   const { environments } = useEnvironments();
   // The page reads every connected server, so one of them offering pull requests is enough for
@@ -169,6 +172,11 @@ export const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
     }
     void navigate({ to: "/usage" });
   }, [isMobile, navigate, setOpenMobile]);
+
+  const handleThreadEnvironmentsClick = useCallback(() => {
+    closeMobileSidebar();
+    void navigate({ to: "/operations/threads" });
+  }, [closeMobileSidebar, navigate]);
 
   const handleSignOutClick = useCallback(() => {
     closeMobileSidebar();
@@ -217,6 +225,13 @@ export const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
             label="Usage"
             onClick={handleUsageClick}
           />
+          {COMPADRE_AUTH_ENABLED ? (
+            <SidebarUtilityItem
+              icon={<ServerIcon />}
+              label="Thread environments"
+              onClick={handleThreadEnvironmentsClick}
+            />
+          ) : null}
           {COMPADRE_AUTH_ENABLED ? (
             <SidebarUtilityItem
               icon={<LogOutIcon />}

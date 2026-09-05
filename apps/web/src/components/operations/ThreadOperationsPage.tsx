@@ -57,6 +57,35 @@ function DetailText({
   );
 }
 
+const statusStyles = {
+  active: "bg-sky-500/10 text-sky-700 dark:text-sky-300",
+  ready: "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300",
+  waiting: "bg-amber-500/10 text-amber-700 dark:text-amber-300",
+  error: "bg-red-500/10 text-red-700 dark:text-red-300",
+  neutral: "bg-muted/60 text-muted-foreground",
+};
+type StatusTone = keyof typeof statusStyles;
+
+function StatusLabel({ children, tone }: { children: ReactNode; tone: StatusTone }) {
+  return (
+    <span
+      className={cn(
+        "inline-flex max-w-full items-center gap-1.5 rounded-md px-2 py-1 font-medium",
+        statusStyles[tone],
+      )}
+    >
+      <span aria-hidden="true" className="size-1.5 shrink-0 rounded-full bg-current" />
+      <span className="min-w-0 truncate">{children}</span>
+    </span>
+  );
+}
+
+function readinessTone(state: string, stale: boolean): StatusTone {
+  if (state === "unknown" || state === "stopped") return "neutral";
+  if (stale) return "waiting";
+  return state === "unresponsive" ? "error" : "ready";
+}
+
 function OperationsRow({ thread }: { readonly thread: CompadreThreadOperation }) {
   const environmentId = usePrimaryEnvironmentId();
   const [expanded, setExpanded] = useState(false);
@@ -71,6 +100,24 @@ function OperationsRow({ thread }: { readonly thread: CompadreThreadOperation })
       : "Not checked yet";
   const devServer = thread.environment?.devServer ?? "unknown";
   const database = thread.environment?.database ?? "unknown";
+  const agentTone: StatusTone =
+    thread.status === "error" || thread.activeRun?.status === "failed"
+      ? "error"
+      : thread.status === "interrupted" ||
+          thread.status === "unavailable" ||
+          thread.phase.startsWith("Waiting for ")
+        ? "waiting"
+        : thread.status === "working"
+          ? "active"
+          : thread.phase === "Completed"
+            ? "ready"
+            : "neutral";
+  const containerTone: StatusTone =
+    thread.container.workerState === "restoring" || thread.container.workerState === "hibernating"
+      ? "waiting"
+      : suspended
+        ? "neutral"
+        : readinessTone(thread.environment?.container ?? "unknown", stale);
   const title = (
     <span className="block truncate text-sm font-medium text-foreground">{thread.title}</span>
   );
@@ -105,8 +152,8 @@ function OperationsRow({ thread }: { readonly thread: CompadreThreadOperation })
           </div>
         </div>
         <div className="min-w-0">
-          <DetailText className="truncate font-medium text-foreground" detail={thread.phase}>
-            {thread.phase}
+          <DetailText className="truncate" detail={thread.phase}>
+            <StatusLabel tone={agentTone}>{thread.phase}</StatusLabel>
           </DetailText>
           <DetailText
             className="mt-1 truncate text-muted-foreground"
@@ -130,7 +177,9 @@ function OperationsRow({ thread }: { readonly thread: CompadreThreadOperation })
           ) : null}
         </div>
         <div className="min-w-0">
-          <p className="font-medium">{containerLabel(thread)}</p>
+          <p>
+            <StatusLabel tone={containerTone}>{containerLabel(thread)}</StatusLabel>
+          </p>
           <p className="mt-1 text-muted-foreground">
             {suspended
               ? thread.container.hasSnapshot
@@ -142,18 +191,19 @@ function OperationsRow({ thread }: { readonly thread: CompadreThreadOperation })
           </p>
         </div>
         <div>
-          <p
-            className={cn(
-              "capitalize",
-              devServer === "unresponsive" && "text-amber-600 dark:text-amber-400",
-            )}
-          >
-            {suspended ? "Stopped" : devServer}
+          <p className="capitalize">
+            <StatusLabel tone={suspended ? "neutral" : readinessTone(devServer, stale)}>
+              {suspended ? "Stopped" : devServer}
+            </StatusLabel>
           </p>
           <p className="mt-1 text-[11px] text-muted-foreground">{observation}</p>
         </div>
         <div>
-          <p className="capitalize">{suspended ? "Stopped" : database}</p>
+          <p className="capitalize">
+            <StatusLabel tone={suspended ? "neutral" : readinessTone(database, stale)}>
+              {suspended ? "Stopped" : database}
+            </StatusLabel>
+          </p>
           <p className="mt-1 text-[11px] text-muted-foreground">
             {suspended ? "Data health unchecked" : observation}
           </p>
