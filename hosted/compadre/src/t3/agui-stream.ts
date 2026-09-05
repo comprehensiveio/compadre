@@ -400,6 +400,10 @@ export class NativeT3SnapshotProjector {
           if (chunk.messageId) projector.seenActivities.add(chunk.messageId);
           break;
         }
+        case "COMPADRE_AGENT_ACTIVITY": {
+          if (chunk.messageId) projector.seenActivities.add(chunk.messageId);
+          break;
+        }
         case EventType.RUN_FINISHED:
         case EventType.RUN_ERROR: {
           projector.terminal = true;
@@ -503,6 +507,16 @@ export class NativeT3SnapshotProjector {
         chunks.push({
           type: EventType.THREAD_TOKEN_USAGE_UPDATED,
           usage,
+          timestamp: timestamp(activity.createdAt),
+        });
+        continue;
+      }
+      if (["approval.requested", "approval.resolved", "user-input.requested", "user-input.resolved"].includes(activity.kind)) {
+        chunks.push({
+          type: "COMPADRE_AGENT_ACTIVITY",
+          messageId: activityVersion,
+          toolCallId: stringValue(activity.payload?.requestId) ?? activity.kind.split(".")[0],
+          status: activity.kind,
           timestamp: timestamp(activity.createdAt),
         });
         continue;

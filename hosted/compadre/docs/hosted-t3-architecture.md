@@ -528,3 +528,22 @@ source, central T3, or Modal.
 The temporary `Secret dre experiment` app remains only as an explicit
 post-cutover cleanup/rollback decision. Do not route production traffic to it
 or delete it without authorization.
+
+## Thread environment observations
+
+The authenticated operations directory exposes chronological thread activity,
+container lifecycle metadata, and cached localhost development readiness via
+`services/thread-environment-observations.ts`. At most four probes run at once,
+with oldest observations scheduled first and a 30-second refresh interval per
+sandbox generation/state. Directory requests return immediately with cached or
+unknown observations. Suspended/restoring/hibernating workers are never probed.
+Probing uses Modal resume's existing-sandbox lookup/poll only; it cannot create
+or restore workers and never updates bindings or warm leases. HTTP probes do
+not follow redirects to the preview activation gateway. PostgreSQL readiness
+uses the Comp development cluster on port 5433.
+
+The optional operations contract fields tolerate either service rollout order.
+Native run projection emits additive `COMPADRE_AGENT_ACTIVITY` request/resolution
+events for diagnostics; older consumers ignore unrecognized event types. These
+events do not implement approval responses for providers that lack that feature.
+The page shows recent bounded run events, not a complete container audit log.

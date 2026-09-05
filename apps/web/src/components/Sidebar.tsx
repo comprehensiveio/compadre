@@ -66,7 +66,7 @@ import {
   type MouseEvent as ReactMouseEvent,
   type ReactNode,
 } from "react";
-import { useParams, useRouter } from "@tanstack/react-router";
+import { Link, useParams, useRouter } from "@tanstack/react-router";
 
 import {
   isAtomCommandInterrupted,
@@ -3618,6 +3618,16 @@ export default function Sidebar() {
                 </Tooltip>
               </div>
             </div>
+            {COMPADRE_AUTH_ENABLED ? (
+              <Link
+                to="/operations/threads"
+                className="flex h-8 items-center gap-2 rounded-md px-2 text-sm text-sidebar-muted-foreground hover:bg-sidebar-row-hover hover:text-sidebar-foreground"
+                activeProps={{ className: "bg-sidebar-row-active text-sidebar-foreground" }}
+              >
+                <ServerIcon className="size-4 shrink-0" />
+                <span>Thread environments</span>
+              </Link>
+            ) : null}
             {COMPADRE_AUTH_ENABLED && currentCompadreUser ? (
               <div
                 role="group"
