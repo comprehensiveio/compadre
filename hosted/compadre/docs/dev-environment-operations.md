@@ -41,6 +41,14 @@ each hosted T3 thread. The safety and ownership rules in
   `connect.sid` cookie stays scoped to the thread host, so developers can still
   use Comp's dev-login routes to impersonate any sandbox-local user inside
   the isolated environment.
+- Agent handoff uses a full Comp dev-login URL on the stable preview host, not
+  the bare host and not the legacy `auto_impersonate` query parameter. The
+  agent selects an explicit sandbox-local user when requested. Otherwise it
+  chooses the sandbox-local user whose role, permissions, company, and data
+  best demonstrate the functionality discussed in the thread. It falls back
+  to the admin for company ID 9 only when there is not enough context to choose
+  a meaningful user. The URL's encoded `redirect` takes the reviewer to the
+  page relevant to the work, defaulting to `/`.
 
 ## Comprehensive-owned artifacts
 
