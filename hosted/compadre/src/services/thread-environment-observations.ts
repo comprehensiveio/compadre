@@ -77,7 +77,40 @@ export function createEnvironmentObserver(
       pending: boolean;
     }
   >();
+  const queue: Array<{
+    binding: T3ThreadBinding;
+    key: string;
+    target: NonNullable<ReturnType<typeof cache.get>>;
+  }> = [];
   let inFlight = 0;
+  const drain = () => {
+    while (inFlight < 4 && queue.length > 0) {
+      const next = queue.shift()!;
+      if (cache.get(next.key) !== next.target) continue;
+      const { binding, target } = next;
+      inFlight++;
+      void inspect(binding)
+        .then(
+          (value) => {
+            target.value = value;
+          },
+          () => {
+            target.value = {
+              container: "unknown",
+              devServer: "unknown",
+              database: "unknown",
+              checkedAt: new Date(now()).toISOString(),
+            };
+          },
+        )
+        .finally(() => {
+          target.refreshedAt = now();
+          target.pending = false;
+          inFlight--;
+          drain();
+        });
+    }
+  };
   return (bindings: readonly T3ThreadBinding[]) => {
     const keys = new Set(
       bindings.map(
@@ -93,7 +126,7 @@ export function createEnvironmentObserver(
         )?.refreshedAt ?? -Infinity;
       return age(left) - age(right);
     });
-    return new Map(
+    const observations = new Map(
       ordered.map((binding) => {
         const previewUrl = authenticatedDevPreviewUrl({
           ...process.env,
@@ -128,31 +161,10 @@ export function createEnvironmentObserver(
           binding.workerState !== "hibernating" &&
           binding.workerState !== "restoring" &&
           !entry.pending &&
-          now() - entry.refreshedAt >= 30_000 &&
-          inFlight < 4
+          now() - entry.refreshedAt >= 30_000
         ) {
-          const target = entry;
-          target.pending = true;
-          inFlight++;
-          void inspect(binding)
-            .then(
-              (value) => {
-                target.value = value;
-              },
-              () => {
-                target.value = {
-                  container: "unknown",
-                  devServer: "unknown",
-                  database: "unknown",
-                  checkedAt: new Date(now()).toISOString(),
-                };
-              },
-            )
-            .finally(() => {
-              target.refreshedAt = now();
-              target.pending = false;
-              inFlight--;
-            });
+          entry.pending = true;
+          queue.push({ binding, key, target: entry });
         }
         return [
           binding.canonicalThreadId,
@@ -160,5 +172,7 @@ export function createEnvironmentObserver(
         ] as const;
       }),
     );
+    drain();
+    return observations;
   };
 }

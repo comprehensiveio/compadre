@@ -57,6 +57,11 @@ test("returns cached observations without blocking; isolates generations and cap
   finish(ready);
   await promise;
   await Promise.resolve();
+  assert.equal(
+    calls,
+    8,
+    "queued workers are checked without waiting for another directory refresh",
+  );
   assert.equal(observe(bindings).get("thread-0")?.devServer, "ready");
   assert.equal(
     observe([{ ...bindings[0]!, workerGeneration: 2 }]).get("thread-0")
