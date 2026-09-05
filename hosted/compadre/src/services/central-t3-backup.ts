@@ -57,7 +57,7 @@ export async function backupCentralT3State(input: {
   objects: CentralT3BackupObjectStore;
   fetchImpl?: typeof fetch;
   now?: () => Date;
-}): Promise<{ key: string; sha256: string; sizeBytes: number }> {
+}): Promise<{ key: string; sha256: string; sizeBytes: number } | { backend: "postgres"; skipped: true }> {
   const endpoint = new URL(
     "/internal/compadre/state-backup",
     input.centralUrl,
@@ -65,6 +65,9 @@ export async function backupCentralT3State(input: {
   const response = await (input.fetchImpl ?? fetch)(endpoint, {
     headers: { Authorization: `Bearer ${input.accessToken}` },
   });
+  if (response.status === 410 && response.headers.get("x-compadre-backup-backend") === "postgres") {
+    return { backend: "postgres", skipped: true };
+  }
   if (!response.ok) {
     throw new Error(`Central T3 backup endpoint returned HTTP ${response.status}`);
   }
@@ -96,7 +99,7 @@ export async function backupCentralT3State(input: {
 
 export function configuredCentralT3Backup(
   environment: NodeJS.ProcessEnv = process.env,
-): (() => Promise<{ key: string; sha256: string; sizeBytes: number }>) | null {
+): (() => Promise<{ key: string; sha256: string; sizeBytes: number } | { backend: "postgres"; skipped: true }>) | null {
   const centralUrl =
     environment.COMPADRE_T3_CENTRAL_URL?.trim() ||
     environment.COMPADRE_T3_HOSTED_APP_URL?.trim();

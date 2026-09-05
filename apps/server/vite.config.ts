@@ -36,7 +36,11 @@ export default mergeConfig(
       },
     },
     pack: {
-      entry: ["src/bin.ts"],
+      entry: {
+        bin: "src/bin.ts",
+        "import-sqlite-to-postgres": "scripts/import-sqlite-to-postgres.ts",
+        "import-central-attachments": "scripts/import-central-attachments.ts",
+      },
       outDir: "dist",
       sourcemap: true,
       clean: true,

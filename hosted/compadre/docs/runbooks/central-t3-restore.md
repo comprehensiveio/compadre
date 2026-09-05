@@ -1,6 +1,11 @@
 # Central T3 state restore
 
-The central T3 SQLite database is the authoritative hosted transcript. The
+This is the **pre-cutover SQLite recovery** procedure. After PostgreSQL accepts
+production writes, use [PostgreSQL cutover and restore](./central-t3-postgres-cutover.md)
+and never revert to the frozen SQLite snapshot. The disk is retained during this
+migration's single-process phase.
+
+Before the approved cutover, central T3 SQLite is the authoritative hosted transcript. The
 controller downloads a transactionally consistent online snapshot from T3,
 verifies its SHA-256 digest, and writes it to the private Comprehensive
 `compadre` bucket under `backups/t3-state/v1/YYYY/MM/DD/` every six hours.
@@ -35,7 +40,7 @@ against the central writer and must have an incident owner.
 6. Start the controller, submit one API canary, then one `#slack-bot-test`
    canary. Confirm the browser reads the durable transcript without Modal.
 
-## Important limitation
+## Pre-cutover attachment limitation
 
 The current scheduled object is the SQLite database, not the central T3
 attachment directory. Render's persistent disk remains the primary copy of
@@ -43,3 +48,8 @@ uploaded input files. Before production cutover, mirror those bytes to object
 storage or include them in a separately versioned backup and rehearse restoring
 them alongside SQLite.
 
+
+The PostgreSQL candidate introduces a central attachment object manifest and
+content-addressed S3 writes. Run its explicit attachment importer and prove
+manifest completeness/hydration before relying on that ownership. No existing
+production attachments have been moved by preparing the code change.

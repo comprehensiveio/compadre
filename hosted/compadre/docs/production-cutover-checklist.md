@@ -363,3 +363,18 @@ Canonical endpoints:
 - [ ] After the rollback window, revoke superseded credentials, remove obsolete
   services and duplicated persistence, archive migration artifacts, and update
   the architecture document to describe only the production system.
+
+## Central SQLite to PostgreSQL migration (not yet executed)
+
+Follow [the staged cutover runbook](./runbooks/central-t3-postgres-cutover.md).
+The candidate Blueprint must not be synced before the approved import window.
+Reuse the existing application database and credential, with central tables in
+`compadre_t3` and controller tables in `public`; verify
+shared capacity, backup/PITR/export and monitoring policy; verify the immutable SQLite audit snapshot and complete
+attachment object import; prove one PostgreSQL canary with existing secrets and
+environment identity. Retain the disk and single-process topology. Overlapping
+reactor ownership/drain, an automated continuous rollout canary, configuration
+ownership and checkpoint reconstruction remain gates before any disk removal.
+Do not mark the zero-downtime TODO complete from SQL concurrency tests. Once
+PostgreSQL accepts production writes, only PostgreSQL-compatible binary rollback
+is allowed, with a 24-hour observation window and successful restore rehearsal.

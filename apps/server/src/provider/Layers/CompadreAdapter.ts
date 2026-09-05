@@ -1,3 +1,4 @@
+import { CompadreAttachmentStore } from "../../assets/CompadreAttachmentStore.ts";
 import {
   ApprovalRequestId,
   type ChatAttachment,
@@ -213,6 +214,7 @@ export function makeCompadreAdapter(options: CompadreAdapterOptions) {
     const adapterScope = yield* Scope.make("sequential");
     const httpClient = yield* HttpClient.HttpClient;
     const fileSystem = yield* FileSystem.FileSystem;
+    const attachmentObjects = yield* CompadreAttachmentStore;
     const transport =
       options.transport ??
       makeCompadreTransport(httpClient, runtimeProvider, options.reconnectBaseDelayMs ?? 250);
@@ -697,6 +699,17 @@ export function makeCompadreAdapter(options: CompadreAdapterOptions) {
                           provider: runtimeProvider,
                           method: "compadre/output-artifact",
                           detail: "Failed to persist a Compadre output artifact.",
+                          cause,
+                        }),
+                    ),
+                  );
+                  yield* attachmentObjects.persist(attachmentPath).pipe(
+                    Effect.mapError(
+                      (cause) =>
+                        new ProviderAdapterRequestError({
+                          provider: runtimeProvider,
+                          method: "compadre/output-artifact",
+                          detail: "Failed to store output object.",
                           cause,
                         }),
                     ),

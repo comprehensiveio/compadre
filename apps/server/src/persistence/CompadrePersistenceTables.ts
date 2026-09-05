@@ -1,0 +1,17 @@
+export const CENTRAL_SQLITE_TABLES = [
+  "orchestration_events",
+  "orchestration_command_receipts",
+  "checkpoint_diff_blobs",
+  "provider_session_runtime",
+  "auth_pairing_links",
+  "auth_sessions",
+  "projection_pending_approvals",
+  "projection_thread_activities",
+  "projection_thread_messages",
+  "projection_thread_proposed_plans",
+  "projection_thread_sessions",
+  "projection_threads",
+  "projection_turns",
+  "projection_projects",
+  "projection_state",
+] as const;

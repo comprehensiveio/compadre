@@ -1,3 +1,4 @@
+import { PersistenceBackend } from "../../persistence/Services/PersistenceBackend.ts";
 import {
   ApprovalRequestId,
   type ChatAttachment,
@@ -380,6 +381,8 @@ function collectThreadAttachmentRelativePaths(
 const runAttachmentSideEffects = Effect.fn("runAttachmentSideEffects")(function* (
   sideEffects: AttachmentSideEffects,
 ) {
+  const backend = yield* Effect.serviceOption(PersistenceBackend);
+  if (Option.isSome(backend) && backend.value.kind === "postgres") return;
   const serverConfig = yield* Effect.service(ServerConfig);
   const fileSystem = yield* Effect.service(FileSystem.FileSystem);
   const path = yield* Effect.service(Path.Path);
@@ -1834,8 +1837,44 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
         );
 
     const projectEvent: OrchestrationProjectionPipelineShape["projectEvent"] = (event) =>
-      Effect.forEach(projectors, (projector) => runProjectorForEvent(projector, event), {
-        concurrency: 1,
+      Effect.gen(function* () {
+        const attachmentSideEffects: AttachmentSideEffects = {
+          deletedThreadIds: new Set<string>(),
+          prunedThreadRelativePaths: new Map<string, Set<string>>(),
+        };
+
+        yield* sql.withTransaction(
+          Effect.gen(function* () {
+            yield* Effect.forEach(
+              projectors,
+              (projector) => projector.apply(event, attachmentSideEffects),
+              { concurrency: 1, discard: true },
+            );
+            yield* sql`
+              INSERT INTO projection_state ${sql.insert(
+                projectors.map((projector) => ({
+                  projector: projector.name,
+                  last_applied_sequence: event.sequence,
+                  updated_at: event.occurredAt,
+                })),
+              )}
+              ON CONFLICT (projector)
+              DO UPDATE SET
+                last_applied_sequence = excluded.last_applied_sequence,
+                updated_at = excluded.updated_at
+            `;
+          }),
+        );
+
+        yield* runAttachmentSideEffects(attachmentSideEffects).pipe(
+          Effect.catch((cause) =>
+            Effect.logWarning("failed to apply projected attachment side-effects", {
+              sequence: event.sequence,
+              eventType: event.type,
+              cause,
+            }),
+          ),
+        );
       }).pipe(
         Effect.provideService(FileSystem.FileSystem, fileSystem),
         Effect.provideService(Path.Path, path),

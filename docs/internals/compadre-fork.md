@@ -1,5 +1,13 @@
 # Comprehensive's T3 fork layer
 
+> Central PostgreSQL migration is staged, not deployed. Hosted central authority
+> moves into the existing Compadre PostgreSQL compadre_t3 schema after approved cutover; SQLite
+> remains the local/desktop/Modal backend and the pre-cutover production authority.
+> Keep the Render disk and single-process deployment: reactor ownership, signing
+> secrets/configuration and workspace restore still block disk removal. See
+> `docs/internals/hosted-postgres-persistence.md` and
+> `hosted/compadre/docs/runbooks/central-t3-postgres-cutover.md`.
+
 The root of this monorepo is an intentional product fork of T3 Code.
 Comprehensive uses the native T3 server, web application, Codex provider, and
 Claude Code provider as the conversation system for Compadre. Compadre routes
@@ -19,19 +27,20 @@ It is “concentrate each product difference behind a narrow seam.”
 
 ## Fork seams
 
-| Seam                       | Comprehensive implementation                                                                                        | Upstream surface changed                                                                   |
-| -------------------------- | ------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
-| Remote native execution    | `apps/server/src/provider/RemoteNativeProvider.ts` and the `Compadre*` provider layers                              | Provider registry wiring only                                                              |
-| Controller text generation | `apps/server/src/textGeneration/CompadreTextGeneration.ts`                                                          | Remote provider construction only                                                          |
-| Runtime telemetry          | `apps/server/src/provider/ProviderRuntimeTelemetry.ts`                                                              | Provider event observation hooks                                                           |
-| Protocol durability        | Cursor-aware reconnect in `apps/server/src/provider/Layers/CompadreTransport.ts`                                    | No UI or storage changes                                                                   |
-| Hosted authentication      | `apps/server/src/auth/CompadreAuth.ts`, `CompadrePreviewGateway.ts`, and `CompadrePreviewActivationPage.ts`         | Server route/session composition                                                           |
-| Controller MCP bridge      | `apps/server/src/mcp/CompadreMcpBridge.ts`                                                                          | Codex and Claude adapter hooks                                                             |
-| Hosted backup              | `apps/server/src/auth/CompadreBackup.ts`                                                                            | Server route composition                                                                   |
-| Operations diagnostics     | `apps/server/src/auth/CompadreOperations.ts` and `apps/web/src/components/operations`                               | One server route and one hidden web route                                                  |
-| Triggered prompts          | `apps/server/src/auth/CompadreTriggeredPrompts.ts` and `apps/web/src/components/settings/TriggeredPromptsSettings*` | One proxy route layer, one settings section, trigger attribution in contracts and timeline |
-| Message attribution        | migrations `043` and `044` plus command attribution hooks                                                           | Contracts, projection, and UI                                                              |
-| Compadre product UI        | branding, session, sidebar, chat, usage, and CSS hooks in `apps/web`                                                | Narrow components and styles                                                               |
+| Seam                       | Comprehensive implementation                                                                                            | Upstream surface changed                                                                                          |
+| -------------------------- | ----------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
+| Remote native execution    | `apps/server/src/provider/RemoteNativeProvider.ts` and the `Compadre*` provider layers                                  | Provider registry wiring only                                                                                     |
+| Controller text generation | `apps/server/src/textGeneration/CompadreTextGeneration.ts`                                                              | Remote provider construction only                                                                                 |
+| Runtime telemetry          | `apps/server/src/provider/ProviderRuntimeTelemetry.ts`                                                                  | Provider event observation hooks                                                                                  |
+| Protocol durability        | Cursor-aware reconnect in `apps/server/src/provider/Layers/CompadreTransport.ts`                                        | No UI or storage changes                                                                                          |
+| Hosted authentication      | `apps/server/src/auth/CompadreAuth.ts`, `CompadrePreviewGateway.ts`, and `CompadrePreviewActivationPage.ts`             | Server route/session composition                                                                                  |
+| Controller MCP bridge      | `apps/server/src/mcp/CompadreMcpBridge.ts`                                                                              | Codex and Claude adapter hooks                                                                                    |
+| Central persistence        | `persistence/Layers/Persistence.ts`, `Postgres.ts`, `CompadrePostgresSchema.ts`, importer and attachment object modules | Server/project CLI composition, engine transaction/publication, projection read/cursor and attachment write hooks |
+| Hosted backup              | `apps/server/src/auth/CompadreBackup.ts`                                                                                | Server route composition                                                                                          |
+| Operations diagnostics     | `apps/server/src/auth/CompadreOperations.ts` and `apps/web/src/components/operations`                                   | One server route and one hidden web route                                                                         |
+| Triggered prompts          | `apps/server/src/auth/CompadreTriggeredPrompts.ts` and `apps/web/src/components/settings/TriggeredPromptsSettings*`     | One proxy route layer, one settings section, trigger attribution in contracts and timeline                        |
+| Message attribution        | migrations `043` and `044` plus command attribution hooks                                                               | Contracts, projection, and UI                                                                                     |
+| Compadre product UI        | branding, session, sidebar, chat, usage, and CSS hooks in `apps/web`                                                    | Narrow components and styles                                                                                      |
 
 Codex and Claude Code remain the provider identities shown to users. Compadre is
 transport and orchestration, not a provider choice.
@@ -54,7 +63,7 @@ migration and should not duplicate Compadre's Postgres execution records.
 
 ## Current ownership
 
-Central T3 SQLite owns the canonical conversation, message attribution,
+Central T3’s configured database owns the canonical conversation, message attribution,
 participants, usage projection, and browser sessions rendered by the hosted
 UI. The Compadre controller's Postgres owns canonical users and Slack
 identities, external-thread bindings, run/event delivery, worker identity,
@@ -77,3 +86,19 @@ auto-deploy independently even from the same repository. Contracts crossing
 that seam must remain backward compatible through the rollout, and the
 cross-stack skill defines the safe deployment order and live verification
 requirements.
+
+### Central PostgreSQL migration maintenance
+
+Hosted central T3 uses the existing application database’s `compadre_t3` schema;
+the controller keeps its `public` tables and Drizzle migration history. SQLite
+remains local/desktop/development/Modal persistence. The two applications reuse
+the existing database credential. Their migration tools and table ownership stay
+independent; no cross-schema joins are introduced.
+
+On every upstream SQLite migration, inspect and reproduce the applicable schema
+and data transformation in a new ordered central PostgreSQL migration. Update
+`SQLITE_SCHEMA_VERSION`, then run the schema/import parity test and shared
+repository contracts on both backends. Do not copy Tolty or upstream migrations
+without comparing Compadre’s attribution/participants and authentication fields.
+The parity test intentionally fails when the SQLite migration tip changes. Keep
+runtime persistence selection dynamic and server composition hooks additive.

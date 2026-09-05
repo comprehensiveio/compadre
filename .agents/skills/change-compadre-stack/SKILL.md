@@ -5,6 +5,14 @@ description: Implement, ship, and verify Compadre changes across the controller,
 
 # Change Compadre Stack
 
+> Central PostgreSQL migration is staged, not deployed. Hosted central authority
+> moves into the existing Compadre PostgreSQL compadre_t3 schema after approved cutover; SQLite
+> remains the local/desktop/Modal backend and the pre-cutover production authority.
+> Keep the Render disk and single-process deployment: reactor ownership, signing
+> secrets/configuration and workspace restore still block disk removal. See
+> `docs/internals/hosted-postgres-persistence.md` and
+> `hosted/compadre/docs/runbooks/central-t3-postgres-cutover.md`.
+
 Use this skill to put a change at the correct architectural seam and carry it
 through deployed verification. Compadre lives in one monorepo but spans two
 toolchains and three runtime layers; a locally correct edit is incomplete if
@@ -61,7 +69,7 @@ auto-deploying services require an atomic rollout.
 
 ## Preserve these invariants
 
-- Central T3 SQLite owns the canonical conversation rendered by the web UI.
+- Central T3’s configured database owns the canonical conversation rendered by the web UI.
   Reading a completed thread must not wake Modal.
 - Compadre Postgres owns control-plane state: canonical users and Slack
   identities, external bindings, run lifecycle/event delivery, worker

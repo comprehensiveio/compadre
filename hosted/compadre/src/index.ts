@@ -178,9 +178,14 @@ async function start() {
         const scheduleBackup = () => {
           if (backupActive) return;
           backupActive = backupCentralT3()
-            .then((backup) =>
-              console.log("[central-t3-backup] uploaded", backup),
-            )
+            .then((backup) => {
+              if ("skipped" in backup) {
+                clearInterval(backupInterval);
+                console.log("[central-t3-backup] retired: central authority is PostgreSQL");
+              } else {
+                console.log("[central-t3-backup] uploaded", backup);
+              }
+            })
             .catch((error) =>
               console.error("[central-t3-backup] failed:", error),
             )

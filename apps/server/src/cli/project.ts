@@ -28,7 +28,7 @@ import * as ServerConfig from "../config.ts";
 import * as OrchestrationEngine from "../orchestration/Services/OrchestrationEngine.ts";
 import * as ProjectionSnapshotQuery from "../orchestration/Services/ProjectionSnapshotQuery.ts";
 import { OrchestrationLayerLive } from "../orchestration/runtimeLayer.ts";
-import { layerConfig as SqlitePersistenceLayerLive } from "../persistence/Layers/Sqlite.ts";
+import { layerConfig as PersistenceLayerConfigLive } from "../persistence/Layers/Persistence.ts";
 import * as RepositoryIdentityResolver from "../project/RepositoryIdentityResolver.ts";
 import * as ServerRuntimeStartup from "../serverRuntimeStartup.ts";
 import {
@@ -202,7 +202,7 @@ const ProjectCliRuntimeLive = Layer.mergeAll(
   WorkspacePaths.layer,
   OrchestrationLayerLive.pipe(
     Layer.provideMerge(RepositoryIdentityResolver.layer),
-    Layer.provideMerge(SqlitePersistenceLayerLive),
+    Layer.provideMerge(PersistenceLayerConfigLive),
   ),
 );
 

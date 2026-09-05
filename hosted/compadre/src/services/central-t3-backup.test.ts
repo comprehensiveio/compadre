@@ -75,3 +75,13 @@ test("does not store a backup whose digest header is wrong", async () => {
   );
   assert.equal(uploaded, false);
 });
+
+
+test("retires SQLite backups only on the authenticated PostgreSQL backend response", async () => {
+  const result = await backupCentralT3State({
+    centralUrl: "https://compadre.example", accessToken: "backup-token",
+    objects: { put: async () => { throw new Error("must not upload a frozen database"); } },
+    fetchImpl: async () => new Response("PostgreSQL", { status: 410, headers: { "x-compadre-backup-backend": "postgres" } }),
+  });
+  assert.deepEqual(result, { backend: "postgres", skipped: true });
+});

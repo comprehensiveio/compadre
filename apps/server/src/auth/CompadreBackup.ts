@@ -1,5 +1,6 @@
-import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
-import { backup, DatabaseSync } from "node:sqlite";
+import { usesPostgresPersistence } from "../persistence/Layers/Persistence.ts";
+import * as NodeCrypto from "node:crypto";
+import * as NodeSqlite from "node:sqlite";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -12,7 +13,7 @@ function equalSecret(actual: string | undefined, expected: string): boolean {
   if (!actual?.startsWith("Bearer ")) return false;
   const supplied = Buffer.from(actual.slice("Bearer ".length).trim());
   const configured = Buffer.from(expected);
-  return supplied.length === configured.length && timingSafeEqual(supplied, configured);
+  return supplied.length === configured.length && NodeCrypto.timingSafeEqual(supplied, configured);
 }
 
 export interface SqliteBackupArtifact {
@@ -30,14 +31,17 @@ export const createSqliteBackup = Effect.fn("CompadreBackup.createSqliteBackup")
 ) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const destination = path.join(path.dirname(dbPath), `.compadre-backup-${randomUUID()}.sqlite`);
+  const destination = path.join(
+    path.dirname(dbPath),
+    `.compadre-backup-${NodeCrypto.randomUUID()}.sqlite`,
+  );
   return yield* Effect.acquireUseRelease(
-    Effect.sync(() => new DatabaseSync(dbPath, { readOnly: true })),
+    Effect.sync(() => new NodeSqlite.DatabaseSync(dbPath, { readOnly: true })),
     (source) =>
       Effect.gen(function* () {
-        yield* Effect.tryPromise(() => backup(source, destination, { rate: 100 }));
+        yield* Effect.tryPromise(() => NodeSqlite.backup(source, destination, { rate: 100 }));
         yield* Effect.acquireUseRelease(
-          Effect.sync(() => new DatabaseSync(destination, { readOnly: true })),
+          Effect.sync(() => new NodeSqlite.DatabaseSync(destination, { readOnly: true })),
           (verification) =>
             Effect.sync(() => {
               const integrity = verification.prepare("PRAGMA integrity_check").get() as
@@ -52,7 +56,7 @@ export const createSqliteBackup = Effect.fn("CompadreBackup.createSqliteBackup")
         const bytes = yield* fs.readFile(destination);
         return {
           bytes,
-          sha256: createHash("sha256").update(bytes).digest("hex"),
+          sha256: NodeCrypto.createHash("sha256").update(bytes).digest("hex"),
         } satisfies SqliteBackupArtifact;
       }).pipe(Effect.ensuring(fs.remove(destination).pipe(Effect.ignore))),
     (source) => Effect.sync(() => source.close()),
@@ -69,6 +73,12 @@ const route = HttpRouter.add(
       return HttpServerResponse.text("Unauthorized", {
         status: 401,
         headers: { "cache-control": "no-store" },
+      });
+    }
+    if (usesPostgresPersistence()) {
+      return HttpServerResponse.text("Central state is backed up by PostgreSQL operations.", {
+        status: 410,
+        headers: { "cache-control": "no-store", "x-compadre-backup-backend": "postgres" },
       });
     }
     const config = yield* ServerConfig.ServerConfig;

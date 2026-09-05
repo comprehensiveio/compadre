@@ -1,5 +1,13 @@
 # Hosted T3 architecture
 
+> Central PostgreSQL migration is staged, not deployed. Hosted central authority
+> moves into the existing Compadre PostgreSQL compadre_t3 schema after approved cutover; SQLite
+> remains the local/desktop/Modal backend and the pre-cutover production authority.
+> Keep the Render disk and single-process deployment: reactor ownership, signing
+> secrets/configuration and workspace restore still block disk removal. See
+> `docs/internals/hosted-postgres-persistence.md` and
+> `hosted/compadre/docs/runbooks/central-t3-postgres-cutover.md`.
+
 Compadre is an internal coding-agent system with Slack, API, and the native T3
 web application as equivalent conversation entrypoints. The central T3 server
 on Render owns durable conversation state. Compadre owns distributed execution,

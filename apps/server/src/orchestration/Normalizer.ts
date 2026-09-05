@@ -1,3 +1,4 @@
+import { CompadreAttachmentStore } from "../assets/CompadreAttachmentStore.ts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -195,6 +196,15 @@ export const normalizeDispatchCommand = (command: ClientOrchestrationCommand) =>
                   }),
               ),
             );
+            yield* (yield* CompadreAttachmentStore).persist(claim.finalPath).pipe(
+              Effect.mapError(
+                (cause) =>
+                  new OrchestrationDispatchCommandError({
+                    message: "Failed to store claimed attachment.",
+                    cause,
+                  }),
+              ),
+            );
             claimedAttachmentPaths.push(claim.finalPath);
 
             return normalizedAttachment;
@@ -264,6 +274,15 @@ export const normalizeDispatchCommand = (command: ClientOrchestrationCommand) =>
             ),
           );
 
+          yield* (yield* CompadreAttachmentStore).persist(attachmentPath).pipe(
+            Effect.mapError(
+              (cause) =>
+                new OrchestrationDispatchCommandError({
+                  message: "Failed to store attachment object.",
+                  cause,
+                }),
+            ),
+          );
           return persistedAttachment;
         }),
       { concurrency: 1 },

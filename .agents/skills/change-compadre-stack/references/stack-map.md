@@ -1,5 +1,13 @@
 # Compadre stack map
 
+> Central PostgreSQL migration is staged, not deployed. Hosted central authority
+> moves into the existing Compadre PostgreSQL compadre_t3 schema after approved cutover; SQLite
+> remains the local/desktop/Modal backend and the pre-cutover production authority.
+> Keep the Render disk and single-process deployment: reactor ownership, signing
+> secrets/configuration and workspace restore still block disk removal. See
+> `docs/internals/hosted-postgres-persistence.md` and
+> `hosted/compadre/docs/runbooks/central-t3-postgres-cutover.md`.
+
 Use this reference to decide where a change belongs before opening files.
 
 ## Runtime and layout map

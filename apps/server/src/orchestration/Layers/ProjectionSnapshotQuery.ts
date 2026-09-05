@@ -1,3 +1,4 @@
+import { PersistenceReadClient } from "../../persistence/Services/PersistenceBackend.ts";
 import {
   ChatAttachment,
   CheckpointRef,
@@ -361,6 +362,9 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
   const threadBackgroundLiveness = yield* ThreadBackgroundLivenessService;
   const threadPlanProgress = yield* ThreadPlanProgressService;
   const sql = yield* SqlClient.SqlClient;
+  const readSql = yield* Effect.serviceOption(PersistenceReadClient).pipe(
+    Effect.map(Option.getOrElse(() => sql)),
+  );
   const repositoryIdentityResolver = yield* RepositoryIdentityResolver.RepositoryIdentityResolver;
   const repositoryIdentityResolutionConcurrency = 4;
   const resolveRepositoryIdentitiesForProjects = Effect.fn(
@@ -790,8 +794,8 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
     execute: () =>
       sql`
         SELECT
-          (SELECT COUNT(*) FROM projection_projects) AS "projectCount",
-          (SELECT COUNT(*) FROM projection_threads) AS "threadCount"
+          CAST((SELECT COUNT(*) FROM projection_projects) AS INTEGER) AS "projectCount",
+          CAST((SELECT COUNT(*) FROM projection_threads) AS INTEGER) AS "threadCount"
       `,
   });
 
@@ -1469,7 +1473,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
   });
 
   const getSnapshot: ProjectionSnapshotQueryShape["getSnapshot"] = () =>
-    sql
+    readSql
       .withTransaction(
         Effect.all([
           listProjectRows(undefined).pipe(
@@ -1767,7 +1771,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
       );
 
   const getCommandReadModel: ProjectionSnapshotQueryShape["getCommandReadModel"] = () =>
-    sql
+    readSql
       .withTransaction(
         Effect.all([
           listProjectRows(undefined).pipe(
@@ -1972,7 +1976,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
       );
 
   const getShellSnapshot: ProjectionSnapshotQueryShape["getShellSnapshot"] = () =>
-    sql
+    readSql
       .withTransaction(
         Effect.all([
           listProjectRows(undefined).pipe(
@@ -2121,7 +2125,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
       );
 
   const getArchivedShellSnapshot: ProjectionSnapshotQueryShape["getArchivedShellSnapshot"] = () =>
-    sql
+    readSql
       .withTransaction(
         Effect.all([
           listProjectRows(undefined).pipe(
@@ -2743,7 +2747,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
     // a sequence ahead of the thread detail, causing the client to resume from
     // too far and drop events. Window resolution runs inside the same
     // transaction so the page boundary is consistent with the returned rows.
-    sql
+    readSql
       .withTransaction(
         Effect.gen(function* () {
           if (window?.turnLimit === undefined) {

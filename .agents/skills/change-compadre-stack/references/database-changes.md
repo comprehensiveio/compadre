@@ -1,19 +1,30 @@
 # Database changes
 
-Choose the database from ownership, not from which client asks for the feature.
-Compadre deliberately has two durable databases with different jobs.
+> Central PostgreSQL migration is staged, not deployed. Hosted central authority
+> moves into the existing Compadre PostgreSQL compadre_t3 schema after approved cutover; SQLite
+> remains the local/desktop/Modal backend and the pre-cutover production authority.
+> Keep the Render disk and single-process deployment: reactor ownership, signing
+> secrets/configuration and workspace restore still block disk removal. See
+> `docs/internals/hosted-postgres-persistence.md` and
+> `hosted/compadre/docs/runbooks/central-t3-postgres-cutover.md`.
+
+Choose table and migration ownership from the data, not from which client asks
+for the feature. After central cutover, controller and central tables share the
+existing PostgreSQL database and credential, with central tables in `compadre_t3`
+and controller tables in `public`. Temporal remains
+separate. Before cutover central production data is still in SQLite.
 
 ## Decision table
 
-| Data                                                                                                                                                        | Database                                                      |
-| ----------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------- |
-| Messages, turns, activities, tool history, approvals, central usage projections, T3 sessions and UI read models                                             | Central T3 SQLite                                             |
-| Canonical people/Slack identities, auth handoff records, Slack/external bindings, run lifecycle and event delivery, worker leases/recovery, delivery outbox | Compadre Postgres                                             |
-| Checkout files, local dev database, provider-native transcript                                                                                              | Modal worker filesystem/snapshot; never the central authority |
+| Data                                                                                                                                                        | Database                                                               |
+| ----------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------- |
+| Messages, turns, activities, tool history, approvals, central usage projections, T3 sessions and UI read models                                             | Central T3 tables (SQLite before cutover; shared PostgreSQL afterward) |
+| Canonical people/Slack identities, auth handoff records, Slack/external bindings, run lifecycle and event delivery, worker leases/recovery, delivery outbox | Compadre Postgres                                                      |
+| Checkout files, local dev database, provider-native transcript                                                                                              | Modal worker filesystem/snapshot; never the central authority          |
 
 If a proposed table mixes conversation content with worker leases or Slack
 delivery, split the model at the existing boundary instead of choosing one
-database arbitrarily.
+migration owner arbitrarily.
 
 ## Compadre Postgres and Drizzle
 
@@ -115,3 +126,16 @@ restored filesystem image.
 
 Do not infer that a successful central migration proves worker snapshot
 compatibility.
+
+## Hosted central PostgreSQL (staged)
+
+Use `apps/server/src/persistence/CompadrePostgresSchema.ts` and ordered
+`compadre_t3.compadre_t3_migrations`, independent of controller Drizzle or Temporal.
+Use the existing application database and credential; do not provision another
+data database. The explicit central migration CLI owns the `compadre_t3` schema. A new SQLite
+migration must have PostgreSQL parity and update `SQLITE_SCHEMA_VERSION`;
+run the schema/import parity test and repository contracts on both backends.
+Production application startup validates schema; explicit `migrate-postgres`
+runs in pre-deploy. The importer runs only against empty central target tables after writer
+quiescence, outside pre-deploy. After PostgreSQL accepts writes, rollback must
+retain that database; the frozen SQLite audit snapshot cannot be resumed.

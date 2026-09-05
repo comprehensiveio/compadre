@@ -1,5 +1,13 @@
 # UI and hosted T3 fork changes
 
+> Central PostgreSQL migration is staged, not deployed. Hosted central authority
+> moves into the existing Compadre PostgreSQL compadre_t3 schema after approved cutover; SQLite
+> remains the local/desktop/Modal backend and the pre-cutover production authority.
+> Keep the Render disk and single-process deployment: reactor ownership, signing
+> secrets/configuration and workspace restore still block disk removal. See
+> `docs/internals/hosted-postgres-persistence.md` and
+> `hosted/compadre/docs/runbooks/central-t3-postgres-cutover.md`.
+
 Read the complete root `AGENTS.md` and
 `docs/internals/compadre-fork.md` before changing the UI/server stack. Their
 instructions about
@@ -36,7 +44,7 @@ Compadre is an intentional T3 product fork, not a temporary patch set:
 - Add every new seam to `docs/internals/compadre-fork.md`.
 - Preserve native `codex` and `claudeAgent` identities. Remote execution is
   an adapter behind those providers.
-- Put durable conversation and UI concepts in T3 SQLite. Do not mirror
+- Put durable conversation and UI concepts in central T3 persistence (hosted PostgreSQL after cutover; SQLite locally). Do not mirror
   Compadre Postgres control tables into SQLite.
 - Keep the `upstream` remote and rehearse upstream merges periodically.
 

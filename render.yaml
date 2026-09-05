@@ -118,6 +118,10 @@ services:
     buildCommand: >-
       npm install -g pnpm@11.10.0 && pnpm install --frozen-lockfile &&
       pnpm exec vp run --filter t3 build
+    # Apply only during the approved cutover, after the final import. The
+    # pre-deploy instance cannot access the disk and must never run the importer.
+    preDeployCommand: node apps/server/dist/bin.mjs migrate-postgres
+    maxShutdownDelaySeconds: 300
     startCommand: >-
       mkdir -p /var/data/workspace && node apps/server/dist/bin.mjs serve
       /var/data/workspace --mode web --host 0.0.0.0 --port "$PORT"
@@ -132,6 +136,31 @@ services:
     envVars:
       - fromGroup: compadre-production-shared
       - fromGroup: compadre-production-web
+      # Staged PostgreSQL cutover. Do not sync this Blueprint before the runbook gate.
+      - key: COMPADRE_T3_PERSISTENCE
+        value: postgres
+      - key: COMPADRE_T3_REACTOR_MODE
+        value: single-process
+      # Reuse the existing application database and credential; no new database.
+      - key: COMPADRE_T3_POSTGRES_URL
+        fromDatabase:
+          name: compadre-postgres
+          property: connectionString
+      # Reuse the controller's existing S3 credential; no new key or rotation.
+      - key: AWS_ACCESS_KEY_ID
+        fromService:
+          name: compadre-api
+          type: web
+          envVarKey: AWS_ACCESS_KEY_ID
+      - key: AWS_SECRET_ACCESS_KEY
+        fromService:
+          name: compadre-api
+          type: web
+          envVarKey: AWS_SECRET_ACCESS_KEY
+      - key: COMPADRE_T3_ATTACHMENT_BUCKET
+        value: compadre
+      - key: COMPADRE_T3_ATTACHMENT_REGION
+        value: us-west-2
       - key: COMPADRE_NATIVE_T3_URL
         value: https://compadre-api.comprehensive.io/hosted/t3/chat
       - key: COMPADRE_CONTROLLER_URL
@@ -152,8 +181,10 @@ services:
         value: compadre-web
       - key: DD_LLMOBS_ML_APP
         value: compadre
+    # KEEP: enforces stop-before-start for process-local reactors and retains
+    # signing keys/settings. Removal is a separate approved and tested change.
     disk:
-      name: compadre-state
+      name: t3code-state
       mountPath: /var/data
       sizeGB: 1
     previews:

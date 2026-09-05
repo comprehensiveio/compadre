@@ -1,3 +1,4 @@
+import { CompadreAttachmentStore } from "./CompadreAttachmentStore.ts";
 // @effect-diagnostics nodeBuiltinImport:off
 import * as NodeCrypto from "node:crypto";
 
@@ -202,6 +203,7 @@ export const storeAttachmentUpload = Effect.fn("AttachmentUpload.store")(functio
       } satisfies StoreAttachmentUploadResult;
     }
     yield* fileSystem.rename(partPath, finalPath);
+    yield* (yield* CompadreAttachmentStore).persist(finalPath);
     return { ok: true } satisfies StoreAttachmentUploadResult;
   }).pipe(
     Effect.catch((cause) =>
