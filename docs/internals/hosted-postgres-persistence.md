@@ -31,8 +31,8 @@ Read-only Render inspection on 2026-09-05 found:
 - an independent PostgreSQL 16 Temporal database and a separate legacy database.
 
 Temporal stays separate and unchanged. The legacy database is outside this
-migration. Before cutover, measure the shared database's connection, memory and
-storage headroom, including controller traffic. A read-only SQL probe found 12 connections out of
+migration. Monitor the shared database's connection, memory and
+storage headroom, including controller traffic. A pre-cutover read-only SQL probe found 12 connections out of
 a 103-connection limit, 41 MB controller data and CREATE-schema permission on
 the existing role. This proves connection headroom, not peak compute capacity;
 resize the existing service if
@@ -131,6 +131,18 @@ retained Render disk enforces Recreate; do not launch another full server agains
 this database or remove the disk. Independent engine pools in tests prove SQL
 ordering only.
 
+This means one active `compadre-web` server, not one user, thread or provider
+run at a time. `compadre-api` remains independently deployed, and Modal workers
+can execute multiple threads concurrently. Normal web deployments stop the old
+server before starting its replacement, causing a temporary interruption.
+Shutdown can cancel an active turn; startup reconciliation preserves its history
+but does not seamlessly resume it. This is an accepted, deferred rollout
+limitation, not a release gate. Routine merges and deployments do not wait for
+active turns, Temporal workflows or schedules to finish. Observe deployment
+frequency, interruption duration and affected turns before prioritizing the fix.
+PostgreSQL command idempotency does not prevent two reactors from sending the
+same external provider instruction.
+
 The side-effect inventory includes:
 
 | Consumer                 | External or process-local responsibility                                                                                |
@@ -151,6 +163,40 @@ adapters earlier, and a lease alone cannot fence an already-sent external call.
 A command can commit immediately before a crash without its hot-stream reactor
 seeing it. Recovering that window needs durable claims/reconciliation. No
 exactly-once external-effect, overlap, or 300-second drain proof is claimed here.
+
+### Proposed fix (deferred)
+
+Reuse the controller's durable run IDs, Temporal workflow deduplication, driver
+epoch fencing and output replay. Keep this change in Compadre-owned persistence
+and adapter modules with narrow server lifecycle hooks; local/desktop provider
+lifecycles should remain independent.
+
+1. Persist each provider action's identity and payload before dispatch. Reuse the
+   same identity after retries or restart, reject conflicting payloads, and verify
+   deduplication through controller and worker dispatch, including steering and
+   cancellation. A persisted action must remain recoverable if no reactor sees
+   its live notification.
+2. Separate server shutdown from explicit user cancellation. Detach the web
+   adapter without cancelling remote execution; restore active run associations
+   and replay positions when the replacement reconnects. Reconcile output without
+   duplicate messages or prematurely marking the turn failed.
+3. Initially allow both web instances to serve requests but elect one durable
+   background owner. Transfer ownership with protection against stale owners and
+   recover pending actions. Cover every effectful path in the inventory above;
+   a leader lock alone does not resolve ambiguous external requests.
+4. Move the remaining signing/configuration identity and required workspace/Git
+   state to durable ownership with verified restoration. Only then remove the
+   disk and enable overlapping Render deployments.
+5. Prove active-run deployment, crash-before/after-dispatch recovery, steering,
+   explicit cancellation, event replay and WebSocket reconnect using independent
+   processes. A continuous rollout canary must show no failed HTTP reads, lost
+   turns or duplicate effects. Keep old/new binaries and migrations compatible.
+
+The intended handoff permits a short delay in dispatching new commands while
+existing Modal runs continue and historical reads remain available. This work
+has not been implemented or validated by the PostgreSQL migration. Until it is,
+retain one central server and the disk; do not use routine deploys as overlap
+experiments.
 
 ## Durable bytes and remaining disk files
 

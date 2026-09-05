@@ -118,7 +118,7 @@ services:
     buildCommand: >-
       npm install -g pnpm@11.10.0 && pnpm install --frozen-lockfile &&
       pnpm exec vp run --filter t3 build
-    # Apply only during the approved cutover, after the final import. The
+    # Apply pending PostgreSQL migrations on every deploy. The separate
     # pre-deploy instance cannot access the disk and must never run the importer.
     preDeployCommand: node apps/server/dist/bin.mjs migrate-postgres
     # Render does not support a custom shutdown delay with an attached disk.
@@ -129,14 +129,14 @@ services:
     healthCheckPath: /
     autoDeployTrigger: commit
     # Controller-only commits must not restart the single-writer web service:
-    # every compadre-web rollout is a user-visible maintenance event.
+    # compadre-web restarts can briefly interrupt service and active turns.
     buildFilter:
       ignoredPaths:
         - hosted/compadre/**
     envVars:
       - fromGroup: compadre-production-shared
       - fromGroup: compadre-production-web
-      # Staged PostgreSQL cutover. Do not sync this Blueprint before the runbook gate.
+      # Production persistence since 2026-09-05; retain the disk and one instance.
       - key: COMPADRE_T3_PERSISTENCE
         value: postgres
       - key: COMPADRE_T3_REACTOR_MODE

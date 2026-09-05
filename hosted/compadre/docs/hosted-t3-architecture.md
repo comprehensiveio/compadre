@@ -394,8 +394,12 @@ Attachments have verified private S3 bytes with PostgreSQL metadata. However,
 `compadre-web` still retains the Render disk for signing/configuration identity
 and bootstrap/checkpoint files, and its reactors have process-local ownership.
 The disk forces stop-before-start deployment. Do not run overlapping full
-servers, remove the disk, or assume active turns survive a restart. Require
-zero active turns before planned maintenance. A leader/claim mechanism must
+servers, remove the disk, or assume active turns survive a restart. Routine
+merges and deployments do not require an idle Temporal system. The completed
+SQLite import required a frozen writer; that was a one-time migration gate.
+The team accepts the current interruption risk while observing deployment
+frequency and impact; do not wait for active turns to finish before routine
+deployments. Seamless deployment is deferred. A leader/claim mechanism must
 cover every effectful consumer and prove safe drain/transfer before removing
 this restriction. See the central PostgreSQL architecture and cutover runbook.
 
@@ -403,8 +407,12 @@ This TODO is complete only after `compadre-web` can run overlapping old and new
 instances with graceful connection draining, a deploy can occur while a turn
 is active without losing or duplicating it, and an automated canary observes no
 HTTP 5xx or transcript unavailability throughout the rollout. Until then,
-every merge touching the root T3 stack must be treated as a user-visible
-maintenance event and verified after the replacement instance is live.
+root T3 deployments can cause a user-visible interruption and must be verified
+after the replacement instance is live. This known issue does not impose a
+zero-activity, schedule-pause or maintenance-approval gate on routine deployment.
+The [proposed fix](../../../docs/internals/hosted-postgres-persistence.md#proposed-fix-deferred)
+builds on existing controller recovery rather than introducing another execution
+system.
 
 The controller is also kept at one instance today. Native T3 run execution,
 events, dispatch metadata, driver-epoch fencing, and cancellation are durable

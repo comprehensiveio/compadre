@@ -40,6 +40,21 @@ For changes crossing the controller/UI seam, remember the services still
 deploy independently: keep each side independently deployable and state the
 safe order. Deploy tolerant consumers before new producers.
 
+Do not require Temporal to be idle before merging or deploying. Long-lived
+workflows, schedules and waiting activities are normal production state. Keep
+workflow changes replay-compatible and verify controller takeover/retry for the
+affected behavior. The zero-active-turn requirement in the SQLite cutover
+runbook applied to freezing that one-time migration source, not routine merges.
+
+Until central shutdown/ownership is improved, a `compadre-web` restart can
+interrupt active provider turns and briefly interrupt HTTP/WebSocket service.
+The team accepts this known limitation while observing deployment frequency and
+impact. Do not block routine merges or deployments waiting for active turns or
+Temporal activity to disappear, pause schedules, or add a drain/maintenance
+approval gate by default. Preserve the current topology and verify the replacement
+after deployment. A specific future request for uninterrupted execution can set
+a different rollout requirement.
+
 ## Render safety
 
 Always resolve the Comprehensive workspace before mutating:

@@ -13,6 +13,14 @@ description: Implement, ship, and verify Compadre changes across the controller,
 > `docs/internals/hosted-postgres-persistence.md` and
 > `hosted/compadre/docs/runbooks/central-t3-postgres-cutover.md`.
 
+Routine merges and deployments do not require zero activity: do not wait for
+Temporal workflows, schedules, or active provider turns to finish. The team
+accepts the current web restart interruption while observing deployment frequency
+and impact. Seamless web deployment is deferred work, not a release gate. Keep
+the existing single-instance/disk topology and verify the deployed application.
+The completed SQLite import's writer-freeze procedure is historical and does not
+apply to ordinary deployments.
+
 Use this skill to put a change at the correct architectural seam and carry it
 through deployed verification. Compadre lives in one monorepo but spans two
 toolchains and three runtime layers; a locally correct edit is incomplete if

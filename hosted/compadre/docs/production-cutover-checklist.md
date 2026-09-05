@@ -75,13 +75,16 @@ official Slack application cutover.
 - [ ] Add graceful deploy draining: stop accepting new turns, allow or detach
   active turns, and verify that no Modal run is orphaned. The isolated T3
   deployment currently cancels active provider turns during shutdown; this has
-  been reproduced and must be fixed before cutover.
+  been reproduced. The 2026-09-05 maintenance cutover required no active turns;
+  that one-time import gate does not apply to routine deployments. Seamless
+  draining is deferred while the team observes deployment frequency and impact;
+  do not wait for active turns or Temporal activity to finish before deploying.
 - [ ] Eliminate or explicitly accommodate central-T3 deployment downtime. The
   persistent-disk Render rollout returned 502s for roughly three and a half
   minutes in an earlier rollout, and a 2026-08-31 UI deployment produced about
-  two and a half minutes of 502s. The single persistent SQLite disk prevents
-  old and new instances from overlapping. Move T3's authoritative persistence
-  to Postgres or another transactionally equivalent non-exclusive store, then
+  two and a half minutes of 502s. Central persistence moved to PostgreSQL on
+  2026-09-05, but the retained disk still prevents overlapping instances. Resolve
+  reactor ownership and remaining signing/configuration/workspace files, then
   prove a gracefully drained rollout has no HTTP 5xx, transcript outage, lost
   active turn, or duplicate turn. Serving only the static shell separately does
   not satisfy this item because conversations would remain unavailable.
@@ -153,7 +156,9 @@ Central T3 secrets and configuration:
 - [ ] `COMPADRE_AUTH_COOKIE_DOMAIN=.compadre.comprehensive.io`
 - [ ] `COMPADRE_BACKUP_TOKEN` matching the controller
 - [ ] `VITE_COMPADRE_AUTH_ENABLED=true`
-- [ ] Persistent SQLite path and disk mount
+- [x] Central PostgreSQL mode, private URL and explicit single-process reactor mode
+- [ ] Retained disk mount for signing/configuration/workspace state; disk removal
+  requires separate ownership and restore verification
 - [ ] `T3CODE_INSTALL_GH_CLI=true`
 - [ ] `GH_TOKEN` scoped for the repository operations exposed by the T3 UI
 - [ ] Ensure the retired `COMPADRE_PROVIDER_URL` is unset
@@ -250,22 +255,27 @@ Canonical endpoints:
 ## Durable data and recovery
 
 - [ ] Inventory every copy of conversation and execution data: central T3
-  SQLite, Compadre Postgres, Modal/provider transcripts, Slack, attachments,
+  PostgreSQL (`compadre_t3`), controller PostgreSQL (`public`), frozen SQLite audit
+  snapshots, Modal/provider transcripts, Slack, attachments,
   and Datadog.
 - [ ] Make central T3 the authoritative transcript and reduce Postgres worker
   snapshots to narrow execution/recovery records.
 - [x] Leave existing Compadre conversations in the frozen legacy deployment
   during the rollback window; no transcript migration is required for cutover.
-- [ ] Add encrypted continuous backup for T3 SQLite and Postgres.
+- [ ] Automate encrypted PostgreSQL exports, retention and freshness alerts;
+  managed PITR was verified during the 2026-09-05 cutover.
 - [x] Add authenticated, integrity-checked online SQLite snapshots to the
   private Comprehensive S3 bucket and document the single-writer restore
-  procedure in `docs/runbooks/central-t3-restore.md`.
+  procedure in `docs/runbooks/central-t3-restore.md`. This is now historical:
+  the PostgreSQL server retires the scheduled SQLite caller with HTTP 410.
 - [ ] Run and time a restore into clean resources; verify thread text, tool
   calls, actor attribution, sessions, and external-thread bindings.
-- [ ] Add SQLite integrity checks, disk-capacity alerts, backup-age alerts, and
+- [ ] Add PostgreSQL restore/integrity verification, disk-capacity alerts, backup-age alerts, and
   explicit RPO/RTO targets.
-- [ ] Move attachments and large artifacts to durable object storage with
-  authorization and retention policies.
+- [x] Move central attachments to private S3 with PostgreSQL metadata and
+  byte-integrity verification; final import and a new browser upload passed.
+- [ ] Complete object retention and deletion policies for attachments and large
+  artifacts without expiring objects referenced by retained database backups.
 - [x] Create the private `s3://compadre` bucket in Comprehensive AWS account
   `629591269808`, block public access, enable encryption and versioning, and
   grant the Render `compadre` identity `s3:GetBucketLocation`/`s3:ListBucket`

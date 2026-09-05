@@ -10,6 +10,12 @@ zero-downtime deployment solved. Architecture and exact table inventory:
 
 ## Approval gates and cutover
 
+The writer-quiescence steps below describe the completed one-time SQLite import.
+They are not prerequisites for routine merges or deployments. Do not wait for
+all Temporal workflows, schedules or activities to become idle: those can be
+long-lived by design. Subsequent deployments use the deploy-and-verify guidance
+and preserve workflow replay compatibility.
+
 1. **Verify the existing application database.** Confirm Comprehensive workspace
    `tea-ci5g47tgkuvgpf98aimg` and AWS account `629591269808`. Reuse
    `compadre-postgres`, PostgreSQL 17 in Oregon, database
@@ -186,10 +192,15 @@ maintenance path, not the unimplemented zero-downtime overlap proof.
 
 ## Backup, retention and restore
 
-PostgreSQL becomes authority when it first accepts a production write. Configure
-managed PITR and verify the actual plan's recovery window in Render, rather than
-assuming it. Read-only inspection on 2026-09-05 reported recovery AVAILABLE,
-starting at 2026-08-29T15:37:43Z. Recheck immediately before cutover. Add a nightly custom-format `pg_dump` using the existing database credential,
+PostgreSQL has been production authority since 2026-09-05. Managed PITR was
+verified AVAILABLE with recovery starting at 2026-08-29T15:37:43Z; inspect its
+current rolling window before relying on a restore point. During cutover, a
+database-wide Render export was archived with a digest in private S3 and restored
+into disposable PostgreSQL 17. The restored original 22,803 events matched the
+final SQLite snapshot field for field. This was a manual rehearsal, not a
+recurring backup job.
+
+Still to provision: a nightly custom-format `pg_dump` using the existing database credential,
 using a PostgreSQL 17 client and an encrypted private prefix
 `backups/t3-state/v1/postgres/`. Store its SHA-256, timestamp, schema version, source
 commit and event range with the object. Use a consistent database-wide dump containing both controller and central
@@ -210,8 +221,10 @@ retention/lifecycle changes are separate approved operations.
 Monitor backup age (warn at 26 hours), failed exports, dump digest failures,
 managed PITR freshness, restore-rehearsal age (warn after 35 days), SQL storage
 and connection capacity, and attachment GetObject/integrity failures. The
-retired SQLite timer is not a PostgreSQL backup health signal. These jobs and
-alerts are provisioning gates, not resources installed by this local change.
+retired SQLite timer is not a PostgreSQL backup health signal. Recurring off-site
+exports, retention enforcement and these backup alerts remain operational
+follow-up work; they were not installed during the cutover. Managed PITR and a
+successful manual restore do not prove that this automation exists.
 
 Every month restore a selected dump into a disposable isolated PostgreSQL 17
 database with outbound controller/provider/Slack writes disabled. Verify the
