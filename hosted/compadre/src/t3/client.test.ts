@@ -3,6 +3,7 @@ import test from "node:test";
 import {
   exchangeT3PairingToken,
   incompleteProviderStopReason,
+  reviewCheckpointForMessage,
   T3Client,
   T3GatewayError,
 } from "./client.js";
@@ -809,4 +810,29 @@ test("review completion waits past a missing checkpoint and never accepts anothe
     minimumSequence: 1, requireCheckpoint: true, pollIntervalMs: 0, timeoutMs: 1000 });
   assert.equal(calls, 3);
   assert.equal(result.snapshotSequence, 3);
+});
+
+
+test("saved reviews correlate legacy null turn IDs only within the completed worker turn", () => {
+  const snapshot = {
+    snapshotSequence: 2,
+    thread: {
+      id: "thread", projectId: "project", title: "Review",
+      modelSelection: { instanceId: "codex", model: "gpt-5.6-sol" }, session: null,
+      latestTurn: { turnId: "turn", state: "completed" as const,
+        requestedAt: "2026-09-05T21:00:00Z", startedAt: "2026-09-05T21:00:00Z",
+        completedAt: "2026-09-05T21:01:00Z", assistantMessageId: null },
+      messages: [{ id: "request", role: "user" as const, text: "edit", turnId: null,
+        streaming: false, createdAt: "2026-09-05T21:00:00Z", updatedAt: "2026-09-05T21:00:00Z" }],
+      checkpoints: [{ turnId: "turn", checkpointTurnCount: 1, checkpointRef: "refs/turn/1", status: "ready" }],
+    },
+  };
+  assert.equal(reviewCheckpointForMessage(snapshot, "request")?.checkpointRef, "refs/turn/1");
+  snapshot.thread.messages[0]!.createdAt = "2026-09-05T21:00:30Z";
+  assert.equal(reviewCheckpointForMessage(snapshot, "request")?.checkpointRef, "refs/turn/1");
+  for (const createdAt of ["2026-09-05T20:59:59Z", "2026-09-05T21:01:01Z", "invalid"]) {
+    snapshot.thread.messages[0]!.createdAt = createdAt;
+    assert.equal(reviewCheckpointForMessage(snapshot, "request"), undefined);
+  }
+  assert.equal(reviewCheckpointForMessage(snapshot, "absent"), undefined);
 });
