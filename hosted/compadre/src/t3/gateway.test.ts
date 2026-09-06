@@ -1920,3 +1920,142 @@ test("markWorkerLost parks only the confirmed sandbox and never a restorable one
     "a restorable worker is never parked",
   );
 });
+
+test("terminal startup shares restore serialization and attach-only access never restores", async () => {
+  const bindings = new T3ThreadBindingStore(memoryPersistence().stores.metadata);
+  let restores = 0;
+  let provisions = 0;
+  const client = { baseUrl: "https://worker.example" } as T3CommandClient;
+  const connection = { sandboxId: "restored", projectId: "project-1", client };
+  const gateway = new T3Gateway(bindings, {
+    async provision() {
+      provisions++;
+      throw new Error("unexpected provision");
+    },
+    async reconnect(binding) {
+      assert.equal(binding.sandboxId, "restored");
+      return connection;
+    },
+    async restore() {
+      restores++;
+      return connection;
+    },
+  });
+  await bindings.bindRecord({
+    canonicalThreadId: "canonical",
+    providerInstanceId: "codex",
+    sandboxId: "old",
+    projectId: "project-1",
+    t3ThreadId: "native",
+    baseUrl: "https://old.example",
+    modelSelection: { instanceId: "codex", model: "gpt-5.6-sol" },
+    status: "ready",
+    workerState: "suspended",
+    workerSnapshotId: "snapshot",
+    workerGeneration: 1,
+    createdAt: "2026-09-05T12:00:00Z",
+    updatedAt: "2026-09-05T12:00:00Z",
+  });
+  await assert.rejects(gateway.attachWorker("canonical"), T3EnvironmentUnavailableError);
+  assert.equal(restores, 0);
+  const [a, b] = await Promise.all([
+    gateway.ensureWorkerRunning("canonical"),
+    gateway.ensureWorkerRunning("canonical"),
+  ]);
+  assert.equal(restores, 1);
+  assert.equal(provisions, 0);
+  assert.equal(a?.binding.workerGeneration, 2);
+  assert.equal(b?.binding.sandboxId, "restored");
+  assert.equal((await gateway.attachWorker("canonical"))?.binding.workerGeneration, 2);
+  assert.equal(restores, 1);
+});
+
+test("explicit terminal startup can provision an empty workspace without dispatching an agent", async () => {
+  const bindings = new T3ThreadBindingStore(memoryPersistence().stores.metadata);
+  let provisions = 0;
+  let creates = 0;
+  const client = {
+    baseUrl: "https://worker.example",
+    async createThread(input: { threadId?: string }) {
+      creates++;
+      return input.threadId!;
+    },
+    async startNewThread() {
+      throw new Error("must not start agent");
+    },
+    async startTurn() {
+      throw new Error("must not start agent");
+    },
+  } as unknown as T3CommandClient;
+  const connection = { sandboxId: "new", projectId: "project-1", client };
+  const gateway = new T3Gateway(bindings, {
+    async provision() {
+      provisions++;
+      return connection;
+    },
+    async reconnect() {
+      return connection;
+    },
+  });
+  assert.equal(await gateway.attachWorker("canonical"), null);
+  assert.equal(provisions, 0);
+  const creation = {
+    title: "New shell",
+    modelSelection: { instanceId: "codex", model: "gpt-5.6-sol" },
+  };
+  const [a, b] = await Promise.all([
+    gateway.ensureWorkerRunning("canonical", creation),
+    gateway.ensureWorkerRunning("canonical", creation),
+  ]);
+  assert.equal(provisions, 1);
+  assert.equal(creates, 1);
+  assert.equal(a?.binding.status, "ready");
+  assert.equal(b?.binding.t3ThreadId, a?.binding.t3ThreadId);
+  assert.equal((await gateway.list()).length, 1);
+});
+
+test("terminal close checkpoints only an idle existing worker and leaves active-turn ownership intact", async () => {
+  const bindings = new T3ThreadBindingStore(memoryPersistence().stores.metadata);
+  let checkpoints = 0;
+  const connection = {
+    sandboxId: "worker",
+    projectId: "project",
+    client: { baseUrl: "https://worker.example" } as T3CommandClient,
+  };
+  const gateway = new T3Gateway(bindings, {
+    async provision() {
+      throw new Error("must not provision");
+    },
+    async restore() {
+      throw new Error("must not restore");
+    },
+    async reconnect() {
+      return connection;
+    },
+    async checkpoint() {
+      checkpoints++;
+      return { snapshotId: "saved-shell-edits" };
+    },
+  });
+  await bindings.bindRecord({
+    canonicalThreadId: "canonical",
+    providerInstanceId: "codex",
+    t3ThreadId: "native",
+    projectId: "project",
+    sandboxId: "worker",
+    baseUrl: "https://worker.example",
+    modelSelection: { instanceId: "codex", model: "gpt-5.6-sol" },
+    status: "ready",
+    workerState: "running",
+    createdAt: "2026-09-05T12:00:00Z",
+    updatedAt: "2026-09-05T12:00:00Z",
+  });
+  await gateway.checkpointWorkspace("missing");
+  assert.equal(checkpoints, 0);
+  await gateway.checkpointWorkspace("canonical");
+  assert.equal((await bindings.get("canonical"))?.workerSnapshotId, "saved-shell-edits");
+  const binding = (await bindings.get("canonical"))!;
+  await bindings.bindRecord({ ...binding, activeRunId: "agent-run", status: "working" });
+  await gateway.checkpointWorkspace("canonical");
+  assert.equal(checkpoints, 1);
+});

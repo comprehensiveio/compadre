@@ -364,6 +364,10 @@ export function TerminalViewport({
   const openPreview = useAtomCommand(previewEnvironment.open, {
     reportFailure: false,
   });
+  const runTerminalOpen = useAtomCommand(terminalEnvironment.open, { reportFailure: false });
+  const [startingWorker, setStartingWorker] = useState(false);
+  const [startWorkerError, setStartWorkerError] = useState<string | null>(null);
+  const workerTerminal = serverConfig?.environment.capabilities.workerTerminals === true;
   const runTerminalWrite = useAtomCommand(terminalEnvironment.write, {
     reportFailure: false,
   });
@@ -413,6 +417,23 @@ export function TerminalViewport({
       ...(runtimeEnv ? { env: runtimeEnv } : {}),
     },
   });
+  const startWorker = async () => {
+    if (startingWorker) return;
+    setStartingWorker(true);
+    setStartWorkerError(null);
+    try {
+      const result = await runTerminalOpen({
+        environmentId,
+        input: { threadId, terminalId, cwd, startWorker: true },
+      });
+      if (result._tag !== "Success") {
+        const error = squashAtomCommandFailure(result);
+        setStartWorkerError(error instanceof Error ? error.message : "Could not start terminal.");
+      } else terminalSession.reconnect();
+    } finally {
+      setStartingWorker(false);
+    }
+  };
   const writeTerminal = useEffectEvent((data: string) =>
     runTerminalWrite({
       environmentId,
@@ -977,10 +998,29 @@ export function TerminalViewport({
     };
   }, [drawerHeight, environmentId, resizeEpoch, terminalId, threadId]);
   return (
-    <div
-      ref={containerRef}
-      className="relative h-full w-full overflow-hidden bg-[var(--terminal-background)]"
-    />
+    <div className="relative h-full w-full overflow-hidden bg-[var(--terminal-background)]">
+      <div ref={containerRef} className="h-full w-full" />
+      {workerTerminal && terminalStatus === "error" && (
+        <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-[var(--terminal-background)] p-5 text-center text-sm">
+          <p>{startWorkerError ?? terminalError}</p>
+          <p className="text-muted-foreground">
+            Starting a terminal may start the workspace. Opening this panel does not.
+          </p>
+          <div className="flex gap-2">
+            <Button
+              variant="outline"
+              disabled={startingWorker}
+              onClick={() => terminalSession.reconnect()}
+            >
+              Reconnect
+            </Button>
+            <Button disabled={startingWorker} onClick={() => void startWorker()}>
+              {startingWorker ? "Starting terminal…" : "Start terminal"}
+            </Button>
+          </div>
+        </div>
+      )}
+    </div>
   );
 }
 

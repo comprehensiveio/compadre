@@ -1,3 +1,4 @@
+import { createT3TerminalRoutes } from "./routes/t3-terminal.js";
 // Ensure nvm-managed Node binaries are available to coding harness processes.
 if (!process.env.PATH?.includes(process.execPath.replace(/\/node$/, ""))) {
   const nodeDir = process.execPath.replace(/\/node$/, "");
@@ -97,6 +98,7 @@ app.route("/", aguiRoutes);
 app.route("/", workflowRunRoutes);
 app.route("/", toolBridgeRoutes);
 app.route("/", t3DirectoryRoutes);
+app.route("/", createT3TerminalRoutes());
 app.route("/", slackAuthRoutes);
 app.route("/", previewGatewayRoutes);
 app.route("/", devBackupRoutes);

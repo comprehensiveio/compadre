@@ -1,3 +1,4 @@
+import { WorkerTerminalRpc } from "./terminal-rpc.js";
 import { randomUUID } from "node:crypto";
 import { log } from "../logging.js";
 import { z } from "zod";
@@ -621,30 +622,23 @@ export class T3Client {
     return result.sequence;
   }
 
-  async startNewThread(input: {
+  /** Create a native thread without dispatching a provider turn. */
+  async createThread(input: {
     threadId?: string;
-    messageId?: string;
     projectId: string;
     title: string;
-    text: string;
-    displayText?: string;
-    attribution?: T3MessageAttribution;
-    inputFiles?: ReadonlyArray<T3InputFile>;
     modelSelection: T3ModelSelection;
     runtimeMode?: T3RuntimeMode;
     interactionMode?: T3InteractionMode;
     branch?: string | null;
     worktreePath?: string | null;
     signal?: AbortSignal;
-  }): Promise<T3TurnDispatch> {
+  }): Promise<string> {
     const threadId = input.threadId ?? this.idFactory();
     const createCommandId = this.idFactory();
     const createdAt = this.now().toISOString();
     const runtimeMode = input.runtimeMode ?? "full-access";
     const interactionMode = input.interactionMode ?? "default";
-    // T3's WebSocket dispatcher expands turn.bootstrap, but its HTTP
-    // dispatcher currently sends commands directly to the engine. Keep the
-    // headless HTTP path portable by creating the thread explicitly first.
     await this.dispatch(
       {
         type: "thread.create",
@@ -661,6 +655,28 @@ export class T3Client {
       },
       input.signal,
     );
+    return threadId;
+  }
+
+  async startNewThread(input: {
+    threadId?: string;
+    messageId?: string;
+    projectId: string;
+    title: string;
+    text: string;
+    displayText?: string;
+    attribution?: T3MessageAttribution;
+    inputFiles?: ReadonlyArray<T3InputFile>;
+    modelSelection: T3ModelSelection;
+    runtimeMode?: T3RuntimeMode;
+    interactionMode?: T3InteractionMode;
+    branch?: string | null;
+    worktreePath?: string | null;
+    signal?: AbortSignal;
+  }): Promise<T3TurnDispatch> {
+    const threadId = await this.createThread(input);
+    const runtimeMode = input.runtimeMode ?? "full-access";
+    const interactionMode = input.interactionMode ?? "default";
     return this.startTurn({
       threadId,
       messageId: input.messageId,
@@ -719,6 +735,10 @@ export class T3Client {
       threadId: input.threadId,
       createdAt,
     };
+  }
+
+  createTerminalRpc(): WorkerTerminalRpc {
+    return new WorkerTerminalRpc(this.baseUrl, this.accessToken);
   }
 
   async interruptTurn(input: {
