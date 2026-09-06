@@ -446,8 +446,8 @@ export function resolveAssistantMessageCopyState({
 }
 
 function deriveTerminalAssistantMessageIds(timelineEntries: ReadonlyArray<TimelineEntry>) {
-  const lastAssistantMessageIdByResponseKey = new Map<string, string>();
-  let nullTurnResponseIndex = 0;
+  const lastAssistantMessageIdByResponse = new Map<number, string>();
+  let responseIndex = 0;
 
   for (const timelineEntry of timelineEntries) {
     if (timelineEntry.kind !== "message") {
@@ -455,20 +455,17 @@ function deriveTerminalAssistantMessageIds(timelineEntries: ReadonlyArray<Timeli
     }
     const { message } = timelineEntry;
     if (message.role === "user") {
-      nullTurnResponseIndex += 1;
+      responseIndex += 1;
       continue;
     }
     if (message.role !== "assistant") {
       continue;
     }
 
-    const responseKey = message.turnId
-      ? `turn:${message.turnId}`
-      : `unkeyed:${nullTurnResponseIndex}`;
-    lastAssistantMessageIdByResponseKey.set(responseKey, message.id);
+    lastAssistantMessageIdByResponse.set(responseIndex, message.id);
   }
 
-  return new Set(lastAssistantMessageIdByResponseKey.values());
+  return new Set(lastAssistantMessageIdByResponse.values());
 }
 
 interface TurnFold {
@@ -523,8 +520,8 @@ function timelineEntryTurnId(entry: TimelineEntry): TurnId | null {
 /**
  * Settled turns keep their first and terminal assistant messages visible.
  * Everything between them folds behind a "Worked for ..." row anchored at
- * the first hidden entry. Keeping both ends prevents a short follow-up from
- * hiding a substantive opening response while still bounding noisy turns.
+ * the first hidden entry. A turn superseded by another answer to the same user
+ * message has no terminal entry, so its answer folds with the rest of its work.
  */
 function deriveTurnFolds(input: {
   timelineEntries: ReadonlyArray<TimelineEntry>;
@@ -594,9 +591,11 @@ function deriveTurnFolds(input: {
     if (group.hasStreamingMessage) {
       continue;
     }
-    const firstAssistantEntry = group.entries.find(
-      (entry): entry is Extract<TimelineEntry, { kind: "message" }> => entry.kind === "message",
-    );
+    const firstAssistantEntry = group.terminalEntry
+      ? group.entries.find(
+          (entry): entry is Extract<TimelineEntry, { kind: "message" }> => entry.kind === "message",
+        )
+      : undefined;
     const hiddenEntryIds = new Set<string>();
     for (const entry of group.entries) {
       if (entry.id === firstAssistantEntry?.id || entry.id === group.terminalEntry?.id) {

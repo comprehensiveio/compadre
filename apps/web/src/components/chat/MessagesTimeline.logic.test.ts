@@ -354,6 +354,20 @@ describe("deriveMessagesTimelineRows", () => {
           },
         },
         {
+          id: "user-two-entry",
+          kind: "message",
+          createdAt: "2026-01-01T00:00:15Z",
+          message: {
+            id: "user-two" as never,
+            role: "user",
+            text: "Continue",
+            turnId: null,
+            createdAt: "2026-01-01T00:00:15Z",
+            updatedAt: "2026-01-01T00:00:15Z",
+            streaming: false,
+          },
+        },
+        {
           id: "assistant-two-entry",
           kind: "message",
           createdAt: "2026-01-01T00:00:20Z",
@@ -612,6 +626,65 @@ describe("deriveMessagesTimelineRows", () => {
       "assistant-first-entry",
       "turn-fold:turn-1",
       "assistant-final-entry",
+    ]);
+  });
+
+  it("folds a superseded answer while keeping the final answer visible", () => {
+    const rows = deriveMessagesTimelineRows({
+      timelineEntries: [
+        {
+          id: "user-entry",
+          kind: "message",
+          createdAt: "2026-01-01T00:00:00Z",
+          message: {
+            id: "user-1" as never,
+            role: "user" as const,
+            text: "Build it",
+            turnId: null,
+            createdAt: "2026-01-01T00:00:00Z",
+            updatedAt: "2026-01-01T00:00:00Z",
+            streaming: false,
+          },
+        },
+        {
+          id: "superseded-assistant-entry",
+          kind: "message",
+          createdAt: "2026-01-01T00:00:05Z",
+          message: {
+            id: "superseded-assistant" as never,
+            role: "assistant" as const,
+            text: "Here is the first answer.",
+            turnId: "turn-1" as never,
+            createdAt: "2026-01-01T00:00:05Z",
+            updatedAt: "2026-01-01T00:00:06Z",
+            streaming: false,
+          },
+        },
+        {
+          id: "final-assistant-entry",
+          kind: "message",
+          createdAt: "2026-01-01T00:00:10Z",
+          message: {
+            id: "final-assistant" as never,
+            role: "assistant" as const,
+            text: "Here is the final answer.",
+            turnId: "turn-2" as never,
+            createdAt: "2026-01-01T00:00:10Z",
+            updatedAt: "2026-01-01T00:00:11Z",
+            streaming: false,
+          },
+        },
+      ],
+      isWorking: false,
+      activeTurnStartedAt: null,
+      turnDiffSummaryByAssistantMessageId: new Map(),
+      revertTurnCountByUserMessageId: new Map(),
+    });
+
+    expect(rows.map((row) => row.id)).toEqual([
+      "user-entry",
+      "turn-fold:turn-1",
+      "final-assistant-entry",
     ]);
   });
 
