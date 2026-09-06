@@ -6,6 +6,7 @@ import { DraftId } from "./composerDraftStore";
 import {
   buildDraftThreadRouteParams,
   buildThreadRouteParams,
+  isThreadDetailMissing,
   resolveActiveThreadRouteRef,
   resolveThreadRouteRenderState,
   resolveThreadRouteRef,
@@ -94,13 +95,12 @@ describe("threadRoutes", () => {
     ).toBeNull();
   });
 
-  it("keeps shell-only server threads in the loading state", () => {
+  it("keeps unresolved server threads in the loading state", () => {
     expect(
       resolveThreadRouteRenderState({
         bootstrapComplete: true,
-        serverThreadShellExists: true,
         serverThreadDetailExists: false,
-        serverThreadDetailDeleted: false,
+        serverThreadDetailMissing: false,
         draftThreadExists: false,
       }),
     ).toBe("loading");
@@ -110,53 +110,67 @@ describe("threadRoutes", () => {
     expect(
       resolveThreadRouteRenderState({
         bootstrapComplete: true,
-        serverThreadShellExists: true,
         serverThreadDetailExists: true,
-        serverThreadDetailDeleted: false,
+        serverThreadDetailMissing: false,
         draftThreadExists: false,
       }),
     ).toBe("ready");
     expect(
       resolveThreadRouteRenderState({
         bootstrapComplete: true,
-        serverThreadShellExists: false,
         serverThreadDetailExists: false,
-        serverThreadDetailDeleted: false,
+        serverThreadDetailMissing: false,
         draftThreadExists: true,
       }),
     ).toBe("ready");
   });
 
-  it("distinguishes bootstrap loading from a missing thread", () => {
+  it("does not treat initial thread state as missing after shell bootstrap", () => {
     expect(
       resolveThreadRouteRenderState({
         bootstrapComplete: false,
-        serverThreadShellExists: false,
         serverThreadDetailExists: false,
-        serverThreadDetailDeleted: false,
+        serverThreadDetailMissing: false,
         draftThreadExists: false,
       }),
     ).toBe("loading");
     expect(
       resolveThreadRouteRenderState({
         bootstrapComplete: true,
-        serverThreadShellExists: false,
         serverThreadDetailExists: false,
-        serverThreadDetailDeleted: false,
+        serverThreadDetailMissing: false,
+        draftThreadExists: false,
+      }),
+    ).toBe("loading");
+  });
+
+  it("redirects only after the thread detail is authoritatively missing", () => {
+    expect(
+      resolveThreadRouteRenderState({
+        bootstrapComplete: true,
+        serverThreadDetailExists: false,
+        serverThreadDetailMissing: true,
         draftThreadExists: false,
       }),
     ).toBe("missing");
   });
 
-  it("redirects deleted shell-only threads", () => {
+  it("recognizes deleted and not-found thread detail states", () => {
+    const threadId = ThreadId.make("thread-1");
+    expect(isThreadDetailMissing({ threadId, status: "deleted", error: null })).toBe(true);
     expect(
-      resolveThreadRouteRenderState({
-        bootstrapComplete: true,
-        serverThreadShellExists: true,
-        serverThreadDetailExists: false,
-        serverThreadDetailDeleted: true,
-        draftThreadExists: false,
+      isThreadDetailMissing({
+        threadId,
+        status: "empty",
+        error: "Thread thread-1 was not found",
       }),
-    ).toBe("missing");
+    ).toBe(true);
+    expect(
+      isThreadDetailMissing({
+        threadId,
+        status: "empty",
+        error: "Could not synchronize the thread.",
+      }),
+    ).toBe(false);
   });
 });

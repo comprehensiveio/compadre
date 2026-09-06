@@ -4,12 +4,17 @@ import { useEffect } from "react";
 import ChatView from "../components/ChatView";
 import { threadHasStarted } from "../components/ChatView.logic";
 import { finalizePromotedDraftThreadByRef, useComposerDraftStore } from "../composerDraftStore";
-import { resolveThreadRouteRef, resolveThreadRouteRenderState } from "../threadRoutes";
+import {
+  isThreadDetailMissing,
+  resolveThreadRouteRef,
+  resolveThreadRouteRenderState,
+} from "../threadRoutes";
 import { resolveThreadSyncPhase } from "../threadSync";
 import { SidebarInset } from "~/components/ui/sidebar";
 import {
   useEnvironmentThreadRefs,
   useThreadDetail,
+  useThreadError,
   useThreadShell,
   useThreadStatus,
 } from "../state/entities";
@@ -27,6 +32,7 @@ function ChatThreadRouteView() {
   const serverThreadShell = useThreadShell(threadRef);
   const serverThreadDetail = useThreadDetail(threadRef);
   const serverThreadStatus = useThreadStatus(threadRef);
+  const serverThreadError = useThreadError(threadRef);
   const environmentThreadRefs = useEnvironmentThreadRefs(threadRef?.environmentId ?? null);
   const bootstrapComplete = shell.data?.snapshot._tag === "Some";
   const environmentHasServerThreads = environmentThreadRefs.length > 0;
@@ -44,9 +50,14 @@ function ChatThreadRouteView() {
   });
   const renderState = resolveThreadRouteRenderState({
     bootstrapComplete,
-    serverThreadShellExists: serverThreadShell !== null,
     serverThreadDetailExists: serverThreadDetail !== null,
-    serverThreadDetailDeleted: serverThreadStatus === "deleted",
+    serverThreadDetailMissing:
+      threadRef !== null &&
+      isThreadDetailMissing({
+        threadId: threadRef.threadId,
+        status: serverThreadStatus,
+        error: serverThreadError,
+      }),
     draftThreadExists,
   });
   const threadSyncPhase = resolveThreadSyncPhase({
@@ -87,6 +98,10 @@ function ChatThreadRouteView() {
           routeKind="server"
           threadSyncPhase={threadSyncPhase}
         />
+      ) : renderState === "loading" ? (
+        <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
+          Loading conversation...
+        </div>
       ) : null}
     </SidebarInset>
   );
