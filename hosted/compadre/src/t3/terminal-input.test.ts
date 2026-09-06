@@ -71,7 +71,7 @@ test("input batches a typing burst behind an in-flight write while preserving or
         operation: "attach",
         input: { threadId: "canonical", terminalId: "term-1" },
       });
-      return {} as Awaited<ReturnType<T3TerminalService["connect"]>>;
+      return { rpc: { isClosed: false } } as Awaited<ReturnType<T3TerminalService["connect"]>>;
     },
     async *execute(request) {
       assert.equal(request.operation, "write");
@@ -119,4 +119,30 @@ test("input batches a typing burst behind an in-flight write while preserving or
     release();
     await fixture.close();
   }
+});
+
+test("input reattaches to an expired output socket before sending another character", async () => {
+  let connects = 0;
+  const old = { rpc: { isClosed: false } } as Awaited<ReturnType<T3TerminalService["connect"]>>;
+  const fresh = { rpc: { isClosed: false } } as Awaited<ReturnType<T3TerminalService["connect"]>>;
+  const fixture = await setup({
+    async connect(request) {
+      assert.equal(request.operation, "attach");
+      return ++connects === 1 ? old : fresh;
+    },
+    async *execute(request, connection) {
+      assert.equal(connection, fresh);
+      assert.equal(request.operation, "write");
+    },
+  });
+  try {
+    const ready = once(fixture.socket, "message");
+    fixture.socket.send(JSON.stringify({ token: "secret", threadId: "canonical", terminalId: "term-1" }));
+    await ready;
+    Object.assign(old.rpc, { isClosed: true });
+    const ack = once(fixture.socket, "message");
+    fixture.socket.send(JSON.stringify({ seq: 1, data: "x" }));
+    assert.deepEqual(JSON.parse(String((await ack)[0])), { ack: 1 });
+    assert.equal(connects, 2);
+  } finally { await fixture.close(); }
 });

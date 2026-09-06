@@ -67,6 +67,8 @@ export function installTerminalInput(
       flushing = true;
       try {
         while (queue.length && !abort.signal.aborted) {
+          // The output relay can expire its idle socket while this input socket remains open.
+          if (connection.rpc.isClosed) connection = await service.connect({ operation: "attach", input: target });
           const batch: Array<{ seq: number; data: string }> = [];
           let data = "";
           while (queue.length && data.length + queue[0]!.data.length <= 65536) {
