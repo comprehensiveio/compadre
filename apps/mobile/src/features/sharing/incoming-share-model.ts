@@ -1,6 +1,5 @@
 import {
   isProviderSendTurnSupportedImageMimeType,
-  PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
   PROVIDER_SEND_TURN_MAX_IMAGE_BYTES,
 } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
@@ -8,6 +7,7 @@ import type { ResolvedSharePayload, SharePayload } from "expo-sharing";
 
 import { DraftComposerImageAttachmentSchema } from "../../lib/composer-image-schema";
 import type { DraftComposerImageAttachment } from "../../lib/composerImages";
+import { MOBILE_COMPOSER_MAX_ATTACHMENTS } from "../../lib/composerLimits";
 import { estimateBase64ByteSize } from "../../lib/base64";
 
 export interface IncomingShareDraft {
@@ -146,10 +146,10 @@ export async function buildIncomingShareDraft(input: {
       consumedResolvedPayloadIndexes,
     );
     const uri = resolved?.contentUri ?? payload.value;
-    if (attachments.length >= PROVIDER_SEND_TURN_MAX_ATTACHMENTS) {
+    if (attachments.length >= MOBILE_COMPOSER_MAX_ATTACHMENTS) {
       if (!warnedAttachmentLimit) {
         warnings.push(
-          `Only the first ${PROVIDER_SEND_TURN_MAX_ATTACHMENTS} shared images were attached.`,
+          `Only the first ${MOBILE_COMPOSER_MAX_ATTACHMENTS} shared images were attached.`,
         );
         warnedAttachmentLimit = true;
       }

@@ -1,11 +1,9 @@
 import { describe, expect, it, vi } from "@effect/vitest";
-import {
-  PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
-  PROVIDER_SEND_TURN_MAX_IMAGE_BYTES,
-} from "@t3tools/contracts";
+import { PROVIDER_SEND_TURN_MAX_IMAGE_BYTES } from "@t3tools/contracts";
 import type { ResolvedSharePayload, SharePayload } from "expo-sharing";
 
 import { buildIncomingShareDraft, hasIncomingShareContent } from "./incoming-share-model";
+import { MOBILE_COMPOSER_MAX_ATTACHMENTS } from "../../lib/composerLimits";
 
 describe("incoming native shares", () => {
   it("converts shared text, URLs, and images into a durable composer draft", async () => {
@@ -97,7 +95,7 @@ describe("incoming native shares", () => {
   });
 
   it("releases every temporary file when a share exceeds the attachment limit", async () => {
-    const payloads = Array.from({ length: PROVIDER_SEND_TURN_MAX_ATTACHMENTS + 1 }, (_, index) => ({
+    const payloads = Array.from({ length: MOBILE_COMPOSER_MAX_ATTACHMENTS + 1 }, (_, index) => ({
       shareType: "image" as const,
       value: `file:///shared/${index}.png`,
       mimeType: "image/png",
@@ -113,11 +111,11 @@ describe("incoming native shares", () => {
       fileReader: { readBase64, removeOwnedFile },
     });
 
-    expect(result.attachments).toHaveLength(PROVIDER_SEND_TURN_MAX_ATTACHMENTS);
+    expect(result.attachments).toHaveLength(MOBILE_COMPOSER_MAX_ATTACHMENTS);
     expect(result.warnings).toEqual([
-      `Only the first ${PROVIDER_SEND_TURN_MAX_ATTACHMENTS} shared images were attached.`,
+      `Only the first ${MOBILE_COMPOSER_MAX_ATTACHMENTS} shared images were attached.`,
     ]);
-    expect(readBase64).toHaveBeenCalledTimes(PROVIDER_SEND_TURN_MAX_ATTACHMENTS);
+    expect(readBase64).toHaveBeenCalledTimes(MOBILE_COMPOSER_MAX_ATTACHMENTS);
     expect(removeOwnedFile).toHaveBeenCalledTimes(payloads.length);
   });
 

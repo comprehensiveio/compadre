@@ -10,7 +10,7 @@ import {
 import type { ComposerFileAttachment, ComposerImageAttachment } from "../../composerDraftStore";
 import { isHeicImageFile } from "../../lib/imageCompression";
 
-type ComposerAttachmentFileKind = "image" | "file" | "unsupported-image";
+type ComposerAttachmentFileKind = "image" | "file";
 
 interface FileAttachmentCapabilityState {
   readonly attachmentUploadsCapabilityKnown: boolean;
@@ -72,7 +72,7 @@ export function classifyComposerAttachmentFile(
   if (!file.type.toLowerCase().startsWith("image/")) {
     return "file";
   }
-  return isProviderSendTurnSupportedImageMimeType(file.type) ? "image" : "unsupported-image";
+  return isProviderSendTurnSupportedImageMimeType(file.type) ? "image" : "file";
 }
 
 /** Byte limit for adding a generic file to the local composer draft. */
@@ -139,7 +139,7 @@ export function shouldHandleComposerAttachmentPaste(input: {
   if (
     input.files.some((file) => {
       const classification = classifyComposerAttachmentFile(file);
-      return classification === "image" || classification === "unsupported-image";
+      return classification === "image" || file.type.toLowerCase().startsWith("image/");
     })
   ) {
     return true;

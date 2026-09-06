@@ -462,8 +462,11 @@ COMPADRE_MODAL_SNAPSHOT_TTL_MS=604800000
 
 Slack thread history from before the bot mention is supplied as hidden context
 only when a conversation is created, or for an explicit mention-only resumed
-turn. Slack image inputs are downloaded with the bot credential and forwarded
-to the native T3 harness without becoming a second transcript. Generated files
+turn. Slack accepts attachment-only messages and arbitrary file types. Files are
+downloaded with the bot credential, uploaded sequentially to central attachment
+storage, and forwarded to the native T3 harness without becoming a second
+transcript. There is no product-level count cap; each file remains limited to
+50 MB. Generated files
 written under `/tmp/agent-outputs` are content-addressed into the private S3
 bucket; Postgres retains their metadata, while authenticated controller reads
 serve the central UI and the same bytes are uploaded to a linked Slack thread.

@@ -338,3 +338,15 @@ test("a mention-only thread reply asks the agent to answer preceding context", (
     "",
   );
 });
+
+test("an attachment-only message asks the agent to inspect its files", () => {
+  assert.equal(
+    slackMessageTextForAgent({
+      messageText: "",
+      isThreadReply: false,
+      mentionsBot: true,
+      hasAttachments: true,
+    }),
+    "Please inspect the attached file(s).",
+  );
+});

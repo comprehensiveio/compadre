@@ -521,6 +521,75 @@ test("a new central thread loads contextual Slack images once", async () => {
   assert.deepEqual(receivedFiles, [contextualImage, currentImage]);
 });
 
+test("uploads files sequentially and preserves the text turn when one upload fails", async (t) => {
+  t.mock.method(console, "warn", () => undefined);
+  const uploadOrder: string[] = [];
+  let receivedAttachments: ReadonlyArray<{ name: string }> | undefined;
+  let receivedPrompt = "";
+  let dispatch: T3TurnDispatch | undefined;
+  const client: CentralT3ConversationClient = {
+    baseUrl: "https://central.example",
+    async environmentDescriptor() {
+      return { environmentId: "environment-central", label: "Central", serverVersion: "1" };
+    },
+    async snapshot() {
+      return {
+        snapshotSequence: 1,
+        projects: [{ id: "project-central", title: "Compadre", workspaceRoot: "/workspace", defaultModelSelection: codex }],
+        threads: [],
+        updatedAt: "2026-08-26T16:00:00.000Z",
+      };
+    },
+    async uploadAttachment(input) {
+      uploadOrder.push(input.name);
+      if (input.name === "unavailable.log") throw new Error("upload failed");
+      return {
+        type: "file",
+        id: `uploaded-${input.name}`,
+        name: input.name,
+        mimeType: input.mimeType,
+        sizeBytes: input.bytes.byteLength,
+      };
+    },
+    async startNewThread(input) {
+      receivedAttachments = input.attachments;
+      receivedPrompt = input.text;
+      dispatch = {
+        sequence: 2,
+        commandId: "command-attachments",
+        messageId: input.messageId!,
+        threadId: input.threadId!,
+        createdAt: "2026-08-26T16:00:00.000Z",
+      };
+      return dispatch;
+    },
+    async startTurn() {
+      throw new Error("should create the thread");
+    },
+    async waitForTurnTerminal() {
+      assert.ok(dispatch);
+      return terminalSnapshot(dispatch);
+    },
+  };
+
+  await runCentralT3Conversation({
+    client,
+    canonicalThreadId: "slack:T1:C1:mixed-files",
+    title: "Inspect files",
+    prompt: "Inspect the available files.",
+    inputFiles: [
+      { name: "report.pdf", mimetype: "application/pdf", sizeBytes: 1, dataBase64: "YQ==" },
+      { name: "unavailable.log", mimetype: "text/plain", sizeBytes: 1, dataBase64: "Yg==" },
+      { name: "archive.zip", mimetype: "application/zip", sizeBytes: 1, dataBase64: "Yw==" },
+    ],
+  });
+
+  assert.deepEqual(uploadOrder, ["report.pdf", "unavailable.log", "archive.zip"]);
+  assert.deepEqual(receivedAttachments?.map(({ name }) => name), ["report.pdf", "archive.zip"]);
+  assert.match(receivedPrompt, /Inspect the available files\./);
+  assert.match(receivedPrompt, /"unavailable\.log" could not be made available/);
+});
+
 test("a continuation uses current images unless explicit turn context overrides them", async () => {
   const threadId = centralT3ThreadId("slack:T1:C1:existing-with-images");
   const receivedFiles: Array<ReadonlyArray<T3InputFile> | undefined> = [];

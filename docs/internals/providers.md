@@ -62,6 +62,8 @@ attachment to the provider adapter. Each adapter decides what its provider inges
 - OpenCode sends PNG/JPEG/GIF/WebP images, text files, and PDFs up to 20 MB as native file parts
   with their real mime type. Everything else (ZIP and other binaries, image formats model APIs
   reject, oversized files) falls back to the file path in the turn text, like the other providers.
+- The hosted Compadre adapter forwards every attachment to the controller. The controller stages
+  each file in the thread's Modal sandbox and adds its path and MIME type to the provider prompt.
 
 Claude receives the attachment directory as an allowed additional directory. Codex keeps its
 configured sandbox policy, so access depends on that policy and the selected runtime mode. OpenCode

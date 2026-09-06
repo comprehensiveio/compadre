@@ -121,6 +121,20 @@ describe("ProviderSessionStartInput", () => {
 });
 
 describe("ProviderSendTurnInput", () => {
+  it("accepts more than eight attachments", () => {
+    const attachments = Array.from({ length: 12 }, (_, index) => ({
+      type: "file" as const,
+      id: `file-${index}`,
+      name: `file-${index}.pdf`,
+      mimeType: "application/pdf",
+      sizeBytes: 1,
+    }));
+
+    expect(
+      decodeProviderSendTurnInput({ threadId: "thread-1", attachments }).attachments,
+    ).toHaveLength(12);
+  });
+
   it("accepts codex modelSelection", () => {
     const parsed = decodeProviderSendTurnInput({
       threadId: "thread-1",

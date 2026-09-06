@@ -5,7 +5,6 @@ import { z } from "zod";
 import { SlackClient, type DownloadedSlackFile } from "./slack-client.js";
 import type { InputFile } from "./input-files.js";
 
-export const MAX_SLACK_INPUT_FILES = 5;
 export const MAX_SLACK_INPUT_FILE_BYTES = 50 * 1024 * 1024;
 
 export const slackFileReferenceSchema = z.object({
@@ -119,7 +118,7 @@ export function mergeSlackFileReferences(
       if (!byId.has(file.id)) byId.set(file.id, file);
     }
   }
-  return [...byId.values()].slice(0, MAX_SLACK_INPUT_FILES);
+  return [...byId.values()];
 }
 
 function safeFilename(name: string, index: number): string {
