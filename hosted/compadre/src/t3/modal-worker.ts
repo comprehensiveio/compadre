@@ -620,7 +620,7 @@ export function t3ServerLaunchCommands(workspaceRoot: string): {
   launch: string;
 } {
   const command = [
-    "env -u CODEX_AUTH_JSON_BASE64 -u CODEX_API_KEY -u OPENAI_API_KEY t3 serve",
+    "env -u CODEX_AUTH_JSON_BASE64 -u CODEX_API_KEY -u OPENAI_API_KEY COMPADRE_DIRECT_TERMINAL_WORKER=1 t3 serve",
     "--host 0.0.0.0",
     `--port ${DEFAULT_T3_PORT}`,
     `--base-dir ${quote(DEFAULT_T3_BASE_DIR)}`,

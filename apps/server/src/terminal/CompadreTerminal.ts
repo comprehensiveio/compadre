@@ -1,5 +1,7 @@
 import {
   TerminalAttachStreamEvent,
+  TerminalConnection,
+  type TerminalAttachInput,
   TerminalSessionSnapshot,
   TerminalRemoteError,
   ThreadId,
@@ -37,7 +39,13 @@ export function makeCompadreTerminal(
   environment: NodeJS.ProcessEnv = process.env,
   fetcher: (input: string | URL | Request, init?: RequestInit) => Promise<Response> = fetch,
   createInputSocket?: (url: URL) => TerminalInputSocket,
-): TerminalManager["Service"] | undefined {
+):
+  | (TerminalManager["Service"] & {
+      connection: (
+        input: TerminalAttachInput,
+      ) => Effect.Effect<TerminalConnection | null, TerminalRemoteError>;
+    })
+  | undefined {
   const origin = environment.COMPADRE_NATIVE_T3_URL?.trim();
   if (!origin) return undefined;
   const url = new URL("/hosted/t3/terminal", origin);
@@ -199,6 +207,11 @@ export function makeCompadreTerminal(
       catch: remoteError,
     });
   return {
+    connection: (input) =>
+      command("connection", input).pipe(
+        Effect.flatMap(Schema.decodeUnknownEffect(Schema.NullOr(TerminalConnection))),
+        Effect.mapError(remoteError),
+      ),
     open: (input) =>
       command("open", input).pipe(
         Effect.flatMap((value) =>

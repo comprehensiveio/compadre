@@ -26,6 +26,7 @@ export const terminalRequestSchema = z.discriminatedUnion("operation", [
     }),
   }),
   z.object({ operation: z.literal("attach"), input: session.extend(size) }),
+  z.object({ operation: z.literal("connection"), input: session.extend(size) }),
   z.object({
     operation: z.literal("write"),
     input: session.extend({ data: z.string().min(1).max(65536) }),
@@ -56,6 +57,7 @@ type Connection = {
   nativeThreadId: string;
   cwd: string;
   sandboxId: string;
+  baseUrl: string;
 };
 /** Only open(startWorker=true) may call ensureWorkerRunning. All other paths attach or fail. */
 export class T3TerminalService {
@@ -117,6 +119,7 @@ export class T3TerminalService {
       cwd,
       nativeThreadId: worker.binding.t3ThreadId,
       sandboxId: worker.binding.sandboxId,
+      baseUrl: worker.binding.baseUrl,
     };
     this.connections.set(threadId, connection);
     return connection;
@@ -130,10 +133,26 @@ export class T3TerminalService {
       startWorker: undefined,
       creation: undefined,
       threadId: connection.nativeThreadId,
-      ...(["open", "attach", "restart"].includes(request.operation)
+      ...(["open", "attach", "restart", "connection"].includes(request.operation)
         ? { cwd: connection.cwd, worktreePath: null }
         : {}),
     };
+    if (request.operation === "connection") {
+      // Older workers retain the relay. Never send an unknown RPC to their connection.
+      let supported = false;
+      for await (const config of connection.rpc.request("server.getConfig", {}, signal)) {
+        const parsed = z.object({ environment: z.object({ capabilities: z.object({ directTerminals: z.boolean().optional() }) }) }).safeParse(config);
+        supported = parsed.success && parsed.data.environment.capabilities.directTerminals === true;
+      }
+      if (!supported) { yield null; return; }
+      for await (const value of connection.rpc.request("terminal.connection", payload, signal)) {
+        const grant = z.object({url: z.literal("/terminal/direct"), ticket: z.string(), expiresAt: z.string()}).parse(value);
+        const url = new URL(grant.url, connection.baseUrl);
+        url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
+        yield { ...grant, url: url.toString() };
+      }
+      return;
+    }
     for await (const value of connection.rpc.request(
       `terminal.${request.operation}`,
       payload,

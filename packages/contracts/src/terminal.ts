@@ -358,3 +358,41 @@ export const TerminalError = Schema.Union([
   TerminalResizeError,
 ]);
 export type TerminalError = typeof TerminalError.Type;
+
+/** Single-use worker grant. Kept in memory by clients, never in conversation state. */
+export const TerminalConnection = Schema.Struct({
+  url: Schema.String,
+  ticket: Schema.String,
+  expiresAt: Schema.String,
+});
+export type TerminalConnection = typeof TerminalConnection.Type;
+const DirectMessageId = Schema.Int.check(Schema.isGreaterThanOrEqualTo(1));
+export const TerminalDirectClientMessage = Schema.Union([
+  Schema.Struct({
+    type: Schema.Literal("connect"),
+    ticket: Schema.String.check(Schema.isMaxLength(128)),
+  }),
+  Schema.Struct({
+    type: Schema.Literal("write"),
+    id: DirectMessageId,
+    data: TerminalWriteInput.fields.data,
+  }),
+  Schema.Struct({
+    type: Schema.Literal("resize"),
+    id: DirectMessageId,
+    cols: TerminalColsSchema,
+    rows: TerminalRowsSchema,
+  }),
+  Schema.Struct({ type: Schema.Literal("ack"), sequence: DirectMessageId }),
+  Schema.Struct({ type: Schema.Literal("ping") }),
+]);
+export const TerminalDirectServerMessage = Schema.Union([
+  Schema.Struct({
+    type: Schema.Literal("event"),
+    sequence: DirectMessageId,
+    event: TerminalAttachStreamEvent,
+  }),
+  Schema.Struct({ type: Schema.Literal("ack"), id: DirectMessageId }),
+  Schema.Struct({ type: Schema.Literal("error"), message: Schema.String }),
+]);
+export type TerminalDirectServerMessage = typeof TerminalDirectServerMessage.Type;
