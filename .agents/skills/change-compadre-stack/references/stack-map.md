@@ -128,10 +128,10 @@ Every cloud mutation must target Comprehensive explicitly.
 - Artifact bucket: private `compadre` bucket, scoped prefixes such as
   `attachments/`
 
-This machine also accesses Tolt infrastructure. Similar names, credentials, or
-patterns are not evidence that a resource belongs to Comprehensive. Resolve
-the account/workspace and target before mutating. Never inspect or change Tolt
-resources as part of Compadre work.
+This machine also accesses infrastructure outside Comprehensive. Similar names,
+credentials, or patterns are not evidence that a resource belongs to
+Comprehensive. Resolve the account/workspace and target before mutating. Never
+inspect or change unrelated resources as part of Compadre work.
 
 ## Live workspace access
 

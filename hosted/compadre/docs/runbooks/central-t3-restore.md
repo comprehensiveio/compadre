@@ -16,7 +16,7 @@ against the central writer and must have an incident owner.
 ## Preconditions
 
 1. Confirm the target is the Comprehensive deployment and AWS account
-   `629591269808`, never the Tolt deployment.
+   `629591269808`, never another deployment or account.
 2. Stop Slack/API ingress and the controller before stopping central T3.
 3. Confirm no central T3 process has the SQLite database open. There must be
    exactly one writer before and after the restore.

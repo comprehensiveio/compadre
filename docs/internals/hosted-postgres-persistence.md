@@ -58,7 +58,8 @@ disk](https://render.com/docs/deploys).
 ## Schema and import boundary
 
 `CompadrePostgresSchema.ts` represents Compadre SQLite migrations 001–044. The
-PostgreSQL table set does not include Tolty preferences or its `unsettled_at`.
+PostgreSQL table set does not include unrelated preference tables or their
+`unsettled_at` field.
 It does include Compadre `attribution_json`, `started_by_user_id`,
 `participants_json` and `external_thread_json`.
 
