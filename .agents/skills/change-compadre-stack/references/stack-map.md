@@ -135,7 +135,6 @@ resources as part of Compadre work.
 
 ## Live workspace access
 
-The worker-terminal implementation is locally verified, not yet deployed.
 For canonical worker access, use `T3Gateway.attachWorker` (never wakes) or
 `T3Gateway.ensureWorkerRunning` (explicit actions only). Provider dispatch and
 preview activation share its locked lifecycle implementation. Terminal adapters
