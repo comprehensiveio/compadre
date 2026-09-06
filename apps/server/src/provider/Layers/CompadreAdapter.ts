@@ -82,6 +82,9 @@ interface CompadreSessionContext {
   stopped: boolean;
 }
 
+const HOSTED_TEXT_COALESCE_MAX_FRAGMENTS = 64;
+const HOSTED_TEXT_COALESCE_MAX_CHARS = 16 * 1_024;
+
 function stringField(event: Readonly<Record<string, unknown>>, field: string): string | undefined {
   const value = event[field];
   return typeof value === "string" && value.length > 0 ? value : undefined;
@@ -519,6 +522,14 @@ export function makeCompadreAdapter(options: CompadreAdapterOptions) {
           const artifactAttachments = new Map<string, ChatAttachment>();
           let lastAssistantItemId: RuntimeItemId | undefined;
           let terminal = false;
+          let pendingText:
+            | {
+                readonly sourceId: string;
+                readonly event: CompadreStreamEvent;
+                readonly fragments: string[];
+                chars: number;
+              }
+            | undefined;
 
           const completeTurn = (
             state: "completed" | "failed" | "cancelled",
@@ -594,6 +605,39 @@ export function makeCompadreAdapter(options: CompadreAdapterOptions) {
               yield* completeTurn("failed", message);
             });
 
+          const publishTextContent = (event: CompadreStreamEvent) =>
+            Effect.gen(function* () {
+              const sourceId = stringField(event, "messageId") ?? `assistant-${runId}`;
+              let item = items.get(sourceId);
+              if (!item) {
+                item = { id: RuntimeItemId.make(sourceId), type: "assistant_message" };
+                items.set(sourceId, item);
+                yield* publish({
+                  type: "item.started",
+                  ...(yield* makeEventStamp()),
+                  provider: runtimeProvider,
+                  providerInstanceId: boundInstanceId,
+                  threadId: input.threadId,
+                  turnId,
+                  itemId: item.id,
+                  payload: { itemType: "assistant_message", status: "inProgress" },
+                });
+              }
+              const delta = stringField(event, "delta");
+              if (delta) {
+                yield* publish({
+                  type: "content.delta",
+                  ...(yield* makeEventStamp()),
+                  provider: runtimeProvider,
+                  providerInstanceId: boundInstanceId,
+                  threadId: input.threadId,
+                  turnId,
+                  itemId: item.id,
+                  payload: { streamKind: "assistant_text", delta },
+                });
+              }
+            });
+
           const handleEvent = (event: CompadreStreamEvent) =>
             Effect.gen(function* () {
               switch (event.type) {
@@ -615,35 +659,7 @@ export function makeCompadreAdapter(options: CompadreAdapterOptions) {
                   return;
                 }
                 case "TEXT_MESSAGE_CONTENT": {
-                  const sourceId = stringField(event, "messageId") ?? `assistant-${runId}`;
-                  let item = items.get(sourceId);
-                  if (!item) {
-                    item = { id: RuntimeItemId.make(sourceId), type: "assistant_message" };
-                    items.set(sourceId, item);
-                    yield* publish({
-                      type: "item.started",
-                      ...(yield* makeEventStamp()),
-                      provider: runtimeProvider,
-                      providerInstanceId: boundInstanceId,
-                      threadId: input.threadId,
-                      turnId,
-                      itemId: item.id,
-                      payload: { itemType: "assistant_message", status: "inProgress" },
-                    });
-                  }
-                  const delta = stringField(event, "delta");
-                  if (delta) {
-                    yield* publish({
-                      type: "content.delta",
-                      ...(yield* makeEventStamp()),
-                      provider: runtimeProvider,
-                      providerInstanceId: boundInstanceId,
-                      threadId: input.threadId,
-                      turnId,
-                      itemId: item.id,
-                      payload: { streamKind: "assistant_text", delta },
-                    });
-                  }
+                  yield* publishTextContent(event);
                   return;
                 }
                 case "TEXT_MESSAGE_END": {
@@ -941,7 +957,57 @@ export function makeCompadreAdapter(options: CompadreAdapterOptions) {
               }
             });
 
-          yield* Stream.runForEach(transport(transportInput), handleEvent).pipe(
+          const flushPendingText = () => {
+            const pending = pendingText;
+            pendingText = undefined;
+            return pending === undefined
+              ? Effect.void
+              : publishTextContent({
+                  ...pending.event,
+                  delta: pending.fragments.join(""),
+                });
+          };
+
+          const handleStreamEvent = (event: CompadreStreamEvent) =>
+            Effect.gen(function* () {
+              if (event.type !== "TEXT_MESSAGE_CONTENT") {
+                yield* flushPendingText();
+                yield* handleEvent(event);
+                return;
+              }
+
+              const delta = stringField(event, "delta");
+              if (!delta) return;
+              const sourceId = stringField(event, "messageId") ?? `assistant-${runId}`;
+              if (pendingText !== undefined && pendingText.sourceId !== sourceId) {
+                yield* flushPendingText();
+              }
+              if (delta.length >= HOSTED_TEXT_COALESCE_MAX_CHARS) {
+                yield* flushPendingText();
+                yield* handleEvent(event);
+                return;
+              }
+              if (
+                pendingText !== undefined &&
+                pendingText.chars + delta.length > HOSTED_TEXT_COALESCE_MAX_CHARS
+              ) {
+                yield* flushPendingText();
+              }
+              pendingText ??= {
+                sourceId,
+                event,
+                fragments: [],
+                chars: 0,
+              };
+              pendingText.fragments.push(delta);
+              pendingText.chars += delta.length;
+              if (pendingText.fragments.length >= HOSTED_TEXT_COALESCE_MAX_FRAGMENTS) {
+                yield* flushPendingText();
+              }
+            });
+
+          yield* Stream.runForEach(transport(transportInput), handleStreamEvent).pipe(
+            Effect.ensuring(flushPendingText().pipe(Effect.ignore)),
             Effect.flatMap(() =>
               terminal
                 ? Effect.void

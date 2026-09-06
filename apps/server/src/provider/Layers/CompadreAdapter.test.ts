@@ -164,6 +164,93 @@ it.layer(Layer.merge(NodeServices.layer, FetchHttpClient.layer))("CompadreAdapte
     ),
   );
 
+  it.effect("coalesces a large hosted text stream before publishing runtime events", () =>
+    Effect.gen(function* () {
+      const threadId = ThreadId.make("large-hosted-text-stream");
+      const completed = yield* Deferred.make<void>();
+      const events: ProviderRuntimeEvent[] = [];
+      const adapter = yield* makeCompadreAdapter({
+        endpoint: "http://compadre.test/hosted/t3/chat",
+        instanceId: ProviderInstanceId.make("codex"),
+        runtimeProvider: ProviderDriverKind.make("codex"),
+        provider: "codex",
+        transport: () =>
+          Stream.fromIterable(
+            (function* () {
+              yield { type: "TEXT_MESSAGE_START", messageId: "assistant-1" };
+              for (let index = 0; index < 60_000; index += 1) {
+                yield {
+                  type: "TEXT_MESSAGE_CONTENT",
+                  messageId: "assistant-1",
+                  delta: "a",
+                };
+              }
+              yield {
+                type: "TOOL_CALL_START",
+                toolCallId: "tool-1",
+                toolName: "Bash",
+              };
+              yield { type: "TOOL_CALL_RESULT", toolCallId: "tool-1" };
+              for (let index = 0; index < 40_000; index += 1) {
+                yield {
+                  type: "TEXT_MESSAGE_CONTENT",
+                  messageId: "assistant-1",
+                  delta: "b",
+                };
+              }
+              yield { type: "TEXT_MESSAGE_END", messageId: "assistant-1" };
+              yield { type: "RUN_FINISHED" };
+            })(),
+          ),
+      });
+      const eventsFiber = yield* Stream.runForEach(adapter.streamEvents, (event) =>
+        Effect.sync(() => events.push(event)).pipe(
+          Effect.andThen(
+            event.type === "turn.completed" ? Deferred.succeed(completed, undefined) : Effect.void,
+          ),
+        ),
+      ).pipe(Effect.forkChild);
+      yield* Effect.yieldNow;
+
+      yield* adapter.startSession({
+        threadId,
+        cwd: process.cwd(),
+        runtimeMode: "full-access",
+      });
+      yield* adapter.sendTurn({ threadId, input: "produce a large response" });
+      yield* Deferred.await(completed);
+      yield* Fiber.interrupt(eventsFiber);
+
+      const textEvents = events.filter((event) => event.type === "content.delta");
+      assert.isAtMost(textEvents.length, 1_600);
+      assert.equal(
+        textEvents.map((event) => event.payload.delta).join(""),
+        `${"a".repeat(60_000)}${"b".repeat(40_000)}`,
+      );
+      const toolStartIndex = events.findIndex(
+        (event) => event.type === "item.started" && event.payload.itemType === "dynamic_tool_call",
+      );
+      assert.isAbove(
+        toolStartIndex,
+        events.findIndex((event) => event === textEvents[0]),
+      );
+      assert.isBelow(
+        toolStartIndex,
+        events.findIndex((event) => event === textEvents[textEvents.length - 1]),
+      );
+      const lastTextIndex = events.findIndex(
+        (event) => event === textEvents[textEvents.length - 1],
+      );
+      const assistantCompletedIndex = events.findIndex(
+        (event) =>
+          event.type === "item.completed" && event.payload.itemType === "assistant_message",
+      );
+      const turnCompletedIndex = events.findIndex((event) => event.type === "turn.completed");
+      assert.isAbove(assistantCompletedIndex, lastTextIndex);
+      assert.isAbove(turnCompletedIndex, assistantCompletedIndex);
+    }),
+  );
+
   it.effect("presents a remote worker as the native provider and forwards its model", () =>
     Effect.gen(function* () {
       const threadId = ThreadId.make("remote-codex-thread");
