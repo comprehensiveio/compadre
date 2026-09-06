@@ -37,6 +37,8 @@ const TerminalSessionInput = Schema.Struct({
 export type TerminalSessionInput = Schema.Codec.Encoded<typeof TerminalSessionInput>;
 
 export const TerminalOpenInput = Schema.Struct({
+  /** Only an explicit Start terminal action may set this; subscriptions never can. */
+  startWorker: Schema.optional(Schema.Boolean),
   ...TerminalSessionInput.fields,
   cwd: TrimmedNonEmptyStringSchema,
   worktreePath: Schema.optional(Schema.NullOr(TrimmedNonEmptyStringSchema)),
@@ -341,7 +343,13 @@ export class TerminalResizeError extends Schema.TaggedErrorClass<TerminalResizeE
   }
 }
 
+export class TerminalRemoteError extends Schema.TaggedErrorClass<TerminalRemoteError>()(
+  "TerminalRemoteError",
+  { message: Schema.String },
+) {}
+
 export const TerminalError = Schema.Union([
+  TerminalRemoteError,
   TerminalCwdError,
   TerminalHistoryError,
   TerminalSessionLookupError,

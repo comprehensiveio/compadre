@@ -132,3 +132,12 @@ This machine also accesses Tolt infrastructure. Similar names, credentials, or
 patterns are not evidence that a resource belongs to Comprehensive. Resolve
 the account/workspace and target before mutating. Never inspect or change Tolt
 resources as part of Compadre work.
+
+## Live workspace access
+
+The worker-terminal implementation is locally verified, not yet deployed.
+For canonical worker access, use `T3Gateway.attachWorker` (never wakes) or
+`T3Gateway.ensureWorkerRunning` (explicit actions only). Provider dispatch and
+preview activation share its locked lifecycle implementation. Terminal adapters
+must not provision/restore independently. See
+`docs/internals/hosted-worker-terminals.md` for relay ownership and save behavior.

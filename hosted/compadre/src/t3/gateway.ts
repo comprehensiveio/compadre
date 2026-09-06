@@ -38,6 +38,13 @@ import {
 import { appendSetupSteering } from "./run-control.js";
 
 export interface T3CommandClient {
+  createThread?(input: {
+    threadId?: string;
+    projectId: string;
+    title: string;
+    modelSelection: T3ModelSelection;
+  }): Promise<string>;
+  createTerminalRpc?(): import("./terminal-rpc.js").WorkerTerminalRpc;
   snapshot?(signal?: AbortSignal): Promise<T3OrchestrationSnapshot>;
   readonly baseUrl: string;
   startNewThread(input: {
@@ -390,7 +397,70 @@ export class T3Gateway {
     );
   }
 
-  private async connectForTurn(initialBinding: T3ThreadBinding): Promise<{
+  /** Attach-only access cannot restore, provision, or change worker generation. */
+  async attachWorker(canonicalThreadId: string) {
+    const binding = await this.bindings.get(canonicalThreadId);
+    if (!binding) return null;
+    if (binding.workerState === "suspended")
+      throw new T3EnvironmentUnavailableError(binding.sandboxId);
+    return { binding, environment: await this.environments.reconnect(binding) };
+  }
+
+  /** Explicit actions share the same lock and restore implementation as agent turns. */
+  async ensureWorkerRunning(
+    canonicalThreadId: string,
+    creation?: { title: string; modelSelection: T3ModelSelection },
+  ) {
+    const connected = await this.locks.withLock(this.lockKey(canonicalThreadId), async (signal) => {
+      signal.throwIfAborted();
+      const binding = await this.bindings.get(canonicalThreadId);
+      if (binding) return this.ensureWorkerRunningUnlocked(binding);
+      if (!creation) return null;
+      return this.provisionWorkerUnlocked(
+        { canonicalThreadId, ...creation },
+        async (environment, threadId) => {
+          if (!environment.client.createThread)
+            throw new Error("Worker does not support shell-only workspaces");
+          await environment.client.createThread({
+            threadId,
+            projectId: environment.projectId,
+            ...creation,
+          });
+        },
+        "ready",
+      );
+    });
+    if (connected) await this.bindings.ensureIndexed(canonicalThreadId);
+    return connected;
+  }
+
+  /** Save terminal edits on explicit shell close without creating/restoring a worker. */
+  async checkpointWorkspace(canonicalThreadId: string) {
+    if (!this.environments.checkpoint) return;
+    await this.locks.withLock(this.lockKey(canonicalThreadId), async (signal) => {
+      signal.throwIfAborted();
+      const binding = await this.bindings.get(canonicalThreadId);
+      // An active turn's completion owns its checkpoint.
+      if (!binding || binding.activeRunId || binding.status === "working") return;
+      try {
+        const environment = await this.environments.reconnect(binding);
+        const snapshot = await this.environments.checkpoint!(binding, environment);
+        await this.bindings.bindRecord({
+          ...binding,
+          workerSnapshotId: snapshot.snapshotId,
+          updatedAt: this.now().toISOString(),
+        });
+        this.recordWorkerTransition("checkpoint.completed", binding, { reason: "terminal.close" });
+      } catch (error) {
+        this.recordWorkerTransition("checkpoint.failed", binding, {
+          reason: "terminal.close",
+          errorName: error instanceof Error ? error.name : typeof error,
+        });
+      }
+    });
+  }
+
+  private async ensureWorkerRunningUnlocked(initialBinding: T3ThreadBinding): Promise<{
     binding: T3ThreadBinding;
     environment: T3EnvironmentConnection;
   }> {
@@ -639,7 +709,7 @@ export class T3Gateway {
       }
       let connected;
       try {
-        connected = await this.connectForTurn(existing);
+        connected = await this.ensureWorkerRunningUnlocked(existing);
       } catch (error) {
         if (
           !(error instanceof T3EnvironmentUnavailableError) ||
@@ -711,6 +781,50 @@ export class T3Gateway {
     },
     replacing?: T3ThreadBinding,
   ): Promise<T3GatewayTurn> {
+    const connected = await this.provisionWorkerUnlocked(
+      input,
+      async (environment, t3ThreadId) => {
+        await this.prepareCodexAuth(
+          environment,
+          {
+            canonicalThreadId: input.canonicalThreadId,
+            providerInstanceId: input.modelSelection.instanceId,
+            t3ThreadId,
+          },
+          input.runId,
+        );
+        const initialSteering = (await input.loadInitialSteering?.()) ?? [];
+        return environment.client.startNewThread({
+          threadId: t3ThreadId,
+          projectId: environment.projectId,
+          title: input.title,
+          text: appendSetupSteering(
+            input.text,
+            initialSteering.map((text) => ({ text })),
+          ),
+          displayText: input.displayText,
+          inputFiles: input.inputFiles,
+          modelSelection: input.modelSelection,
+          signal: input.signal,
+        });
+      },
+      "working",
+      replacing,
+    );
+    return { binding: connected.binding, dispatch: connected.result };
+  }
+
+  private async provisionWorkerUnlocked<A>(
+    input: {
+      canonicalThreadId: string;
+      title: string;
+      modelSelection: T3ModelSelection;
+      blockedSlackDestination?: { channelId: string; threadTs: string };
+    },
+    initialize: (environment: T3EnvironmentConnection, nativeThreadId: string) => Promise<A>,
+    status: "ready" | "working",
+    replacing?: T3ThreadBinding,
+  ) {
     const providerInstanceId = input.modelSelection.instanceId;
     const environment = await this.environments.provision({
       canonicalThreadId: input.canonicalThreadId,
@@ -719,29 +833,7 @@ export class T3Gateway {
     });
     try {
       const t3ThreadId = this.idFactory();
-      await this.prepareCodexAuth(
-        environment,
-        {
-          canonicalThreadId: input.canonicalThreadId,
-          providerInstanceId,
-          t3ThreadId,
-        },
-        input.runId,
-      );
-      const initialSteering = await input.loadInitialSteering?.() ?? [];
-      const dispatch = await environment.client.startNewThread({
-        threadId: t3ThreadId,
-        projectId: environment.projectId,
-        title: input.title,
-        text: appendSetupSteering(
-          input.text,
-          initialSteering.map((text) => ({ text })),
-        ),
-        displayText: input.displayText,
-        inputFiles: input.inputFiles,
-        modelSelection: input.modelSelection,
-        signal: input.signal,
-      });
+      const result = await initialize(environment, t3ThreadId);
       const timestamp = this.now().toISOString();
       const binding: T3ThreadBinding = {
         canonicalThreadId: input.canonicalThreadId,
@@ -757,7 +849,7 @@ export class T3Gateway {
         modelSelection: input.modelSelection,
         blockedSlackDestination: input.blockedSlackDestination,
         title: replacing?.title ?? input.title,
-        status: "working",
+        status,
         createdAt: replacing?.createdAt ?? timestamp,
         updatedAt: timestamp,
       };
@@ -767,7 +859,7 @@ export class T3Gateway {
         replacing ? "provision.replaced" : "provision.completed",
         binding,
       );
-      return { binding, dispatch };
+      return { binding, environment, result };
     } catch (error) {
       await this.environments.discard?.(environment).catch(() => undefined);
       throw error;
@@ -1151,7 +1243,7 @@ export class T3Gateway {
         const binding = await this.bindings.get(input.canonicalThreadId);
         if (!binding) return null;
         await input.onPhase?.("restoring");
-        const connected = await this.connectForTurn(binding);
+        const connected = await this.ensureWorkerRunningUnlocked(binding);
         const sandbox = connected.environment.sandbox;
         if (!sandbox) {
           throw new Error(

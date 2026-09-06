@@ -1,3 +1,4 @@
+import { makeCompadreTerminal } from "./terminal/CompadreTerminal.ts";
 import { makeCompadreReview } from "./review/CompadreReview.ts";
 import * as Cause from "effect/Cause";
 import * as Crypto from "effect/Crypto";
@@ -472,7 +473,9 @@ const makeWsRpcLayer = (
       const review = yield* ReviewService.ReviewService;
       const vcsProvisioning = yield* VcsProvisioningService.VcsProvisioningService;
       const vcsStatusBroadcaster = yield* VcsStatusBroadcaster.VcsStatusBroadcaster;
-      const terminalManager = yield* TerminalManager.TerminalManager;
+      const localTerminalManager = yield* TerminalManager.TerminalManager;
+      const hostedTerminal = makeCompadreTerminal(projectionSnapshotQuery);
+      const terminalManager = hostedTerminal ?? localTerminalManager;
       const previewManager = yield* PreviewManager.PreviewManager;
       const portDiscovery = yield* PortScanner.PortDiscovery;
       const providerRegistry = yield* ProviderRegistry.ProviderRegistry;
@@ -1153,6 +1156,7 @@ const makeWsRpcLayer = (
             capabilities: {
               ...environment.capabilities,
               workspaceReviewArtifacts: hostedReview !== undefined,
+              workerTerminals: hostedTerminal !== undefined,
             },
           },
           auth,
