@@ -1,6 +1,5 @@
 import { expect } from "vite-plus/test";
 import { it } from "@effect/vitest";
-import * as Fiber from "effect/Fiber";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import { ProjectId, ThreadId, type TerminalAttachStreamEvent } from "@t3tools/contracts";
@@ -41,7 +40,7 @@ it.effect(
       const service = makeCompadreTerminal(projection, env, async (_url, init) => {
         requests.push(JSON.parse(String(init?.body)));
         return Response.json(
-          { error: "Workspace is stopped. Select Start terminal to start it." },
+          { error: "Workspace is stopped. Select Start workspace to start it." },
           { status: 409 },
         );
       })!;
@@ -58,7 +57,7 @@ it.effect(
       );
       expect(yield* Effect.promise(() => received)).toMatchObject({
         type: "error",
-        message: expect.stringContaining("Start terminal"),
+        message: expect.stringContaining("Start workspace"),
       });
       expect(requests).toEqual([
         { operation: "attach", input: { threadId: "canonical", terminalId: "term-1" } },
@@ -150,37 +149,22 @@ it.effect("forwards startup intent only on explicit open and rejects unknown cen
   }),
 );
 
-it.effect("serializes input to one terminal across separate HTTP requests", () =>
+it.effect("unknown threads cannot open an input connection", () =>
   Effect.gen(function* () {
-    const writes: string[] = [];
-    let release!: () => void;
-    const firstFinished = new Promise<void>((resolve) => {
-      release = resolve;
-    });
-    let started!: () => void;
-    const firstStarted = new Promise<void>((resolve) => {
-      started = resolve;
-    });
-    const service = makeCompadreTerminal(projection, env, async (_url, init) => {
-      const body = JSON.parse(String(init?.body));
-      writes.push(body.input.data);
-      if (body.input.data === "a") {
-        started();
-        await firstFinished;
-      }
-      return new Response("");
-    })!;
-    const a = yield* service
-      .write({ threadId: "canonical", terminalId: "term-1", data: "a" })
-      .pipe(Effect.forkChild);
-    const b = yield* service
-      .write({ threadId: "canonical", terminalId: "term-1", data: "b" })
-      .pipe(Effect.forkChild);
-    yield* Effect.promise(() => firstStarted);
-    expect(writes).toEqual(["a"]);
-    release();
-    yield* Fiber.join(a);
-    yield* Fiber.join(b);
-    expect(writes).toEqual(["a", "b"]);
+    let sockets = 0;
+    const service = makeCompadreTerminal(
+      { getThreadCheckpointContext: () => Effect.succeed(Option.none()) },
+      env,
+      undefined,
+      () => {
+        sockets++;
+        throw new Error("must not connect");
+      },
+    )!;
+    const error = yield* service
+      .write({ threadId: "missing", terminalId: "term-1", data: "a" })
+      .pipe(Effect.flip);
+    expect(error.message).toBe("Thread is unavailable.");
+    expect(sockets).toBe(0);
   }),
 );

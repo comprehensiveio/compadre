@@ -85,7 +85,7 @@ export class WorkerTerminalRpc {
     clearTimeout(this.idle);
     clearInterval(this.heartbeat);
     for (const entry of this.pending.values())
-      entry.finish(new Error("Worker terminal disconnected. Reconnect to continue."));
+      entry.finish(new Error("Worker terminal disconnected. Reopen the terminal to connect again."));
     this.pending.clear();
     this.socket.terminate();
   }
@@ -112,7 +112,7 @@ export class WorkerTerminalRpc {
         if (value === undefined) return;
         bytes += Buffer.byteLength(JSON.stringify(value));
         if (bytes > 2 * 1024 * 1024) {
-          finish(new Error("Terminal reader is too slow. Reconnect to continue."));
+          finish(new Error("Terminal reader is too slow. Reopen the terminal to connect again."));
           return;
         }
         queue.push(value);

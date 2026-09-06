@@ -22,11 +22,12 @@ worker lock. Concurrent starts must reuse the published binding/generation.
 Only these gateway lifecycle helpers may introduce a canonical worker generation;
 feature adapters must not implement their own restore/provision policy.
 
-`terminal.open` has an optional `startWorker` flag. Only the Start terminal button
+`terminal.open` has an optional `startWorker` flag. Only the Start workspace button
 sets it. Attach, input, resize, clear, restart, close, retries, metadata
 subscriptions and browser reloads cannot set startup intent. The controller's
 operation-specific schema drops extraneous flags, so forwarding one on attach
-cannot wake a worker. Reconnect retries attachment only.
+cannot wake a worker. Opening the panel automatically attaches to an existing
+worker; the UI exposes only Start workspace when attachment is unavailable.
 
 Saved conversations and diffs do not use either worker acquisition operation.
 
@@ -42,8 +43,15 @@ Worker credentials never reach the browser.
 The controller multiplexes terminal operations over an authenticated worker T3
 WebSocket using its existing Effect JSON RPC protocol. Output acknowledgments,
 bounded buffers, request cancellation and idle socket cleanup keep the relay
-bounded. The central adapter serializes input per terminal to preserve typing
-order across HTTP requests. Socket failure never automatically restores a worker.
+bounded. Input uses a separate persistent WebSocket from central T3 to the
+controller at `/hosted/t3/terminal/input`. Its first frame authenticates the
+service key and binds a previously validated canonical thread/terminal. It can
+only attach; it cannot start a workspace. Keystrokes are sent immediately without
+waiting for earlier acknowledgments. The controller batches queued input behind
+an in-flight worker write, preserving order without one round trip per character.
+The relay bounds queues, closes idle input sockets, and never replays uncertain
+input after a disconnect. Socket failure never automatically restores a worker.
+The original HTTP write operation remains available for older central servers.
 
 Disconnecting the browser interrupts only the output subscription. The worker's
 terminal manager continues owning the PTY. A later attach gets its retained
@@ -60,7 +68,7 @@ terminal edits alone do not publish a new diff manifest.
 
 ## Clients and verification
 
-Web and desktop share the Start terminal/Reconnect UI, including terminal panel,
+Web and desktop share automatic attachment and the Start workspace UI, including terminal panel,
 drawer, split panes and keyboard entrypoints. Existing mobile terminal clients
 can attach to running workers through the same contracts; they do not yet expose
 the explicit worker-start button. Local and other remote T3 environments retain

@@ -1,4 +1,5 @@
-import { createT3TerminalRoutes } from "./routes/t3-terminal.js";
+import { installTerminalInput } from "./t3/terminal-input.js";
+import { createT3TerminalRoutes, getConfiguredTerminalService } from "./routes/t3-terminal.js";
 // Ensure nvm-managed Node binaries are available to coding harness processes.
 if (!process.env.PATH?.includes(process.execPath.replace(/\/node$/, ""))) {
   const nodeDir = process.execPath.replace(/\/node$/, "");
@@ -290,10 +291,13 @@ async function start() {
     }
   });
 
+  const closeTerminalInput = installTerminalInput(server, getConfiguredTerminalService);
+
   let shuttingDown = false;
   const shutdown = (signal: NodeJS.Signals) => {
     if (shuttingDown) return;
     shuttingDown = true;
+    closeTerminalInput();
     console.log(`[shutdown] ${signal} received; draining in-flight requests`);
     const configuredTimeout = Number(
       process.env.COMPADRE_SHUTDOWN_TIMEOUT_MS ?? "295000",

@@ -3,9 +3,9 @@
 In a hosted Compadre thread, the terminal opens a shell in that thread's worker
 workspace. It shares files with the agent.
 
-Opening the thread or terminal panel does not start a stopped workspace. Select
-**Start terminal** to start or restore it. **Reconnect** only tries to attach to
-an already-running workspace.
+Opening the terminal automatically connects to an already-running workspace.
+If the workspace is stopped, select **Start workspace** to start or restore it.
+Opening the thread or terminal panel never starts a stopped workspace.
 
 Refreshing the page or hiding the panel leaves the shell running. Closing a
 terminal tab ends that shell and attempts to save the worker filesystem. If an

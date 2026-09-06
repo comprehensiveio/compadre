@@ -1004,18 +1004,11 @@ export function TerminalViewport({
         <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-[var(--terminal-background)] p-5 text-center text-sm">
           <p>{startWorkerError ?? terminalError}</p>
           <p className="text-muted-foreground">
-            Starting a terminal may start the workspace. Opening this panel does not.
+            Opening this panel connects automatically when the workspace is running.
           </p>
           <div className="flex gap-2">
-            <Button
-              variant="outline"
-              disabled={startingWorker}
-              onClick={() => terminalSession.reconnect()}
-            >
-              Reconnect
-            </Button>
             <Button disabled={startingWorker} onClick={() => void startWorker()}>
-              {startingWorker ? "Starting terminal…" : "Start terminal"}
+              {startingWorker ? "Starting workspace…" : "Start workspace"}
             </Button>
           </div>
         </div>
