@@ -7,19 +7,25 @@ import {
 } from "../t3/terminal-service.js";
 import { getConfiguredT3Gateway } from "../t3/runtime.js";
 
+let configuredService: Promise<T3TerminalService | null> | undefined;
+export function getConfiguredTerminalService() {
+  return (configuredService ??= getConfiguredT3Gateway()
+    .then((gateway) => (gateway ? new T3TerminalService(gateway) : null))
+    .catch((error) => {
+      configuredService = undefined;
+      throw error;
+    }));
+}
+
 export function createT3TerminalRoutes(dependencies: { service?: T3TerminalService } = {}) {
   const routes = new Hono();
-  let service = dependencies.service;
   routes.post("/hosted/t3/terminal", async (c) => {
     const denied = requireCompadreApiKey(c);
     if (denied) return denied;
     const parsed = terminalRequestSchema.safeParse(await c.req.json().catch(() => null));
     if (!parsed.success) return c.json({ error: "Invalid terminal request" }, 400);
-    if (!service) {
-      const gateway = await getConfiguredT3Gateway();
-      if (!gateway) return c.json({ error: "Worker terminals are unavailable" }, 503);
-      service = new T3TerminalService(gateway);
-    }
+    const service = dependencies.service ?? (await getConfiguredTerminalService());
+    if (!service) return c.json({ error: "Worker terminals are unavailable" }, 503);
     try {
       const connection = await service.connect(parsed.data);
       const abort = new AbortController();
@@ -39,7 +45,9 @@ export function createT3TerminalRoutes(dependencies: { service?: T3TerminalServi
             } catch {
               controller.enqueue(
                 encoder.encode(
-                  JSON.stringify({ error: "Terminal disconnected. Reconnect to continue." }) + "\n",
+                  JSON.stringify({
+                    error: "Terminal disconnected. Reopen the terminal to connect again.",
+                  }) + "\n",
                 ),
               );
               controller.close();

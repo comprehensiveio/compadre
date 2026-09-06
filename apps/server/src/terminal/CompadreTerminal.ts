@@ -10,7 +10,7 @@ import {
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
-import * as Semaphore from "effect/Semaphore";
+import { CompadreTerminalInput, type TerminalInputSocket } from "./CompadreTerminalInput.ts";
 import type { ProjectionSnapshotQueryShape } from "../orchestration/Services/ProjectionSnapshotQuery.ts";
 import type { TerminalManager } from "./Manager.ts";
 
@@ -27,7 +27,7 @@ const remoteError = (error: unknown) =>
   new TerminalRemoteError({
     message: isRemoteError(error)
       ? error.message
-      : "Terminal connection interrupted. Reconnect to continue.",
+      : "Terminal connection interrupted. Reopen the terminal to connect again.",
   });
 
 /** Hosted terminals never fall back to a shell in the central server's filesystem. */
@@ -36,19 +36,45 @@ export function makeCompadreTerminal(
     Partial<Pick<ProjectionSnapshotQueryShape, "getThreadShellById">>,
   environment: NodeJS.ProcessEnv = process.env,
   fetcher: (input: string | URL | Request, init?: RequestInit) => Promise<Response> = fetch,
+  createInputSocket?: (url: URL) => TerminalInputSocket,
 ): TerminalManager["Service"] | undefined {
   const origin = environment.COMPADRE_NATIVE_T3_URL?.trim();
   if (!origin) return undefined;
   const url = new URL("/hosted/t3/terminal", origin);
-  const writeLocks = new Map<string, Semaphore.Semaphore>();
-  const writeLock = (threadId: string, terminalId: string) => {
-    const key = `${threadId}:${terminalId}`;
-    let lock = writeLocks.get(key);
-    if (!lock) {
-      lock = Semaphore.makeUnsafe(1);
-      writeLocks.set(key, lock);
+  const inputUrl = new URL("/hosted/t3/terminal/input", origin);
+  inputUrl.protocol = inputUrl.protocol === "https:" ? "wss:" : "ws:";
+  const inputConnections = new Map<string, Promise<CompadreTerminalInput>>();
+  const inputConnection = async (target: {
+    threadId: string;
+    terminalId: string;
+  }): Promise<CompadreTerminalInput> => {
+    const key = `${target.threadId}:${target.terminalId}`;
+    let pending = inputConnections.get(key);
+    if (!pending) {
+      pending = (async () => {
+        const context = await Effect.runPromise(
+          projection.getThreadCheckpointContext(ThreadId.make(target.threadId)),
+        );
+        if (Option.isNone(context))
+          throw new TerminalRemoteError({ message: "Thread is unavailable." });
+        return new CompadreTerminalInput(
+          inputUrl,
+          environment.COMPADRE_API_KEY ?? "",
+          target,
+          createInputSocket,
+        );
+      })();
+      inputConnections.set(key, pending);
     }
-    return lock;
+    try {
+      const connection = await pending;
+      if (!connection.isClosed) return connection;
+      if (inputConnections.get(key) === pending) inputConnections.delete(key);
+      return inputConnection(target);
+    } catch (error) {
+      if (inputConnections.get(key) === pending) inputConnections.delete(key);
+      throw error;
+    }
   };
   const metadata = new Map<string, TerminalSummary>();
   const eventListeners = new Set<(event: TerminalEvent) => Effect.Effect<void>>();
@@ -186,10 +212,10 @@ export function makeCompadreTerminal(
         ),
       ),
     write: (input) =>
-      command("write", input).pipe(
-        Effect.asVoid,
-        writeLock(input.threadId, input.terminalId).withPermit,
-      ),
+      Effect.tryPromise({
+        try: async () => (await inputConnection(input)).write(input.data),
+        catch: remoteError,
+      }),
     resize: (input) => command("resize", input).pipe(Effect.asVoid),
     clear: (input) => command("clear", input).pipe(Effect.asVoid),
     close: (input) => command("close", input).pipe(Effect.asVoid),

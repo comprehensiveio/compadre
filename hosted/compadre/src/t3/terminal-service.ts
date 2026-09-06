@@ -84,14 +84,14 @@ export class T3TerminalService {
       if (error instanceof T3EnvironmentUnavailableError)
         throw new TerminalAccessError(
           409,
-          "Workspace is stopped. Select Start terminal to start it.",
+          "Workspace is stopped. Select Start workspace to start it.",
         );
       throw new TerminalAccessError(503, "Could not connect to the workspace. Try again.");
     }
     if (!worker)
       throw new TerminalAccessError(
         404,
-        "Send the first message in this thread to create its workspace.",
+        "Workspace is not running. Select Start workspace to start it.",
       );
     // Concurrent pane opens share one live connection after the await above.
     const current = this.connections.get(threadId);

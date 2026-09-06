@@ -39,7 +39,7 @@ test("subscriptions and every ordinary terminal operation cannot restore a stopp
       operation: "open",
       input: { threadId: "canonical", terminalId: "term-1", startWorker: true },
     }),
-    /first message/,
+    /Start workspace/,
   );
   assert.equal(started, 1);
 });
