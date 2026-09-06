@@ -107,3 +107,9 @@ runtime persistence selection dynamic and server composition hooks additive.
 Hosted diff reads use [durable workspace reviews](hosted-workspace-reviews.md).
 The controller publishes immutable checkpoint patches and file context; the
 central server's `CompadreReview` adapter reads them without accessing Modal.
+
+The hosted terminal direct transport adds `terminal.connection` to the shared
+contract, `terminal/DirectTerminal.ts` to the worker HTTP routes and RPC handler,
+and `state/directTerminal.ts` to client-runtime terminal atoms. The controller
+terminal service brokers terminal-bound grants through the existing worker
+lifecycle interface. See [Hosted worker terminals](hosted-worker-terminals.md).

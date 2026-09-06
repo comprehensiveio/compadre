@@ -96,6 +96,7 @@ import * as ServerSelfUpdate from "./cloud/selfUpdate.ts";
 import * as ServerLifecycleEvents from "./serverLifecycleEvents.ts";
 import * as ServerRuntimeStartup from "./serverRuntimeStartup.ts";
 import * as ServerSettings from "./serverSettings.ts";
+import { terminalTickets } from "./terminal/DirectTerminal.ts";
 import * as TerminalManager from "./terminal/Manager.ts";
 import * as PreviewAutomationBroker from "./mcp/PreviewAutomationBroker.ts";
 import * as PreviewManager from "./preview/Manager.ts";
@@ -1157,6 +1158,8 @@ const makeWsRpcLayer = (
               ...environment.capabilities,
               workspaceReviewArtifacts: hostedReview !== undefined,
               workerTerminals: hostedTerminal !== undefined,
+              directTerminals:
+                hostedTerminal !== undefined || process.env.COMPADRE_DIRECT_TERMINAL_WORKER === "1",
             },
           },
           auth,
@@ -2238,6 +2241,14 @@ const makeWsRpcLayer = (
             (hostedReview ?? review).getDiffFileContents(input),
             { "rpc.aggregate": "review" },
           ),
+        [WS_METHODS.terminalConnection]: (input) =>
+          hostedTerminal
+            ? hostedTerminal.connection(input)
+            : Effect.sync(() =>
+                process.env.COMPADRE_DIRECT_TERMINAL_WORKER === "1"
+                  ? terminalTickets.issue(input)
+                  : null,
+              ).pipe(Effect.catchDefect(() => Effect.succeed(null))),
         [WS_METHODS.terminalOpen]: (input) =>
           observeRpcEffect(WS_METHODS.terminalOpen, terminalManager.open(input), {
             "rpc.aggregate": "terminal",

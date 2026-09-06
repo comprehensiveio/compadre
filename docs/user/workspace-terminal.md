@@ -14,3 +14,8 @@ stopped cannot resume its old shell process; restoration starts a new shell.
 
 Manual terminal edits appear in saved diffs after the next agent turn. The saved
 diff timestamp tells you when that view was captured.
+
+When supported, the terminal connects directly to the workspace for responsive
+typing. If that connection is unavailable, it uses the server relay automatically.
+Neither reconnecting nor switching transports starts a stopped workspace. Input
+whose delivery is uncertain after a disconnect is not sent again automatically.

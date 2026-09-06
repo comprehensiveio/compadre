@@ -33,25 +33,39 @@ Saved conversations and diffs do not use either worker acquisition operation.
 
 ## Transport and ownership
 
-Central T3 authenticates the client through its existing terminal RPC scopes,
-checks that the canonical thread exists, and forwards a bounded NDJSON response
-from the authenticated `/hosted/t3/terminal` controller route. The controller
-maps the canonical thread to its native thread and derives CWD from the worker's
-project/worktree. Central/client CWD and environment values are not forwarded.
-Worker credentials never reach the browser.
+Central T3 authenticates terminal connection requests through the existing terminal
+RPC scope and validates the canonical thread. The controller uses `attachWorker`
+to resolve the worker and its trusted directory. Supported workers issue a
+30-second, single-use grant bound to that native thread, terminal, directory and
+size. The browser receives the worker WebSocket URL and this grant; controller
+and worker service credentials stay on the servers. Grants live only in memory,
+are not persisted in thread state, and become invalid when the worker process
+restarts. The direct socket is limited to one hour and then reconnects through
+the ordinary attach path.
 
-The controller multiplexes terminal operations over an authenticated worker T3
-WebSocket using its existing Effect JSON RPC protocol. Output acknowledgments,
-bounded buffers, request cancellation and idle socket cleanup keep the relay
-bounded. Input uses a separate persistent WebSocket from central T3 to the
-controller at `/hosted/t3/terminal/input`. Its first frame authenticates the
-service key and binds a previously validated canonical thread/terminal. It can
-only attach; it cannot start a workspace. Keystrokes are sent immediately without
-waiting for earlier acknowledgments. The controller batches queued input behind
-an in-flight worker write, preserving order without one round trip per character.
-The relay bounds queues, closes idle input sockets, and never replays uncertain
-input after a disconnect. Socket failure never automatically restores a worker.
-The original HTTP write operation remains available for older central servers.
+Interactive input, resize and output use `/terminal/direct` on the worker via
+its Modal tunnel. The first WebSocket frame consumes the ticket. Subsequent
+frames cannot select another terminal, change the working directory, provision
+a worker, or call arbitrary RPCs. Output acknowledgments bound unconsumed data
+to 2 MiB; input queues and message sizes are bounded. Input is pipelined in order
+without waiting for each earlier acknowledgment. Socket failure rejects pending
+input without replaying it.
+
+The shared client-runtime terminal adapter selects direct transport when the
+central server advertises `directTerminals`. A failed connection, expired ticket,
+or older worker falls back to the existing authenticated relay and takes a fresh
+terminal snapshot. Fallback can only attach; it never supplies startup intent.
+Direct process-status events feed the client metadata projection, including the
+running-subprocess close warning. Web and desktop share this path; mobile uses
+the shared transport with its native WebSocket implementation.
+
+Open/start, clear, restart and explicit close still use the central controller
+path, preserving lifecycle serialization and checkpoint ownership. The relay
+continues to multiplex worker T3 JSON RPC, with HTTP NDJSON output and persistent
+WebSocket input. Older clients and workers remain compatible during rollout.
+New/restored workers start with `COMPADRE_DIRECT_TERMINAL_WORKER=1`; their pinned
+T3 package must include the direct endpoint. Already-running older workers keep
+the relay until they are naturally replaced, without a forced restart.
 
 Disconnecting the browser interrupts only the output subscription. The worker's
 terminal manager continues owning the PTY. A later attach gets its retained

@@ -18,7 +18,7 @@ test("subscriptions and every ordinary terminal operation cannot restore a stopp
       return null;
     },
   });
-  for (const operation of ["attach", "open", "write", "resize", "restart", "clear", "close"]) {
+  for (const operation of ["attach", "connection", "open", "write", "resize", "restart", "clear", "close"]) {
     const request = terminalRequestSchema.parse({
       operation,
       input: {
@@ -32,7 +32,7 @@ test("subscriptions and every ordinary terminal operation cannot restore a stopp
     });
     await assert.rejects(service.connect(request), /Workspace is stopped/);
   }
-  assert.equal(attached, 7);
+  assert.equal(attached, 8);
   assert.equal(started, 0);
   await assert.rejects(
     service.connect({
@@ -185,5 +185,32 @@ test("terminal routing uses the worker directory, shares connections, and checkp
   } finally {
     service.close();
     await new Promise<void>((resolve) => server.close(() => resolve()));
+  }
+});
+
+test("direct grants use the native terminal and trusted worker origin; old workers keep the relay", async () => {
+  const service = new T3TerminalService({
+    async attachWorker() { throw new Error("not needed after acquisition"); },
+    async ensureWorkerRunning() { throw new Error("must never wake"); },
+  });
+  for (const supported of [false, true]) {
+    const calls: Array<{ tag: string; payload: object }> = [];
+    const connection = {
+      nativeThreadId: "native", cwd: "/worker", sandboxId: "sandbox", baseUrl: "https://worker.example",
+      rpc: { async *request(tag: string, payload: object) {
+        calls.push({ tag, payload });
+        yield tag === "server.getConfig"
+          ? { environment: { capabilities: supported ? { directTerminals: true } : {} } }
+          : { url: "/terminal/direct", ticket: "one-time", expiresAt: "2026-09-06T12:00:00Z" };
+      } },
+    } as unknown as Parameters<typeof service.execute>[1];
+    const request = terminalRequestSchema.parse({ operation: "connection", input: { threadId: "canonical", terminalId: "bound", cwd: "/central", env: { SECRET: "no" }, startWorker: true } });
+    const values = [];
+    for await (const value of service.execute(request, connection, new AbortController().signal)) values.push(value);
+    assert.equal(calls.length, supported ? 2 : 1);
+    if (supported) {
+      assert.deepEqual(values, [{ url: "wss://worker.example/terminal/direct", ticket: "one-time", expiresAt: "2026-09-06T12:00:00Z" }]);
+      assert.deepEqual(calls[1]?.payload, { threadId: "native", terminalId: "bound", cwd: "/worker", worktreePath: null, startWorker: undefined, creation: undefined });
+    } else assert.deepEqual(values, [null]);
   }
 });
