@@ -2,8 +2,19 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   inputFileSchema,
+  inputFilesSchema,
   materializeInputFiles,
 } from "./input-files.js";
+
+test("accepts more than eight input files without a combined-size cap", () => {
+  const files = Array.from({ length: 12 }, (_, index) => ({
+    name: `file-${index}.txt`,
+    mimetype: "text/plain",
+    sizeBytes: 1,
+    dataBase64: "YQ==",
+  }));
+  assert.equal(inputFilesSchema.parse(files).length, 12);
+});
 
 test("materializes an authenticated browser image for Modal", () => {
   const file = inputFileSchema.parse({

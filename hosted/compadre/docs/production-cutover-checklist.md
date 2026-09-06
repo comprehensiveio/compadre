@@ -190,7 +190,7 @@ Canonical endpoints:
 - [x] Reconcile bot scopes and events with the checked-in manifest, including
   mentions, DMs, channel history, message writing, reactions, user lookup, and
   file access. The official app subscribes to `app_mention` and `message.im`.
-- [x] Grant and verify `files:read` for image inputs and `files:write` for
+- [x] Grant and verify `files:read` for file inputs and `files:write` for
   generated artifact delivery on the official app installation.
 - [x] Prove those file scopes plus conversation metadata scopes on the isolated
   Comprehensive app and reinstall it before production cutover.

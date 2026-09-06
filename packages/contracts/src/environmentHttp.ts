@@ -8,6 +8,7 @@ import * as HttpApiMiddleware from "effect/unstable/httpapi/HttpApiMiddleware";
 import * as HttpServerRespondable from "effect/unstable/http/HttpServerRespondable";
 import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
 
+import { AttachmentCreateUploadUrlInput, AttachmentCreateUploadUrlResult } from "./assets.ts";
 import {
   AuthAccessTokenResult,
   AuthBrowserSessionRequest,
@@ -519,6 +520,14 @@ export class EnvironmentOrchestrationHttpApi extends HttpApiGroup.make("orchestr
       payload: EnvironmentOrchestrationThreadSnapshotQuery,
       success: OrchestrationThreadDetailSnapshot,
       error: EnvironmentOrchestrationThreadSnapshotErrors,
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("createAttachmentUploadUrl", "/api/orchestration/attachments/upload-url", {
+      headers: OptionalBearerHeaders,
+      payload: AttachmentCreateUploadUrlInput,
+      success: AttachmentCreateUploadUrlResult,
+      error: EnvironmentScopedOperationErrors,
     }).middleware(EnvironmentAuthenticatedAuth),
   )
   .add(

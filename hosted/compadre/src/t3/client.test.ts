@@ -96,6 +96,63 @@ test("exchanges a one-time pairing credential for a scoped bot session", async (
   assert.equal(result.accessToken, "access-token");
 });
 
+test("uploads an arbitrary file through the authenticated central attachment route", async () => {
+  const requests: Request[] = [];
+  const client = new T3Client("https://t3.example", "access-token", {
+    fetch: async (input, init) => {
+      const request = new Request(input, init);
+      requests.push(request);
+      if (request.url.endsWith("/api/orchestration/attachments/upload-url")) {
+        return json({
+          attachmentId: "attachment-pdf",
+          relativeUrl: "/api/assets/attachments/upload/signed-token",
+          expiresAt: 1_800_000_000_000,
+        });
+      }
+      return new Response(null, { status: 204 });
+    },
+  });
+
+  const attachment = await client.uploadAttachment({
+    name: "report.pdf",
+    mimeType: "application/pdf",
+    bytes: new Uint8Array([37, 80, 68, 70]),
+  });
+
+  assert.deepEqual(attachment, {
+    type: "file",
+    id: "attachment-pdf",
+    name: "report.pdf",
+    mimeType: "application/pdf",
+    sizeBytes: 4,
+  });
+  assert.equal(requests.length, 2);
+  assert.equal(requests[0]?.headers.get("authorization"), "Bearer access-token");
+  assert.deepEqual(await requests[0]?.json(), {
+    type: "file",
+    name: "report.pdf",
+    mimeType: "application/pdf",
+    sizeBytes: 4,
+  });
+  assert.equal(requests[1]?.url, "https://t3.example/api/assets/attachments/upload/signed-token");
+  assert.equal(requests[1]?.headers.get("content-type"), "application/pdf");
+  assert.deepEqual(new Uint8Array(await requests[1]?.arrayBuffer()), new Uint8Array([37, 80, 68, 70]));
+});
+
+test("keeps text turns compatible while the central upload route is unavailable", async () => {
+  const client = new T3Client("https://t3.example", "access-token", {
+    fetch: async () => json({ error: "not found" }, 404),
+  });
+  assert.equal(
+    await client.uploadAttachment({
+      name: "report.pdf",
+      mimeType: "application/pdf",
+      bytes: new Uint8Array([1]),
+    }),
+    null,
+  );
+});
+
 test("creates a native T3 thread before dispatching its first HTTP turn", async () => {
   const requests: Request[] = [];
   const ids = ["thread-1", "create-command", "turn-command", "message-1"];

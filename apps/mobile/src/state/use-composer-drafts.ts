@@ -1,7 +1,6 @@
 import { useAtomValue } from "@effect/atom-react";
 import {
   ModelSelection as ModelSelectionSchema,
-  PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
   ProviderInteractionMode as ProviderInteractionModeSchema,
   RuntimeMode as RuntimeModeSchema,
   type EnvironmentId,
@@ -16,6 +15,7 @@ import { Atom } from "effect/unstable/reactivity";
 import { writeFileAtomically } from "../lib/atomic-file";
 import { DraftComposerImageAttachmentSchema } from "../lib/composer-image-schema";
 import type { DraftComposerImageAttachment } from "../lib/composerImages";
+import { MOBILE_COMPOSER_MAX_ATTACHMENTS } from "../lib/composerLimits";
 import { SerializedAsyncQueue } from "../lib/serialized-async-queue";
 import { appAtomRegistry } from "./atom-registry";
 
@@ -513,7 +513,7 @@ export function mergeComposerDraftContentState(
   });
   const attachments = [...existing.attachments, ...incomingAttachments].slice(
     0,
-    PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
+    MOBILE_COMPOSER_MAX_ATTACHMENTS,
   );
   const text = mergeComposerDraftText(existing.text, content.text);
   const importedShareIds = content.sourceShareId

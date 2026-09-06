@@ -9,6 +9,7 @@ import {
 import {
   T3Client,
   incompleteProviderStopReason,
+  type T3Attachment,
   type T3InputFile,
   type T3MessageAttribution,
   type T3ModelSelection,
@@ -20,6 +21,7 @@ export const CENTRAL_T3_TIMEOUT_MS = 20 * 60 * 1_000;
 const CENTRAL_T3_ABSOLUTE_TIMEOUT_MS = 115 * 60 * 1_000;
 const MODAL_LIFETIME_SAFETY_MS = 5 * 60 * 1_000;
 const MAX_PROVIDER_PROMPT_CHARS = 95_000;
+const MAX_FAILED_ATTACHMENT_NAMES = 10;
 const TRUNCATED_CONTEXT_NOTICE =
   "[Earlier Slack thread context truncated to fit the agent prompt.]";
 const SLACK_MESSAGE_PREFIX = "slack-entrypoint:";
@@ -53,6 +55,7 @@ export interface CentralT3ConversationClient {
   startTurn(
     input: Parameters<T3Client["startTurn"]>[0],
   ): Promise<T3TurnDispatch>;
+  uploadAttachment?: T3Client["uploadAttachment"];
   waitForTurnTerminal(
     input: Parameters<T3Client["waitForTurnTerminal"]>[0],
   ): Promise<T3ThreadSnapshot>;
@@ -98,6 +101,20 @@ export function prependConversationContext(
             -(contextBudget - TRUNCATED_CONTEXT_NOTICE.length - 1),
           )}`;
   return `${boundedContext}${separator}${prompt}`;
+}
+
+function appendAttachmentFailureNotice(
+  prompt: string,
+  names: ReadonlyArray<string>,
+): string {
+  if (names.length === 0) return prompt;
+  const visibleNames = names
+    .slice(0, MAX_FAILED_ATTACHMENT_NAMES)
+    .map((name) => JSON.stringify(name))
+    .join(", ");
+  const remaining = names.length - MAX_FAILED_ATTACHMENT_NAMES;
+  const suffix = remaining > 0 ? ` and ${remaining} more` : "";
+  return `${prompt}\n\n[Attachment warning: ${visibleNames}${suffix} could not be made available. Continue with the user's message and explicitly tell them that these attachments were unavailable.]`;
 }
 
 function record(value: unknown): Record<string, unknown> | undefined {
@@ -299,7 +316,7 @@ export async function runCentralT3Conversation(input: {
     : existing
       ? ""
       : (await input.loadInitialContext?.())?.trim() ?? "";
-  const providerPrompt = prependConversationContext(
+  let providerPrompt = prependConversationContext(
     promptContext,
     input.prompt,
   );
@@ -308,8 +325,42 @@ export async function runCentralT3Conversation(input: {
     : existing
       ? input.inputFiles
       : (await input.loadInitialInputFiles?.()) ?? input.inputFiles;
+  const attachments: T3Attachment[] = [];
+  const failedAttachmentNames: string[] = [];
+  if (input.client.uploadAttachment) {
+    const files = inputFiles ?? [];
+    for (const [index, file] of files.entries()) {
+      let uploaded: T3Attachment | null;
+      try {
+        uploaded = await input.client.uploadAttachment({
+          name: file.name,
+          mimeType: file.mimetype,
+          bytes: Uint8Array.from(Buffer.from(file.dataBase64, "base64")),
+          signal: input.signal,
+        });
+      } catch (error) {
+        if (input.signal?.aborted) throw error;
+        failedAttachmentNames.push(file.name);
+        continue;
+      }
+      // compadre-api and compadre-web deploy independently. A 404 means the
+      // central server is still on the prior version, so preserve the text turn.
+      if (!uploaded) {
+        failedAttachmentNames.push(...files.slice(index).map(({ name }) => name));
+        break;
+      }
+      attachments.push(uploaded);
+    }
+    providerPrompt = appendAttachmentFailureNotice(
+      providerPrompt,
+      failedAttachmentNames,
+    );
+  }
 
   const messageId = `${input.entrypoint === "api" ? API_MESSAGE_PREFIX : SLACK_MESSAGE_PREFIX}${idFactory()}`;
+  const attachmentInput = input.client.uploadAttachment
+    ? { attachments }
+    : { inputFiles };
   const dispatch = existing
     ? await input.client.startTurn({
         threadId: t3ThreadId,
@@ -317,7 +368,7 @@ export async function runCentralT3Conversation(input: {
         text: providerPrompt,
         displayText: input.displayText,
         attribution: input.attribution,
-        inputFiles,
+        ...attachmentInput,
         modelSelection,
         signal: input.signal,
       })
@@ -329,7 +380,7 @@ export async function runCentralT3Conversation(input: {
         text: providerPrompt,
         displayText: input.displayText,
         attribution: input.attribution,
-        inputFiles,
+        ...attachmentInput,
         modelSelection,
         signal: input.signal,
       });
