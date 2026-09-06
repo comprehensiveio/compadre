@@ -99,8 +99,9 @@ independent; no cross-schema joins are introduced.
 On every upstream SQLite migration, inspect and reproduce the applicable schema
 and data transformation in a new ordered central PostgreSQL migration. Update
 `SQLITE_SCHEMA_VERSION`, then run the schema/import parity test and shared
-repository contracts on both backends. Do not copy Tolty or upstream migrations
-without comparing Compadre’s attribution/participants and authentication fields.
+repository contracts on both backends. Do not copy migrations from another fork
+or upstream without comparing Compadre’s attribution/participants and
+authentication fields.
 The parity test intentionally fails when the SQLite migration tip changes. Keep
 runtime persistence selection dynamic and server composition hooks additive.
 

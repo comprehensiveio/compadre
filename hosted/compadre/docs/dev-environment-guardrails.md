@@ -5,8 +5,8 @@ work so they survive handoffs and context compaction.
 
 ## Safety and ownership
 
-- Toltagent is read-only prior art. Do not mutate any Toltagent repository,
-  deployment, cloud account, bucket, secret, Slack app, or other resource.
+- Other repositories and infrastructure are out of scope. Do not mutate any
+  unrelated deployment, cloud account, bucket, secret, Slack app, or resource.
 - Create and use only Comprehensive/Compadre resources. Verify the organization
   or account before every external mutation.
 - Keep the feature dark-launched and isolated on reversible branches and
@@ -22,13 +22,13 @@ work so they survive handoffs and context compaction.
 - Target a comfortably sub-10-minute cold start; a roughly 45-minute start is
   not useful.
 - Support the main TanStack Start application only. Ignore Temporal, PIE, and
-  auxiliary Toltagent services.
+  unrelated auxiliary services.
 - The agent can start the app, expose it through a stable per-thread Compadre
   preview hostname, validate it with agent-browser, and use an isolated database
   behind it.
-- Learn from Toltagent's current production flow, including its Modal microVM
-  and database choices where those fit Compadre's architecture. Do not assume
-  older Claude-tag development-environment relics in Comp are good prior art.
+- Use established Modal microVM and database patterns where they fit Compadre's
+  architecture. Do not assume older Claude-tag development-environment relics
+  in Comp are good prior art.
 
 ## Delivery sequence
 
@@ -56,7 +56,7 @@ work so they survive handoffs and context compaction.
   never receives AWS credentials or the controller signing secret, and the raw
   SQL dump is deleted immediately after successful anonymization.
 - Never use a direct production database connection, disable Hen anonymization,
-  select a different bucket or prefix, or substitute any Tolt resource.
+  select a different bucket or prefix, or substitute any unrelated resource.
 - The raw Modal preview is an internal routing target, never a user-facing URL.
   Browser traffic enters through a UUID-scoped Compadre hostname, requires the
   existing Slack-backed Compadre session, and is then proxied to the bound

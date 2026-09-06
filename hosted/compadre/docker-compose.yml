@@ -1,6 +1,6 @@
 # Local Temporal server for Compadre's durable native-T3 run orchestration.
-# Ports are offset from the defaults so this stack can run alongside the comp
-# repo's local Temporal (7233/8080) and toltagent's (7244/8244).
+# Ports are offset from the defaults so this stack can run alongside other local
+# Temporal stacks, including the comp repo's local instance (7233/8080).
 #
 #   docker compose up -d        # gRPC localhost:7243, UI http://localhost:8243
 #

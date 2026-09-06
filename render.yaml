@@ -46,7 +46,7 @@ services:
       - key: COMPADRE_MODAL_CPU_LIMIT
         value: "4"
       # Worker lifetime is the code default (24 h, src/t3/runtime.ts): the
-      # sandbox lives for the whole task like toltagent's, with a live
+      # sandbox lives for the whole task and its follow-ups, with a live
       # checkpoint after every terminal turn as the recovery point.
       # 16 GiB guaranteed memory: full-monorepo ci-checks wedged both the
       # 2 GiB and 8 GiB sandboxes so completely that even pkill could not
