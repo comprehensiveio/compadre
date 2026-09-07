@@ -21,7 +21,10 @@ export function watchCompadrePreviews(
   let disposed = false;
   let pending = false;
   let controller: AbortController | undefined;
+  let hiddenAbortController: AbortController | undefined;
+  let refreshAfterPending = false;
   let expiryTimer: number | undefined;
+  let latestSnapshot: CompadreReadyPreviews | undefined;
   const publish = (snapshot: CompadreReadyPreviews) => {
     window.clearTimeout(expiryTimer);
     const now = Date.now();
@@ -42,36 +45,54 @@ export function watchCompadrePreviews(
     }
   };
   const refresh = async () => {
-    if (document.hidden) {
-      window.clearTimeout(expiryTimer);
-      setPreviews(emptyPreviews);
-      controller?.abort();
+    if (document.hidden) return;
+    if (pending) {
+      refreshAfterPending = true;
       return;
     }
-    if (pending) return;
     pending = true;
-    controller = new AbortController();
+    const requestController = new AbortController();
+    controller = requestController;
     try {
       const response = await fetch("/api/compadre/previews/ready", {
         credentials: "same-origin",
         cache: "no-store",
-        signal: AbortSignal.any([controller.signal, AbortSignal.timeout(10_000)]),
+        signal: AbortSignal.any([requestController.signal, AbortSignal.timeout(10_000)]),
       });
       if (!response.ok) throw new Error("Preview readiness unavailable");
       const snapshot = decode(await response.json());
-      if (!disposed && !document.hidden) publish(snapshot);
+      if (!disposed && !document.hidden) {
+        latestSnapshot = snapshot;
+        publish(snapshot);
+      }
     } catch {
-      if (!disposed) {
+      if (!disposed && !document.hidden && hiddenAbortController !== requestController) {
+        latestSnapshot = undefined;
         window.clearTimeout(expiryTimer);
         setPreviews(emptyPreviews);
       }
     } finally {
+      if (controller === requestController) controller = undefined;
       pending = false;
+      if (refreshAfterPending && !disposed && !document.hidden) {
+        refreshAfterPending = false;
+        void refresh();
+      }
     }
   };
   void refresh();
   const timer = window.setInterval(() => void refresh(), 15_000);
-  const onVisibility = () => void refresh();
+  const onVisibility = () => {
+    if (document.hidden) {
+      window.clearTimeout(expiryTimer);
+      refreshAfterPending = false;
+      hiddenAbortController = controller;
+      controller?.abort();
+      return;
+    }
+    if (latestSnapshot) publish(latestSnapshot);
+    void refresh();
+  };
   document.addEventListener("visibilitychange", onVisibility);
   return () => {
     disposed = true;
@@ -105,7 +126,7 @@ export function CompadrePreviewIndicator(props: {
             target="_blank"
             rel="noopener noreferrer"
             aria-label="Preview ready"
-            className="ml-1 inline-flex shrink-0 items-center rounded-sm text-blue-600 outline-none focus-visible:ring-2 focus-visible:ring-ring dark:text-blue-400"
+            className="-m-0.5 ml-0.5 inline-flex shrink-0 items-center rounded-sm p-0.5 text-blue-600 outline-none transition-colors hover:bg-blue-500/10 hover:text-blue-800 focus-visible:ring-2 focus-visible:ring-ring dark:text-blue-400 dark:hover:text-blue-200"
             onPointerDown={(event) => event.stopPropagation()}
             onClick={(event) => event.stopPropagation()}
             onDoubleClick={(event) => event.stopPropagation()}
