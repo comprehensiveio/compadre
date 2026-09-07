@@ -88,6 +88,7 @@ import {
 } from "../state/entities";
 import { selectThreadTerminalUiState, useTerminalUiStateStore } from "../terminalUiStateStore";
 import { useThreadRunningTerminalIds } from "../state/terminalSessions";
+import { CompadrePreviewIndicator } from "../compadrePreviews";
 import { useThreadDiscoveredPorts } from "../portDiscoveryState";
 import { openDiscoveredPort } from "./preview/openDiscoveredPort";
 import { useAtomCommand } from "../state/use-atom-command";
@@ -754,6 +755,7 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
           )}
         </div>
         <div className="ml-auto flex shrink-0 items-center gap-1.5">
+          <CompadrePreviewIndicator threadId={thread.id} environmentId={thread.environmentId} />
           {discoveredPorts.length > 0 && (
             <Tooltip>
               <TooltipTrigger
