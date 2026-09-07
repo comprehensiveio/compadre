@@ -30,6 +30,7 @@ It is “concentrate each product difference behind a narrow seam.”
 | Seam                       | Comprehensive implementation                                                                                            | Upstream surface changed                                                                                          |
 | -------------------------- | ----------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
 | Hosted worker terminals    | `apps/server/src/terminal/CompadreTerminal.ts`, controller terminal service and shared gateway acquisition              | Terminal manager composition, explicit-start contract and terminal viewport                                       |
+| Hosted preview readiness   | `auth/CompadrePreviews.ts`, web `compadrePreviews.tsx`, controller `routes/preview-readiness.ts`                        | Session-scoped preview provider and both sidebar layouts                                                          |
 | Remote native execution    | `apps/server/src/provider/RemoteNativeProvider.ts` and the `Compadre*` provider layers                                  | Provider registry wiring only                                                                                     |
 | Controller text generation | `apps/server/src/textGeneration/CompadreTextGeneration.ts`                                                              | Remote provider construction only                                                                                 |
 | Runtime telemetry          | `apps/server/src/provider/ProviderRuntimeTelemetry.ts`                                                                  | Provider event observation hooks                                                                                  |
@@ -45,6 +46,19 @@ It is “concentrate each product difference behind a narrow seam.”
 
 Codex and Claude Code remain the provider identities shown to users. Compadre is
 transport and orchestration, not a provider choice.
+
+The preview indicator reads `/api/compadre/previews/ready`, authenticated with
+the hosted browser session. Central T3 forwards to the controller's separate
+`/internal/previews/ready` endpoint using its service credential. Only thread
+IDs, stable HTTPS preview URLs, and observation timestamps cross this seam.
+The controller shares the existing bounded, cached environment observer with
+operations diagnostics; these reads never provision or restore workers.
+Only a running container with a responding port 3000 and an observation less
+than 90 seconds old is advertised. The client polls once per 15 seconds while
+visible, expires links locally, clears them on request failure, and scopes them
+to the primary environment. An older controller's 404 becomes an empty result,
+allowing web to deploy before API. Web and desktop share the sidebar component;
+mobile navigation and local terminal status contracts are unchanged.
 
 ## Merge discipline
 

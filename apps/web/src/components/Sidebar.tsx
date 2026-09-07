@@ -195,6 +195,7 @@ import {
 } from "../composerDraftStore";
 import { COMPADRE_AUTH_ENABLED } from "../branding";
 import { useCompadreSessionUser } from "../compadreSession";
+import { CompadrePreviewIndicator } from "../compadrePreviews";
 
 // Settled-tail paging: recent history is the common lookup; the deep tail
 // stays behind an explicit Show more.
@@ -1362,6 +1363,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
               )}
             </span>
             {title}
+            <CompadrePreviewIndicator threadId={thread.id} environmentId={thread.environmentId} />
             {pinIndicator}
             {terminalStatusIcon}
             {isRegeneratingTitle ? (
@@ -1639,6 +1641,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
             </div>
             <div className="mt-1 flex min-w-0">
               {title}
+              <CompadrePreviewIndicator threadId={thread.id} environmentId={thread.environmentId} />
               {isRegeneratingTitle ? (
                 <span role="status" className="sr-only">
                   Regenerating title
