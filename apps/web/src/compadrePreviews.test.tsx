@@ -1,4 +1,5 @@
 import { afterEach, expect, it, vi } from "vite-plus/test";
+import { COMPADRE_PREVIEW_FRESHNESS_MS } from "@t3tools/contracts";
 
 vi.mock("./state/environments", () => ({ usePrimaryEnvironmentId: () => "primary" }));
 vi.mock("./components/ui/tooltip", () => ({
@@ -64,18 +65,34 @@ it("expires an observation even if a refresh hangs", async () => {
   stop();
 });
 
-it("stops background requests while hidden and refreshes on return", async () => {
+it("keeps a fresh preview while hidden and refreshes without flickering on return", async () => {
   const { fetch, changes, document } = setup();
   const stop = watchCompadrePreviews(changes);
   await vi.advanceTimersByTimeAsync(0);
   document.hidden = true;
   document.dispatchEvent(new Event("visibilitychange"));
-  expect(changes.mock.lastCall?.[0].size).toBe(0);
+  expect(changes.mock.lastCall?.[0].size).toBe(1);
   await vi.advanceTimersByTimeAsync(30_000);
   expect(fetch).toHaveBeenCalledTimes(1);
+  fetch.mockImplementation(() => new Promise(() => {}));
   document.hidden = false;
   document.dispatchEvent(new Event("visibilitychange"));
   await vi.advanceTimersByTimeAsync(0);
   expect(fetch).toHaveBeenCalledTimes(2);
+  expect(changes.mock.lastCall?.[0].size).toBe(1);
+  stop();
+});
+
+it("drops a preview that became stale while the tab was hidden", async () => {
+  const { changes, document } = setup();
+  const stop = watchCompadrePreviews(changes);
+  await vi.advanceTimersByTimeAsync(0);
+  document.hidden = true;
+  document.dispatchEvent(new Event("visibilitychange"));
+  await vi.advanceTimersByTimeAsync(COMPADRE_PREVIEW_FRESHNESS_MS);
+  expect(changes.mock.lastCall?.[0].size).toBe(1);
+  document.hidden = false;
+  document.dispatchEvent(new Event("visibilitychange"));
+  expect(changes.mock.lastCall?.[0].size).toBe(0);
   stop();
 });

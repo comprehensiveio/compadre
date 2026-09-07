@@ -1641,7 +1641,6 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
             </div>
             <div className="mt-1 flex min-w-0">
               {title}
-              <CompadrePreviewIndicator threadId={thread.id} environmentId={thread.environmentId} />
               {isRegeneratingTitle ? (
                 <span role="status" className="sr-only">
                   Regenerating title
@@ -1660,6 +1659,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
               ) : (
                 <span className="flex-1" />
               )}
+              <CompadrePreviewIndicator threadId={thread.id} environmentId={thread.environmentId} />
               {terminalStatusIcon}
               {prBadge}
               {diff ? (
