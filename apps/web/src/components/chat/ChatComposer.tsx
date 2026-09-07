@@ -15,7 +15,6 @@ import type {
 import {
   ProviderDriverKind,
   ProviderInstanceId,
-  PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
   PROVIDER_SEND_TURN_MAX_IMAGE_BYTES,
 } from "@t3tools/contracts";
 import type { EnvironmentConnectionPresentation } from "@t3tools/client-runtime/connection";
@@ -1190,10 +1189,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
    */
   const stashInFlightRef = useRef<Set<string>>(new Set());
   /**
-   * Count of pasted images still being compressed, per thread. Reserved
-   * against the attachment limit so concurrent pastes can't overshoot it,
-   * and checked before sending or compacting so an image cannot move into
-   * the next draft.
+   * Count of pasted images still being compressed, per thread. Checked before
+   * sending or compacting so an image cannot move into the next draft.
    */
   const pendingImageCompressionsRef = useRef<Map<ThreadId, number>>(new Map());
 
@@ -2350,9 +2347,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         setComposerTrigger(null);
       }
 
-      let unrestoredFileNames: string[] = [];
       const expiredFileNames: string[] = [];
-      let restoredFileCount = 0;
       const stashedFiles = entry.files ?? [];
       if (stashedFiles.length > 0) {
         const fileDedupKey = (file: {
@@ -2427,17 +2422,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
           }
           appendedFiles.push(restored);
         }
-        const capacity = Math.max(
-          0,
-          PROVIDER_SEND_TURN_MAX_ATTACHMENTS -
-            composerImagesRef.current.length -
-            composerFilesNow.length,
-        );
-        // Marker replacements reuse their marker's slot; only appended files
-        // consume capacity.
-        const filesToAppend = appendedFiles.slice(0, capacity);
-        const skippedFiles = appendedFiles.slice(capacity);
-        unrestoredFileNames = skippedFiles.map((file) => file.name);
+        const filesToAppend = appendedFiles;
         // A non-durable take can resurrect the stash entry after a reload;
         // deleting these uploads would leave it pointing at nothing.
         if (durable) {
@@ -2448,41 +2433,21 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
               attachmentId: file.attachmentId,
             });
           }
-          for (const file of skippedFiles) {
-            if (file.uploadedAttachmentId) {
-              releasePersistedAttachmentUpload({
-                id: file.id,
-                environmentId,
-                attachmentId: file.uploadedAttachmentId,
-              });
-            }
-          }
         }
         const restoredFiles = [...markerReplacements, ...filesToAppend];
         if (restoredFiles.length > 0) {
           addComposerDraftFiles(composerDraftTarget, restoredFiles);
-          restoredFileCount = filesToAppend.length;
         }
       }
 
-      let unrestoredImageNames: string[] = [];
       if (entry.attachments.length > 0) {
         const existingIds = new Set(composerImagesRef.current.map((image) => image.id));
         // The draft store also dedupes by mimeType+sizeBytes+name, so filter
-        // on the same key here. Counting a duplicate against capacity would
-        // burn a slot the store then refuses to fill, pushing a genuinely
-        // unique image into the overflow list for nothing.
+        // on the same key here.
         const existingDedupKeys = new Set(
           composerImagesRef.current.map(
             (image) => `${image.mimeType} ${image.sizeBytes} ${image.name}`,
           ),
-        );
-        const capacity = Math.max(
-          0,
-          PROVIDER_SEND_TURN_MAX_ATTACHMENTS -
-            composerImagesRef.current.length -
-            composerFilesRef.current.length -
-            restoredFileCount,
         );
         const pending = entry.attachments.filter(
           (attachment) =>
@@ -2491,11 +2456,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
               `${attachment.mimeType} ${attachment.sizeBytes} ${attachment.name}`,
             ),
         );
-        // Anything past the attachment limit cannot be restored. The entry is
-        // already out of the queue, so report the overflow by name instead of
-        // discarding it silently.
-        unrestoredImageNames = pending.slice(capacity).map((attachment) => attachment.name);
-        const restoredImages = hydrateImagesFromPersisted(pending.slice(0, capacity));
+        const restoredImages = hydrateImagesFromPersisted(pending);
         if (restoredImages.length > 0) {
           addComposerDraftImages(composerDraftTarget, restoredImages);
         }
@@ -2517,16 +2478,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       if (entry.unreadableImageNames && entry.unreadableImageNames.length > 0) {
         missingImageReasons.push(
           `${entry.unreadableImageNames.join(", ")} could not be read when this prompt was saved.`,
-        );
-      }
-      if (unrestoredImageNames.length > 0) {
-        missingImageReasons.push(
-          `${unrestoredImageNames.join(", ")} could not be restored: the composer is at its ${PROVIDER_SEND_TURN_MAX_ATTACHMENTS}-attachment limit.`,
-        );
-      }
-      if (unrestoredFileNames.length > 0) {
-        missingImageReasons.push(
-          `${unrestoredFileNames.join(", ")} could not be restored: the composer is at its ${PROVIDER_SEND_TURN_MAX_ATTACHMENTS}-attachment limit.`,
         );
       }
       if (expiredFileNames.length > 0) {
@@ -2939,40 +2890,12 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     // to the thread the paste happened in.
     const threadId = activeThreadId;
 
-    // Validation happens synchronously so concurrent pastes see each other:
-    // accepted files reserve their attachment slots (via the pending counter)
-    // before the first await, keeping the total under the limit.
     const pendingCount = pendingImageCompressionsRef.current.get(threadId) ?? 0;
-    let reservedCount =
-      composerImagesRef.current.length + composerFilesRef.current.length + pendingCount;
-    // A pick that matches a needs-reattach marker replaces it in the draft, so
-    // it must not consume a slot; a draft full of markers would otherwise hit
-    // the capacity error before the replacement path could run.
-    const reattachKeys = new Set(
-      composerFilesRef.current
-        .filter(composerFileNeedsReattach)
-        .map((file) => `${file.mimeType}\u0000${file.sizeBytes}\u0000${file.name}`),
-    );
     const acceptedImages: File[] = [];
     const acceptedFiles: ComposerFileAttachment[] = [];
     let error: string | null = null;
     for (const file of files) {
       const attachmentKind = classifyComposerAttachmentFile(file);
-      const replacesReattachMarker =
-        attachmentKind === "file" &&
-        reattachKeys.delete(
-          `${file.type || "application/octet-stream"}\u0000${file.size}\u0000${file.name || "file"}`,
-        );
-      if (!replacesReattachMarker && reservedCount >= PROVIDER_SEND_TURN_MAX_ATTACHMENTS) {
-        error = `You can attach up to ${PROVIDER_SEND_TURN_MAX_ATTACHMENTS} files per message.`;
-        // Keep scanning: a later file in this batch can still replace a
-        // needs-reattach marker without needing a free slot.
-        continue;
-      }
-      if (attachmentKind === "unsupported-image") {
-        error = `'${file.name}' is not a supported image type. Attach GIF, HEIC, HEIF, JPEG, PNG, or WebP images.`;
-        continue;
-      }
       if (attachmentKind === "image") {
         acceptedImages.push(normalizeComposerImageFileMimeType(file));
       } else {
@@ -2996,9 +2919,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
           sizeBytes: file.size,
           file,
         });
-      }
-      if (!replacesReattachMarker) {
-        reservedCount += 1;
       }
     }
     setThreadError(threadId, error);
@@ -3069,10 +2989,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   // ------------------------------------------------------------------
   const onComposerPaste = (event: React.ClipboardEvent<HTMLElement>) => {
     const files = Array.from(event.clipboardData.files);
-    // Claimable pastes go through even when plan questions are pending or the
-    // composer is at its attachment limit: `addComposerAttachments` surfaces
-    // those as a toast and a thread error. An early return here would swallow
-    // the paste with no feedback.
+    // Claimable pastes go through even when plan questions are pending so
+    // `addComposerAttachments` can surface the toast. An early return here
+    // would swallow the paste with no feedback.
     if (
       files.length === 0 ||
       !activeThreadId ||

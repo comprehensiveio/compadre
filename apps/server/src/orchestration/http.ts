@@ -19,6 +19,7 @@ import {
 import { OrchestrationEngineService } from "./Services/OrchestrationEngine.ts";
 import { ProjectionSnapshotQuery } from "./Services/ProjectionSnapshotQuery.ts";
 import { attributeCompadreWebCommand } from "../auth/CompadreAuth.ts";
+import { issueAttachmentUploadUrl } from "../assets/AttachmentUpload.ts";
 
 export const orchestrationHttpApiLayer = HttpApiBuilder.group(
   EnvironmentHttpApi,
@@ -87,6 +88,16 @@ export const orchestrationHttpApiLayer = HttpApiBuilder.group(
             return yield* failEnvironmentNotFound("thread_not_found");
           }
           return projectThreadDetailSnapshot(snapshot.value);
+        }),
+      )
+      .handle(
+        "createAttachmentUploadUrl",
+        Effect.fn("environment.orchestration.createAttachmentUploadUrl")(function* (args) {
+          yield* annotateEnvironmentRequest(args.endpoint.name);
+          yield* requireEnvironmentScope(AuthOrchestrationOperateScope);
+          return yield* issueAttachmentUploadUrl(args.payload).pipe(
+            Effect.catch((cause) => failEnvironmentInternal("internal_error", cause)),
+          );
         }),
       )
       .handle(

@@ -10,11 +10,8 @@ import {
 } from "../repo.js";
 import { releaseAguiThread } from "../tanstack/runtime.js";
 import { getSlackStreamingSystemPrompt } from "../prompts/index.js";
-import {
-  MAX_SLACK_INPUT_FILES,
-  slackFileReferenceSchema,
-} from "../services/slack-files.js";
-import { inputFileSchema, MAX_INPUT_FILES } from "../services/input-files.js";
+import { slackFileReferenceSchema } from "../services/slack-files.js";
+import { inputFileSchema } from "../services/input-files.js";
 import { workflowErrorDetails } from "./diagnostics.js";
 
 export const agentWorkflowInputSchema = z.object({
@@ -26,11 +23,8 @@ export const agentWorkflowInputSchema = z.object({
   profile: z.enum(["claude-code", "codex", "fable"]).optional(),
   responseMode: z.enum(["default", "slack-streaming"]).optional(),
   persistThread: z.boolean().optional(),
-  slackFiles: z
-    .array(slackFileReferenceSchema)
-    .max(MAX_SLACK_INPUT_FILES)
-    .optional(),
-  inputFiles: z.array(inputFileSchema).max(MAX_INPUT_FILES).optional(),
+  slackFiles: z.array(slackFileReferenceSchema).optional(),
+  inputFiles: z.array(inputFileSchema).optional(),
 });
 
 export type AgentWorkflowInput = z.infer<typeof agentWorkflowInputSchema>;

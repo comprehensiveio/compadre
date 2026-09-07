@@ -160,13 +160,16 @@ export function stripSlackBotMention(text: string, botUserId?: string): string {
 
 export const MENTION_ONLY_THREAD_PROMPT =
   "Respond to the preceding Slack message.";
+export const ATTACHMENT_ONLY_PROMPT = "Please inspect the attached file(s).";
 
 export function slackMessageTextForAgent(input: {
   messageText: string;
   isThreadReply: boolean;
   mentionsBot: boolean;
+  hasAttachments?: boolean;
 }): string {
   if (input.messageText.trim()) return input.messageText.trim();
+  if (input.hasAttachments) return ATTACHMENT_ONLY_PROMPT;
   return input.isThreadReply && input.mentionsBot
     ? MENTION_ONLY_THREAD_PROMPT
     : "";
@@ -509,6 +512,7 @@ async function handleAIMessage(
     messageText: routedMessageText,
     isThreadReply,
     mentionsBot,
+    hasAttachments: slackFileReferences(event.files).length > 0,
   });
   if (!messageText) return;
 
