@@ -1,4 +1,5 @@
 export * from "./baseSchemas.ts";
+export * from "./compadrePreviews.ts";
 export * from "./background.ts";
 export * from "./auth.ts";
 export * from "./environment.ts";

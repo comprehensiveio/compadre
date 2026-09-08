@@ -6,7 +6,7 @@ multiple messages, then send again in the same thread.
 
 You can attach images up to 10 MB. On servers that support file uploads, web and desktop can also
 attach text files, PDFs, ZIP archives, and other files. Each file can be up to the limit advertised
-by the server, capped at 50 MB. Each message can contain up to eight attachments in total. Files
+by the server, capped at 50 MB. Messages do not have a product-level attachment-count limit. Files
 upload directly to the environment, where your agent can read, copy, or edit them by their file path.
 
 On web and desktop, attachments upload as soon as you add them. The send button becomes available

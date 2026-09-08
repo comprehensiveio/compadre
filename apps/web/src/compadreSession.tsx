@@ -1,5 +1,6 @@
 import type { AuthSessionUser } from "@t3tools/contracts";
 import { createContext, useContext, type ReactNode } from "react";
+import { CompadrePreviewsProvider } from "./compadrePreviews";
 
 const CompadreSessionContext = createContext<AuthSessionUser | null>(null);
 
@@ -9,7 +10,11 @@ export function CompadreSessionProvider(props: {
 }) {
   return (
     <CompadreSessionContext.Provider value={props.user}>
-      {props.children}
+      {props.user ? (
+        <CompadrePreviewsProvider key={props.user.id}>{props.children}</CompadrePreviewsProvider>
+      ) : (
+        props.children
+      )}
     </CompadreSessionContext.Provider>
   );
 }

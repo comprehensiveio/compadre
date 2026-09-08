@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
-import { PROVIDER_SEND_TURN_MAX_ATTACHMENTS } from "@t3tools/contracts";
+import { MOBILE_COMPOSER_MAX_ATTACHMENTS } from "./composerLimits";
 
 const files = new Map<string, { base64: string; deleted: boolean }>();
 
@@ -114,7 +114,7 @@ describe("native pasted image cleanup", () => {
 
     await convertPastedImagesToAttachments({
       uris: [rejected, overflow, userOwned],
-      existingCount: PROVIDER_SEND_TURN_MAX_ATTACHMENTS - 1,
+      existingCount: MOBILE_COMPOSER_MAX_ATTACHMENTS - 1,
     });
 
     expect(files.get(rejected)?.deleted).toBe(true);

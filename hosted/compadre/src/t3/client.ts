@@ -66,11 +66,33 @@ export interface T3InputFile {
   dataBase64: string;
 }
 
+export interface T3Attachment {
+  type: "image" | "file";
+  id: string;
+  name: string;
+  mimeType: string;
+  sizeBytes: number;
+}
+
+const MAX_IMAGE_ATTACHMENT_BYTES = 10 * 1024 * 1024;
+export const CENTRAL_T3_MAX_ATTACHMENT_BYTES = 50 * 1024 * 1024;
+const SUPPORTED_IMAGE_ATTACHMENT_MIME_TYPES = new Set([
+  "image/gif",
+  "image/jpeg",
+  "image/png",
+  "image/webp",
+]);
+
+function attachmentType(mimeType: string, sizeBytes: number): T3Attachment["type"] {
+  return SUPPORTED_IMAGE_ATTACHMENT_MIME_TYPES.has(mimeType.toLowerCase()) &&
+    sizeBytes <= MAX_IMAGE_ATTACHMENT_BYTES
+    ? "image"
+    : "file";
+}
+
 function inlineAttachment(file: T3InputFile) {
   return {
-    type: file.mimetype.toLowerCase().startsWith("image/")
-      ? ("image" as const)
-      : ("file" as const),
+    type: attachmentType(file.mimetype, file.sizeBytes),
     name: file.name,
     mimeType: file.mimetype,
     sizeBytes: file.sizeBytes,
@@ -319,6 +341,12 @@ export function decodeT3ThreadSnapshot(value: unknown): T3ThreadSnapshot {
 
 const dispatchResultSchema = z.object({
   sequence: z.number().int().nonnegative(),
+});
+
+const attachmentUploadUrlSchema = z.object({
+  attachmentId: z.string().min(1),
+  relativeUrl: z.string().min(1),
+  expiresAt: z.number(),
 });
 
 const accessTokenSchema = z.object({
@@ -622,6 +650,82 @@ export class T3Client {
     return result.sequence;
   }
 
+  /** Upload one attachment before dispatch so large batches do not ride in one JSON body. */
+  async uploadAttachment(input: {
+    name: string;
+    mimeType: string;
+    bytes: Uint8Array;
+    signal?: AbortSignal;
+  }): Promise<T3Attachment | null> {
+    if (input.bytes.byteLength < 1 || input.bytes.byteLength > CENTRAL_T3_MAX_ATTACHMENT_BYTES) {
+      throw new Error(`Attachment '${input.name}' must be between 1 byte and 50 MB`);
+    }
+    const mimeType = input.mimeType.trim().toLowerCase() || "application/octet-stream";
+    const type = attachmentType(mimeType, input.bytes.byteLength);
+    let issued: z.infer<typeof attachmentUploadUrlSchema>;
+    try {
+      issued = await this.request(
+        "attachment upload URL",
+        "/api/orchestration/attachments/upload-url",
+        {
+          method: "POST",
+          body: {
+            type,
+            name: input.name,
+            mimeType,
+            sizeBytes: input.bytes.byteLength,
+          },
+          schema: attachmentUploadUrlSchema,
+          signal: input.signal,
+        },
+      );
+    } catch (error) {
+      // The API and web services deploy independently. Keep text turns
+      // working while an older central server does not expose this route.
+      if (error instanceof T3GatewayError && error.status === 404) return null;
+      throw error;
+    }
+
+    const timeoutSignal = AbortSignal.timeout(this.timeoutMs);
+    const signal = input.signal
+      ? AbortSignal.any([input.signal, timeoutSignal])
+      : timeoutSignal;
+    let response: Response;
+    try {
+      response = await this.fetch(new URL(issued.relativeUrl, `${this.baseUrl}/`), {
+        method: "POST",
+        headers: { "content-type": mimeType },
+        body: Buffer.from(input.bytes),
+        signal,
+      });
+    } catch {
+      throw new T3GatewayError(
+        input.signal?.aborted ? "aborted" : signal.aborted ? "timeout" : "transport",
+        "attachment upload",
+        input.signal?.aborted
+          ? "T3 attachment upload was aborted"
+          : signal.aborted
+            ? "T3 attachment upload timed out"
+            : "T3 attachment upload could not reach the environment",
+      );
+    }
+    if (!response.ok) {
+      throw new T3GatewayError(
+        "http",
+        "attachment upload",
+        `T3 attachment upload failed with HTTP ${response.status}`,
+        response.status,
+      );
+    }
+    return {
+      type,
+      id: issued.attachmentId,
+      name: input.name,
+      mimeType,
+      sizeBytes: input.bytes.byteLength,
+    };
+  }
+
   /** Create a native thread without dispatching a provider turn. */
   async createThread(input: {
     threadId?: string;
@@ -667,6 +771,7 @@ export class T3Client {
     displayText?: string;
     attribution?: T3MessageAttribution;
     inputFiles?: ReadonlyArray<T3InputFile>;
+    attachments?: ReadonlyArray<T3Attachment>;
     modelSelection: T3ModelSelection;
     runtimeMode?: T3RuntimeMode;
     interactionMode?: T3InteractionMode;
@@ -684,6 +789,7 @@ export class T3Client {
       displayText: input.displayText,
       attribution: input.attribution,
       inputFiles: input.inputFiles,
+      attachments: input.attachments,
       modelSelection: input.modelSelection,
       runtimeMode,
       interactionMode,
@@ -698,6 +804,7 @@ export class T3Client {
     displayText?: string;
     attribution?: T3MessageAttribution;
     inputFiles?: ReadonlyArray<T3InputFile>;
+    attachments?: ReadonlyArray<T3Attachment>;
     modelSelection: T3ModelSelection;
     runtimeMode?: T3RuntimeMode;
     interactionMode?: T3InteractionMode;
@@ -719,7 +826,7 @@ export class T3Client {
             ? { providerPrompt: input.text }
             : {}),
           ...(input.attribution ? { attribution: input.attribution } : {}),
-          attachments: (input.inputFiles ?? []).map(inlineAttachment),
+          attachments: input.attachments ?? (input.inputFiles ?? []).map(inlineAttachment),
         },
         modelSelection: input.modelSelection,
         runtimeMode: input.runtimeMode ?? "full-access",

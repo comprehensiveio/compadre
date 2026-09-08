@@ -131,6 +131,7 @@ const withLiveProjectCliServer = <A, E, R>(baseDir: string, run: () => Effect.Ef
         ),
       ),
       Layer.provideMerge(makeProjectPersistenceLayer(config)),
+      Layer.provideMerge(ServerSecretStore.layer),
       Layer.provideMerge(
         NodeHttpServer.layer(NodeHttp.createServer, {
           host: "127.0.0.1",

@@ -525,7 +525,7 @@ it.layer(Layer.merge(NodeServices.layer, FetchHttpClient.layer))("CompadreAdapte
     }),
   );
 
-  it.effect("forwards T3 image attachments to hosted Compadre", () =>
+  it.effect("forwards generic file attachments to hosted Compadre", () =>
     Effect.scoped(
       Effect.gen(function* () {
         const fileSystem = yield* FileSystem.FileSystem;
@@ -533,10 +533,10 @@ it.layer(Layer.merge(NodeServices.layer, FetchHttpClient.layer))("CompadreAdapte
         const attachmentsDir = yield* fileSystem.makeTempDirectoryScoped({
           prefix: "t3-compadre-attachments-",
         });
-        const attachmentId = "compadre-image-00000000-0000-4000-8000-000000000001";
+        const attachmentId = "compadre-file-00000000-0000-4000-8000-000000000001";
         yield* fileSystem.writeFile(
-          path.join(attachmentsDir, `${attachmentId}.png`),
-          new Uint8Array([137, 80, 78, 71]),
+          path.join(attachmentsDir, `${attachmentId}.pdf`),
+          new Uint8Array([37, 80, 68, 70]),
         );
         const received: Array<{
           name: string;
@@ -574,10 +574,10 @@ it.layer(Layer.merge(NodeServices.layer, FetchHttpClient.layer))("CompadreAdapte
           threadId,
           attachments: [
             {
-              type: "image",
+              type: "file",
               id: attachmentId,
-              name: "probe.png",
-              mimeType: "image/png",
+              name: "probe.pdf",
+              mimeType: "application/pdf",
               sizeBytes: 4,
             },
           ],
@@ -586,10 +586,10 @@ it.layer(Layer.merge(NodeServices.layer, FetchHttpClient.layer))("CompadreAdapte
         yield* Fiber.interrupt(eventsFiber);
         assert.deepStrictEqual(received, [
           {
-            name: "probe.png",
-            mimetype: "image/png",
+            name: "probe.pdf",
+            mimetype: "application/pdf",
             sizeBytes: 4,
-            dataBase64: "iVBORw==",
+            dataBase64: "JVBERg==",
           },
         ]);
       }),

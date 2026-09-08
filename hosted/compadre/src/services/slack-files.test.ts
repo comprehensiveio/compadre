@@ -76,6 +76,14 @@ test("normalizes and deduplicates Slack event files", () => {
   );
 });
 
+test("keeps every unique Slack file reference", () => {
+  const files = Array.from({ length: 12 }, (_, index) => ({
+    id: `F${index}`,
+    name: `file-${index}.pdf`,
+  }));
+  assert.deepEqual(mergeSlackFileReferences(files), files);
+});
+
 test("materializes Slack images for native harness inspection and cleans up", async (t) => {
   const worktree = await fs.mkdtemp(
     path.join(os.tmpdir(), "compadre-slack-files-test-"),

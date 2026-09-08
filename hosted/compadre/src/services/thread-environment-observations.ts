@@ -176,3 +176,6 @@ export function createEnvironmentObserver(
     return observations;
   };
 }
+
+/** Shared by product preview reads and operations diagnostics. */
+export const observeThreadEnvironments = createEnvironmentObserver();

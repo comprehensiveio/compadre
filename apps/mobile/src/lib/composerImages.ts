@@ -1,10 +1,10 @@
 import {
   isProviderSendTurnSupportedImageMimeType,
-  PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
   PROVIDER_SEND_TURN_MAX_IMAGE_BYTES,
   type UploadChatImageAttachment,
 } from "@t3tools/contracts";
 import { estimateBase64ByteSize } from "./base64";
+import { MOBILE_COMPOSER_MAX_ATTACHMENTS } from "./composerLimits";
 import { beginForegroundHandoff } from "./foreground-handoff";
 import { uuidv4 } from "./uuid";
 
@@ -48,11 +48,11 @@ export async function pickComposerImages(input: { readonly existingCount: number
   readonly images: ReadonlyArray<DraftComposerImageAttachment>;
   readonly error: string | null;
 }> {
-  const remainingSlots = PROVIDER_SEND_TURN_MAX_ATTACHMENTS - input.existingCount;
+  const remainingSlots = MOBILE_COMPOSER_MAX_ATTACHMENTS - input.existingCount;
   if (remainingSlots <= 0) {
     return {
       images: [],
-      error: `You can attach up to ${PROVIDER_SEND_TURN_MAX_ATTACHMENTS} images per message.`,
+      error: `You can attach up to ${MOBILE_COMPOSER_MAX_ATTACHMENTS} images per message.`,
     };
   }
 
@@ -149,14 +149,14 @@ export async function pasteComposerClipboard(input: { readonly existingCount: nu
     };
   }
 
-  const remainingSlots = PROVIDER_SEND_TURN_MAX_ATTACHMENTS - input.existingCount;
+  const remainingSlots = MOBILE_COMPOSER_MAX_ATTACHMENTS - input.existingCount;
 
   if (await clipboard.hasImageAsync()) {
     if (remainingSlots <= 0) {
       return {
         images: [],
         text: null,
-        error: `You can attach up to ${PROVIDER_SEND_TURN_MAX_ATTACHMENTS} images per message.`,
+        error: `You can attach up to ${MOBILE_COMPOSER_MAX_ATTACHMENTS} images per message.`,
       };
     }
     const image = await clipboard.getImageAsync({ format: "png" });
@@ -250,7 +250,7 @@ export async function convertPastedImagesToAttachments(input: {
   readonly existingCount: number;
 }): Promise<ReadonlyArray<DraftComposerImageAttachment>> {
   const { File } = await import("expo-file-system");
-  const remainingSlots = PROVIDER_SEND_TURN_MAX_ATTACHMENTS - input.existingCount;
+  const remainingSlots = MOBILE_COMPOSER_MAX_ATTACHMENTS - input.existingCount;
   const results: DraftComposerImageAttachment[] = [];
 
   for (const [index, uri] of input.uris.entries()) {

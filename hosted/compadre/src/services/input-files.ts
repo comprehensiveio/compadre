@@ -1,9 +1,7 @@
 import path from "node:path";
 import { z } from "zod";
 
-export const MAX_INPUT_FILES = 8;
 export const MAX_INPUT_FILE_BYTES = 50 * 1024 * 1024;
-export const MAX_INPUT_FILES_TOTAL_BYTES = 50 * 1024 * 1024;
 const MAX_BASE64_CHARS = Math.ceil(MAX_INPUT_FILE_BYTES / 3) * 4;
 
 const IMAGE_EXTENSIONS: Record<string, string> = {
@@ -41,18 +39,7 @@ export const inputFileSchema = z
     }
   });
 
-export const inputFilesSchema = z
-  .array(inputFileSchema)
-  .max(MAX_INPUT_FILES)
-  .superRefine((files, context) => {
-    const total = files.reduce((sum, file) => sum + file.sizeBytes, 0);
-    if (total > MAX_INPUT_FILES_TOTAL_BYTES) {
-      context.addIssue({
-        code: "custom",
-        message: "combined attachment size exceeds 50 MiB",
-      });
-    }
-  });
+export const inputFilesSchema = z.array(inputFileSchema);
 
 export type InputFile = z.infer<typeof inputFileSchema>;
 

@@ -11,7 +11,6 @@ import {
   ProjectId,
   ProviderDriverKind,
   ProviderInstanceId,
-  PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
   ThreadId,
   type ModelSelection,
   type ProviderOptionSelection,
@@ -475,9 +474,9 @@ describe("composerDraftStore file attachments", () => {
     expect(store.getComposerDraft(threadRef)).toBeNull();
   });
 
-  it("enforces the combined file and image limit across separate updates", () => {
+  it("keeps every unique file and image across separate updates", () => {
     const store = useComposerDraftStore.getState();
-    const images = Array.from({ length: PROVIDER_SEND_TURN_MAX_ATTACHMENTS - 1 }, (_, index) =>
+    const images = Array.from({ length: 10 }, (_, index) =>
       makeImage({
         id: `image-${index}`,
         name: `image-${index}.png`,
@@ -494,8 +493,8 @@ describe("composerDraftStore file attachments", () => {
     ]);
 
     const draft = store.getComposerDraft(threadRef);
-    expect(draft?.images).toHaveLength(PROVIDER_SEND_TURN_MAX_ATTACHMENTS - 1);
-    expect(draft?.files.map((file) => file.id)).toEqual(["file-accepted"]);
+    expect(draft?.images).toHaveLength(11);
+    expect(draft?.files.map((file) => file.id)).toEqual(["file-accepted", "file-overflow"]);
   });
 
   it("replaces a needs-reattach marker when the same file is picked again", () => {
@@ -553,11 +552,11 @@ describe("composerDraftStore file attachments", () => {
     ]);
   });
 
-  it("keeps the remaining file slot available after a duplicate is skipped", () => {
+  it("keeps unique files after a duplicate is skipped", () => {
     const store = useComposerDraftStore.getState();
     store.addImages(
       threadRef,
-      Array.from({ length: PROVIDER_SEND_TURN_MAX_ATTACHMENTS - 2 }, (_, index) =>
+      Array.from({ length: 10 }, (_, index) =>
         makeImage({
           id: `image-${index}`,
           name: `image-${index}.png`,
@@ -697,11 +696,11 @@ describe("composerDraftStore moveComposerPromptAndImages", () => {
     ]);
   });
 
-  it("keeps overflow attachments on the source when the destination is nearly full", () => {
+  it("moves every attachment when the destination already has many", () => {
     const store = useComposerDraftStore.getState();
     store.addImages(
       destinationDraftId,
-      Array.from({ length: PROVIDER_SEND_TURN_MAX_ATTACHMENTS - 1 }, (_, index) =>
+      Array.from({ length: 10 }, (_, index) =>
         makeImage({
           id: `destination-${index}`,
           name: `destination-${index}.png`,
@@ -717,16 +716,11 @@ describe("composerDraftStore moveComposerPromptAndImages", () => {
 
     store.moveComposerPromptAndImages(sourceDraftId, destinationDraftId);
 
-    expect(store.getComposerDraft(destinationDraftId)?.images).toHaveLength(
-      PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
-    );
-    expect(store.getComposerDraft(destinationDraftId)?.files).toEqual([]);
-    expect(store.getComposerDraft(sourceDraftId)?.images.map((image) => image.id)).toEqual([
-      "source-second",
-    ]);
-    expect(store.getComposerDraft(sourceDraftId)?.files.map((file) => file.id)).toEqual([
+    expect(store.getComposerDraft(destinationDraftId)?.images).toHaveLength(12);
+    expect(store.getComposerDraft(destinationDraftId)?.files.map((file) => file.id)).toEqual([
       "source-file",
     ]);
+    expect(store.getComposerDraft(sourceDraftId)).toBeNull();
   });
 
   it("is a no-op when source and destination are the same target", () => {

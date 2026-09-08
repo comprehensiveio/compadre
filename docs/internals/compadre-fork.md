@@ -30,6 +30,7 @@ It is “concentrate each product difference behind a narrow seam.”
 | Seam                       | Comprehensive implementation                                                                                            | Upstream surface changed                                                                                          |
 | -------------------------- | ----------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
 | Hosted worker terminals    | `apps/server/src/terminal/CompadreTerminal.ts`, controller terminal service and shared gateway acquisition              | Terminal manager composition, explicit-start contract and terminal viewport                                       |
+| Hosted preview readiness   | `auth/CompadrePreviews.ts`, web `compadrePreviews.tsx`, controller `routes/preview-readiness.ts`                        | Session-scoped preview provider and both sidebar layouts                                                          |
 | Remote native execution    | `apps/server/src/provider/RemoteNativeProvider.ts` and the `Compadre*` provider layers                                  | Provider registry wiring only                                                                                     |
 | Controller text generation | `apps/server/src/textGeneration/CompadreTextGeneration.ts`                                                              | Remote provider construction only                                                                                 |
 | Runtime telemetry          | `apps/server/src/provider/ProviderRuntimeTelemetry.ts`                                                                  | Provider event observation hooks                                                                                  |
@@ -77,6 +78,21 @@ workers retain their binaries until replacement/restoration. Custom images with
 Deploy the controller before the web server for this additive endpoint. An older
 controller produces a visible discovery warning; a prior successful catalog is
 retained, while first discovery does not manufacture model choices.
+
+### Preview indicator
+
+The preview indicator reads `/api/compadre/previews/ready`, authenticated with
+the hosted browser session. Central T3 forwards to the controller's separate
+`/internal/previews/ready` endpoint using its service credential. Only thread
+IDs, stable HTTPS preview URLs, and observation timestamps cross this seam.
+The controller shares the existing bounded, cached environment observer with
+operations diagnostics; these reads never provision or restore workers.
+Only a running container with a responding port 3000 and an observation less
+than 90 seconds old is advertised. The client polls once per 15 seconds while
+visible, expires links locally, clears them on request failure, and scopes them
+to the primary environment. An older controller's 404 becomes an empty result,
+allowing web to deploy before API. Web and desktop share the sidebar component;
+mobile navigation and local terminal status contracts are unchanged.
 
 ## Merge discipline
 
@@ -131,8 +147,9 @@ independent; no cross-schema joins are introduced.
 On every upstream SQLite migration, inspect and reproduce the applicable schema
 and data transformation in a new ordered central PostgreSQL migration. Update
 `SQLITE_SCHEMA_VERSION`, then run the schema/import parity test and shared
-repository contracts on both backends. Do not copy Tolty or upstream migrations
-without comparing Compadre’s attribution/participants and authentication fields.
+repository contracts on both backends. Do not copy migrations from another fork
+or upstream without comparing Compadre’s attribution/participants and
+authentication fields.
 The parity test intentionally fails when the SQLite migration tip changes. Keep
 runtime persistence selection dynamic and server composition hooks additive.
 

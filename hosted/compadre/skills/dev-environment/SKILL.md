@@ -44,9 +44,9 @@ thread-scoped controller manifest, then reuses Hen to restore, anonymize, and
 migrate the sandbox-local database. It deletes the raw dump and restarts the
 same stable preview URL. Check the active mode with
 `scripts/compadre-dev-data.sh status`. Never connect Hen directly to production,
-set `HEN_SKIP_ANONYMIZE=true`, select another bucket, or use any Tolt resource.
-The artifact and download URLs supplied to this sandbox are short-lived and
-read-only.
+set `HEN_SKIP_ANONYMIZE=true`, select another bucket, or use any unrelated
+resource. The artifact and download URLs supplied to this sandbox are
+short-lived and read-only.
 
 ## Validate with agent-browser
 

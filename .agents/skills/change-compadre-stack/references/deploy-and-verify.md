@@ -62,7 +62,7 @@ Always resolve the Comprehensive workspace before mutating:
 
 Use Render CLI/API programmatically where possible. Discover current service
 IDs rather than copying one from an unrelated workspace. Never infer ownership
-from a service name, and never touch Tolt resources.
+from a service name, and never touch resources outside Comprehensive.
 
 Keep `compadre-api` single-instance while its active tool bridge contains
 process-local closures. Before increasing replicas, implement and prove either

@@ -69,7 +69,7 @@ Current inputs are synthetic or derived build artifacts:
 
 The controller signs read-only object URLs for no more than seven days and
 projects those URLs only when the feature flag is enabled. Never upload a
-production database dump or use a Tolt-owned bucket, account, or artifact.
+production database dump or use an unrelated bucket, account, or artifact.
 
 ## Optional production-derived data
 
@@ -97,9 +97,9 @@ scripts/compadre-dev-up.sh status
 ```
 
 Do not use Hen's direct production connection, `HEN_SKIP_ANONYMIZE=true`, a
-different bucket, or a Tolt-owned resource. Production-derived mode preserves
-Hen's current anonymization contract; avoid printing or screenshotting broad
-customer datasets even after anonymization.
+different bucket, or a resource outside Comprehensive. Production-derived mode
+preserves Hen's current anonymization contract; avoid printing or screenshotting
+broad customer datasets even after anonymization.
 
 ### Deferred cache optimization
 
