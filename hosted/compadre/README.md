@@ -102,7 +102,7 @@ See `.env.example` for the full list. Key notes:
 - **COMPADRE_T3_PACKAGE_URL / COMPADRE_T3_PACKAGE_SHA256**: HTTPS release archive and required digest for reproducible Render-to-Modal fork installation. The controller caches the verified artifact locally before copying it into a new sandbox.
 - **COMPADRE_HOSTED_SLACK_DELIVERY_ENABLED**: Set to `false` to suppress browser-to-Slack mirroring during synthetic hosted probes without removing the Slack token used by agent tools. Defaults to enabled.
 - **TEMPORAL_ADDRESS / TEMPORAL_NAMESPACE / TEMPORAL_SHUTDOWN_GRACE_TIME_MS**: The self-hosted Temporal server that durably orchestrates native T3 runs. Production uses the `compadre-temporal` private service from `render.yaml`; local development uses `npm run temporal:up`. The orchestrator kill switch is code-level: `NATIVE_T3_RUN_ORCHESTRATOR` in `src/temporal/mode.ts` (`temporal` runs each native T3 run as a durable workflow that survives controller restarts; `in-process` is the legacy rollback path). See `docs/temporal-orchestration.md`.
-- **FABLE_MODEL**: Optional model ID used by Slack's `--fable` routing profile. Defaults to `claude-fable-5`; normal Claude Code prompts use `DEFAULT_MODEL` or the built-in default.
+- **FABLE_MODEL**: Optional model ID used by Slack's `--fable` routing profile. Defaults to `claude-fable-5-1`; normal Claude Code prompts use `DEFAULT_MODEL` or the built-in default.
 
 Run `npm run modal:prepare-image` to build or resolve the same cached Modal
 image ahead of a local benchmark or deployment. It creates no sandbox and

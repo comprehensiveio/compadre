@@ -149,6 +149,7 @@ class FakeClaudeQuery implements AsyncIterable<SDKMessage> {
 }
 
 function makeHarness(config?: {
+  readonly modelCatalog?: ClaudeAdapterLiveOptions["modelCatalog"];
   readonly nativeEventLogPath?: string;
   readonly nativeEventLogger?: ClaudeAdapterLiveOptions["nativeEventLogger"];
   readonly cwd?: string;
@@ -166,6 +167,7 @@ function makeHarness(config?: {
     | undefined;
 
   const adapterOptions: ClaudeAdapterLiveOptions = {
+    ...(config?.modelCatalog ? { modelCatalog: config.modelCatalog } : {}),
     ...(config?.instanceId ? { instanceId: config.instanceId } : {}),
     // Keep the existing full-access assertions independent of the uid of the
     // machine running the suite.
@@ -271,6 +273,61 @@ const THREAD_ID = ThreadId.make("thread-claude-1");
 const RESUME_THREAD_ID = ThreadId.make("thread-claude-resume");
 
 describe("ClaudeAdapterLive", () => {
+  it.effect("executes a model supplied by discovery with its manifest capabilities", () => {
+    const harness = makeHarness({
+      modelCatalog: Effect.succeed({
+        models: [
+          {
+            model: {
+              slug: "claude-future-model",
+              name: "Future Claude",
+              isCustom: false,
+              capabilities: {
+                optionDescriptors: [
+                  {
+                    id: "effort",
+                    label: "Reasoning",
+                    type: "select",
+                    options: [{ id: "extreme", label: "Extreme", isDefault: true }],
+                  },
+                  {
+                    id: "contextWindow",
+                    label: "Context",
+                    type: "select",
+                    options: [{ id: "large", label: "Large", isDefault: true }],
+                  },
+                ],
+              },
+            },
+            compatibility: {},
+            runtime: {
+              effortMap: { extreme: "xhigh" },
+              modelSuffixes: { contextWindow: { large: "[1m]" } },
+            },
+          },
+        ],
+      }),
+    });
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        modelSelection: createModelSelection(
+          ProviderInstanceId.make("claudeAgent"),
+          "claude-future-model",
+        ),
+        runtimeMode: "full-access",
+      });
+      const input = harness.getLastCreateQueryInput();
+      assert.equal(input?.options.model, "claude-future-model[1m]");
+      assert.equal(input?.options.effort, "xhigh");
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
   it.effect("returns validation error for non-claude provider on startSession", () => {
     const harness = makeHarness();
     return Effect.gen(function* () {

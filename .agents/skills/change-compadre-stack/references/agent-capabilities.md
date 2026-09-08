@@ -44,6 +44,14 @@ expose destination-scoped tools through the authenticated bridge.
   `hosted/compadre/src/tanstack/claude-executable.ts`
 - T3-side controller bridge:
   `apps/server/src/mcp/CompadreMcpBridge.ts` at the monorepo root
+- provider catalogs: native Codex `model/list` via
+  `hosted/compadre/src/t3/provider-models.ts` for hosted discovery, and
+  upstream-compatible `apps/server/src/provider/ModelManifest.ts` /
+  `ClaudeModelCatalog.ts` for Claude. Hosted snapshots refresh in
+  `RemoteNativeProvider.ts`; never add a hosted model allowlist.
+- CLI version pins shared by Modal image construction, snapshot upgrades, and
+  discovery: `hosted/compadre/src/t3/provider-versions.ts`. Keep the controller
+  package manifest and lockfile synchronized with these pins.
 
 Search for the current seam before editing; keep this guide current when it
 moves.

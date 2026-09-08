@@ -46,6 +46,38 @@ It is “concentrate each product difference behind a narrow seam.”
 Codex and Claude Code remain the provider identities shown to users. Compadre is
 transport and orchestration, not a provider choice.
 
+### Model discovery
+
+The hosted provider snapshot refreshes through the normal T3 managed-provider
+lifecycle. It has no model allowlist. The controller's authenticated
+`GET /hosted/t3/providers/:provider/models` endpoint runs its pinned Codex CLI's
+`model/list`, collects all pages, and returns native capability metadata.
+Central T3 reuses the local Codex parser. The probe uses an isolated temporary
+Codex home and the worker API credential; it never creates a thread or acquires
+a Modal worker. The controller caches successful results for five minutes,
+coalesces concurrent requests, and retains the last success during an outage.
+This discovers the shared API execution catalog, not a particular user's
+ChatGPT subscription entitlements.
+
+Claude uses upstream T3's `ModelManifest`, `ClaudeModelCatalog`, and validated
+adapter profiles (ported from upstream commit `035428368`). The manifest refreshes
+hourly from upstream, with a disk cache and bundled offline fallback. Its model
+capabilities drive both the picker and native Claude execution. Hosted discovery
+filters against the controller-reported worker CLI pin; local discovery uses
+the installed CLI version. Provider update-check settings gate manifest network
+refreshes, matching upstream. Explicit Slack shortcuts remain environment-backed
+defaults in `hosted/compadre/src/config.ts`.
+
+Controller npm dependencies and Modal image pins must agree. New workers use
+the pinned image; template and checkpoint restores reconcile the CLI packages
+before installing the current T3 fork and starting its server. Already running
+workers retain their binaries until replacement/restoration. Custom images with
+`COMPADRE_MODAL_SKIP_CLI_SETUP=true` remain responsible for their own CLIs.
+
+Deploy the controller before the web server for this additive endpoint. An older
+controller produces a visible discovery warning; a prior successful catalog is
+retained, while first discovery does not manufacture model choices.
+
 ## Merge discipline
 
 - Prefer additive files owned by the fork.

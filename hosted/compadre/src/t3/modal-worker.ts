@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
+import { CLAUDE_CODE_VERSION, CODEX_VERSION } from "./provider-versions.js";
 import fs from "node:fs/promises";
 import {
   COMPADRE_SKILL_NAMES,
@@ -7,6 +8,7 @@ import {
 import { gitAuthenticationEnvironment } from "../repo.js";
 import {
   ModalHandle,
+  T3_CODE_VERSION,
   modalSandboxProvider,
 } from "../tanstack/modal-sandbox.js";
 import type { SandboxHandle } from "@tanstack/ai-sandbox";
@@ -381,7 +383,12 @@ export async function configureNativeHarnessAuthentication(
 async function installLocalT3Fork(
   handle: T3SandboxHandle,
   archivePath: string | undefined,
+  environment: NodeJS.ProcessEnv = process.env,
 ): Promise<void> {
+  if (environment.COMPADRE_MODAL_SKIP_CLI_SETUP !== "true") {
+    const cliUpgrade = await handle.process.exec(providerCliUpgradeCommand());
+    if (cliUpgrade.exitCode !== 0) throw new Error("Worker provider CLI update failed");
+  }
   if (!archivePath?.trim()) return;
   if (!(handle instanceof ModalHandle)) {
     throw new Error("COMPADRE_T3_PACKAGE_PATH requires a Modal sandbox");
@@ -571,6 +578,13 @@ export interface RestoredT3ModalEnvironmentIdentity {
   t3ThreadId: string;
 }
 
+/** Snapshots retain old binaries, so reconcile pins before starting their T3 server. */
+export function providerCliUpgradeCommand(): string {
+  const root = "/opt/compadre-runtime";
+  const check = `const r="${root}/node_modules/";process.exit(require(r+"@openai/codex/package.json").version===${JSON.stringify(CODEX_VERSION)}&&require(r+"@anthropic-ai/claude-code/package.json").version===${JSON.stringify(CLAUDE_CODE_VERSION)}?0:1)`;
+  return `node -e ${quote(check)} || npm install --prefix ${quote(root)} --no-save @openai/codex@${CODEX_VERSION} @anthropic-ai/claude-code@${CLAUDE_CODE_VERSION} t3@${T3_CODE_VERSION}`;
+}
+
 async function projectWorkerRuntimeEnvironment(
   handle: T3SandboxHandle,
   workerEnvironment: NodeJS.ProcessEnv,
@@ -735,7 +749,7 @@ export async function launchManagedT3ModalEnvironment(
     encryptedPorts: t3EncryptedPorts(workerEnvironment),
     onReady: async (handle) => {
       const workspaceRoot = handle.workspaceRoot ?? "/workspace";
-      await installLocalT3Fork(handle, forkArchivePath);
+      await installLocalT3Fork(handle, forkArchivePath, workerEnvironment);
       await projectWorkerRuntimeEnvironment(handle, workerEnvironment);
       const blockedSlackDestination =
         blockedSlackDestinationFromEnvironment(workerEnvironment);
@@ -841,7 +855,7 @@ export async function launchManagedT3ModalEnvironmentFromTemplate(
         new TextDecoder().decode(upload.data),
       );
     }
-    await installLocalT3Fork(handle, forkArchivePath);
+    await installLocalT3Fork(handle, forkArchivePath, workerEnvironment);
     await projectWorkerRuntimeEnvironment(handle, workerEnvironment);
     const blockedSlackDestination =
       blockedSlackDestinationFromEnvironment(workerEnvironment);
@@ -889,7 +903,7 @@ export async function restoreManagedT3ModalEnvironment(
     snapshotId: identity.snapshotId,
   })) as T3SandboxHandle;
   try {
-    await installLocalT3Fork(handle, forkArchivePath);
+    await installLocalT3Fork(handle, forkArchivePath, workerEnvironment);
     await projectWorkerRuntimeEnvironment(handle, workerEnvironment);
     const startupToken = await startT3Server(
       handle,

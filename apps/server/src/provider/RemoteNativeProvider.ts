@@ -2,14 +2,25 @@ import {
   type ProviderDriverKind,
   type ProviderInstanceId,
   type ServerProvider,
-  type ServerProviderModel,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Stream from "effect/Stream";
+import * as Schema from "effect/Schema";
+import * as DateTime from "effect/DateTime";
+import { ProviderDriverError } from "./Errors.ts";
+import * as CodexSchema from "effect-codex-app-server/schema";
+import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/unstable/http";
+import * as ModelManifest from "./ModelManifest.ts";
+import { resolveClaudeModelCatalog, resolveClaudeModelsForVersion } from "./ClaudeModelCatalog.ts";
+import { parseCodexModelListResponse } from "./Layers/CodexProvider.ts";
+import { makeManagedServerProvider } from "./makeManagedServerProvider.ts";
 
 import { makeCompadreTextGeneration } from "../textGeneration/CompadreTextGeneration.ts";
 import { makeCompadreAdapter } from "./Layers/CompadreAdapter.ts";
 import { makeManualOnlyProviderMaintenanceCapabilities } from "./providerMaintenance.ts";
+
+const decodeProviderVersion = Schema.decodeUnknownEffect(Schema.Struct({ version: Schema.String }));
+const decodeCodexModels = Schema.decodeUnknownEffect(CodexSchema.V2ModelListResponse);
 
 export interface RemoteNativeProviderOptions {
   readonly endpoint: string;
@@ -22,53 +33,7 @@ export interface RemoteNativeProviderOptions {
   readonly snapshot: ServerProvider;
 }
 
-function remoteCodexCapabilities(
-  efforts: ReadonlyArray<string>,
-): ServerProviderModel["capabilities"] {
-  return {
-    optionDescriptors: [
-      {
-        id: "reasoningEffort",
-        label: "Reasoning",
-        type: "select",
-        options: efforts.map((id) => ({
-          id,
-          label: id === "xhigh" ? "Extra High" : `${id.slice(0, 1).toUpperCase()}${id.slice(1)}`,
-          ...(id === "high" ? { isDefault: true as const } : {}),
-        })),
-        currentValue: "high",
-      },
-    ],
-  };
-}
-
-const REMOTE_CODEX_MODELS: ReadonlyArray<ServerProviderModel> = [
-  {
-    slug: "gpt-5.6-sol",
-    name: "GPT-5.6-Sol",
-    isDefault: true,
-    isCustom: false,
-    capabilities: remoteCodexCapabilities(["low", "medium", "high", "xhigh", "max", "ultra"]),
-  },
-  {
-    slug: "gpt-5.6-terra",
-    name: "GPT-5.6-Terra",
-    isCustom: false,
-    capabilities: remoteCodexCapabilities(["low", "medium", "high", "xhigh", "max", "ultra"]),
-  },
-  {
-    slug: "gpt-5.6-luna",
-    name: "GPT-5.6-Luna",
-    isCustom: false,
-    capabilities: remoteCodexCapabilities(["low", "medium", "high", "xhigh", "max"]),
-  },
-];
-
-/**
- * A hosted native driver cannot probe a local CLI for its catalog because the
- * CLI lives in the Modal worker. Use the catalog supported by this T3 build and
- * deliberately ignore stale `customModels` persisted by earlier experiments.
- */
+/** Hosted snapshots receive the discovered catalog; no model allowlist lives here. */
 export function remoteNativeProviderSnapshot(
   options: Pick<RemoteNativeProviderOptions, "agentProvider" | "enabled" | "snapshot">,
 ): ServerProvider {
@@ -77,15 +42,65 @@ export function remoteNativeProviderSnapshot(
     enabled: options.enabled,
     installed: true,
     status: options.enabled ? "ready" : "disabled",
-    auth: {
-      status: "authenticated",
-      type: "compadre-modal",
-      label: "Isolated Modal worker",
-    },
+    auth: { status: "authenticated", type: "compadre-modal", label: "Isolated Modal worker" },
     availability: "available",
     message: "Provider execution runs in an isolated Modal T3 worker.",
-    ...(options.agentProvider === "codex" ? { models: [...REMOTE_CODEX_MODELS] } : {}),
   };
+}
+
+/** Shares refresh and outage behavior between the hosted drivers and focused transport tests. */
+export function makeRemoteProviderModelCheck(
+  options: RemoteNativeProviderOptions,
+  httpClient: HttpClient.HttpClient,
+  manifest: ModelManifest.ModelManifest["Service"],
+) {
+  let snapshotValue = {
+    ...remoteNativeProviderSnapshot(options),
+    models: [],
+    status: options.enabled ? "warning" : "disabled",
+    message: "Discovering worker provider models.",
+  } as ServerProvider;
+  const checkProvider = Effect.gen(function* () {
+    if (!options.enabled) return snapshotValue;
+    const url = new URL(`/hosted/t3/providers/${options.agentProvider}/models`, options.endpoint);
+    const request = HttpClientRequest.get(url, {
+      headers: options.apiKey ? { authorization: `Bearer ${options.apiKey}` } : {},
+    });
+    const response = yield* httpClient.execute(request).pipe(
+      Effect.flatMap(HttpClientResponse.filterStatusOk),
+      Effect.flatMap((response) => response.json),
+      Effect.timeout("25 seconds"),
+    );
+    const { version } = yield* decodeProviderVersion(response);
+    const catalog = yield* manifest.refresh;
+    const models =
+      options.agentProvider === "codex"
+        ? ModelManifest.classifyModels(
+            parseCodexModelListResponse(yield* decodeCodexModels(response)),
+            catalog,
+            options.driverKind,
+          )
+        : resolveClaudeModelsForVersion(resolveClaudeModelCatalog(catalog), version);
+    snapshotValue = {
+      ...remoteNativeProviderSnapshot(options),
+      models,
+      version,
+      checkedAt: DateTime.formatIso(yield* DateTime.now),
+    };
+    return snapshotValue;
+  }).pipe(
+    Effect.catchCause(() =>
+      Effect.succeed({
+        ...snapshotValue,
+        status: "warning" as const,
+        message: snapshotValue.models.length
+          ? "Model discovery is temporarily unavailable; showing the last successful catalog."
+          : "Worker model discovery is unavailable. Refresh providers after the controller is updated.",
+      }),
+    ),
+  );
+
+  return { initialSnapshot: snapshotValue, checkProvider };
 }
 
 /**
@@ -97,17 +112,35 @@ export function remoteNativeProviderSnapshot(
 export const makeRemoteNativeProvider = Effect.fn("makeRemoteNativeProvider")(function* (
   options: RemoteNativeProviderOptions,
 ) {
-  const snapshotValue = remoteNativeProviderSnapshot(options);
+  const httpClient = yield* HttpClient.HttpClient;
+  const manifest = yield* ModelManifest.make;
+  const { initialSnapshot, checkProvider } = makeRemoteProviderModelCheck(
+    options,
+    httpClient,
+    manifest,
+  );
   const maintenanceCapabilities = makeManualOnlyProviderMaintenanceCapabilities({
     provider: options.driverKind,
     packageName: null,
   });
-  const snapshot = {
+  const snapshot = yield* makeManagedServerProvider({
     maintenanceCapabilities,
-    getSnapshot: Effect.succeed(snapshotValue),
-    refresh: Effect.succeed(snapshotValue),
-    streamChanges: Stream.empty,
-  };
+    getSettings: Effect.succeed(options.enabled),
+    streamSettings: Stream.empty,
+    haveSettingsChanged: (previous, next) => previous !== next,
+    initialSnapshot: () => Effect.succeed(initialSnapshot),
+    checkProvider,
+  }).pipe(
+    Effect.mapError(
+      (cause) =>
+        new ProviderDriverError({
+          driver: options.driverKind,
+          instanceId: options.instanceId,
+          detail: "Failed to initialize remote model discovery.",
+          cause,
+        }),
+    ),
+  );
   const adapter = yield* makeCompadreAdapter({
     endpoint: options.endpoint,
     instanceId: options.instanceId,
