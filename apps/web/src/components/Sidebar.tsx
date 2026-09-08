@@ -1041,6 +1041,9 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
 
   const isRemote =
     props.currentEnvironmentId !== null && thread.environmentId !== props.currentEnvironmentId;
+  // An empty flex child still reserves the row gap, pulling the preview icon
+  // inward from the timestamp's right edge in hosted mode.
+  const showEnvironmentMetadata = isRemote || (!COMPADRE_AUTH_ENABLED && driverKind !== null);
 
   const detailsTooltip = (
     <SidebarThreadTooltip
@@ -1673,6 +1676,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
                 className={cn(
                   "pointer-events-none inline-flex shrink-0 items-center gap-1",
                   !COMPADRE_AUTH_ENABLED && "ml-auto",
+                  !showEnvironmentMetadata && "hidden",
                 )}
               >
                 {isRemote ? (
