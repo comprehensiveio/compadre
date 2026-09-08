@@ -12,6 +12,8 @@ import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawne
 import * as CodexClient from "effect-codex-app-server/client";
 import * as CodexSchema from "effect-codex-app-server/schema";
 import * as CodexErrors from "effect-codex-app-server/errors";
+import { BUNDLED_MODEL_MANIFEST, isLegacyModel } from "../ModelManifest.ts";
+import { ProviderDriverKind } from "@t3tools/contracts";
 
 import type {
   CodexSettings,
@@ -62,16 +64,8 @@ const REASONING_EFFORT_LABELS: Readonly<Record<string, string>> = {
 };
 
 const DEFAULT_SERVICE_TIER_ID = "default";
-const CURRENT_CODEX_MODELS = new Set([
-  "gpt-5.6-luna",
-  "gpt-5.6-terra",
-  "gpt-5.6-sol",
-  "gpt-daybreak-blue-latest",
-  "gpt-daybreak-red-latest",
-]);
-
 export function isLegacyCodexModel(model: string): boolean {
-  return !CURRENT_CODEX_MODELS.has(model);
+  return isLegacyModel(BUNDLED_MODEL_MANIFEST, ProviderDriverKind.make("codex"), model);
 }
 
 function reasoningEffortLabel(reasoningEffort: string): string {
@@ -193,7 +187,7 @@ const toDisplayName = (model: CodexSchema.V2ModelListResponse__Model): string =>
     .replace(/-([a-z])/g, (_, c) => "-" + c.toUpperCase());
 };
 
-function parseCodexModelListResponse(
+export function parseCodexModelListResponse(
   response: CodexSchema.V2ModelListResponse,
 ): ReadonlyArray<ServerProviderModel> {
   return response.data.map((model) => ({

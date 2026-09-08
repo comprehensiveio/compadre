@@ -1,4 +1,5 @@
 import path from "node:path";
+import { CLAUDE_CODE_VERSION, CODEX_VERSION } from "../t3/provider-versions.js";
 import { createHash } from "node:crypto";
 import {
   ModalClient,
@@ -84,10 +85,8 @@ const DEFAULT_IMAGE = "node:22";
 const DEFAULT_WORKDIR = "/workspace";
 const DEFAULT_TIMEOUT_MS = 2 * 60 * 60 * 1_000;
 const DEFAULT_SNAPSHOT_TTL_MS = 7 * 24 * 60 * 60 * 1_000;
-const CLAUDE_CODE_VERSION = "2.1.222";
-const CODEX_VERSION = "0.146.0";
 const PNPM_VERSION = "10.34.2";
-const T3_CODE_VERSION = "0.0.33";
+export const T3_CODE_VERSION = "0.0.33";
 const AGENT_BROWSER_VERSION = "0.35.1";
 const COMP_DEV_POSTGRES_PASSWORD =
   "Oe1lQ3diVMmKdJ4aFLSU9LsQcT2KkVpZMq4V025ABqcOCUtSKpluLNCsLZH60wMa";

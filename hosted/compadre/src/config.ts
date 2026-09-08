@@ -1,5 +1,5 @@
 export const DEFAULT_MODEL = process.env.DEFAULT_MODEL || "claude-opus-5";
-export const FABLE_MODEL = process.env.FABLE_MODEL || "claude-fable-5";
+export const FABLE_MODEL = process.env.FABLE_MODEL || "claude-fable-5-1";
 export const CODEX_MODEL = process.env.CODEX_MODEL || "gpt-5.6-sol";
 export const REPO_PATH = process.env.REPO_PATH || "/tmp/comp-repo";
 // Retained for the legacy local worktree helper, which is no longer used on

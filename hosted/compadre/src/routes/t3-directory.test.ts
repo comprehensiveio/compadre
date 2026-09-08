@@ -215,6 +215,35 @@ test("accepts authenticated run steering and reports closed runs", async (t) => 
   );
 });
 
+test("serves discovered models only after authentication and without waking workers", async (t) => {
+  const previousApiKey = process.env.COMPADRE_API_KEY;
+  process.env.COMPADRE_API_KEY = "test-key";
+  t.after(() => {
+    if (previousApiKey === undefined) delete process.env.COMPADRE_API_KEY;
+    else process.env.COMPADRE_API_KEY = previousApiKey;
+  });
+  let discoveries = 0;
+  const app = createT3DirectoryRoutes({
+    enabled: () => true,
+    createId: () => { throw new Error("must not create a thread"); },
+    getGateway: async () => { throw new Error("must not acquire a worker"); },
+    watchTurn: () => { throw new Error("must not start a turn"); },
+    discoverCodexModels: async () => {
+      discoveries++;
+      return { version: "1.0.0", data: [{ model: "future-model" }], nextCursor: null };
+    },
+  });
+  const path = "/hosted/t3/providers/codex/models";
+  assert.equal((await app.request(path)).status, 401);
+  assert.equal(discoveries, 0);
+  const response = await app.request(path, authorized());
+  assert.equal(response.status, 200);
+  assert.deepEqual((await response.json()).data, [{ model: "future-model" }]);
+  assert.equal(discoveries, 1);
+  assert.equal((await app.request("/hosted/t3/providers/claude-code/models", authorized())).status, 200);
+  assert.equal((await app.request("/hosted/t3/providers/unknown/models", authorized())).status, 400);
+});
+
 test("lists directory metadata without waking a T3 sandbox", async (t) => {
   const previousApiKey = process.env.COMPADRE_API_KEY;
   process.env.COMPADRE_API_KEY = "test-key";

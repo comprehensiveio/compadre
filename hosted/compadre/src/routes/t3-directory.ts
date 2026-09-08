@@ -1,5 +1,6 @@
 import { readWorkspaceReview, readWorkspaceReviewFile, type WorkspaceReviewStore } from "../t3/workspace-review.js";
 import { getConfiguredWorkspaceReviewStore } from "../t3/runtime.js";
+import { discoverProviderModels, claudeProviderVersion } from "../t3/provider-models.js";
 import crypto from "node:crypto";
 import {
   chatParamsFromRequestBody,
@@ -108,6 +109,7 @@ interface T3DirectoryGateway {
 }
 
 export interface T3DirectoryRoutesDependencies {
+  discoverCodexModels?: typeof discoverProviderModels;
   enabled(): boolean;
   getGateway(): Promise<T3DirectoryGateway | null>;
   getRunCoordinator?(): Promise<NativeT3RunCoordinator | null>;
@@ -420,6 +422,13 @@ export function createT3DirectoryRoutes(
     if (authError) return authError;
     return next();
   });
+
+  routes.get("/hosted/t3/providers/:provider/models", guarded(async (c) => {
+    const provider = c.req.param("provider");
+    if (provider === "claude-code") return c.json(claudeProviderVersion);
+    if (provider === "codex") return c.json(await (dependencies.discoverCodexModels ?? discoverProviderModels)());
+    return c.json({ error: "unsupported provider" }, 400);
+  }));
 
   routes.get("/hosted/t3/threads", guarded(async (c) => {
     const gateway = await dependencies.getGateway();

@@ -24,7 +24,7 @@ import { makeCompadreAdapter } from "./CompadreAdapter.ts";
 import type { CompadreStreamEvent } from "./CompadreTransport.ts";
 import { remoteNativeProviderSnapshot } from "../RemoteNativeProvider.ts";
 
-it("uses the native Codex catalog instead of stale proxy model aliases", () => {
+it("preserves discovered models and their capabilities without a hosted allowlist", () => {
   const snapshot = remoteNativeProviderSnapshot({
     agentProvider: "codex",
     enabled: true,
@@ -37,10 +37,10 @@ it("uses the native Codex catalog instead of stale proxy model aliases", () => {
       status: "warning",
       auth: { status: "unknown" },
       checkedAt: "2026-08-26T00:00:00.000Z",
-      models: ["claude-code", "codex", "compadre"].map((model) => ({
+      models: ["future-model", "another-new-model"].map((model) => ({
         slug: model,
         name: model,
-        isCustom: true,
+        isCustom: false,
         capabilities: null,
       })),
       slashCommands: [],
@@ -50,9 +50,8 @@ it("uses the native Codex catalog instead of stale proxy model aliases", () => {
 
   assert.deepStrictEqual(
     snapshot.models.map((model) => model.slug),
-    ["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"],
+    ["future-model", "another-new-model"],
   );
-  assert.equal(snapshot.models[0]?.isDefault, true);
 });
 
 it.layer(Layer.merge(NodeServices.layer, FetchHttpClient.layer))("CompadreAdapter", (it) => {
