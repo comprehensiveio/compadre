@@ -482,6 +482,36 @@ describe("MessagesTimeline", () => {
     expect(markup).toContain("2.0 KB");
   });
 
+  it("keeps hosted assistant files clickable while their download URL is minted lazily", () => {
+    const entry = buildAssistantTimelineEntry("The SQL file is ready.");
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        timelineEntries={[
+          {
+            ...entry,
+            message: {
+              ...entry.message,
+              attachments: [
+                {
+                  type: "file" as const,
+                  id: "artifact-sql",
+                  name: "undo-angus-final-approval.sql",
+                  mimeType: "application/sql",
+                  sizeBytes: 3277,
+                },
+              ],
+            },
+          },
+        ]}
+      />,
+    );
+
+    expect(markup).toContain('aria-label="Download undo-angus-final-approval.sql"');
+    expect(markup).toContain("cursor-pointer");
+    expect(markup).not.toContain("href=");
+  });
+
   it("uses the larger leading inset only when the top fade is enabled", () => {
     const timelineEntries = [buildUserTimelineEntry("Hello")];
 

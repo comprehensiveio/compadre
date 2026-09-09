@@ -1347,6 +1347,7 @@ function InlineMessageFiles({
   files: ReadonlyArray<ChatFileAttachment>;
   className?: string;
 }) {
+  const ctx = use(TimelineRowCtx);
   if (files.length === 0) return null;
   return (
     <div className={cn("flex max-w-[560px] flex-col gap-2", className)}>
@@ -1362,9 +1363,9 @@ function InlineMessageFiles({
                 {formatArtifactSize(file.sizeBytes)}
               </span>
             </span>
-            {file.downloadUrl ? (
+            {file.downloadable === false ? null : (
               <DownloadIcon className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
-            ) : null}
+            )}
           </>
         );
         return file.downloadUrl ? (
@@ -1376,13 +1377,23 @@ function InlineMessageFiles({
           >
             {content}
           </a>
-        ) : (
+        ) : file.downloadable === false ? (
           <div
             key={file.id}
             className="flex min-w-0 items-center gap-3 rounded-lg border border-border/80 bg-background/70 px-3 py-2.5"
           >
             {content}
           </div>
+        ) : (
+          <button
+            key={file.id}
+            type="button"
+            aria-label={`Download ${file.name}`}
+            onClick={() => ctx.onFileDownload(file)}
+            className="flex min-w-0 cursor-pointer items-center gap-3 rounded-lg border border-border/80 bg-background/70 px-3 py-2.5 text-left transition-colors hover:bg-muted/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/70"
+          >
+            {content}
+          </button>
         );
       })}
     </div>
