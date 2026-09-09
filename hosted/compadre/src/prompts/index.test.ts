@@ -81,6 +81,15 @@ test("points harnesses at projected provider-neutral skills", () => {
     /\/opt\/compadre-skills\/dev-environment\/SKILL\.md/,
   );
   assert.match(prompt, /full Comp dev-login URL/);
+  assert.match(prompt, /asks to start, run, open, serve, preview, or tunnel/);
+  assert.match(prompt, /complete managed development environment/);
+  assert.match(prompt, /do not separately ask for a public URL/);
+  assert.match(prompt, /scripts\/compadre-dev-up\.sh up/);
+  assert.match(prompt, /do not launch the framework dev server directly/);
+  assert.match(prompt, /cloudflared, ngrok, localtunnel/);
+  assert.match(prompt, /Managed startup always exposes/);
+  assert.match(prompt, /\.dev\.compadre\.comprehensive\.io/);
+  assert.match(prompt, /\.trycloudflare\.com/);
   assert.match(prompt, /best demonstrate the functionality discussed in the thread/);
   assert.match(prompt, /not a bare preview URL or an `auto_impersonate` link/);
   assert.match(prompt, /company ID 9/);

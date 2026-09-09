@@ -40,6 +40,10 @@ test("teaches agents to hand users a contextual dev-login URL", () => {
   assert.ok(skill);
   const contents = Buffer.from(skill.data).toString("utf8");
 
+  assert.match(contents, /start, run, open, serve, preview, or tunnel/);
+  assert.match(contents, /Do not wait for a separate request to expose or share it/);
+  assert.match(contents, /Never\s+launch the framework dev server directly/);
+  assert.match(contents, /cloudflared, ngrok, localtunnel/);
   assert.match(contents, /proactively include a complete Comp dev-login/);
   assert.match(contents, /\/api\/v1\/auth\/dev\/login\/user\?userId=<uuid>/);
   assert.match(contents, /best demonstrate the functionality the thread is about/);
