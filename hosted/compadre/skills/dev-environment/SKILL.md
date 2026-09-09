@@ -1,6 +1,6 @@
 ---
 name: dev-environment
-description: Start and validate the Comp application's isolated development server when a task needs a live review environment or browser verification.
+description: Start, run, open, serve, preview, or tunnel the Comp application's isolated development server. Managed startup always exposes the stable public review URL and applies whenever a user asks to start the dev server, even if they do not separately ask for a link.
 ---
 
 # Comp development environment
@@ -11,6 +11,12 @@ useful. Do not start them for questions, investigations, or code changes that do
 not benefit from browser validation.
 
 ## Start or reuse it
+
+An explicit request to start, run, open, serve, preview, or tunnel the Comp app
+means to complete this entire managed flow and hand the user its authenticated
+review link. Do not wait for a separate request to expose or share it. Never
+launch the framework dev server directly, and never create another tunnel with
+cloudflared, ngrok, localtunnel, or a similar tool.
 
 From `REPO_PATH`, run:
 
