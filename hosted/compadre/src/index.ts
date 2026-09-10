@@ -64,7 +64,6 @@ import {
 } from "./t3/runtime.js";
 import { devEnvironmentEnabled } from "./t3/dev-environment.js";
 import { ensureWorkerTemplateBuildSchedule } from "./temporal/client.js";
-import { NATIVE_T3_RUN_ORCHESTRATOR } from "./temporal/mode.js";
 import {
   startNativeT3TemporalWorker,
   type RunningTemporalWorker,
@@ -127,33 +126,31 @@ async function start() {
         "Native T3 worker lifecycle requires configured thread persistence",
       );
     }
-    if (NATIVE_T3_RUN_ORCHESTRATOR === "temporal") {
-      // Fail fast: without the Temporal worker no native run can execute, so
-      // an unreachable server must block this deploy from receiving traffic.
-      temporalWorker = await startNativeT3TemporalWorker();
-      temporalWorker.done.catch((error) => {
-        console.error("[temporal] worker stopped unexpectedly", error);
-        if (!shuttingDown) process.exit(1);
-      });
-      if (devEnvironmentEnabled()) {
-        ensureWorkerTemplateBuildSchedule().catch((error) => {
-          log.error(
-            serializeError(error),
-            "worker-template build cron could not be ensured",
-          );
-        });
-      }
-      // Reconcile triggered-prompt rows with their Temporal Schedules. Never
-      // fatal: a failed sync only delays fires until the next boot.
-      void getConfiguredTriggeredPromptStore()
-        .then((store) => (store ? ensureTriggeredPromptSchedules(store) : null))
-        .catch((error) =>
-          log.warn(
-            serializeError(error),
-            "triggered prompt schedules could not be reconciled",
-          ),
+    // Fail fast: without the Temporal worker no native run can execute, so
+    // an unreachable server must block this deploy from receiving traffic.
+    temporalWorker = await startNativeT3TemporalWorker();
+    temporalWorker.done.catch((error) => {
+      console.error("[temporal] worker stopped unexpectedly", error);
+      if (!shuttingDown) process.exit(1);
+    });
+    if (devEnvironmentEnabled()) {
+      ensureWorkerTemplateBuildSchedule().catch((error) => {
+        log.error(
+          serializeError(error),
+          "worker-template build cron could not be ensured",
         );
+      });
     }
+    // Reconcile triggered-prompt rows with their Temporal Schedules. Never
+    // fatal: a failed sync only delays fires until the next boot.
+    void getConfiguredTriggeredPromptStore()
+      .then((store) => (store ? ensureTriggeredPromptSchedules(store) : null))
+      .catch((error) =>
+        log.warn(
+          serializeError(error),
+          "triggered prompt schedules could not be reconciled",
+        ),
+      );
   }
   const agent = validateConversationConfiguration();
   const slackInstallation = await validateConfiguredSlackInstallation();

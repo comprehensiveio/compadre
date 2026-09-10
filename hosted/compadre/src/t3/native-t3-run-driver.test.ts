@@ -196,7 +196,7 @@ async function harness(runId: string, waitBehaviors: WaitBehavior[]) {
     (await durability.stream(runId).snapshot()).map(
       (entry) => entry.chunk as unknown as StreamChunk,
     );
-  return { durability, requests, controls, gateway, calls, chunks, runId };
+  return { durability, requests, controls, gateway, calls, chunks, runId, prepareNativeDelivery: async () => {} };
 }
 
 test("folds setup-time steering into the initial provider prompt in order", async (t) => {
@@ -242,7 +242,7 @@ test("drives a native T3 run to completion against durable state", async (t) => 
   t.after(() => durability.close());
 
   const outcome = await driveNativeT3Run(
-    { gateway, durability, requests },
+    { gateway, durability, requests, prepareNativeDelivery: async () => {} },
     runId,
   );
 
@@ -252,22 +252,18 @@ test("drives a native T3 run to completion against durable state", async (t) => 
   const types = events.map((event) => event.type);
   assert.deepEqual(types, [
     "RUN_STARTED",
-    "TEXT_MESSAGE_START",
-    "TEXT_MESSAGE_CONTENT",
-    "TEXT_MESSAGE_CONTENT",
-    "TEXT_MESSAGE_END",
     "RUN_FINISHED",
   ]);
   const text = events
     .filter((event) => event.type === EventType.TEXT_MESSAGE_CONTENT)
     .map((event) => event.delta)
     .join("");
-  assert.equal(text, "Working directory is /workspace");
+  assert.equal(text, "", "conversation events belong to the native journal");
   const run = await durability.runs.get(runId);
   assert.equal(run?.status, "completed");
 });
 
-test("a retried driver resumes projection without duplicating events", async (t) => {
+test("a retried driver resumes observation without duplicating lifecycle receipts", async (t) => {
   let clock = 1_000_000;
   const { durability, requests, gateway, calls, chunks, runId } = await harness("run-resume", [
     async ({ onSnapshot }) => {
@@ -284,7 +280,7 @@ test("a retried driver resumes projection without duplicating events", async (t)
     },
   ]);
   t.after(() => durability.close());
-  const deps = { gateway, durability, requests, now: () => clock };
+  const deps = { gateway, durability, requests, prepareNativeDelivery: async () => {}, now: () => clock };
 
   // Attempt 1: transient failure must NOT terminalize the run.
   await assert.rejects(
@@ -307,7 +303,7 @@ test("a retried driver resumes projection without duplicating events", async (t)
   );
   assert.equal(
     events.filter((event) => event.type === EventType.TEXT_MESSAGE_START).length,
-    1,
+    0,
   );
   assert.equal(
     events.filter((event) => event.type === EventType.RUN_FINISHED).length,
@@ -317,7 +313,7 @@ test("a retried driver resumes projection without duplicating events", async (t)
     .filter((event) => event.type === EventType.TEXT_MESSAGE_CONTENT)
     .map((event) => event.delta)
     .join("");
-  assert.equal(text, "Working directory is /workspace");
+  assert.equal(text, "", "conversation events belong to the native journal");
   assert.equal((await durability.runs.get(runId))?.status, "completed");
 });
 
@@ -327,7 +323,7 @@ test("a run cancelled before dispatch converges without contacting the worker", 
   await requestRunCancel(durability.runs, runId);
 
   const outcome = await driveNativeT3Run(
-    { gateway, durability, requests },
+    { gateway, durability, requests, prepareNativeDelivery: async () => {} },
     runId,
   );
 
@@ -366,7 +362,7 @@ test("an aborted signal interrupts the worker and terminalizes as aborted", asyn
   t.after(() => durability.close());
 
   const outcome = await driveNativeT3Run(
-    { gateway, durability, requests },
+    { gateway, durability, requests, prepareNativeDelivery: async () => {} },
     runId,
     { signal: abort.signal },
   );
@@ -376,7 +372,7 @@ test("an aborted signal interrupts the worker and terminalizes as aborted", asyn
   assert.equal(calls.cancels, 1, "the worker turn is interrupted");
   const events = await chunks();
   assert.equal(events.at(-1)?.type, EventType.RUN_ERROR);
-  assert.match(String(events.at(-1)?.message), /cancelled/);
+  assert.match(String(events.at(-1)?.message), /interrupted/);
   assert.equal((await durability.runs.get(runId))?.status, "aborted");
 });
 
@@ -417,7 +413,7 @@ test("a superseded driver claim cannot append or terminalize", async (t) => {
   t.after(() => durability.close());
 
   await assert.rejects(
-    () => driveNativeT3Run({ gateway, durability, requests }, runId),
+    () => driveNativeT3Run({ gateway, durability, requests, prepareNativeDelivery: async () => {} }, runId),
     /superseded/,
   );
   // The superseded driver neither appended the terminal chunk nor closed out
@@ -449,7 +445,7 @@ test("an attempt cancellation without run intent hands off instead of interrupti
     },
   ]);
   t.after(() => durability.close());
-  const deps = { gateway, durability, requests };
+  const deps = { gateway, durability, requests, prepareNativeDelivery: async () => {} };
 
   // The cancelled attempt must throw for retry and must NOT touch the turn.
   await assert.rejects(() => driveNativeT3Run(deps, runId, { signal: abort.signal }));
@@ -468,7 +464,7 @@ test("an attempt cancellation without run intent hands off instead of interrupti
     .filter((event) => event.type === EventType.TEXT_MESSAGE_CONTENT)
     .map((event) => event.delta)
     .join("");
-  assert.equal(text, "Still working, now done");
+  assert.equal(text, "", "retry never copies the conversation into lifecycle receipts");
 });
 
 test("a pre-watch attempt cancellation without run intent retries instead of aborting", async (t) => {
@@ -478,7 +474,7 @@ test("a pre-watch attempt cancellation without run intent retries instead of abo
   t.after(() => durability.close());
 
   await assert.rejects(
-    () => driveNativeT3Run({ gateway, durability, requests }, runId, { signal: abort.signal }),
+    () => driveNativeT3Run({ gateway, durability, requests, prepareNativeDelivery: async () => {} }, runId, { signal: abort.signal }),
     /cancelled before watching/,
   );
   assert.equal(calls.sends, 0);
@@ -502,7 +498,7 @@ test("one attempt rides out an interrupted watch while the turn progresses", asy
   t.after(() => durability.close());
 
   const outcome = await driveNativeT3Run(
-    { gateway, durability, requests },
+    { gateway, durability, requests, prepareNativeDelivery: async () => {} },
     runId,
     { reconnectDelayMs: 5 },
   );
@@ -517,7 +513,7 @@ test("one attempt rides out an interrupted watch while the turn progresses", asy
       .filter((event) => event.type === EventType.TEXT_MESSAGE_CONTENT)
       .map((event) => event.delta)
       .join(""),
-    "Converting the grid... done",
+    "",
   );
   assert.equal((await durability.runs.get(runId))?.status, "completed");
 });
@@ -536,7 +532,7 @@ test("a watch failure with no durable progress fails the attempt for retry", asy
   await assert.rejects(
     () =>
       driveNativeT3Run(
-        { gateway, durability, requests, now: () => clock },
+        { gateway, durability, requests, prepareNativeDelivery: async () => {}, now: () => clock },
         runId,
         { reconnectDelayMs: 5 },
       ),
@@ -558,7 +554,7 @@ test("a confirmed-dead worker terminalizes the run promptly instead of burning r
   t.after(() => durability.close());
 
   const outcome = await driveNativeT3Run(
-    { gateway, durability, requests },
+    { gateway, durability, requests, prepareNativeDelivery: async () => {} },
     runId,
     { reconnectDelayMs: 5 },
   );
@@ -573,30 +569,12 @@ test("a confirmed-dead worker terminalizes the run promptly instead of burning r
   assert.equal((await durability.runs.get(runId))?.status, "failed");
 });
 
-test("persists the saved review before announcing terminal completion", async (t) => {
-  const h = await harness("review-completion", [async () => snapshotAt({ assistantText: "Done", streaming: false, terminal: true })]);
-  t.after(() => h.durability.close());
-  const request = await h.requests.getRequest(h.runId);
-  assert.ok(request);
-  await h.requests.saveRequest({ ...request, collectArtifacts: true });
-  const reference = `compadre-review:review-completion:${"a".repeat(64)}`;
-  await driveNativeT3Run({ ...h, async collectArtifactEvents() {
-    return [{ type: "WORKSPACE_REVIEW", timestamp: Date.now(), data: { reference } }];
-  } }, h.runId);
-  const events = await h.chunks();
-  const review = events.findIndex((event) => event.type === "WORKSPACE_REVIEW");
-  assert.ok(review >= 0);
-  assert.equal(events[review + 1]?.type, "RUN_FINISHED");
-});
-
 test("native delivery stores only lifecycle receipts while the worker owns the conversation", async (t) => {
   const h = await harness("native-only", [async ({ onSnapshot }) => {
     await onSnapshot?.(snapshotAt({ assistantText: "partial", streaming: true, terminal: false }));
     return snapshotAt({ assistantText: "native final", streaming: false, terminal: true });
   }]);
   t.after(() => h.durability.close());
-  const request = await h.requests.getRequest(h.runId);
-  await h.requests.saveRequest({ ...request!, nativeDelivery: true });
   await driveNativeT3Run({ ...h, prepareNativeDelivery: async () => {} }, h.runId);
   assert.deepEqual((await h.chunks()).map((chunk) => chunk.type), ["RUN_STARTED", "RUN_FINISHED"]);
 });

@@ -4,11 +4,6 @@ import type { T3Client, T3ThreadSnapshot } from "./client.js";
 import type { NativeT3RunRequest } from "./run-request-store.js";
 import { NativeThreadDelivery, type NativeDeliveryState } from "./native-events.js";
 
-export function nativeDeliveryCohortIncludes(threadId: string, environment: NodeJS.ProcessEnv = process.env): boolean {
-  const cohort = environment.COMPADRE_NATIVE_EVENT_THREADS?.split(",").map((id) => id.trim()) ?? [];
-  return cohort.includes("*") || cohort.includes(threadId);
-}
-
 function lastCheckpoint(snapshot: T3ThreadSnapshot): number {
   const checkpoints = snapshot.thread.checkpoints;
   if (!Array.isArray(checkpoints)) return 0;

@@ -14,29 +14,16 @@ import {
   nativeT3RunWorkflowId,
   type NativeT3RunWorkflowInput,
 } from "../temporal/shared.js";
-import { mirrorNativeT3RunToSlack } from "../services/native-t3-slack-delivery.js";
-import { dispatchWasSuperseded } from "../services/t3-slack-conversation.js";
-import type { T3ThreadBinding } from "../services/t3-thread-bindings.js";
-import {
-  createNativeT3AguiRecoveryStream,
-  createNativeT3AguiStream,
-  traceNativeT3AguiStream,
-  type NativeT3AguiGateway,
-} from "./agui-stream.js";
-import type { StreamChunk } from "./agui-protocol.js";
 import type { DurableStreamOptions } from "../durability/runtime.js";
-import type { T3GatewayTurn } from "./gateway.js";
 import type {
   NativeT3RunCancelResult,
   NativeT3RunCoordinator,
   NativeT3RunStartResult,
 } from "./run-coordinator.js";
-import type { NativeT3DriverGateway } from "./native-t3-run-driver.js";
 import {
   NativeT3RunRequestStore,
   type NativeT3RunRequest,
 } from "./run-request-store.js";
-import type { T3ThreadSnapshot } from "./client.js";
 import type { NativeT3SteeringInput } from "./run-control.js";
 
 /**
@@ -54,13 +41,7 @@ export interface NativeT3RunService {
   activeRun(threadId: string): Promise<RunRecord | null>;
   cancel(runId: string): Promise<NativeT3RunCancelResult>;
   steer(runId: string, input: NativeT3SteeringInput): Promise<boolean>;
-  /**
-   * Give a replay subscriber a producer when the run has none. The Temporal
-   * implementation is a no-op — the workflow's retried drive activity is the
-   * sole producer — while the in-process implementation reattaches the worker
-   * turn exactly as startup recovery does.
-   */
-  ensureSubscriberRecovery(runId: string): Promise<void>;
+
 }
 
 export interface NativeT3WorkflowLauncher {
@@ -228,7 +209,7 @@ export class TemporalNativeT3RunService implements NativeT3RunService {
   }
 
   async cancel(runId: string): Promise<NativeT3RunCancelResult> {
-    // Durable intent plus the in-process fast path for any legacy run first.
+    // Record durable cancellation intent before cancelling the workflow.
     const result = await this.coordinator.cancel(runId);
     if (!result.found || !result.requested) return result;
     const dispatched = await this.launcher.cancel(nativeT3RunWorkflowId(runId));
@@ -246,218 +227,4 @@ export class TemporalNativeT3RunService implements NativeT3RunService {
     return this.launcher.steer(nativeT3RunWorkflowId(runId), input);
   }
 
-  async ensureSubscriberRecovery(): Promise<void> {
-    // Temporal owns production: the drive activity's retries already
-    // reattach after controller loss, and a second in-process producer would
-    // only trade driver-epoch claims with the activity.
-  }
-}
-
-export interface InProcessNativeT3RunGateway extends NativeT3AguiGateway {
-  steer?(input: {
-    canonicalThreadId: string;
-    id: string;
-    text: string;
-    signal?: AbortSignal;
-  }): Promise<boolean>;
-  cancel(input: {
-    canonicalThreadId: string;
-    providerInstanceId: string;
-    signal?: AbortSignal;
-  }): Promise<number | null>;
-  markActiveRun?(canonicalThreadId: string, runId: string): Promise<void>;
-  clearActiveRun?(
-    canonicalThreadId: string,
-    runId: string,
-    terminalStatus?: T3ThreadBinding["status"],
-  ): Promise<void>;
-}
-
-export interface InProcessNativeT3RunServiceDependencies {
-  gateway: InProcessNativeT3RunGateway;
-  coordinator: NativeT3RunCoordinator;
-  collectArtifactEvents?(
-    turn: T3GatewayTurn,
-    request: NativeT3RunRequest,
-  ): Promise<StreamChunk[]>;
-}
-
-/**
- * The pre-Temporal execution path, retained as the rollback for
- * NATIVE_T3_RUN_ORCHESTRATOR="in-process": the run is driven by a
- * fire-and-forget promise in this process and does not survive a restart.
- */
-export class InProcessNativeT3RunService implements NativeT3RunService {
-  private readonly activeTurns = new Map<string, T3GatewayTurn>();
-
-  constructor(
-    private readonly deps: InProcessNativeT3RunServiceDependencies,
-  ) {}
-
-  stream(runId: string, options?: DurableStreamOptions) {
-    return this.deps.coordinator.durability.stream(runId, options);
-  }
-
-  run(runId: string): Promise<RunRecord | null> {
-    return this.deps.coordinator.run(runId);
-  }
-
-  activeRun(threadId: string): Promise<RunRecord | null> {
-    return this.deps.coordinator.activeRun(threadId);
-  }
-
-  async startTurn(request: NativeT3RunRequest): Promise<NativeT3RunStartResult> {
-    const { gateway, coordinator, collectArtifactEvents } = this.deps;
-    const botToken = process.env.SLACK_BOT_TOKEN?.trim();
-    return coordinator.start({
-      runId: request.runId,
-      threadId: request.canonicalThreadId,
-      source: (signal) => {
-        let workerTurn: T3GatewayTurn | undefined;
-        const nativeStream = createNativeT3AguiStream({
-          gateway,
-          canonicalThreadId: request.canonicalThreadId,
-          runId: request.runId,
-          title: request.title,
-          text: request.text,
-          modelSelection: request.modelSelection,
-          inputFiles: request.inputFiles,
-          ...(request.blockedSlackDestination
-            ? { blockedSlackDestination: request.blockedSlackDestination }
-            : {}),
-          ...(request.collectArtifacts && collectArtifactEvents
-            ? {
-                outputArtifactEvents: (turn: T3GatewayTurn) =>
-                  collectArtifactEvents(turn, request),
-              }
-            : {}),
-          signal,
-          onTurn: async (turn) => {
-            workerTurn = turn;
-            this.activeTurns.set(request.runId, turn);
-            await gateway.markActiveRun?.(
-              request.canonicalThreadId,
-              request.runId,
-            );
-          },
-          onTerminal: async () => {
-            this.activeTurns.delete(request.runId);
-            await gateway
-              .clearActiveRun?.(request.canonicalThreadId, request.runId)
-              .catch((error: unknown) => {
-                console.error(
-                  "[native-t3-run] active run marker could not be cleared",
-                  {
-                    runId: request.runId,
-                    canonicalThreadId: request.canonicalThreadId,
-                    error,
-                  },
-                );
-              });
-          },
-        });
-        const mirrored =
-          request.slackMirror && botToken
-            ? mirrorNativeT3RunToSlack(nativeStream, {
-                binding: {
-                  channelId: request.slackMirror.channelId,
-                  threadTs: request.slackMirror.threadTs,
-                  ...(request.slackMirror.recipientUserId
-                    ? { recipientUserId: request.slackMirror.recipientUserId }
-                    : {}),
-                  ...(request.slackMirror.recipientTeamId
-                    ? { recipientTeamId: request.slackMirror.recipientTeamId }
-                    : {}),
-                },
-                userMessage: request.slackMirror.userMessage,
-                ...(request.slackMirror.detailsUrl
-                  ? { detailsUrl: request.slackMirror.detailsUrl }
-                  : {}),
-                botToken,
-              })
-            : nativeStream;
-        return traceNativeT3AguiStream(mirrored, {
-          canonicalThreadId: request.canonicalThreadId,
-          runId: request.runId,
-          provider: request.provider,
-          model: request.modelSelection.model,
-        });
-      },
-      cancel: async () => {
-        const turn = this.activeTurns.get(request.runId);
-        if (!turn) return;
-        await gateway.cancel({
-          canonicalThreadId: turn.binding.canonicalThreadId,
-          providerInstanceId: turn.binding.providerInstanceId,
-        });
-      },
-    });
-  }
-
-  cancel(runId: string): Promise<NativeT3RunCancelResult> {
-    return this.deps.coordinator.cancel(runId);
-  }
-
-  async steer(
-    runId: string,
-    input: NativeT3SteeringInput,
-  ): Promise<boolean> {
-    const run = await this.deps.coordinator.run(runId);
-    const turn = this.activeTurns.get(runId);
-    if (
-      !run ||
-      isTerminalRunStatus(run.status) ||
-      run.cancelRequested ||
-      !turn ||
-      !this.deps.gateway.steer
-    ) {
-      return false;
-    }
-    return this.deps.gateway.steer({
-      canonicalThreadId: turn.binding.canonicalThreadId,
-      id: input.id,
-      text: input.text,
-    });
-  }
-
-  /** Reattach a producer-less run for a replay subscriber (startup-recovery parity). */
-  async ensureSubscriberRecovery(runId: string): Promise<void> {
-    const { gateway, coordinator } = this.deps;
-    const run = await coordinator.run(runId);
-    if (!run) return;
-    await coordinator.resume({
-      runId,
-      threadId: run.threadId,
-      source: (signal) =>
-        createNativeT3AguiRecoveryStream({
-          gateway,
-          canonicalThreadId: run.threadId,
-          runId,
-          startedAt: run.startedAt,
-          signal,
-          onTurn: async (turn) => {
-            this.activeTurns.set(runId, turn);
-            await gateway.markActiveRun?.(run.threadId, runId);
-          },
-          onTerminal: async () => {
-            this.activeTurns.delete(runId);
-            await gateway
-              .clearActiveRun?.(run.threadId, runId)
-              .catch((error: unknown) => {
-                console.error(
-                  "[native-t3-run] active run marker could not be cleared",
-                  { runId, canonicalThreadId: run.threadId, error },
-                );
-              });
-          },
-        }),
-      cancel: async () => {
-        const active = this.activeTurns.get(runId);
-        await gateway.cancel({
-          canonicalThreadId: run.threadId,
-          providerInstanceId: active?.binding.providerInstanceId ?? "",
-        });
-      },
-    });
-  }
 }

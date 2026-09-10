@@ -65,9 +65,11 @@ Production endpoints:
 | Generated attachments/artifacts                                                                     | Private Comprehensive object storage plus metadata                      | Compadre artifact services; `s3://compadre`                                                                               |
 | Logs, APM traces, LLM input/output/usage/cost                                                       | Datadog                                                                 | controller, web, and worker telemetry                                                                                     |
 
-Duplicated recovery projections are not new authorities. In particular,
-Postgres worker snapshots may duplicate text for recovery, but central T3
-remains the transcript rendered to users.
+The worker native event journal is the source outbox; a per-thread Temporal
+consumer forwards bounded pages into central T3. Controller Postgres retains
+acknowledged cursors and lifecycle metadata, not recovery transcript copies.
+Central T3 remains the transcript rendered to users. See
+[Native event delivery](../../../../docs/internals/native-event-rollout.md).
 
 ## Change routing
 

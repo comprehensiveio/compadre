@@ -4,7 +4,6 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { memoryPersistence } from "@tanstack/ai-persistence";
 import { T3ThreadBindingStore } from "../services/t3-thread-bindings.js";
-import { T3ThreadSnapshotStore } from "../services/t3-thread-snapshots.js";
 import { InMemoryLockStore, type LockStore } from "./storage.js";
 import type { SandboxHandle } from "@tanstack/ai-sandbox";
 import { CodexSubscriptionLane } from "./codex-subscription-lane.js";
@@ -281,14 +280,14 @@ test("hands one subscription lane between workers while concurrent work stays on
   let backgroundLiveness: "working" | null = "working";
   let sessionStatus = "ready";
   workers.get("owner")!.connection.client.nativeEventPage = async () => ({ events: [], nextOffset: "00000000000000000009", upToDate: true, backgroundLiveness, sessionStatus });
-  await gateway.releaseCodexAuth({ canonicalThreadId: "owner", runId: "run-steer", nativeDelivery: true });
+  await gateway.releaseCodexAuth({ canonicalThreadId: "owner", runId: "run-steer", requireIdle: true });
   assert.equal(workers.get("owner")!.stopped, false, "parent EOF must not stop live native children");
   backgroundLiveness = null;
   sessionStatus = "running";
-  await gateway.releaseCodexAuth({ canonicalThreadId: "owner", runId: "run-steer", nativeDelivery: true });
+  await gateway.releaseCodexAuth({ canonicalThreadId: "owner", runId: "run-steer", requireIdle: true });
   assert.equal(workers.get("owner")!.stopped, false, "a continuation must retain its provider");
   sessionStatus = "ready";
-  await gateway.releaseCodexAuth({ canonicalThreadId: "owner", runId: "run-steer", nativeDelivery: true });
+  await gateway.releaseCodexAuth({ canonicalThreadId: "owner", runId: "run-steer", requireIdle: true });
   assert.equal(workers.get("owner")!.stopped, true);
   assert.equal(
     workers.get("owner")!.files.get("/home/node/.codex/compadre-auth-route"),
@@ -1700,7 +1699,6 @@ test("bounds text-generation provisioning and discards a late environment", asyn
 test("serves a completed thread from central storage without reconnecting Modal", async () => {
   const persistence = memoryPersistence();
   const bindings = new T3ThreadBindingStore(persistence.stores.metadata);
-  const snapshots = new T3ThreadSnapshotStore(persistence.stores.metadata);
   let reconnects = 0;
   const terminalSnapshot = {
     snapshotSequence: 15,
@@ -1774,7 +1772,7 @@ test("serves a completed thread from central storage without reconnecting Modal"
     () => new Date("2026-08-26T15:00:06.000Z"),
     undefined,
     "https://t3-ui.example",
-    snapshots,
+    { async threadSnapshot(threadId) { assert.equal(threadId, "slack-thread"); return terminalSnapshot; } },
   );
 
   const turn = await gateway.send({

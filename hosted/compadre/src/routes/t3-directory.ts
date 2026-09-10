@@ -1,7 +1,7 @@
 import { z } from "zod";
-import { nativeControlSchema, nativeWorkerControl, nativeDeliveryCohortIncludes } from "../t3/native-delivery.js";
+import { nativeControlSchema, nativeWorkerControl } from "../t3/native-delivery.js";
 import type { NativeThreadDelivery } from "../t3/native-events.js";
-import { getConfiguredNativeThreadDelivery, buildRunRequestStore } from "../t3/runtime.js";
+import { getConfiguredNativeThreadDelivery } from "../t3/runtime.js";
 import { readWorkspaceReview, readWorkspaceReviewFile, type WorkspaceReviewStore } from "../t3/workspace-review.js";
 import { getConfiguredWorkspaceReviewStore } from "../t3/runtime.js";
 import { discoverProviderModels, claudeProviderVersion } from "../t3/provider-models.js";
@@ -115,7 +115,6 @@ interface T3DirectoryGateway {
 
 export interface T3DirectoryRoutesDependencies {
   getNativeDelivery?(): Promise<Pick<NativeThreadDelivery, "get"> | null>;
-  getNativeRunMode?(runId: string): Promise<boolean>;
   discoverCodexModels?: typeof discoverProviderModels;
   enabled(): boolean;
   getGateway(): Promise<T3DirectoryGateway | null>;
@@ -130,7 +129,6 @@ export interface T3DirectoryRoutesDependencies {
 
 const defaultDependencies: T3DirectoryRoutesDependencies = {
   getNativeDelivery: getConfiguredNativeThreadDelivery,
-  getNativeRunMode: async (runId) => Boolean((await (await buildRunRequestStore())?.getRequest(runId))?.nativeDelivery),
   enabled: () => process.env.COMPADRE_T3_DIRECTORY_ENABLED === "true",
   getGateway: getConfiguredT3Gateway,
   getRunCoordinator: getConfiguredNativeT3RunCoordinator,
@@ -601,10 +599,8 @@ export function createT3DirectoryRoutes(
     const artifactStore = await dependencies.getArtifactStore?.();
     const runId = params.runId || dependencies.createId();
     const canonicalThreadId = params.threadId || dependencies.createId();
-    const bound = await (await dependencies.getNativeDelivery?.())?.get(canonicalThreadId);
-    const nativeDelivery = Boolean(bound) || nativeDeliveryCohortIncludes(canonicalThreadId);
-    if (nativeDelivery && c.req.header("x-compadre-native-delivery") !== "1") return c.json({ error: "This thread requires native event delivery" }, 409);
-    if (nativeDelivery && process.env.COMPADRE_NATIVE_EVENTS_PAUSED === "true") return c.json({ error: "Native event delivery is paused" }, 503);
+    if (c.req.header("x-compadre-native-delivery") !== "1") return c.json({ error: "This thread requires native event delivery" }, 409);
+    if (process.env.COMPADRE_NATIVE_EVENTS_PAUSED === "true") return c.json({ error: "Native event delivery is paused" }, 503);
     const selectedModel = nativeModelSelection(
       provider,
       params.forwardedProps.model,
@@ -657,7 +653,6 @@ export function createT3DirectoryRoutes(
         : undefined;
     const runRequest: NativeT3RunRequest = {
       runId,
-      ...(nativeDelivery ? { nativeDelivery: true } : {}),
       runtimeMode: z.enum(["full-access", "approval-required", "auto-accept-edits", "auto"]).catch("full-access").parse(params.forwardedProps.runtimeMode),
       interactionMode: params.forwardedProps.interactionMode === "plan" ? "plan" : "default",
       canonicalThreadId,
@@ -716,7 +711,7 @@ export function createT3DirectoryRoutes(
       c.req.raw,
       {
         [NATIVE_T3_PROTOCOL_HEADER]: String(NATIVE_T3_PROTOCOL_VERSION),
-        ...(nativeDelivery ? { "x-compadre-native-delivery": "1" } : {}),
+        "x-compadre-native-delivery": "1",
       },
       "-1",
     );
@@ -738,18 +733,9 @@ export function createT3DirectoryRoutes(
     const run = await reader.run(runId);
     if (!run) return c.json({ error: "native T3 run not found", runId }, 404);
     // A replay subscriber may arrive after the run's producer disappeared.
-    // The service decides whether reattachment is needed: the Temporal
-    // orchestrator is a no-op (its drive activity is the sole producer), the
-    // in-process orchestrator reattaches the worker turn.
-    await runService?.ensureSubscriberRecovery(runId).catch((error) => {
-      console.error("[native-t3-run] recovery could not start", {
-        runId,
-        threadId: run.threadId,
-        error,
-      });
-    });
+    // Replay is read-only; Temporal retries own producer recovery.
     return durableRunEventsResponse(reader.stream(runId), c.req.raw, {
-      ...((await dependencies.getNativeRunMode?.(runId)) ? { "x-compadre-native-delivery": "1" } : {}),
+      "x-compadre-native-delivery": "1",
       [NATIVE_T3_PROTOCOL_HEADER]: String(NATIVE_T3_PROTOCOL_VERSION),
     });
   }));

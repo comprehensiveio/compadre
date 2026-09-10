@@ -306,7 +306,7 @@ export async function deliverNativeThreadEventsActivity(input: { threadId: strin
       const payload = event.payload;
       return Boolean(payload && typeof payload === "object" && "activity" in payload && payload.activity &&
         typeof payload.activity === "object" && "kind" in payload.activity && payload.activity.kind === "provider.turn.completed");
-    })) await gateway.releaseCodexAuth({ canonicalThreadId: input.threadId, runId: current.runId, nativeDelivery: true }).catch((error) => {
+    })) await gateway.releaseCodexAuth({ canonicalThreadId: input.threadId, runId: current.runId, requireIdle: true }).catch((error) => {
       console.warn("[native-delivery] Codex auth release retained for safety", { threadId: input.threadId, error: error instanceof Error ? error.name : "UnknownError" });
     });
     context.heartbeat({ threadId: input.threadId, epoch: input.epoch, offset: page.nextOffset });

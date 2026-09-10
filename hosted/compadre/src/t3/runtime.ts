@@ -8,9 +8,6 @@ import { getConfiguredAgentRunDurability } from "../durability/runtime.js";
 import { getConfiguredThreadPersistence } from "../persistence/runtime.js";
 import { recoverCentralT3DurableRuns } from "../services/central-t3-run.js";
 import { T3ThreadBindingStore } from "../services/t3-thread-bindings.js";
-import { T3ThreadSnapshotStore } from "../services/t3-thread-snapshots.js";
-import { NATIVE_T3_RUN_ORCHESTRATOR } from "../temporal/mode.js";
-import { collectNativeT3ArtifactEvents } from "./artifact-events.js";
 import { T3Gateway } from "./gateway.js";
 import { CodexSubscriptionLane } from "./codex-subscription-lane.js";
 import { configuredCentralT3Client } from "./central-conversation.js";
@@ -19,15 +16,10 @@ import { codexApiAuthJsonFromEnvironment } from "./modal-worker.js";
 import { readWorkerTemplate } from "./worker-templates.js";
 import type { NativeT3RunDriverDependencies } from "./native-t3-run-driver.js";
 import { NativeT3RunCoordinator } from "./run-coordinator.js";
-import {
-  recoverNativeT3Runs,
-  type NativeT3RecoverySummary,
-} from "./run-recovery.js";
 import { NativeT3RunRequestStore } from "./run-request-store.js";
 import { NativeT3RunControlStore } from "./run-control.js";
 import {
   createTemporalNativeT3WorkflowLauncher,
-  InProcessNativeT3RunService,
   TemporalNativeT3RunService,
   type NativeT3RunService,
 } from "./run-service.js";
@@ -115,10 +107,6 @@ export async function getConfiguredT3Gateway(): Promise<T3Gateway | null> {
           runtime.persistence.stores.metadata,
           runtime.locks,
         );
-        const snapshots = new T3ThreadSnapshotStore(
-          runtime.persistence.stores.metadata,
-          runtime.locks,
-        );
         const codexSubscriptionLane = new CodexSubscriptionLane(
           runtime.persistence.stores.metadata,
           runtime.locks,
@@ -146,7 +134,7 @@ export async function getConfiguredT3Gateway(): Promise<T3Gateway | null> {
           () => new Date(),
           runtime.locks,
           undefined,
-          snapshots,
+          configuredCentralT3Client() ?? undefined,
           {
             maxLiveMs: positiveDurationSetting(
               "COMPADRE_MODAL_TIMEOUT_MS",
@@ -169,7 +157,6 @@ export async function getConfiguredT3Gateway(): Promise<T3Gateway | null> {
 }
 
 export async function getConfiguredPreviewActivationService(): Promise<PreviewActivationService | null> {
-  if (NATIVE_T3_RUN_ORCHESTRATOR !== "temporal") return null;
   if (!configuredPreviewActivationService) {
     const initialization = getConfiguredThreadPersistence()
       .then((runtime) =>
@@ -197,7 +184,7 @@ export async function getConfiguredPreviewActivationService(): Promise<PreviewAc
 
 /** Reclaim provider streams left behind by a previous controller process. */
 export async function recoverConfiguredNativeT3Runs(): Promise<
-  NativeT3RecoverySummary & {
+  { scanned: number; resumed: number; skipped: number;
     compatibilityScanned: number;
     compatibilityResumed: number;
     compatibilitySkipped: number;
@@ -221,16 +208,12 @@ export async function recoverConfiguredNativeT3Runs(): Promise<
   // native-run producer: its retries already reattach after a controller
   // restart, and a second in-process producer would only trade epoch claims
   // with the activity. Compatibility-run recovery stays in-process.
-  const provider =
-    NATIVE_T3_RUN_ORCHESTRATOR === "temporal"
-      ? { scanned: 0, resumed: 0, skipped: 0 }
-      : await recoverNativeT3Runs({ gateway, coordinator });
   const client = configuredCentralT3Client();
   const compatibility = client
     ? await recoverCentralT3DurableRuns({ coordinator, client })
     : { scanned: 0, resumed: 0, skipped: 0 };
   return {
-    ...provider,
+    scanned: 0, resumed: 0, skipped: 0,
     compatibilityScanned: compatibility.scanned,
     compatibilityResumed: compatibility.resumed,
     compatibilitySkipped: compatibility.skipped,
@@ -252,58 +235,10 @@ async function buildRunControlStore(): Promise<NativeT3RunControlStore | null> {
   );
 }
 
-async function buildCollectArtifactEvents(
-  gateway: T3Gateway,
-): Promise<NativeT3RunDriverDependencies["collectArtifactEvents"]> {
-  const artifactStore = await getConfiguredT3ArtifactStore().catch((error) => {
-    console.warn("[t3-artifacts] artifact store unavailable", { error });
-    return null;
-  });
-  if (!artifactStore) return undefined;
-  const reviews = process.env.COMPADRE_T3_WORKSPACE_REVIEWS_ENABLED === "true"
-    ? await getConfiguredWorkspaceReviewStore() : null;
-  return async (turn, request) => {
-    if (request.nativeDelivery) {
-      // The per-thread journal consumer publishes every completed checkpoint,
-      // including continuations after this run's parent turn has returned.
-      return [];
-    }
-    const events = await collectNativeT3ArtifactEvents({
-      gateway,
-      artifactStore,
-      turn,
-      runId: request.runId,
-      ...(request.slackArtifactDestination
-        ? { slackDestination: request.slackArtifactDestination }
-        : {}),
-      ...(process.env.SLACK_BOT_TOKEN?.trim()
-        ? { botToken: process.env.SLACK_BOT_TOKEN.trim() }
-        : {}),
-    }).catch((error) => {
-      log.warn({ runId: request.runId, error }, "output artifact collection failed");
-      return [] as import("./agui-protocol.js").StreamChunk[];
-    });
-    if (reviews) {
-      try {
-        const saved = await reviews.published(request.runId)
-          ?? await reviews.publish(request.runId, request.canonicalThreadId, await gateway.captureWorkspaceReview(turn));
-        events.push({ type: "WORKSPACE_REVIEW", timestamp: Date.now(), data: saved });
-      } catch (error) {
-        log.warn({ runId: request.runId, error }, "workspace review capture failed");
-        events.push({ type: "WORKSPACE_REVIEW_UNAVAILABLE", timestamp: Date.now(),
-          message: "Changes could not be saved for this turn. Previously saved diffs remain available." });
-      }
-    }
-    return events;
-  };
-}
-
 let overriddenDriverDependencies: NativeT3RunDriverDependencies | undefined;
 
 /** Probe/test seam: substitute the gateway and stores the activities use. */
-export function setNativeT3RunDriverDependenciesForTests(
-  dependencies: NativeT3RunDriverDependencies | undefined,
-): void {
+export function setNativeT3RunDriverDependenciesForTests(dependencies: NativeT3RunDriverDependencies | undefined): void {
   overriddenDriverDependencies = dependencies;
 }
 
@@ -327,7 +262,6 @@ export async function getConfiguredNativeT3RunDriverDependencies(): Promise<Nati
     getConfiguredThreadPersistence(),
   ]);
   if (!gateway || !durability || !requests || !controls || !persistence) return null;
-  const collectArtifactEvents = await buildCollectArtifactEvents(gateway);
   return {
     gateway,
     durability,
@@ -342,11 +276,10 @@ export async function getConfiguredNativeT3RunDriverDependencies(): Promise<Nati
       if (!attached) throw new Error("Native event worker is unavailable");
       await prepareNativeDelivery({ delivery, central, request, connection: attached, start: ensureNativeThreadDeliveryWorkflow });
     },
-    ...(collectArtifactEvents ? { collectArtifactEvents } : {}),
   };
 }
 
-/** Producer for /hosted/t3/chat, selected by NATIVE_T3_RUN_ORCHESTRATOR. */
+/** Durable lifecycle producer for /hosted/t3/chat. */
 export async function getConfiguredNativeT3RunService(): Promise<NativeT3RunService | null> {
   if (!configuredRunService) {
     const initialization = (async () => {
@@ -356,19 +289,7 @@ export async function getConfiguredNativeT3RunService(): Promise<NativeT3RunServ
         buildRunRequestStore(),
       ]);
       if (!gateway || !coordinator || !requests) return null;
-      if (NATIVE_T3_RUN_ORCHESTRATOR === "temporal") {
-        return new TemporalNativeT3RunService(
-          coordinator,
-          requests,
-          createTemporalNativeT3WorkflowLauncher(),
-        );
-      }
-      const collectArtifactEvents = await buildCollectArtifactEvents(gateway);
-      return new InProcessNativeT3RunService({
-        gateway,
-        coordinator,
-        ...(collectArtifactEvents ? { collectArtifactEvents } : {}),
-      });
+      return new TemporalNativeT3RunService(coordinator, requests, createTemporalNativeT3WorkflowLauncher());
     })().catch((error) => {
       if (configuredRunService === initialization) {
         configuredRunService = undefined;

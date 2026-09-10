@@ -1,22 +1,13 @@
+/** Public compatibility API response formatting; never used for worker-to-central delivery. */
 import { EventType, type StreamChunk } from "./agui-protocol.js";
-import {
-  SpanKind,
-  SpanStatusCode,
-  context as otelContext,
-  trace as otelTrace,
-  type Context,
-  type Tracer,
-} from "@opentelemetry/api";
 import type {
   T3Client,
   T3MessageAttribution,
-  T3InputFile,
   T3ModelSelection,
   T3ThreadSnapshot,
   T3TurnDispatch,
 } from "./client.js";
 import { preTurnStartFailure } from "./client.js";
-import type { T3GatewayTurn } from "./gateway.js";
 import type { AgentProfile } from "../tanstack/protocol.js";
 import {
   CENTRAL_T3_TIMEOUT_MS,
@@ -27,69 +18,6 @@ import {
   type CentralT3ConversationClient,
   type CentralT3ConversationPrepared,
 } from "./central-conversation.js";
-
-export interface NativeT3AguiGateway {
-  send(input: {
-    canonicalThreadId: string;
-    title: string;
-    text: string;
-    modelSelection: T3ModelSelection;
-    inputFiles?: ReadonlyArray<T3InputFile>;
-    blockedSlackDestination?: {
-      channelId: string;
-      threadTs: string;
-    };
-    signal?: AbortSignal;
-  }): Promise<T3GatewayTurn>;
-  waitForTerminal(input: {
-    turn: T3GatewayTurn;
-    timeoutMs?: number;
-    absoluteTimeoutMs?: number;
-    signal?: AbortSignal;
-    onSnapshot?(snapshot: T3ThreadSnapshot): void | Promise<void>;
-  }): Promise<T3ThreadSnapshot>;
-  snapshot?(input: {
-    canonicalThreadId: string;
-    providerInstanceId: string;
-    signal?: AbortSignal;
-  }): Promise<{
-    binding: T3GatewayTurn["binding"];
-    snapshot: T3ThreadSnapshot;
-    source: "central" | "worker";
-  } | null>;
-  collectOutputArtifacts?(
-    turn: T3GatewayTurn,
-    publish: (artifact: import("./output-artifacts.js").T3OutputArtifact) => Promise<void>,
-  ): Promise<{ published: Array<{ path: string; digest: string }>; failures: string[] }>;
-}
-
-export interface NativeT3AguiStreamInput {
-  gateway: NativeT3AguiGateway;
-  canonicalThreadId: string;
-  runId: string;
-  title: string;
-  text: string;
-  modelSelection: T3ModelSelection;
-  inputFiles?: ReadonlyArray<T3InputFile>;
-  blockedSlackDestination?: {
-    channelId: string;
-    threadTs: string;
-  };
-  signal?: AbortSignal;
-  onTurn?(turn: T3GatewayTurn): void | Promise<void>;
-  onTerminal?(): void | Promise<void>;
-  outputArtifactEvents?(turn: T3GatewayTurn): Promise<StreamChunk[]>;
-}
-
-export interface NativeT3AguiRecoveryStreamInput {
-  gateway: NativeT3AguiGateway;
-  canonicalThreadId: string;
-  runId: string;
-  startedAt: number;
-  signal?: AbortSignal;
-  onTurn?(turn: T3GatewayTurn): void | Promise<void>;
-  onTerminal?(): void | Promise<void>;
-}
 
 export interface CentralT3AguiStreamInput {
   client: CentralT3ConversationClient;
@@ -115,82 +43,6 @@ export interface CentralT3AguiRecoveryStreamInput {
   runId: string;
   startedAt: number;
   signal?: AbortSignal;
-}
-
-export interface NativeT3AguiTraceOptions {
-  canonicalThreadId: string;
-  runId: string;
-  provider: "claude-code" | "codex";
-  model?: string;
-  tracer?: Tracer;
-  parentContext?: Context;
-}
-
-/** Keep the provider request span active until its streamed turn is terminal. */
-export function traceNativeT3AguiStream(
-  stream: AsyncIterable<StreamChunk>,
-  options: NativeT3AguiTraceOptions,
-): AsyncIterable<StreamChunk> {
-  const tracer = options.tracer ?? otelTrace.getTracer("compadre.t3.provider");
-  const parentContext = options.parentContext ?? otelContext.active();
-  const span = tracer.startSpan(
-    "compadre.t3.provider.turn",
-    {
-      kind: SpanKind.INTERNAL,
-      attributes: {
-        "agui.thread_id": options.canonicalThreadId,
-        "agui.run_id": options.runId,
-        "agent.provider": options.provider,
-        "gen_ai.operation.name": "invoke_agent",
-        // The worker exports the logical Agent Observability trace directly so
-        // this controller span remains an APM-only distributed-service span.
-        "dd_llmobs_enabled": false,
-        "gen_ai.conversation.id": options.canonicalThreadId,
-        "gen_ai.provider.name":
-          options.provider === "codex" ? "openai" : "anthropic",
-        ...(options.model ? { "gen_ai.request.model": options.model } : {}),
-      },
-    },
-    parentContext,
-  );
-  const spanContext = otelTrace.setSpan(parentContext, span);
-
-  return {
-    async *[Symbol.asyncIterator]() {
-      const iterator = otelContext.with(spanContext, () =>
-        stream[Symbol.asyncIterator](),
-      );
-      let returned = false;
-      try {
-        while (true) {
-          const next = await otelContext.with(spanContext, () =>
-            iterator.next(),
-          );
-          if (next.done) break;
-          if (next.value.type === EventType.RUN_ERROR) {
-            span.setStatus({
-              code: SpanStatusCode.ERROR,
-              message: next.value.message || "Native T3 provider failed",
-            });
-          }
-          yield next.value;
-        }
-      } catch (error) {
-        span.recordException(error instanceof Error ? error : String(error));
-        span.setStatus({
-          code: SpanStatusCode.ERROR,
-          message: error instanceof Error ? error.message : String(error),
-        });
-        throw error;
-      } finally {
-        if (!returned && iterator.return) {
-          returned = true;
-          await otelContext.with(spanContext, () => iterator.return!());
-        }
-        span.end();
-      }
-    },
-  };
 }
 
 interface T3Activity {
@@ -311,13 +163,8 @@ interface ProjectedTool {
   data?: unknown;
 }
 
-/**
- * Incremental projection from a native worker T3 snapshot into the provider
- * event stream consumed by the central T3 environment. The worker owns the
- * provider process; this projection deliberately emits only events that the
- * central orchestration log needs to render the thread.
- */
-export class NativeT3SnapshotProjector {
+/** Formats central conversation snapshots for external compatibility API subscribers. */
+export class CentralApiResponseProjector {
   private turnId: string | undefined;
   private terminal = false;
   private readonly seenActivities = new Set<string>();
@@ -348,8 +195,8 @@ export class NativeT3SnapshotProjector {
     canonicalThreadId: string,
     requestedMessageId: string,
     chunks: Iterable<StreamChunk>,
-  ): NativeT3SnapshotProjector {
-    const projector = new NativeT3SnapshotProjector(
+  ): CentralApiResponseProjector {
+    const projector = new CentralApiResponseProjector(
       runId,
       canonicalThreadId,
       requestedMessageId,
@@ -679,226 +526,6 @@ export class NativeT3SnapshotProjector {
   }
 }
 
-export async function* createNativeT3AguiStream(
-  input: NativeT3AguiStreamInput,
-): AsyncIterable<StreamChunk> {
-  yield {
-    type: EventType.RUN_STARTED,
-    runId: input.runId,
-    threadId: input.canonicalThreadId,
-    timestamp: Date.now(),
-  };
-  try {
-    const turn = await input.gateway.send({
-      canonicalThreadId: input.canonicalThreadId,
-      title: input.title,
-      text: input.text,
-      modelSelection: input.modelSelection,
-      inputFiles: input.inputFiles,
-      blockedSlackDestination: input.blockedSlackDestination,
-      signal: input.signal,
-    });
-    await input.onTurn?.(turn);
-    const projector = new NativeT3SnapshotProjector(
-      input.runId,
-      input.canonicalThreadId,
-      turn.dispatch.messageId,
-    );
-    const pending: StreamChunk[] = [];
-    let wake: (() => void) | undefined;
-    let completed = false;
-    let failure: unknown;
-    const notify = () => {
-      wake?.();
-      wake = undefined;
-    };
-    const waiter = input.gateway.waitForTerminal({
-      turn,
-      signal: input.signal,
-      onSnapshot(snapshot) {
-        pending.push(...projector.project(snapshot));
-        notify();
-      },
-    }).then(
-      (snapshot) => {
-        pending.push(...projector.project(snapshot));
-        completed = true;
-        notify();
-      },
-      (error) => {
-        failure = error;
-        completed = true;
-        notify();
-      },
-    );
-
-    while (!completed || pending.length > 0) {
-      if (pending.length === 0) {
-        if (completed) break;
-        await new Promise<void>((resolve) => {
-          wake = resolve;
-        });
-        continue;
-      }
-      const chunk = pending.shift()!;
-      if (
-        chunk.type === EventType.RUN_FINISHED &&
-        input.outputArtifactEvents
-      ) {
-        for (const artifactEvent of await input.outputArtifactEvents(turn)) {
-          yield artifactEvent;
-        }
-      }
-      yield chunk;
-    }
-    await waiter;
-    if (failure) throw failure;
-  } catch (error) {
-    yield {
-      type: EventType.RUN_ERROR,
-      runId: input.runId,
-      message: error instanceof Error ? error.message : "Native T3 worker failed.",
-      timestamp: Date.now(),
-    };
-  } finally {
-    await input.onTerminal?.();
-  }
-}
-
-function recoveryTurn(input: {
-  canonicalThreadId: string;
-  runId: string;
-  startedAt: number;
-  binding: T3GatewayTurn["binding"];
-  snapshot: T3ThreadSnapshot;
-}): T3GatewayTurn {
-  const latestTurn = input.snapshot.thread.latestTurn;
-  if (!latestTurn) {
-    throw new Error(`Native T3 run ${input.runId} has no worker turn to resume`);
-  }
-  const requestedAt = Date.parse(latestTurn.requestedAt);
-  const requestedMessage = [...input.snapshot.thread.messages]
-    .reverse()
-    .find((message) => {
-      if (message.role !== "user") return false;
-      const createdAt = Date.parse(message.createdAt);
-      return (
-        Number.isFinite(createdAt) &&
-        Number.isFinite(requestedAt) &&
-        createdAt <= requestedAt + 1_000 &&
-        createdAt >= input.startedAt - 5_000
-      );
-    });
-  if (!requestedMessage) {
-    throw new Error(
-      `Native T3 run ${input.runId} could not identify its requested worker message`,
-    );
-  }
-  return {
-    binding: input.binding,
-    dispatch: {
-      sequence: input.snapshot.snapshotSequence,
-      commandId: `recovery:${input.runId}`,
-      messageId: requestedMessage.id,
-      threadId: input.binding.t3ThreadId,
-      createdAt: requestedMessage.createdAt,
-    },
-  };
-}
-
-/**
- * Re-project an already-dispatched native T3 turn after the controller that
- * originally tailed it disappeared. The worker snapshot contains the full
- * narration/tool transcript, so replay starts from that durable source and
- * dispatches no new provider request.
- */
-export async function* createNativeT3AguiRecoveryStream(
-  input: NativeT3AguiRecoveryStreamInput,
-): AsyncIterable<StreamChunk> {
-  try {
-    if (!input.gateway.snapshot) {
-      throw new Error("Native T3 gateway cannot recover worker snapshots");
-    }
-    const resolved = await input.gateway.snapshot({
-      canonicalThreadId: input.canonicalThreadId,
-      providerInstanceId: "",
-      signal: input.signal,
-    });
-    if (!resolved) {
-      throw new Error(`Native T3 thread ${input.canonicalThreadId} is unavailable`);
-    }
-    const turn = recoveryTurn({
-      canonicalThreadId: input.canonicalThreadId,
-      runId: input.runId,
-      startedAt: input.startedAt,
-      binding: resolved.binding,
-      snapshot: resolved.snapshot,
-    });
-    await input.onTurn?.(turn);
-    const projector = new NativeT3SnapshotProjector(
-      input.runId,
-      input.canonicalThreadId,
-      turn.dispatch.messageId,
-    );
-    for (const chunk of projector.project(resolved.snapshot)) yield chunk;
-    if (resolved.snapshot.thread.latestTurn?.state === "running") {
-      const pending: StreamChunk[] = [];
-      let wake: (() => void) | undefined;
-      let completed = false;
-      let failure: unknown;
-      const notify = () => {
-        wake?.();
-        wake = undefined;
-      };
-      const waiter = input.gateway.waitForTerminal({
-        turn,
-        signal: input.signal,
-        onSnapshot(snapshot) {
-          pending.push(...projector.project(snapshot));
-          notify();
-        },
-      }).then(
-        (terminal) => {
-          pending.push(...projector.project(terminal));
-          completed = true;
-          notify();
-        },
-        (error) => {
-          failure = error;
-          completed = true;
-          notify();
-        },
-      );
-      while (!completed || pending.length > 0) {
-        if (pending.length === 0) {
-          if (completed) break;
-          await new Promise<void>((resolve) => {
-            wake = resolve;
-          });
-          continue;
-        }
-        yield pending.shift()!;
-      }
-      await waiter;
-      if (failure) throw failure;
-    }
-  } catch (error) {
-    yield {
-      type: EventType.RUN_ERROR,
-      runId: input.runId,
-      message: error instanceof Error ? error.message : "Native T3 recovery failed.",
-      timestamp: Date.now(),
-    };
-  } finally {
-    await input.onTerminal?.();
-  }
-}
-
-/**
- * Project one central hosted-T3 turn onto the legacy AG-UI wire contract.
- * The central orchestration log remains authoritative; this stream is only a
- * resumable compatibility view for existing HTTP clients.
- */
 export async function* createCentralT3AguiStream(
   input: CentralT3AguiStreamInput,
 ): AsyncIterable<StreamChunk> {
@@ -913,7 +540,7 @@ export async function* createCentralT3AguiStream(
   let wake: (() => void) | undefined;
   let completed = false;
   let failure: unknown;
-  let projector: NativeT3SnapshotProjector | undefined;
+  let projector: CentralApiResponseProjector | undefined;
   let projectedTerminal = false;
   const notify = () => {
     wake?.();
@@ -949,7 +576,7 @@ export async function* createCentralT3AguiStream(
     signal: input.signal,
     onPrepared: input.onPrepared,
     async onDispatched(prepared, dispatch) {
-      projector = new NativeT3SnapshotProjector(
+      projector = new CentralApiResponseProjector(
         input.runId,
         input.canonicalThreadId,
         dispatch.messageId,
@@ -1016,7 +643,7 @@ export async function* createCentralT3AguiRecoveryStream(
       `Central T3 compatibility run ${input.runId} has no matching user message`,
     );
   }
-  const projector = new NativeT3SnapshotProjector(
+  const projector = new CentralApiResponseProjector(
     input.runId,
     input.canonicalThreadId,
     messageId,

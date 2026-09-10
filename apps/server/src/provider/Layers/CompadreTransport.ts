@@ -66,15 +66,15 @@ export type CompadreSteerTransport = (input: {
   runId: string;
   id: string;
   text: string;
-}) => Effect.Effect<"accepted" | "unsupported", ProviderAdapterRequestError>;
+}) => Effect.Effect<"accepted", ProviderAdapterRequestError>;
 
 /**
  * Durable HTTP adapter for the Compadre controller protocol.
  *
  * The initial POST starts or joins an idempotent run. If delivery ends before
  * a terminal event, later GETs resume from the last SSE id. The controller's
- * Postgres log is authoritative, so reconnecting never repeats acknowledged
- * deltas.
+ * Postgres log owns these lifecycle receipts; the worker journal independently
+ * delivers conversation events to central T3.
  */
 export function makeCompadreTransport(
   httpClient: HttpClient.HttpClient,
@@ -139,6 +139,14 @@ export function makeCompadreTransport(
         httpClient.execute(requestFor(initial)).pipe(
           Effect.flatMap(HttpClientResponse.filterStatusOk),
           Effect.map((response) => {
+            if (response.headers["x-compadre-native-delivery"] !== "1")
+              return Stream.fail(
+                new ProviderAdapterRequestError({
+                  provider: runtimeProvider,
+                  method: "compadre/protocol",
+                  detail: "The controller did not accept native event delivery.",
+                }),
+              );
             connected = true;
             const events = response.stream.pipe(
               Stream.decodeText(),
@@ -175,11 +183,7 @@ export function makeCompadreTransport(
                 ),
               ),
             );
-            return response.headers["x-compadre-native-delivery"] === "1"
-              ? Stream.succeed({ type: "NATIVE_DELIVERY" } as CompadreStreamEvent).pipe(
-                  Stream.concat(events),
-                )
-              : events;
+            return events;
           }),
           Effect.mapError(
             (cause) =>
@@ -265,8 +269,7 @@ export function makeCompadreCancelTransport(
 
 /**
  * Send follow-up input to the durable run that already owns the provider
- * turn. `unsupported` is reserved for the cross-service rollout window, when
- * an older controller still expects steering as a second `/chat` request.
+ * turn using its stable native run identity.
  */
 export function makeCompadreSteerTransport(
   httpClient: HttpClient.HttpClient,
@@ -284,11 +287,8 @@ export function makeCompadreSteerTransport(
       );
     }
     return httpClient.execute(request).pipe(
-      Effect.flatMap((response) =>
-        response.status === 404 || response.status === 405
-          ? Effect.succeed("unsupported" as const)
-          : HttpClientResponse.filterStatusOk(response).pipe(Effect.as("accepted" as const)),
-      ),
+      Effect.flatMap(HttpClientResponse.filterStatusOk),
+      Effect.as("accepted" as const),
       Effect.mapError(
         (cause) =>
           new ProviderAdapterRequestError({

@@ -16,7 +16,6 @@ import {
   T3ThreadBindingStore,
   type T3ThreadBinding,
 } from "../services/t3-thread-bindings.js";
-import { T3ThreadSnapshotStore } from "../services/t3-thread-snapshots.js";
 import type { SandboxHandle } from "@tanstack/ai-sandbox";
 import {
   collectT3OutputArtifacts,
@@ -307,7 +306,7 @@ export class T3Gateway {
     private readonly locks: LockStore = new InMemoryLockStore(),
     private readonly hostedAppUrl: string = process.env.COMPADRE_T3_HOSTED_APP_URL?.trim() ||
       DEFAULT_T3_HOSTED_APP_URL,
-    private readonly snapshots?: T3ThreadSnapshotStore,
+    private readonly central?: Pick<T3Client, "threadSnapshot">,
     workerLifecycle: T3WorkerLifecycleOptions = {},
     private readonly codexSubscriptionLane?: CodexSubscriptionLane,
     private readonly codexApiAuthJson?: string,
@@ -1114,14 +1113,14 @@ export class T3Gateway {
   async releaseCodexAuth(input: {
     canonicalThreadId: string;
     runId: string;
-    nativeDelivery?: boolean;
+    requireIdle?: boolean;
   }): Promise<void> {
     if (!this.codexSubscriptionLane?.enabled) return;
     await this.locks.withLock(
       this.lockKey(input.canonicalThreadId),
       async (signal) => {
         if (signal.aborted) throw signal.reason;
-        if (input.nativeDelivery) {
+        if (input.requireIdle) {
           const binding = await this.bindings.get(input.canonicalThreadId);
           if (binding) {
             const environment = await this.environments.reconnect(binding);
@@ -1218,6 +1217,14 @@ export class T3Gateway {
     return this.bindings.get(canonicalThreadId);
   }
 
+  /** Execution ownership checks use native IDs; history reads use central IDs. */
+  async workerSnapshot(canonicalThreadId: string): Promise<T3ThreadSnapshot | null> {
+    const binding = await this.bindings.get(canonicalThreadId);
+    if (!binding) return null;
+    const environment = await this.environments.reconnect(binding);
+    return environment.client.threadSnapshot(binding.t3ThreadId);
+  }
+
   async snapshot(input: {
     canonicalThreadId: string;
     providerInstanceId: string;
@@ -1229,58 +1236,9 @@ export class T3Gateway {
   } | null> {
     const binding = await this.bindings.get(input.canonicalThreadId);
     if (!binding) return null;
-    const archived = await this.snapshots?.get(input.canonicalThreadId);
-    if (archived && binding.status !== "working") {
-      return { binding, snapshot: archived.snapshot, source: "central" };
-    }
-    try {
-      const environment = await this.environments.reconnect(binding);
-      const snapshot = await environment.client.threadSnapshot(
-        binding.t3ThreadId,
-        input.signal,
-      );
-      await this.snapshots?.save(binding, snapshot);
-      const latestState = snapshot.thread.latestTurn?.state;
-      const startFailure = preTurnStartFailure(snapshot);
-      const status =
-        latestState === "running"
-          ? "working"
-          : latestState === "error"
-            ? "error"
-            : startFailure
-              ? "error"
-              : latestState === "interrupted"
-                ? "interrupted"
-                : "ready";
-      const updated: T3ThreadBinding = {
-        ...binding,
-        title: snapshot.thread.title || binding.title,
-        modelSelection: snapshot.thread.modelSelection,
-        status,
-        // Reading a selected transcript is not new thread activity. Keeping
-        // this stable lets the central directory signal real cross-surface
-        // changes without creating a snapshot/poll feedback loop.
-        updatedAt: binding.updatedAt,
-        baseUrl: environment.client.baseUrl,
-      };
-      await this.bindings.bind(updated);
-      return { binding: updated, snapshot, source: "worker" };
-    } catch (error) {
-      const unavailable: T3ThreadBinding = {
-        ...binding,
-        status: "unavailable",
-        updatedAt: this.now().toISOString(),
-      };
-      await this.bindings.bind(unavailable).catch(() => undefined);
-      if (archived) {
-        return {
-          binding: unavailable,
-          snapshot: archived.snapshot,
-          source: "central",
-        };
-      }
-      throw error;
-    }
+    if (!this.central) throw new Error("Central conversation storage is not configured");
+    const snapshot = await this.central.threadSnapshot(input.canonicalThreadId, input.signal);
+    return { binding, snapshot, source: "central" };
   }
 
   async open(input: {
@@ -1431,11 +1389,9 @@ export class T3Gateway {
       ),
       signal: input.signal,
       onSnapshot: async (nextSnapshot) => {
-        if (!input.nativeEvents) await this.snapshots?.save(input.turn.binding, nextSnapshot);
         await input.onSnapshot?.(nextSnapshot);
       },
     });
-    if (!input.nativeEvents) await this.snapshots?.save(input.turn.binding, snapshot);
     const latestState = snapshot.thread.latestTurn?.state;
     const startFailure = preTurnStartFailure(
       snapshot,

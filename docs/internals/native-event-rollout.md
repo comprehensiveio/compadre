@@ -1,8 +1,9 @@
 # Native event delivery
 
-Native delivery is active for the production canary cohort. Other threads use
-the snapshot/custom-event bridge until adoption. The package pin and adoption
-cohort are controller settings; deployment alone does not adopt every thread.
+Hosted conversations use native delivery. Existing threads adopt their worker journal
+before their next turn while preserving their central history. There is one
+conversation path; the custom worker snapshot projector and central event decoder
+have been removed.
 
 ## Durable owners
 
@@ -37,15 +38,10 @@ history.
 
 ## Activation and recovery
 
-Keep the rollout controls small: an adoption cohort and a pause for native
-execution/delivery. Removing a thread from the adoption cohort must not send an
-already adopted thread through the legacy projector. A pause must preserve
-history, bindings, source events, and cursors. Resuming retries native delivery.
-`COMPADRE_NATIVE_EVENT_THREADS` is a comma-separated cohort (`*` selects all
-threads). `COMPADRE_NATIVE_EVENTS_PAUSED=true` pauses new native runs and delivery
-without changing their ownership. Bound threads require the native-capable
-transport even after removal from the cohort. The run request persists its
-transport mode, so SSE reconnects cannot change modes during a rollout.
+`COMPADRE_NATIVE_EVENTS_PAUSED=true` pauses new runs and native delivery without
+changing history, bindings, source events, or cursors. Resuming retries native
+delivery. All hosted run transports require the native delivery capability;
+there is no cohort switch or legacy fallback.
 
 A per-thread Temporal workflow follows the worker journal independently of run
 completion. A stopped controller retries from its acknowledged cursor; a newer
@@ -65,12 +61,14 @@ their events. Saved workspace reviews replace worker-local checkpoint references
 with durable review references through native checkpoint commands. Local refs
 remain marked missing centrally until that publication completes.
 
-For adopted runs, the controller records lifecycle receipts rather than copied
+For hosted runs, the controller records lifecycle receipts rather than copied
 conversation chunks. Lifecycle observation long polls the journal and reads full
 snapshots only initially and when turn state changes; it does not save redundant
 recovery snapshots. The consumer reuses its worker connection across pages. The web transport consumes those receipts while the native
-journal independently supplies conversation and status. The temporary legacy
-projector/decoder remains only for unadopted runs during independent deployment.
+journal independently supplies conversation and status. The lifecycle transport never reconstructs provider text, tools, usage, or reviews.
+Controller transcript caches and the obsolete in-process run driver are removed.
+Public compatibility API formatting reads central T3 and remains an external API
+boundary; it does not feed conversation events back into central storage.
 
 An old live worker is upgraded under its dispatch lock only when its native
 shell reports no active turn, background work, or pending interaction. The
@@ -96,16 +94,22 @@ reverse-migration system is deliberately out of scope.
 Local tests cover real worker/central T3 projections, SQLite and PostgreSQL,
 lost acknowledgements, conflicting replay, source-thread isolation, generation
 fencing, bounded pages, authenticated HTTP delivery and native question payloads.
-Post-deploy API checks have also exercised authenticated ingestion, duplicate
-batch replay, late output, and unchanged existing central history. These checks
-have also verified real Codex and Claude tool output and final messages, plus
-a Claude choice-response round trip. They do not establish complete background,
-Modal restore, Slack, or visual UI parity.
+Production API canaries exercise real Codex and Claude tool output, final messages,
+choice-response round trips, background-agent activity, and a Claude continuation
+after parent completion. The existing agent-panel model recognizes both providers'
+native child activities. Signed attachment downloads and immutable reviews remain
+readable after the canary worker is destroyed. A retained-history canary preserves
+old messages exactly and retains provider context on its first native turn. Worker
+restore retains the native thread ID, central history, and checkpointed workspace.
 
-Before expansion, prove Codex and Claude, background continuations, interaction
-responses, controller/central restarts, restored workers and artifact delivery
-on the deployed entrypoints. Then remove the snapshot projector, custom-event
-decoder, transcript reconstruction and redundant recovery snapshots after
-retained bindings and any remaining legacy runs are migrated. Preserve Temporal
-run orchestration, worker filesystem recovery and the single Slack outbox owner.
-Do not leave an exception-based legacy fallback after migration.
+Use the deployment runbook to verify controller takeover, worker restore and
+final entrypoint behavior for subsequent changes. Visual browser and Slack delivery
+checks require separate authorization; API evidence does not establish those
+surfaces. Native protocol support preserves what each provider emits; it does not
+invent unsupported provider capabilities or guarantee a Codex parent continuation.
+
+During independent service rollout, activate all-thread native delivery on the
+previous tolerant controller before deploying the decoder removal. Existing
+central records are retained in place, not copied through a legacy read path.
+Old controller metadata caches can expire under ordinary retention; no destructive
+historical data purge is required for cutover.

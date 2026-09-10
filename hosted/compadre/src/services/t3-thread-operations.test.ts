@@ -125,3 +125,33 @@ test("shows generating, waiting, resumed tool work and terminal state without st
   assert.equal((await read({ status: "error" })).phase, "Failed");
   assert.equal((await read({ status: "ready", activeRunId: undefined })).phase, "Idle");
 });
+
+
+test("operations reads native progress and pending choices from central storage without transcript receipts", async () => {
+  const durability = await createAgentRunDurability({ COMPADRE_DURABILITY_BACKEND: "memory" });
+  assert.ok(durability);
+  await durability.runs.createOrResume({ runId: "native", threadId: "thread", startedAt: NOW.getTime() - 40 * 60_000 });
+  await durability.stream("native").append([{ type: "RUN_STARTED", timestamp: NOW.getTime() - 40 * 60_000 } as never]);
+  const activities = [
+    { id: "tool", kind: "tool.started", summary: "Command run started", payload: { toolCallId: "shell" }, turnId: "turn", createdAt: NOW.toISOString() },
+    { id: "question", kind: "user-input.requested", summary: "Choose a value", payload: { requestId: "choice" }, turnId: "turn", createdAt: NOW.toISOString() },
+  ];
+  let reads = 0;
+  const read = async () => (await buildT3ThreadOperationsSnapshot({
+    bindings: [binding("thread", { status: "working", activeRunId: "native" }), binding("idle")], durability, now: NOW,
+    async readCentralSnapshot(threadId) {
+      assert.equal(threadId, "thread"); reads += 1;
+      return { snapshotSequence: 20, thread: { id: threadId, projectId: "project", title: "Native",
+        modelSelection: { instanceId: "codex", model: "test" }, latestTurn: null, messages: [], activities,
+        session: { status: "running", activeTurnId: "turn", lastError: null } } };
+    },
+  })).threads.find(thread => thread.canonicalThreadId === "thread")!;
+  const waiting = await read();
+  assert.equal(waiting.phase, "Waiting for your input");
+  assert.equal(waiting.health, "healthy");
+  assert.equal(waiting.activeRun?.idleMs, 0);
+  assert.equal(waiting.recentEvents?.at(-1)?.type, "user-input.requested");
+  activities.push({ ...activities[1]!, id: "answer", kind: "user-input.resolved" });
+  assert.equal((await read()).phase, "Command run started");
+  assert.equal(reads, 2, "idle threads never need a central snapshot or a worker read");
+});
