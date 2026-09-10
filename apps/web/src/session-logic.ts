@@ -374,6 +374,9 @@ export function deriveActiveWorkStartedAt(
   sendStartedAt: string | null,
   latestUserMessageAt: string | null = null,
 ): string | null {
+  if (session?.status === "starting") {
+    return sendStartedAt ?? latestUserMessageAt;
+  }
   const runningTurnId = session?.status === "running" ? session.activeTurnId : null;
   if (runningTurnId !== null) {
     if (latestTurn?.turnId === runningTurnId) {

@@ -1979,6 +1979,28 @@ describe("deriveActiveWorkStartedAt", () => {
     completedAt: "2026-02-27T21:10:06.000Z",
   } as const;
 
+  it("retains startup timing after draft promotion discards local send state", () => {
+    expect(
+      deriveActiveWorkStartedAt(
+        null,
+        { status: "starting", activeTurnId: null },
+        null,
+        "2026-02-27T21:11:00.000Z",
+      ),
+    ).toBe("2026-02-27T21:11:00.000Z");
+  });
+
+  it("does not reuse the previous turn's timer while starting a follow-up", () => {
+    expect(
+      deriveActiveWorkStartedAt(
+        latestTurn,
+        { status: "starting", activeTurnId: null },
+        null,
+        "2026-02-27T21:11:00.000Z",
+      ),
+    ).toBe("2026-02-27T21:11:00.000Z");
+  });
+
   it("prefers the in-flight turn start when the latest turn is not settled", () => {
     expect(
       deriveActiveWorkStartedAt(
