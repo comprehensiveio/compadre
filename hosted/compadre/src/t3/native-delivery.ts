@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { z } from "zod";
 import type { T3BeforeTurnDispatch } from "./gateway.js";
 import type { T3Client, T3ThreadSnapshot } from "./client.js";
@@ -68,10 +69,15 @@ export function nativeWorkerControl(input: z.infer<typeof nativeControlSchema>) 
   if (!input.requestId?.startsWith(prefix)) throw new Error("Question belongs to a different worker journal");
   const requestId = input.requestId.slice(prefix.length);
   if (!requestId) throw new Error("Missing native request ID");
+  // Provider callbacks are single-use. Separate clicks and clients can submit
+  // distinct central commands for one question; the worker receipt must treat
+  // them as one response, including after reconnect or controller retry.
+  const responseBase = { ...base, commandId: `native-response:${createHash("sha256")
+    .update(JSON.stringify([sourceThreadId, input.type, requestId])).digest("hex")}` };
   if (input.type === "thread.approval-response-requested") {
     if (!input.decision) throw new Error("Missing approval decision");
-    return { ...base, type: "thread.approval.respond", requestId, decision: input.decision };
+    return { ...responseBase, type: "thread.approval.respond", requestId, decision: input.decision };
   }
   if (!input.answers) throw new Error("Missing question answers");
-  return { ...base, type: "thread.user-input.respond", requestId, answers: input.answers };
+  return { ...responseBase, type: "thread.user-input.respond", requestId, answers: input.answers };
 }
