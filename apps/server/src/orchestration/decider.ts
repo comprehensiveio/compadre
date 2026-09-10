@@ -1217,7 +1217,9 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
             activeTurnId: null,
             providerName: thread.session?.providerName ?? null,
             runtimeMode: thread.session?.runtimeMode ?? "full-access",
-            lastError: command.reason,
+            // Closing delivery is normal after idle worker expiry. The run
+            // driver reports interrupted work separately; retain that error.
+            lastError: thread.session?.lastError ?? null,
             updatedAt: command.createdAt,
           },
         },
