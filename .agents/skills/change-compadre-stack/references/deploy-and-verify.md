@@ -161,11 +161,11 @@ the relevant destructive canaries from `hosted/compadre/docs/modal-harness-cutov
 
 Each canary must end in a terminal durable event and the correct final Slack
 state. Controller-restart takeover is supported for native provider turns: the
-replacement must reproject the existing worker's narration and detailed tools
-without sending a second provider request, and stale driver writes must be
-rejected by the durable epoch fence. The replacement must log a provider-run
-reconciliation correlated to the canary's canonical thread and `activeRunId`;
-then verify the durable run's driver epoch advanced. The aggregate `resumed`
+replacement must resume the existing worker's native journal without sending a
+second provider request, and stale writes must be rejected by the durable epoch
+fence. Correlate the replacement activity with the canary's canonical thread and
+run ID, then verify the durable driver's epoch advanced and journal delivery
+reached the terminal source events. The aggregate `resumed`
 count is not canary evidence, and a missing correlated record fails this gate.
 For a compatibility API canary, also require a correlated
 `central-t3-recovery` record, an advanced outer driver epoch, and terminal

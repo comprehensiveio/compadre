@@ -10,7 +10,7 @@ import type { SlackInboxEvent, SlackInboxStore } from "./slack-inbox-store.js";
  *   exactly that ack-then-die window during a rollout).
  * "direct": the pre-inbox behavior — acknowledge, then fire-and-forget.
  *
- * Code-level kill switch by convention (like NATIVE_T3_RUN_ORCHESTRATOR).
+ * Code-level kill switch.
  */
 export const SLACK_INGRESS_MODE: "durable" | "direct" = "durable";
 

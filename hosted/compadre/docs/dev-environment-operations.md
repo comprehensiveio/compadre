@@ -31,9 +31,7 @@ each hosted T3 thread. The safety and ownership rules in
   turns, restores the latest worker checkpoint when necessary, and runs the
   idempotent `scripts/compadre-dev-up.sh up` command. Concurrent tabs join the
   same activation instead of allocating competing sandbox generations.
-- Wake-on-open uses the default Temporal orchestrator. The `in-process` native
-  run rollback mode preserves the previous read-only preview behavior and does
-  not start background preview activations.
+- Wake-on-open uses the Temporal orchestrator.
 - A dead worker without a restorable checkpoint remains unavailable. Preview
   activation never silently provisions a blank replacement, because that would
   present a different checkout and database under the old review URL.

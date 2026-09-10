@@ -1,3 +1,4 @@
+import type { T3ThreadSnapshot } from "../t3/client.js";
 import type { ThreadEnvironmentObservation } from "./thread-environment-observations.js";
 import type { RunRecord } from "@tanstack/ai";
 import type { AgentRunDurability } from "../durability/runtime.js";
@@ -360,11 +361,47 @@ async function eventsForRuns(
   return byRun;
 }
 
+function nativeProgress(snapshot: T3ThreadSnapshot) {
+  const turnId = snapshot.thread.session?.activeTurnId ?? snapshot.thread.latestTurn?.turnId;
+  const activities = (Array.isArray(snapshot.thread.activities) ? snapshot.thread.activities : []).flatMap(value => {
+    const activity = record(value);
+    if (!activity || typeof activity.id !== "string" || typeof activity.kind !== "string" ||
+      typeof activity.createdAt !== "string" || (turnId && activity.turnId !== turnId)) return [];
+    return [{ id: activity.id, kind: activity.kind, createdAt: activity.createdAt,
+      summary: stringValue(activity.summary) ?? activity.kind, payload: record(activity.payload) }];
+  });
+  const pending = new Map<string, string>();
+  const tools = new Map<string, string>();
+  for (const activity of activities) {
+    const payload = record(activity.payload);
+    const requestId = stringValue(payload?.requestId);
+    const toolId = stringValue(payload?.toolCallId);
+    if (requestId && activity.kind.endsWith(".requested")) pending.set(requestId, activity.kind);
+    if (requestId && activity.kind.endsWith(".resolved")) pending.delete(requestId);
+    if (toolId && activity.kind === "tool.started") tools.set(toolId, activity.summary);
+    if (toolId && activity.kind === "tool.completed") tools.delete(toolId);
+  }
+  const latest = activities.at(-1);
+  const recentEvents = activities.slice(-8).map(activity => ({ id: activity.id, type: activity.kind,
+    at: activity.createdAt, detail: activity.summary }));
+  const progressTimes = [...activities.map(activity => Date.parse(activity.createdAt)),
+    ...snapshot.thread.messages.map(message => Date.parse(message.updatedAt))].filter(Number.isFinite);
+  const waiting = [...pending.values()].at(-1);
+  const phase = waiting === "user-input.requested" ? "Waiting for your input"
+    : waiting === "approval.requested" ? "Waiting for approval"
+    : tools.size ? [...tools.values()].at(-1)!
+    : snapshot.thread.latestTurn?.state === "completed" ? "Checkpointing"
+    : "Running";
+  return { phase, recentEvents, progressMs: progressTimes.reduce((latest, time) => Math.max(latest, time), 0),
+    ...(latest ? { since: latest.createdAt, lastEvent: { type: latest.kind, at: latest.createdAt, detail: latest.summary } } : {}) };
+}
+
 export async function buildT3ThreadOperationsSnapshot(input: {
   bindings: readonly T3ThreadBinding[];
   durability: AgentRunDurability;
   now?: Date;
   environments?: ReadonlyMap<string, ThreadEnvironmentObservation>;
+  readCentralSnapshot?(threadId: string): Promise<T3ThreadSnapshot>;
 }): Promise<T3ThreadOperationsSnapshot> {
   const now = input.now ?? new Date();
   const nowMs = now.getTime();
@@ -378,13 +415,20 @@ export async function buildT3ThreadOperationsSnapshot(input: {
     eventsForRuns(input.durability, activeRunIds),
   ]);
   const runById = new Map(runs);
+  const nativeByThread = new Map(await Promise.all(input.bindings
+    .filter(binding => binding.status === "working")
+    .map(async binding => [binding.canonicalThreadId, input.readCentralSnapshot
+      ? await input.readCentralSnapshot(binding.canonicalThreadId).then(nativeProgress).catch(() => undefined)
+      : undefined] as const)));
+
   const threads = input.bindings.map((binding): T3ThreadOperation => {
     const runId = binding.activeRunId;
     const run = runId ? runById.get(runId) : undefined;
     const runEvents = runId ? events.get(runId) ?? [] : [];
-    const phase = phaseFor(binding, runEvents);
+    const native = nativeByThread.get(binding.canonicalThreadId);
+    const phase = native ?? phaseFor(binding, runEvents);
     const lastStoredEvent = runEvents.at(-1);
-    const lastProgressMs = lastStoredEvent?.at
+    const lastProgressMs = native ? Math.max(native.progressMs, run?.startedAt ?? 0) : lastStoredEvent?.at
       ? Date.parse(lastStoredEvent.at)
       : run?.startedAt;
     const idleMs =
@@ -400,7 +444,7 @@ export async function buildT3ThreadOperationsSnapshot(input: {
       modelSelection: binding.modelSelection,
       status: binding.status ?? "ready",
       phase: phase.phase,
-      recentEvents: runEvents.filter(event => !["TEXT_MESSAGE_CONTENT", "REASONING_CONTENT", "TOOL_CALL_ARGS", "THREAD_TOKEN_USAGE_UPDATED"].includes(String(event.chunk.type))).slice(-8).map(event => ({ id: String(event.sequence), type: String(event.chunk.type), ...(event.at ? { at: event.at } : {}), ...(eventDetail(event.chunk) ? { detail: eventDetail(event.chunk) } : {}) })),
+      recentEvents: native?.recentEvents ?? runEvents.filter(event => !["TEXT_MESSAGE_CONTENT", "REASONING_CONTENT", "TOOL_CALL_ARGS", "THREAD_TOKEN_USAGE_UPDATED"].includes(String(event.chunk.type))).slice(-8).map(event => ({ id: String(event.sequence), type: String(event.chunk.type), ...(event.at ? { at: event.at } : {}), ...(eventDetail(event.chunk) ? { detail: eventDetail(event.chunk) } : {}) })),
       health: health.health,
       healthReason: health.reason,
       createdAt: binding.createdAt,

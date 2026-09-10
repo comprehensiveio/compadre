@@ -1,3 +1,4 @@
+import { configuredCentralT3Client } from "../t3/central-conversation.js";
 import { observeThreadEnvironments } from "../services/thread-environment-observations.js";
 import { Hono, type Context, type Handler } from "hono";
 import { getConfiguredAgentRunDurability } from "../durability/runtime.js";
@@ -45,8 +46,10 @@ const defaultDependencies: T3OperationsRoutesDependencies = {
       throw new Error("T3 operations require the configured gateway and durability");
     }
     const bindings = await gateway.list();
+    const central = configuredCentralT3Client();
     return buildT3ThreadOperationsSnapshot({
       bindings,
+      ...(central ? { readCentralSnapshot: (threadId: string) => central.threadSnapshot(threadId) } : {}),
       environments: observeThreadEnvironments(bindings),
       durability,
     });

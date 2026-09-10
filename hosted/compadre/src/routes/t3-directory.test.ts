@@ -1,3 +1,6 @@
+import { memoryPersistence } from "@tanstack/ai-persistence";
+import { NativeT3RunRequestStore } from "../t3/run-request-store.js";
+import { driveNativeT3Run } from "../t3/native-t3-run-driver.js";
 import { T3Client } from "../t3/client.js";
 import assert from "node:assert/strict";
 import test from "node:test";
@@ -9,7 +12,7 @@ import type { T3ArtifactStore } from "../t3/artifact-store.js";
 import { createAgentRunDurability } from "../durability/runtime.js";
 import { NativeT3RunCoordinator } from "../t3/run-coordinator.js";
 import {
-  InProcessNativeT3RunService,
+  TemporalNativeT3RunService,
   type NativeT3RunService,
 } from "../t3/run-service.js";
 import {
@@ -159,6 +162,7 @@ function authorized(body?: unknown): RequestInit {
       : { method: "POST", body: JSON.stringify(body) }),
     headers: {
       Authorization: "Bearer test-key",
+      "x-compadre-native-delivery": "1",
       ...(body === undefined ? {} : { "Content-Type": "application/json" }),
     },
   };
@@ -657,6 +661,7 @@ test("streams a native Modal T3 turn through the central provider endpoint", asy
   });
   assert.ok(durability);
   const runCoordinator = new NativeT3RunCoordinator(durability);
+  const requests = new NativeT3RunRequestStore(memoryPersistence().stores.metadata);
   t.after(() => durability.close());
   const app = new Hono();
   app.route("/", createT3DirectoryRoutes({
@@ -664,11 +669,15 @@ test("streams a native Modal T3 turn through the central provider endpoint", asy
     createId: () => "generated",
     getGateway: async () => gateway,
     getRunCoordinator: async () => runCoordinator,
-    getRunService: async () =>
-      new InProcessNativeT3RunService({
-        gateway,
-        coordinator: runCoordinator,
-      }),
+    getRunService: async () => new TemporalNativeT3RunService(runCoordinator, requests, {
+      async start({ input }) {
+        await driveNativeT3Run({ durability, requests, prepareNativeDelivery: async () => {}, gateway: {
+          ...gateway, resumeTurn: async () => null,
+        } }, input.runId);
+        return { started: true };
+      },
+      cancel: async () => true, steer: async () => true,
+    }),
     watchTurn() {},
     async getSlackBinding(threadId) {
       slackBindingLookups.push(threadId);
@@ -702,10 +711,10 @@ test("streams a native Modal T3 turn through the central provider endpoint", asy
   assert.equal(response.headers.get("x-compadre-t3-protocol-version"), "2");
   const body = await response.text();
   assert.match(body, /"type":"RUN_STARTED"/);
-  assert.match(body, /"type":"TOOL_CALL_START"/);
-  assert.match(body, /"type":"THREAD_TOKEN_USAGE_UPDATED"/);
-  assert.match(body, /"usageProvider":"codex"/);
-  assert.match(body, /"type":"TEXT_MESSAGE_CONTENT"/);
+  assert.doesNotMatch(body, /"type":"TOOL_CALL_START"/);
+  assert.doesNotMatch(body, /"type":"THREAD_TOKEN_USAGE_UPDATED"/);
+
+  assert.doesNotMatch(body, /"type":"TEXT_MESSAGE_CONTENT"/);
   assert.match(body, /"type":"RUN_FINISHED"/);
   assert.match(body, /"protocolVersion":2/);
   assert.deepEqual(selection, {

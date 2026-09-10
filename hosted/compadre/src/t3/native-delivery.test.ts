@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { nativeControlSchema, nativeWorkerControl, nativeDeliveryCohortIncludes } from "./native-delivery.js";
+import { nativeControlSchema, nativeWorkerControl } from "./native-delivery.js";
 import { T3Client } from "./client.js";
 
 test("question controls retain their command identity and reject another worker's requests", () => {
@@ -11,8 +11,6 @@ test("question controls retain their command identity and reject another worker'
     threadId: "worker/a", requestId: "question-1", createdAt: input.createdAt, answers: { choice: "A" } });
   assert.throws(() => nativeWorkerControl({ ...input, sourceThreadId: "worker/b" }), /different worker/);
   assert.equal(nativeWorkerControl({ ...input, type: "thread.turn-interrupt-requested" }).type, "thread.turn.interrupt");
-  assert.equal(nativeDeliveryCohortIncludes("one", { COMPADRE_NATIVE_EVENT_THREADS: "one, two" }), true);
-  assert.equal(nativeDeliveryCohortIncludes("three", { COMPADRE_NATIVE_EVENT_THREADS: "one, two" }), false);
 });
 
 test("an accepted worker dispatch can be retried with exactly the same command and user message", async () => {

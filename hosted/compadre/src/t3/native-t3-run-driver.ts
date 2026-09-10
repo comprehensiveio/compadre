@@ -15,7 +15,6 @@ import {
   NATIVE_T3_PROTOCOL_VERSION,
   type StreamChunk,
 } from "./agui-protocol.js";
-import { NativeT3SnapshotProjector } from "./agui-stream.js";
 import type {
   T3InputFile,
   T3ModelSelection,
@@ -90,15 +89,7 @@ export interface NativeT3DriverGateway {
     providerInstanceId: string;
     signal?: AbortSignal;
   }): Promise<number | null>;
-  snapshot?(input: {
-    canonicalThreadId: string;
-    providerInstanceId: string;
-    signal?: AbortSignal;
-  }): Promise<{
-    binding: T3GatewayTurn["binding"];
-    snapshot: T3ThreadSnapshot;
-    source: "central" | "worker";
-  } | null>;
+  workerSnapshot?(canonicalThreadId: string): Promise<T3ThreadSnapshot | null>;
   markActiveRun?(canonicalThreadId: string, runId: string): Promise<void>;
   markWorkerLost?(
     canonicalThreadId: string,
@@ -112,7 +103,7 @@ export interface NativeT3DriverGateway {
   releaseCodexAuth?(input: {
     canonicalThreadId: string;
     runId: string;
-    nativeDelivery?: boolean;
+    requireIdle?: boolean;
   }): Promise<void>;
 }
 
@@ -122,21 +113,12 @@ export interface NativeT3RunDriverDependencies {
   requests: NativeT3RunRequestStore;
   controls?: NativeT3RunControlStore;
   /**
-   * Serializes driver-epoch claims with in-process drivers. Fresh attempts
-   * claim `driverEpoch + 1` under the same lock key the coordinator uses, so
-   * during a rollout overlap exactly one producer owns the run's log.
+   * Serializes driver-epoch claims. Fresh attempts claim `driverEpoch + 1`
+   * under the same lock key so one producer owns the run's lifecycle log
+   * during controller rollout overlap.
    */
   locks?: LockStore;
-  /**
-   * Collects /tmp/agent-outputs artifacts after the provider's final event
-   * and returns their OUTPUT_ARTIFACT chunks. Wired by the activity layer so
-   * the driver stays free of storage/Slack upload concerns.
-   */
-  collectArtifactEvents?(
-    turn: T3GatewayTurn,
-    request: NativeT3RunRequest,
-  ): Promise<StreamChunk[]>;
-  prepareNativeDelivery?(request: NativeT3RunRequest, connection?: Parameters<T3BeforeTurnDispatch>[0]): Promise<void>;
+  prepareNativeDelivery(request: NativeT3RunRequest, connection?: Parameters<T3BeforeTurnDispatch>[0]): Promise<void>;
   now?: () => number;
 }
 
@@ -373,9 +355,9 @@ export async function driveNativeT3Run(
       ...(error ? { error } : {}),
     });
     await stream.close();
-    if (!request.nativeDelivery || status !== "completed") await deps.gateway
+    if (status !== "completed") await deps.gateway
       .releaseCodexAuth?.({
-        nativeDelivery: request.nativeDelivery,
+        requireIdle: true,
         canonicalThreadId: request.canonicalThreadId,
         runId,
       })
@@ -439,13 +421,12 @@ export async function driveNativeT3Run(
       );
     }
     turn = resumed;
-    if (request.nativeDelivery) await deps.prepareNativeDelivery?.(request);
+    await deps.prepareNativeDelivery(request);
   } else {
     heartbeat("dispatching native T3 turn");
     let setupSteering: NativeT3SteeringEntry[] = [];
-    if (request.nativeDelivery && !deps.prepareNativeDelivery) throw new NativeT3RunStateError("Native delivery is not configured");
     turn = await deps.gateway.send({
-      ...(request.nativeDelivery ? { beforeDispatch: (connection) => deps.prepareNativeDelivery!(request, connection) } : {}),
+      beforeDispatch: (connection) => deps.prepareNativeDelivery(request, connection),
       runId,
       createdAt: request.createdAt,
       runtimeMode: request.runtimeMode, interactionMode: request.interactionMode,
@@ -493,24 +474,14 @@ export async function driveNativeT3Run(
       }),
     );
 
-  const projector = request.nativeDelivery
-    ? new NativeRunObservation(runId, turn.dispatch.messageId, persisted)
-    : NativeT3SnapshotProjector.restore(
-    runId,
-    request.canonicalThreadId,
-    turn.dispatch.messageId,
-    persisted,
-  );
+  const projector = new NativeRunObservation(runId, turn.dispatch.messageId, persisted);
   // A later steer of the same worker turn owns the shared Slack final answer.
   const shouldDeliverFinal = async (): Promise<boolean> => {
-    if (!deps.gateway.snapshot) return true;
+    if (!deps.gateway.workerSnapshot) return true;
     try {
-      const latest = await deps.gateway.snapshot({
-        canonicalThreadId: request.canonicalThreadId,
-        providerInstanceId: request.modelSelection.instanceId,
-      });
+      const latest = await deps.gateway.workerSnapshot(request.canonicalThreadId);
       return latest
-        ? !dispatchWasSuperseded(latest.snapshot, turn.dispatch)
+        ? !dispatchWasSuperseded(latest, turn.dispatch)
         : true;
     } catch (error) {
       console.warn(
@@ -610,27 +581,7 @@ export async function driveNativeT3Run(
     let lastSequence = -1;
 
     const drainChunk = async (chunk: StreamChunk) => {
-      if (
-        chunk.type === EventType.RUN_FINISHED &&
-        request.collectArtifacts &&
-        deps.collectArtifactEvents
-      ) {
-        const artifactEvents = await deps
-          .collectArtifactEvents(turn, request)
-          .catch((error) => {
-            if (request.nativeDelivery) throw error;
-            console.warn("[native-t3-driver] artifact collection failed", {
-              runId,
-              error,
-            });
-            return [] as StreamChunk[];
-          });
-        for (const artifactEvent of artifactEvents) {
-          await append(artifactEvent);
-          mirror?.observe(artifactEvent);
-        }
-      }
-      if (!request.nativeDelivery || [EventType.RUN_STARTED, EventType.RUN_FINISHED, EventType.RUN_ERROR, "NATIVE_TURN"].includes(chunk.type)) await append(chunk);
+      await append(chunk);
       mirror?.observe(chunk);
       if (
         chunk.type === EventType.RUN_FINISHED ||
@@ -659,11 +610,11 @@ export async function driveNativeT3Run(
           lastProgressAt = now();
         }
         pending.push(...projector.project(snapshot));
-        if (request.nativeDelivery) mirror?.replaceAssistantTexts?.(projector.assistantTexts);
+        mirror?.replaceAssistantTexts?.(projector.assistantTexts);
       };
       const waiter = deps.gateway
         .waitForTerminal({
-          nativeEvents: request.nativeDelivery,
+          nativeEvents: true,
           turn,
           timeoutMs: inactivityLimitMs,
           signal: watchAbort.signal,
@@ -939,7 +890,7 @@ export async function finalizeNativeT3Run(
           : ("error" as const);
     await deps.gateway
       ?.releaseCodexAuth?.({
-        nativeDelivery: request.nativeDelivery,
+        requireIdle: true,
         canonicalThreadId: request.canonicalThreadId,
         runId,
       })

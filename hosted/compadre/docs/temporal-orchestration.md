@@ -14,7 +14,6 @@ record by a retried finalize step.
 | Temporal worker | Inside the `compadre-api` process | Task queue `compadre-native-t3`, namespace `compadre` (auto-registered at startup) |
 | Workflow code | `src/temporal/workflows.ts`, bundled at build time to `dist/temporal-workflow-bundle.js` | Deployed workflow code is frozen with the release |
 | Activities | `src/temporal/activities.ts` → `src/t3/native-t3-run-driver.ts` | Run in the controller process with the configured gateway/durability singletons |
-| Orchestrator selector | `NATIVE_T3_RUN_ORCHESTRATOR` in `src/temporal/mode.ts` | Code-level kill switch; `"in-process"` is the rollback path |
 
 ## Run lifecycle
 
@@ -25,29 +24,23 @@ record by a retried finalize step.
    workflow id (`compadre-t3-<sha256(runId)>`). Duplicate starts are no-ops.
 2. `driveNativeT3RunActivity` (130 m start-to-close per attempt, 2 m
    heartbeat timeout for fast dead-controller detection, 3 attempts — an
-   attempt that hits its ceiling hands off cleanly to the next, so three
-   attempts cover the full 6 h production worker lifetime) first claims the run's durable driver epoch (the same fencing
-   in-process drivers use, so a retiring pre-Temporal controller and the
-   activity can never both write one run's log), maintains the worker
-   binding's active-run marker, dispatches the worker turn **at most once** —
-   a durable dispatch record written immediately after `gateway.send` makes
-   every retry reattach via `gateway.resumeTurn` instead of re-sending — and
-   projects worker snapshots into the Postgres run event log. On retry the
-   projector is rebuilt from the already-persisted chunks
-   (`NativeT3SnapshotProjector.restore`), so subscribers never see duplicated
-   events. Slack final delivery honors steer supersession
-   (`dispatchWasSuperseded`), matching the in-process mirror.
+   attempt that hits its ceiling hands off cleanly to the next) claims the run's
+   durable driver epoch, maintains the worker binding's active-run marker, and
+   dispatches the worker turn at most once. A durable dispatch record makes retries
+   reattach via `gateway.resumeTurn`. The run log stores lifecycle receipts only.
+   A separate per-thread workflow forwards the worker's native journal into central
+   T3, including events after the parent run completes. Retry resumes its acknowledged
+   cursor; central command receipts deduplicate accepted events. Slack final delivery
+   honors steer supersession (`dispatchWasSuperseded`).
 3. Retry semantics are split by cost, deliberately. Within one attempt the
    driver rides out interrupted watches: a CPU-starved sandbox stops
    answering snapshot reads while the harness keeps working (observed
    2026-09-01 during `pnpm typecheck`), so on a watch error with recent
    durable progress the driver waits ~15 s, reattaches via `resumeTurn`, and
-   keeps the same projector. Only a genuine stall — no new snapshot sequence
+   keeps the same lifecycle observation. Only a genuine stall — no new snapshot sequence
    for the 20-minute inactivity limit — or a state error fails the attempt,
    and Temporal retries that. Only a provider terminal event or explicit
-   cancellation terminalizes the run. The legacy in-process stream converted
-   every exception into a terminal RUN_ERROR — that inversion is the main
-   reliability change.
+   cancellation terminalizes the run.
 4. `finalizeNativeT3RunActivity` (5 attempts, non-cancellable scope) converges
    any run whose drive could not finish: appends a terminal RUN_ERROR, marks
    the record `failed`/`aborted`, closes the log, and trims the persisted
@@ -130,9 +123,7 @@ propagation; later startups skip it.
 
 ## Rollback
 
-Set `NATIVE_T3_RUN_ORCHESTRATOR = "in-process"` in `src/temporal/mode.ts` and
-deploy. The routes, durability contracts, and SSE surfaces are identical in
-both modes; in-process mode restores the pre-Temporal behavior (runs are
-fire-and-forget promises that do not survive restarts). Runs already owned by
-Temporal at rollback time converge via their finalize activity as workers
-drain.
+Pause new execution and native delivery with `COMPADRE_NATIVE_EVENTS_PAUSED=true`
+while deploying a corrected native-capable binary. Temporal remains the sole run
+orchestrator. History and acknowledged native events remain in central T3; do not
+restore an old database or switch adopted threads to a custom-event decoder.

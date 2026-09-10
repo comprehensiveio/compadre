@@ -1,14 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { EventType, type StreamChunk } from "./agui-protocol.js";
-import { InMemorySpanExporter, SimpleSpanProcessor } from "@opentelemetry/sdk-trace-base";
-import { NodeTracerProvider } from "@opentelemetry/sdk-trace-node";
 import {
   createCentralT3AguiRecoveryStream,
-  createNativeT3AguiRecoveryStream,
-  createNativeT3AguiStream,
-  NativeT3SnapshotProjector,
-  traceNativeT3AguiStream,
+  CentralApiResponseProjector,
 } from "./agui-stream.js";
 import { centralT3ThreadId } from "./central-conversation.js";
 import type { T3ThreadSnapshot } from "./client.js";
@@ -66,7 +61,7 @@ function snapshot(input: {
 }
 
 test("projects native T3 text and tool snapshots incrementally", () => {
-  const projector = new NativeT3SnapshotProjector("run-1", "central-thread", "user-1");
+  const projector = new CentralApiResponseProjector("run-1", "central-thread", "user-1");
   const first = projector.project(snapshot({
     sequence: 4,
     state: "running",
@@ -144,7 +139,7 @@ test("projects native T3 text and tool snapshots incrementally", () => {
 });
 
 test("projects replaced reasoning activities whenever their sequence advances", () => {
-  const projector = new NativeT3SnapshotProjector("run-1", "central-thread", "user-1");
+  const projector = new CentralApiResponseProjector("run-1", "central-thread", "user-1");
   const first = projector.project(snapshot({
     sequence: 4,
     state: "running",
@@ -231,7 +226,7 @@ test("a restored projector continues where the persisted chunks stopped", () => 
   });
 
   // Uninterrupted projection is the reference behavior.
-  const reference = new NativeT3SnapshotProjector("run-1", "central-thread", "user-1");
+  const reference = new CentralApiResponseProjector("run-1", "central-thread", "user-1");
   const referenceEvents = [
     ...reference.project(partial),
     ...reference.project(terminal),
@@ -239,9 +234,9 @@ test("a restored projector continues where the persisted chunks stopped", () => 
 
   // A crashed driver persisted only the first snapshot's chunks; the retry
   // restores from them and must emit exactly the remaining events.
-  const original = new NativeT3SnapshotProjector("run-1", "central-thread", "user-1");
+  const original = new CentralApiResponseProjector("run-1", "central-thread", "user-1");
   const persisted = original.project(partial);
-  const restored = NativeT3SnapshotProjector.restore(
+  const restored = CentralApiResponseProjector.restore(
     "run-1",
     "central-thread",
     "user-1",
@@ -272,13 +267,13 @@ test("a restored projector continues where the persisted chunks stopped", () => 
   );
   assert.equal(restored.isTerminal, true);
   assert.equal(
-    NativeT3SnapshotProjector.restore("run-1", "central-thread", "user-1", combined).isTerminal,
+    CentralApiResponseProjector.restore("run-1", "central-thread", "user-1", combined).isTerminal,
     true,
   );
 });
 
 test("ignores a stale terminal snapshot from before the requested message", () => {
-  const projector = new NativeT3SnapshotProjector("run-1", "central-thread", "new-user");
+  const projector = new CentralApiResponseProjector("run-1", "central-thread", "new-user");
   assert.deepEqual(projector.project(snapshot({
     sequence: 2,
     state: "completed",
@@ -288,7 +283,7 @@ test("ignores a stale terminal snapshot from before the requested message", () =
 });
 
 test("adopts the native latest turn when its user message remains unbound", () => {
-  const projector = new NativeT3SnapshotProjector("run-1", "central-thread", "user-1");
+  const projector = new CentralApiResponseProjector("run-1", "central-thread", "user-1");
   const completed = snapshot({
     sequence: 8,
     state: "completed",
@@ -307,7 +302,7 @@ test("adopts the native latest turn when its user message remains unbound", () =
 });
 
 test("projects replacement output for a message that steers an active native turn", () => {
-  const projector = new NativeT3SnapshotProjector(
+  const projector = new CentralApiResponseProjector(
     "run-steer",
     "central-thread",
     "user-steer",
@@ -416,7 +411,7 @@ test("projects replacement output for a message that steers an active native tur
 });
 
 test("does not project a terminal native turn completed before a new message", () => {
-  const projector = new NativeT3SnapshotProjector(
+  const projector = new CentralApiResponseProjector(
     "run-new",
     "central-thread",
     "user-new",
@@ -450,7 +445,7 @@ test("does not project a terminal native turn completed before a new message", (
 });
 
 test("projects provider failures that happen before a turn is assigned", () => {
-  const projector = new NativeT3SnapshotProjector(
+  const projector = new CentralApiResponseProjector(
     "run-1",
     "central-thread",
     "user-1",
@@ -508,7 +503,7 @@ test("projects provider failures that happen before a turn is assigned", () => {
 });
 
 test("preserves the native MCP server and tool name", () => {
-  const projector = new NativeT3SnapshotProjector("run-1", "central-thread", "user-1");
+  const projector = new CentralApiResponseProjector("run-1", "central-thread", "user-1");
   const events = projector.project(snapshot({
     sequence: 4,
     state: "running",
@@ -550,7 +545,7 @@ test("preserves the native MCP server and tool name", () => {
 });
 
 test("projects every assistant segment from a native T3 turn", () => {
-  const projector = new NativeT3SnapshotProjector("run-1", "central-thread", "user-1");
+  const projector = new CentralApiResponseProjector("run-1", "central-thread", "user-1");
   const first = snapshot({
     sequence: 4,
     state: "running",
@@ -613,205 +608,6 @@ test("projects every assistant segment from a native T3 turn", () => {
     3,
   );
   assert.equal(events.at(-1)?.type, EventType.RUN_FINISHED);
-});
-
-test("keeps a provider span open for the full native T3 stream", async () => {
-  const exporter = new InMemorySpanExporter();
-  const provider = new NodeTracerProvider({
-    spanProcessors: [new SimpleSpanProcessor(exporter)],
-  });
-  const tracer = provider.getTracer("test");
-  async function* source(): AsyncIterable<StreamChunk> {
-    yield {
-      type: EventType.RUN_STARTED,
-      runId: "run-telemetry",
-      threadId: "thread-telemetry",
-    };
-    yield {
-      type: EventType.RUN_FINISHED,
-      runId: "run-telemetry",
-      threadId: "thread-telemetry",
-      finishReason: "stop",
-    };
-  }
-
-  for await (const _event of traceNativeT3AguiStream(source(), {
-    canonicalThreadId: "thread-telemetry",
-    runId: "run-telemetry",
-    provider: "claude-code",
-    model: "claude-opus-5",
-    tracer,
-  })) {
-    // Consume the complete stream so the span finalizer runs.
-  }
-
-  const [span] = exporter.getFinishedSpans();
-  assert.equal(span?.name, "compadre.t3.provider.turn");
-  assert.equal(span?.attributes["gen_ai.operation.name"], "invoke_agent");
-  assert.equal(span?.attributes["gen_ai.request.model"], "claude-opus-5");
-  assert.equal(span?.attributes["agui.thread_id"], "thread-telemetry");
-  await provider.shutdown();
-});
-
-test("publishes durable output artifacts before finishing the provider run", async () => {
-  const terminal = snapshot({
-    sequence: 8,
-    state: "completed",
-    text: "Here is the file.",
-    streaming: false,
-  });
-  const events: StreamChunk[] = [];
-  for await (const event of createNativeT3AguiStream({
-    gateway: {
-      async send() {
-        return {
-          binding: {
-            canonicalThreadId: "central-thread",
-            providerInstanceId: "codex",
-            t3ThreadId: "worker-thread",
-            projectId: "project",
-            sandboxId: "sandbox-1",
-            baseUrl: "https://sandbox.test",
-            modelSelection: { instanceId: "codex", model: "gpt-5.6-sol" },
-            status: "working",
-            createdAt: "2026-08-26T16:00:00.000Z",
-            updatedAt: "2026-08-26T16:00:00.000Z",
-          },
-          dispatch: {
-            sequence: 1,
-            commandId: "command-1",
-            messageId: "user-1",
-            threadId: "worker-thread",
-            createdAt: "2026-08-26T16:00:00.000Z",
-          },
-        };
-      },
-      async waitForTerminal({ onSnapshot }) {
-        await onSnapshot?.(terminal);
-        return terminal;
-      },
-    },
-    canonicalThreadId: "central-thread",
-    runId: "run-1",
-    title: "Artifact test",
-    text: "create a file",
-    modelSelection: { instanceId: "codex", model: "gpt-5.6-sol" },
-    async outputArtifactEvents() {
-      return [{
-        type: EventType.OUTPUT_ARTIFACT,
-        artifact: {
-          artifactId: "a".repeat(64),
-          path: "proof.png",
-          name: "proof.png",
-          title: "Proof",
-          mimetype: "image/png",
-          sizeBytes: 8,
-          storage: "hosted-object",
-        },
-      }];
-    },
-  })) {
-    events.push(event);
-  }
-
-  const artifactIndex = events.findIndex((event) => event.type === EventType.OUTPUT_ARTIFACT);
-  const finishedIndex = events.findIndex((event) => event.type === EventType.RUN_FINISHED);
-  assert.ok(artifactIndex >= 0);
-  assert.ok(finishedIndex > artifactIndex);
-});
-
-test("recovery replays narration and detailed tools from the existing worker without dispatching", async () => {
-  const terminal = snapshot({
-    sequence: 8,
-    state: "completed",
-    text: "Done.",
-    streaming: false,
-    activities: [
-      {
-        id: "activity-start",
-        kind: "tool.started",
-        turnId: "turn-1",
-        summary: "Ran command started",
-        createdAt: "2026-08-26T16:00:00.400Z",
-        payload: {
-          toolCallId: "tool-1",
-          itemType: "command_execution",
-          detail: "pwd && git status --short",
-          data: { item: { command: "pwd && git status --short" } },
-        },
-      },
-      {
-        id: "activity-complete",
-        kind: "tool.completed",
-        turnId: "turn-1",
-        summary: "Ran command",
-        createdAt: "2026-08-26T16:00:01.400Z",
-        payload: {
-          toolCallId: "tool-1",
-          itemType: "command_execution",
-          detail: "pwd && git status --short",
-          data: {
-            item: {
-              command: "pwd && git status --short",
-              aggregatedOutput: "/workspace",
-            },
-          },
-        },
-      },
-    ],
-  });
-  const events: StreamChunk[] = [];
-  for await (const event of createNativeT3AguiRecoveryStream({
-    gateway: {
-      async send() {
-        throw new Error("recovery must not send a second provider turn");
-      },
-      async snapshot() {
-        return {
-          binding: {
-            canonicalThreadId: "central-thread",
-            providerInstanceId: "codex",
-            t3ThreadId: "worker-thread",
-            projectId: "project",
-            sandboxId: "sandbox-1",
-            baseUrl: "https://sandbox.test",
-            modelSelection: { instanceId: "codex", model: "gpt-5.6-sol" },
-            status: "ready",
-            createdAt: "2026-08-26T16:00:00.000Z",
-            updatedAt: "2026-08-26T16:00:02.000Z",
-          },
-          snapshot: terminal,
-          source: "worker" as const,
-        };
-      },
-      async waitForTerminal() {
-        throw new Error("terminal snapshots do not need another poll");
-      },
-    },
-    canonicalThreadId: "central-thread",
-    runId: "run-1",
-    startedAt: Date.parse("2026-08-26T15:59:59.000Z"),
-  })) {
-    events.push(event);
-  }
-
-  assert.deepEqual(events.map((event) => event.type), [
-    EventType.TOOL_CALL_START,
-    EventType.TOOL_CALL_ARGS,
-    EventType.TOOL_CALL_RESULT,
-    EventType.TEXT_MESSAGE_START,
-    EventType.TEXT_MESSAGE_CONTENT,
-    EventType.TEXT_MESSAGE_END,
-    EventType.RUN_FINISHED,
-  ]);
-  assert.equal(
-    events.find((event) => event.type === EventType.TOOL_CALL_START)?.detail,
-    "pwd && git status --short",
-  );
-  assert.equal(
-    events.find((event) => event.type === EventType.TEXT_MESSAGE_CONTENT)?.delta,
-    "Done.",
-  );
 });
 
 test("central compatibility recovery appends only post-takeover deltas", async () => {
@@ -902,12 +698,12 @@ test("terminal compatibility takeover appends only the terminal outcome", async 
 });
 
 test("projects approval and user-input transitions once for operations observers", () => {
-  const projector = new NativeT3SnapshotProjector("run-1", "central-thread", "user-1");
+  const projector = new CentralApiResponseProjector("run-1", "central-thread", "user-1");
   const activities = ["approval.requested", "approval.resolved", "user-input.requested", "user-input.resolved"].map((kind, i) => ({ id: `waiting-${i}`, kind, turnId: "turn-1", summary: kind, createdAt: "2026-08-26T16:00:00.400Z", payload: { requestId: "request-1" } }));
   const state = snapshot({ sequence: 5, state: "running", text: "", streaming: false, activities });
   const events = projector.project(state);
   assert.deepEqual(events.filter(event => event.type === "COMPADRE_AGENT_ACTIVITY").map(event => event.status), activities.map(activity => activity.kind));
-  const restored = NativeT3SnapshotProjector.restore("run-1", "central-thread", "user-1", events);
+  const restored = CentralApiResponseProjector.restore("run-1", "central-thread", "user-1", events);
   assert.equal(restored.project(state).filter(event => event.type === "COMPADRE_AGENT_ACTIVITY").length, 0);
   assert.equal(projector.project(state).filter(event => event.type === "COMPADRE_AGENT_ACTIVITY").length, 0);
 });

@@ -22,7 +22,6 @@ export interface NativeT3RunSlackMirror {
  */
 export interface NativeT3RunRequest {
   runId: string;
-  nativeDelivery?: boolean;
   runtimeMode?: "full-access" | "approval-required" | "auto-accept-edits" | "auto";
   interactionMode?: "default" | "plan";
   canonicalThreadId: string;
