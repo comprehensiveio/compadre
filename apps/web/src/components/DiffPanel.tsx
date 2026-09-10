@@ -256,6 +256,15 @@ export default function DiffPanel({
     selectedTurnId === null && activeThread && activeCwd
       ? reviewEnvironment.diffPreview({
           environmentId: activeThread.environmentId,
+          cacheScope:
+            usesSavedReview && latestTurn
+              ? JSON.stringify([
+                  latestTurn.turnId,
+                  latestTurn.checkpointRef,
+                  latestTurn.status,
+                  latestTurn.completedAt,
+                ])
+              : null,
           input: {
             cwd: activeCwd,
             threadId: activeThread.id,
