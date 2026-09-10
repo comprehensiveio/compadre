@@ -4,7 +4,7 @@ import { createHash } from "node:crypto";
 import { memoryPersistence } from "@tanstack/ai-persistence";
 import { T3Client } from "./client.js";
 import { T3ArtifactStore } from "./artifact-store.js";
-import { nativeBackgroundOutputTurns, nativeOutputCheckpoints, nativeOutputRunId, publishNativeRunOutputs } from "./native-outputs.js";
+import { nativeBackgroundOutputTurns, nativeQuiescentOutputTurn, nativeOutputCheckpoints, nativeOutputRunId, publishNativeRunOutputs } from "./native-outputs.js";
 
 const backgroundEvent = (turnId: string | null, status: string, kind = "task.updated") => ({
   type: "thread.activity-appended", payload: { activity: { kind, turnId, payload: { taskId: "child", status } } },
@@ -76,4 +76,28 @@ test("late native checkpoints publish stable output commands for their own turn"
   assert.equal(last.turnId, "background-turn");
   assert.equal(last.commandId, `output:${runId}:${digest}`);
   assert.equal(uploads, 1);
+});
+
+
+test("catch-up checks HEAD liveness before recovering an already acknowledged completion", async () => {
+  const client = new T3Client("https://worker.example", "unused");
+  let head = { events: [], nextOffset: "00000000000000000009", upToDate: true, sessionStatus: "ready", backgroundLiveness: null as "working" | "monitoring" | null };
+  let snapshots = 0;
+  client.nativeEventPage = async (input) => {
+    assert.equal(input.head, true);
+    assert.equal(input.offset, "-1");
+    return head;
+  };
+  client.threadSnapshot = async () => { snapshots++; return { snapshotSequence: 9, thread: {
+    id: "worker", projectId: "project", title: "Native", modelSelection: { instanceId: "codex", model: "test" },
+    messages: [], session: null, latestTurn: { turnId: "completed-parent", state: "completed", requestedAt: "2026-09-10T12:00:00Z", startedAt: "2026-09-10T12:00:00Z", completedAt: "2026-09-10T12:00:01Z", assistantMessageId: null },
+  } }; };
+  assert.equal(await nativeQuiescentOutputTurn(client, "worker"), "completed-parent");
+  for (const backgroundLiveness of ["working", "monitoring"] as const) {
+    head = { ...head, backgroundLiveness };
+    assert.equal(await nativeQuiescentOutputTurn(client, "worker"), null);
+  }
+  head = { ...head, sessionStatus: "running", backgroundLiveness: null };
+  assert.equal(await nativeQuiescentOutputTurn(client, "worker"), null);
+  assert.equal(snapshots, 1);
 });

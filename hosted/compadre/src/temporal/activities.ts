@@ -1,5 +1,5 @@
 import { copyNativeAttachments } from "../t3/native-attachments.js";
-import { nativeBackgroundOutputTurns, nativeOutputCheckpoints, nativeOutputRunId, publishNativeRunOutputs } from "../t3/native-outputs.js";
+import { nativeBackgroundOutputTurns, nativeQuiescentOutputTurn, nativeOutputCheckpoints, nativeOutputRunId, publishNativeRunOutputs } from "../t3/native-outputs.js";
 import { configuredCentralT3Client } from "../t3/central-conversation.js";
 import { T3EnvironmentUnavailableError } from "../t3/gateway.js";
 import { Context } from "@temporalio/activity";
@@ -288,12 +288,8 @@ export async function deliverNativeThreadEventsActivity(input: { threadId: strin
         // Recover files from a completion already acknowledged by an older
         // consumer. Read once on catch-up, only when the worker is quiescent.
         if (reconcileOutputs && page.upToDate) {
-          if (page.sessionStatus === "ready" && page.backgroundLiveness === null) {
-            const snapshot = await client.threadSnapshot(current.sourceThreadId, signal);
-            if (snapshot.thread.latestTurn?.state === "completed") {
-              backgroundTurns.add(snapshot.thread.latestTurn.turnId);
-            }
-          }
+          const turnId = await nativeQuiescentOutputTurn(client, current.sourceThreadId, signal);
+          if (turnId) backgroundTurns.add(turnId);
           reconcileOutputs = false;
         }
         if ((checkpoints.length || backgroundTurns.size) && current.runId) {
