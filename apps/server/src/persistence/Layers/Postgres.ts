@@ -10,6 +10,10 @@ import * as Migrator from "effect/unstable/sql/Migrator";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 
 import { migration001Initial } from "../CompadrePostgresSchema.ts";
+import {
+  POSTGRES_MIGRATION_LOCK_KEY,
+  validatePostgresSchemaCompatibility,
+} from "../PostgresSchemaCompatibility.ts";
 import { PersistenceBackend, PersistenceReadClient } from "../Services/PersistenceBackend.ts";
 
 export const POSTGRES_SCHEMA_VERSION = 1;
@@ -25,7 +29,7 @@ export const runPostgresMigrations = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
   return yield* sql.withTransaction(
     Effect.gen(function* () {
-      yield* sql`SELECT pg_advisory_xact_lock(hashtextextended('compadre_t3_migrations', 0))`;
+      yield* sql`SELECT pg_advisory_xact_lock(hashtextextended(${POSTGRES_MIGRATION_LOCK_KEY}, 0))`;
       yield* sql`CREATE SCHEMA IF NOT EXISTS compadre_t3`;
       const tables = yield* sql<{
         name: string;
@@ -117,16 +121,7 @@ export const makePostgresPersistenceLive = (url: string) => {
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
       const postgres = yield* PgClient.PgClient;
-      const versions = yield* sql<{
-        version: number | null;
-      }>`SELECT MAX(migration_id) AS version FROM compadre_t3_migrations`;
-      if (versions[0]?.version !== POSTGRES_SCHEMA_VERSION) {
-        return yield* Effect.die(
-          new Error(
-            "Central PostgreSQL schema is not current; run migrate-postgres before serving.",
-          ),
-        );
-      }
+      yield* validatePostgresSchemaCompatibility(POSTGRES_SCHEMA_VERSION);
       return PersistenceBackend.of({
         kind: "postgres",
         lockOrchestrationKeys: (keys) =>

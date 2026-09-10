@@ -57,6 +57,32 @@ disk](https://render.com/docs/deploys).
 
 ## Schema and import boundary
 
+Application startup validates the schema under a shared form of the migration
+advisory lock. The current schema works without additional metadata. A newer
+schema is accepted only when `compadre_t3_schema_compatibility` contains exactly
+one row (`singleton_id = 1`) declaring both its `schema_version` and a
+`minimum_app_schema_version` no greater than the binary's
+`POSTGRES_SCHEMA_VERSION`. The declared schema version must equal the latest
+recorded migration. Older schemas, missing declarations for newer schemas, and
+stale or invalid declarations prevent startup.
+
+The compatibility table is not introduced by the startup-check change. The
+first future migration that needs an older application to remain usable must
+create it, then maintain its declaration in the same transaction as the schema
+change and migration record. Subsequent migrations must update it even when
+they preserve the minimum application version. Compatibility covers old writes,
+queries, and persisted event shapes, not just whether added columns are nullable.
+Raise the minimum version when old application behavior is no longer supported.
+Never lower it merely to force a rollback through startup validation.
+
+This permits application rollback while retaining newer data. Binaries that
+predate this compatibility check still require exact schema equality and are
+not valid rollback targets after a schema upgrade. Deploy and verify a rollback
+baseline containing the check before introducing the future migration. A
+database backup restore is a different recovery operation and can discard
+writes accepted after that backup. See the
+[native transport rollout constraints](native-event-rollout.md).
+
 `CompadrePostgresSchema.ts` represents Compadre SQLite migrations 001–044. The
 PostgreSQL table set does not include unrelated preference tables or their
 `unsettled_at` field.
