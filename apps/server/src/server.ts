@@ -1,3 +1,4 @@
+import { nativeThreadEventRoutes } from "./compadre/NativeThreadEventRoutes.ts";
 import { EnvironmentHttpApi } from "@t3tools/contracts";
 import * as Duration from "effect/Duration";
 import * as Deferred from "effect/Deferred";
@@ -474,6 +475,7 @@ export const makeRoutesLayer = Layer.mergeAll(
     compadreAuthRouteLayer,
     compadreBackupRouteLayer,
     compadreOperationsRouteLayer,
+    nativeThreadEventRoutes.pipe(Layer.provide(PersistenceLayerConfigLive)),
     compadrePreviewsRouteLayer,
     compadreTriggeredPromptsRouteLayer,
     staticAndDevRouteLayer,

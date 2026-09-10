@@ -55,7 +55,11 @@ describe.runIf(url)("PostgreSQL application rollback", () => {
       sql
         .withTransaction(
           Effect.gen(function* () {
-            yield* sql`DROP TABLE IF EXISTS compadre_t3_schema_compatibility`;
+            yield* sql`CREATE TABLE IF NOT EXISTS compadre_t3_schema_compatibility (
+              singleton_id INTEGER PRIMARY KEY CHECK (singleton_id = 1), schema_version INTEGER NOT NULL, minimum_app_schema_version INTEGER NOT NULL
+            )`;
+            yield* sql`INSERT INTO compadre_t3_schema_compatibility VALUES (1, ${POSTGRES_SCHEMA_VERSION}, 1)
+              ON CONFLICT(singleton_id) DO UPDATE SET schema_version = excluded.schema_version, minimum_app_schema_version = excluded.minimum_app_schema_version`;
             yield* sql`DROP TABLE IF EXISTS compadre_future_events_fixture`;
             yield* sql`DELETE FROM compadre_t3_migrations WHERE migration_id = ${futureVersion}`;
             yield* sql`DELETE FROM projection_projects WHERE project_id = 'rollback-existing-project'`;
@@ -66,7 +70,7 @@ describe.runIf(url)("PostgreSQL application rollback", () => {
     yield* sql.withTransaction(
       Effect.gen(function* () {
         yield* sql`CREATE TABLE compadre_future_events_fixture (id TEXT PRIMARY KEY)`;
-        yield* sql`CREATE TABLE compadre_t3_schema_compatibility (
+        yield* sql`CREATE TABLE IF NOT EXISTS compadre_t3_schema_compatibility (
           singleton_id INTEGER PRIMARY KEY CHECK (singleton_id = 1),
           schema_version INTEGER NOT NULL,
           minimum_app_schema_version INTEGER NOT NULL
@@ -74,7 +78,8 @@ describe.runIf(url)("PostgreSQL application rollback", () => {
         yield* sql`INSERT INTO compadre_t3_migrations (migration_id, name)
           VALUES (${futureVersion}, 'additive_future_fixture')`;
         yield* sql`INSERT INTO compadre_t3_schema_compatibility
-          VALUES (1, ${futureVersion}, ${POSTGRES_SCHEMA_VERSION})`;
+          VALUES (1, ${futureVersion}, ${POSTGRES_SCHEMA_VERSION})
+          ON CONFLICT(singleton_id) DO UPDATE SET schema_version = excluded.schema_version, minimum_app_schema_version = excluded.minimum_app_schema_version`;
       }),
     );
     return sql;

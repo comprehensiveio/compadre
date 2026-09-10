@@ -1,4 +1,5 @@
 export const CENTRAL_SQLITE_TABLES = [
+  "native_thread_streams",
   "orchestration_events",
   "orchestration_command_receipts",
   "checkpoint_diff_blobs",

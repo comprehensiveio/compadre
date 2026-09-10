@@ -1183,6 +1183,58 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
       };
     }
 
+    case "thread.native-event.apply": {
+      const thread = yield* requireThread({ readModel, command, threadId: command.threadId });
+      const event = command.event;
+      const allowed = [
+        "thread.message-sent",
+        "thread.session-set",
+        "thread.proposed-plan-upserted",
+        "thread.turn-diff-completed",
+        "thread.activity-appended",
+      ];
+      if (
+        event.aggregateKind !== "thread" ||
+        event.aggregateId !== command.threadId ||
+        !("threadId" in event.payload) ||
+        event.payload.threadId !== command.threadId ||
+        !allowed.includes(event.type) ||
+        (event.type === "thread.message-sent" && event.payload.role !== "assistant") ||
+        (event.type === "thread.session-set" && event.payload.session.threadId !== command.threadId)
+      ) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: "Native replication may only apply provider output to its bound thread.",
+        });
+      }
+      const { sequence: _sequence, ...nativeEvent } = event;
+      const imported = { ...nativeEvent, commandId: command.commandId };
+      if (
+        event.type === "thread.session-set" &&
+        thread.settledOverride !== null &&
+        (event.payload.session.status === "starting" || event.payload.session.status === "running")
+      ) {
+        return [
+          {
+            ...(yield* withEventBase({
+              aggregateKind: "thread",
+              aggregateId: command.threadId,
+              occurredAt: event.occurredAt,
+              commandId: command.commandId,
+            })),
+            type: "thread.unsettled",
+            payload: {
+              threadId: command.threadId,
+              reason: "activity",
+              updatedAt: event.occurredAt,
+            },
+          },
+          imported,
+        ];
+      }
+      return imported;
+    }
+
     case "thread.session.set": {
       const thread = yield* requireThread({
         readModel,

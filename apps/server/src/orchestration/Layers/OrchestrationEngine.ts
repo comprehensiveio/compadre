@@ -1,3 +1,7 @@
+import { nativeThreadStatusRecorder } from "../../compadre/NativeThreadStatus.ts";
+import * as ThreadBackgroundLiveness from "../ThreadBackgroundLiveness.ts";
+import * as ThreadPlanProgress from "../ThreadPlanProgress.ts";
+import { advanceNativeThreadStream } from "../../compadre/NativeThreadStreamStore.ts";
 import type {
   OrchestrationClientOrigin,
   OrchestrationEvent,
@@ -111,6 +115,8 @@ function commandToInitialLockKeys(
   );
 }
 
+const decodeNativeActivity = Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Unknown));
+
 const makeOrchestrationEngine = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
   const persistenceBackend = yield* Effect.serviceOption(PersistenceBackend).pipe(
@@ -133,6 +139,35 @@ const makeOrchestrationEngine = Effect.gen(function* () {
 
   const commandQueue = yield* Queue.unbounded<CommandEnvelope>();
   const eventPubSub = yield* PubSub.unbounded<OrchestrationEvent>();
+  const nativeStatus = nativeThreadStatusRecorder(
+    yield* Effect.serviceOption(ThreadBackgroundLiveness.ThreadBackgroundLivenessService).pipe(
+      Effect.map(Option.getOrElse(ThreadBackgroundLiveness.make)),
+    ),
+    yield* Effect.serviceOption(ThreadPlanProgress.ThreadPlanProgressService).pipe(
+      Effect.map(Option.getOrElse(ThreadPlanProgress.make)),
+    ),
+  );
+  // A central restart does not end work on a remote worker. Rebuild native
+  // status from the existing projection before serving the first snapshot.
+  const nativeActivities = yield* sql<{ thread_id: string; kind: string; payload_json: string }>`
+    SELECT a.thread_id, a.kind, a.payload_json FROM projection_thread_activities a
+    JOIN native_thread_streams n ON n.thread_id = a.thread_id
+    WHERE a.kind IN ('task.started', 'task.progress', 'task.updated', 'task.completed', 'turn.plan.updated', 'provider.turn.completed')
+    ORDER BY a.sequence, a.created_at, a.activity_id
+  `;
+  for (const activity of nativeActivities) {
+    nativeStatus.activity(
+      activity.thread_id,
+      activity.kind,
+      yield* decodeNativeActivity(activity.payload_json),
+    );
+  }
+  const endedNativeSessions = yield* sql<{ thread_id: string }>`
+    SELECT s.thread_id FROM projection_thread_sessions s JOIN native_thread_streams n ON n.thread_id = s.thread_id
+    WHERE s.status IN ('stopped', 'error')
+  `;
+  for (const session of endedNativeSessions) nativeStatus.clear(session.thread_id);
+
   const publishedSequence = yield* Ref.make(0);
   const publishSemaphore = yield* Semaphore.make(1);
 
@@ -142,6 +177,7 @@ const makeOrchestrationEngine = Effect.gen(function* () {
       // publication path used by local reactors.
       return Effect.gen(function* () {
         for (const event of events) {
+          nativeStatus.event(event);
           yield* PubSub.publish(eventPubSub, event);
         }
         const lastEvent = events.at(-1);
@@ -152,6 +188,7 @@ const makeOrchestrationEngine = Effect.gen(function* () {
       let cursor = yield* Ref.get(publishedSequence);
       for (const event of events) {
         if (event.sequence <= cursor) continue;
+        nativeStatus.event(event);
         yield* PubSub.publish(eventPubSub, event);
         cursor = event.sequence;
         yield* Ref.set(publishedSequence, cursor);
@@ -166,6 +203,7 @@ const makeOrchestrationEngine = Effect.gen(function* () {
         const cursor = yield* Ref.get(publishedSequence);
         const events = yield* eventStore.readFromSequence(cursor, 256).pipe(Stream.runCollect);
         for (const event of events) {
+          nativeStatus.event(event);
           yield* PubSub.publish(eventPubSub, event);
           yield* Ref.set(publishedSequence, event.sequence);
         }
@@ -317,7 +355,38 @@ const makeOrchestrationEngine = Effect.gen(function* () {
                 });
                 return { _tag: "Rejected" as const, error };
               }
-              const eventBase = decision.value;
+              let eventBase = decision.value;
+              if (envelope.command.type === "thread.native-event.apply") {
+                const checkpointOffset = yield* advanceNativeThreadStream({
+                  threadId: envelope.command.threadId,
+                  sourceThreadId: envelope.command.sourceThreadId,
+                  epoch: envelope.command.epoch,
+                  sourceSequence: envelope.command.event.sequence,
+                }).pipe(
+                  Effect.provideService(SqlClient.SqlClient, sql),
+                  Effect.catchTag(
+                    "NativeThreadStreamConflict",
+                    (cause) =>
+                      new OrchestrationCommandInvariantError({
+                        commandType: envelope.command.type,
+                        detail: cause.detail,
+                      }),
+                  ),
+                );
+                if (
+                  "type" in eventBase &&
+                  eventBase.type === "thread.turn-diff-completed" &&
+                  "checkpointTurnCount" in eventBase.payload
+                ) {
+                  eventBase = {
+                    ...eventBase,
+                    payload: {
+                      ...eventBase.payload,
+                      checkpointTurnCount: eventBase.payload.checkpointTurnCount + checkpointOffset,
+                    },
+                  };
+                }
+              }
               const plannedEvents = Array.isArray(eventBase) ? eventBase : [eventBase];
               const eventBases =
                 envelope.origin === undefined
