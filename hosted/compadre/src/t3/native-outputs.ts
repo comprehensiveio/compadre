@@ -2,7 +2,7 @@ import { z } from "zod";
 import { createHash } from "node:crypto";
 import { collectNativeT3ArtifactEvents } from "./artifact-events.js";
 import type { T3ArtifactStore } from "./artifact-store.js";
-import type { T3Gateway, T3GatewayTurn } from "./gateway.js";
+import type { T3CommandClient, T3Gateway, T3GatewayTurn } from "./gateway.js";
 import type { MetadataStore } from "./storage.js";
 import type { NativeT3RunRequest } from "./run-request-store.js";
 import type { WorkspaceReviewStore } from "./workspace-review.js";
@@ -24,6 +24,14 @@ export function nativeBackgroundOutputTurns(events: unknown[]): string[] {
     const parsed = backgroundEventSchema.safeParse(event);
     return parsed.success ? [parsed.data.payload.activity.turnId] : [];
   }))];
+}
+
+/** GET pages carry events; HEAD owns current provider and child liveness. */
+export async function nativeQuiescentOutputTurn(client: Pick<T3CommandClient, "nativeEventPage" | "threadSnapshot">, threadId: string, signal?: AbortSignal): Promise<string | null> {
+  const head = await client.nativeEventPage?.({ threadId, offset: "-1", head: true, signal });
+  if (head?.sessionStatus !== "ready" || head.backgroundLiveness !== null) return null;
+  const snapshot = await client.threadSnapshot(threadId, signal);
+  return snapshot.thread.latestTurn?.state === "completed" ? snapshot.thread.latestTurn.turnId : null;
 }
 
 export function nativeOutputCheckpoints(events: unknown[]) {
