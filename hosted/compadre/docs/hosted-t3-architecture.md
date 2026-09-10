@@ -202,7 +202,11 @@ Temporal retries own native-run recovery. Reconnecting a lifecycle subscriber do
 not start another producer. Driver epochs fence run receipts; delivery epochs and
 command receipts fence and deduplicate the per-thread journal. A parent terminal
 does not stop the journal consumer. Persisted native bindings route interactive
-controls without an in-memory adapter session.
+controls without an in-memory adapter session. Question and approval responses
+use a worker command ID derived from the native request identity, so repeated
+clicks or responses from multiple clients consume the provider callback once.
+The first accepted response wins; interrupts and session stops retain their
+individual command identities.
 
 The legacy/API compatibility stream is a second durable run, because its
 external run and thread IDs intentionally differ from the central T3 provider

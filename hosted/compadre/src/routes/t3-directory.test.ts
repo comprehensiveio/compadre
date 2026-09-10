@@ -909,5 +909,8 @@ test("native controls require authentication and the exact durable worker claim"
   assert.equal((await app.request(url, authorized({ ...body, epoch: 1 }))).status, 409);
   assert.equal((await app.request(url, authorized({ ...body, requestId: "compadre-native:other:question" }))).status, 400);
   assert.equal((await app.request(url, authorized(body))).status, 200);
-  assert.deepEqual(commands, [{ type: "thread.user-input.respond", commandId: body.commandId, threadId: "worker", createdAt: body.createdAt, requestId: "question", answers: body.answers }]);
+  assert.equal((await app.request(url, authorized({ ...body, commandId: "native-control:second-click" }))).status, 200);
+  assert.equal(commands.length, 2);
+  assert.deepEqual(commands[0], { type: "thread.user-input.respond", commandId: (commands[0] as { commandId: string }).commandId, threadId: "worker", createdAt: body.createdAt, requestId: "question", answers: body.answers });
+  assert.deepEqual(commands[1], commands[0]);
 });
