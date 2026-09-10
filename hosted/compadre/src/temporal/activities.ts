@@ -1,5 +1,5 @@
 import { copyNativeAttachments } from "../t3/native-attachments.js";
-import { nativeOutputCheckpoints, nativeOutputRunId, publishNativeRunOutputs } from "../t3/native-outputs.js";
+import { nativeBackgroundOutputTurns, nativeOutputCheckpoints, nativeOutputRunId, publishNativeRunOutputs } from "../t3/native-outputs.js";
 import { configuredCentralT3Client } from "../t3/central-conversation.js";
 import { T3EnvironmentUnavailableError } from "../t3/gateway.js";
 import { Context } from "@temporalio/activity";
@@ -259,6 +259,7 @@ export async function deliverNativeThreadEventsActivity(input: { threadId: strin
   const timer = setInterval(() => context.heartbeat(input), HEARTBEAT_INTERVAL_MS);
   timer.unref();
   let attached: Awaited<ReturnType<typeof gateway.attachWorker>> | undefined;
+  let reconcileOutputs = true;
   try {
   while (Date.now() < deadline) {
     context.cancellationSignal.throwIfAborted();
@@ -276,37 +277,60 @@ export async function deliverNativeThreadEventsActivity(input: { threadId: strin
     if (!attached || attached.binding.sandboxId !== state.sandboxId) return "done";
     const client = attached.environment.client;
     if (!client.nativeEventPage) throw new Error("Worker cannot stream native events");
+    let releaseIdleAuth = false;
     const page = await delivery.deliverPage({
       threadId: input.threadId, epoch: input.epoch, signal: context.cancellationSignal,
       prepare: (current, events, signal) => copyNativeAttachments({ metadata: persistence.persistence.stores.metadata, worker: client, central, sourceThreadId: current.sourceThreadId, events, signal }),
       read: async (current, signal) => {
         const page = await client.nativeEventPage!({ threadId: current.sourceThreadId, offset: current.offset, live: true, signal });
         const checkpoints = nativeOutputCheckpoints(page.events);
-        if (checkpoints.length && current.runId) {
+        const backgroundTurns = new Set(nativeBackgroundOutputTurns(page.events));
+        // Recover files from a completion already acknowledged by an older
+        // consumer. Read once on catch-up, only when the worker is quiescent.
+        if (reconcileOutputs && page.upToDate) {
+          if (page.sessionStatus === "ready" && page.backgroundLiveness === null) {
+            const snapshot = await client.threadSnapshot(current.sourceThreadId, signal);
+            if (snapshot.thread.latestTurn?.state === "completed") {
+              backgroundTurns.add(snapshot.thread.latestTurn.turnId);
+            }
+          }
+          reconcileOutputs = false;
+        }
+        if ((checkpoints.length || backgroundTurns.size) && current.runId) {
           const request = await requests?.getRequest(current.runId);
           const dispatch = await requests?.getDispatch(current.runId);
-          if (!request || !dispatch) throw new Error("Native checkpoint has no durable run context");
+          if (!request || !dispatch) throw new Error("Native output has no durable run context");
+          let published = 0;
           if (request.collectArtifacts) {
             if (!artifacts) throw new Error("Native output storage is unavailable");
-            for (const checkpoint of checkpoints) await publishNativeRunOutputs({ gateway, artifactStore: artifacts, reviews,
+            for (const checkpoint of checkpoints) published += await publishNativeRunOutputs({ gateway, artifactStore: artifacts, reviews,
               metadata: persistence.persistence.stores.metadata, checkpoint, turn: { binding, dispatch: dispatch.dispatch },
               request: { ...request, runId: nativeOutputRunId(current.sourceThreadId, checkpoint.turnId) },
             });
+            for (const turnId of backgroundTurns) {
+              if (checkpoints.some((checkpoint) => checkpoint.turnId === turnId)) continue;
+              published += await publishNativeRunOutputs({ gateway, artifactStore: artifacts, reviews,
+                metadata: persistence.persistence.stores.metadata, backgroundTurnId: turnId,
+                turn: { binding, dispatch: dispatch.dispatch },
+                request: { ...request, runId: nativeOutputRunId(current.sourceThreadId, turnId) },
+              });
+            }
           }
           // Output publication precedes acknowledgement. Retries revisit the
           // same checkpoint, with stable output IDs and immutable review storage.
-          await gateway.checkpointWorkspace(input.threadId);
+          if (checkpoints.length || published > 0) await gateway.checkpointWorkspace(input.threadId);
+          releaseIdleAuth = true;
         }
         return page;
       },
     });
     const current = await delivery.get(input.threadId);
-    if (current?.epoch === input.epoch && current.runId && page.events.some((event) => {
+    if (current?.epoch === input.epoch && current.runId && (releaseIdleAuth || page.events.some((event) => {
       if (!event || typeof event !== "object" || !("type" in event) || event.type !== "thread.activity-appended" || !("payload" in event)) return false;
       const payload = event.payload;
       return Boolean(payload && typeof payload === "object" && "activity" in payload && payload.activity &&
         typeof payload.activity === "object" && "kind" in payload.activity && payload.activity.kind === "provider.turn.completed");
-    })) await gateway.releaseCodexAuth({ canonicalThreadId: input.threadId, runId: current.runId, requireIdle: true }).catch((error) => {
+    }))) await gateway.releaseCodexAuth({ canonicalThreadId: input.threadId, runId: current.runId, requireIdle: true }).catch((error) => {
       console.warn("[native-delivery] Codex auth release retained for safety", { threadId: input.threadId, error: error instanceof Error ? error.name : "UnknownError" });
     });
     context.heartbeat({ threadId: input.threadId, epoch: input.epoch, offset: page.nextOffset });

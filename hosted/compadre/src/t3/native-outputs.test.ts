@@ -4,7 +4,23 @@ import { createHash } from "node:crypto";
 import { memoryPersistence } from "@tanstack/ai-persistence";
 import { T3Client } from "./client.js";
 import { T3ArtifactStore } from "./artifact-store.js";
-import { nativeOutputCheckpoints, nativeOutputRunId, publishNativeRunOutputs } from "./native-outputs.js";
+import { nativeBackgroundOutputTurns, nativeOutputCheckpoints, nativeOutputRunId, publishNativeRunOutputs } from "./native-outputs.js";
+
+const backgroundEvent = (turnId: string | null, status: string, kind = "task.updated") => ({
+  type: "thread.activity-appended", payload: { activity: { kind, turnId, payload: { taskId: "child", status } } },
+});
+
+test("native child completion triggers output collection without another parent turn", () => {
+  assert.deepEqual(nativeBackgroundOutputTurns([
+    backgroundEvent("parent", "running"),
+    backgroundEvent("parent", "idle"),
+    backgroundEvent("parent", "idle"),
+    backgroundEvent("claude-parent", "completed", "task.completed"),
+    backgroundEvent("failed-parent", "failed", "task.completed"),
+    backgroundEvent(null, "idle"),
+    { type: "thread.session-set", payload: { status: "ready" } },
+  ]), ["parent", "claude-parent"]);
+});
 
 test("late native checkpoints publish stable output commands for their own turn", async () => {
   const metadata = memoryPersistence().stores.metadata;
@@ -43,4 +59,21 @@ test("late native checkpoints publish stable output commands for their own turn"
     assert.equal(command.turnId, "background-turn");
     assert.equal(command.commandId, `output:${runId}:${digest}`);
   }
+
+  // A child finishes after the parent's checkpoint, while the worker's latest
+  // turn may already be another turn. Keep the file on the child's owning turn.
+  client.threadSnapshot = async () => { throw new Error("background files do not need a parent checkpoint or current snapshot"); };
+  const { checkpoint: _checkpoint, ...backgroundInput } = input;
+  const published = await publishNativeRunOutputs({ ...backgroundInput, backgroundTurnId: "background-turn",
+    reviews: {
+      published: async () => { throw new Error("background completion does not manufacture a review"); },
+      publish: async () => { throw new Error("background completion does not manufacture a review"); },
+    },
+  });
+  assert.equal(published, 1);
+  const last = commands.at(-1);
+  assert.ok(last && typeof last === "object" && "turnId" in last && "commandId" in last);
+  assert.equal(last.turnId, "background-turn");
+  assert.equal(last.commandId, `output:${runId}:${digest}`);
+  assert.equal(uploads, 1);
 });
