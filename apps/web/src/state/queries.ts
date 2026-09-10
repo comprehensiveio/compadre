@@ -360,6 +360,7 @@ export function useCheckpointDiff(
     enabled && target.fromTurnCount === 0 && target.toTurnCount! > 1
       ? {
           environmentId: target.environmentId!,
+          cacheScope: target.cacheScope ?? null,
           input: {
             threadId: target.threadId!,
             toTurnCount: target.toTurnCount!,
@@ -371,6 +372,7 @@ export function useCheckpointDiff(
     enabled && !(target.fromTurnCount === 0 && target.toTurnCount! > 1)
       ? {
           environmentId: target.environmentId!,
+          cacheScope: target.cacheScope ?? null,
           input: {
             threadId: target.threadId!,
             fromTurnCount: target.fromTurnCount!,

@@ -122,6 +122,14 @@ export function useReviewSections(input: {
     ? getReviewSectionIdForCheckpoint(activeCheckpoint)
     : null;
   const activeTurnDiff = useCheckpointDiff({
+    cacheScope: activeCheckpoint
+      ? JSON.stringify([
+          activeCheckpoint.turnId,
+          activeCheckpoint.checkpointRef,
+          activeCheckpoint.status,
+          activeCheckpoint.completedAt,
+        ])
+      : null,
     environmentId: enabled ? (environmentId ?? null) : null,
     threadId: enabled ? (threadId ?? null) : null,
     fromTurnCount:

@@ -156,6 +156,10 @@ runtime persistence selection dynamic and server composition hooks additive.
 Hosted diff reads use [durable workspace reviews](hosted-workspace-reviews.md).
 The controller publishes immutable checkpoint patches and file context; the
 central server's `CompadreReview` adapter reads them without accessing Modal.
+Web/desktop and mobile diff queries include the selected checkpoint revision in
+their local cache identity. A later saved-review publication replaces an early
+unavailable result without requiring a page reload; this revision is not sent
+in the RPC payload.
 
 The hosted terminal direct transport adds `terminal.connection` to the shared
 contract, `terminal/DirectTerminal.ts` to the worker HTTP routes and RPC handler,
