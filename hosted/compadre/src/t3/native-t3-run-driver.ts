@@ -79,6 +79,7 @@ export interface NativeT3DriverGateway {
     dispatch: T3TurnDispatch,
   ): Promise<T3GatewayTurn | null>;
   waitForTerminal(input: {
+    nativeEvents?: boolean;
     turn: T3GatewayTurn;
     timeoutMs?: number;
     signal?: AbortSignal;
@@ -662,6 +663,7 @@ export async function driveNativeT3Run(
       };
       const waiter = deps.gateway
         .waitForTerminal({
+          nativeEvents: request.nativeDelivery,
           turn,
           timeoutMs: inactivityLimitMs,
           signal: watchAbort.signal,

@@ -36,6 +36,7 @@ import {
   COMP_DEV_SERVER_PORT,
 } from "./dev-environment.js";
 import { appendSetupSteering } from "./run-control.js";
+import { NativeJournalUnavailableError } from "./native-events.js";
 
 export interface T3CommandClient {
   uploadAttachment?: T3Client["uploadAttachment"];
@@ -43,6 +44,7 @@ export interface T3CommandClient {
   publishNativeOutput?: T3Client["publishNativeOutput"];
   dispatch?: T3Client["dispatch"];
   nativeEventPage?: T3Client["nativeEventPage"];
+  shellSnapshot?: T3Client["shellSnapshot"];
   createThread?(input: {
     threadId?: string;
     projectId: string;
@@ -93,6 +95,7 @@ export interface T3CommandClient {
     timeoutMs?: number;
     absoluteTimeoutMs?: number;
     requireCheckpoint?: boolean;
+    nativeEvents?: boolean;
     signal?: AbortSignal;
     onSnapshot?(snapshot: T3ThreadSnapshot): void | Promise<void>;
   }): Promise<T3ThreadSnapshot>;
@@ -551,6 +554,48 @@ export class T3Gateway {
     }
   }
 
+  /** Upgrade an idle pre-journal worker while retaining its native thread and filesystem. */
+  private async ensureNativeWorkerUnlocked(connected: { binding: T3ThreadBinding; environment: T3EnvironmentConnection }) {
+    const { binding, environment } = connected;
+    if (!environment.client.nativeEventPage) throw new Error("Worker client cannot check native event support");
+    try {
+      await environment.client.nativeEventPage({ threadId: binding.t3ThreadId, offset: "-1", head: true });
+      return connected;
+    } catch (error) {
+      if (!(error instanceof NativeJournalUnavailableError)) throw error;
+    }
+    if (!this.environments.checkpoint || !this.environments.restore || !this.environments.discard ||
+        !environment.client.shellSnapshot || !environment.client.stopSession) throw new Error("Worker upgrade is unavailable");
+    const shell = (await environment.client.shellSnapshot()).threads.find((thread) => thread.id === binding.t3ThreadId);
+    if (!shell || shell.backgroundLiveness || shell.hasPendingApprovals || shell.hasPendingUserInput ||
+        (shell.session && !["ready", "stopped", "error"].includes(shell.session.status))) {
+      throw new Error("This worker is still running or awaiting input. Finish its current work before migrating it.");
+    }
+    await environment.client.stopSession({ threadId: binding.t3ThreadId });
+    const checkpoint = await this.environments.checkpoint(binding, environment);
+    const saved = { ...binding, workerSnapshotId: checkpoint.snapshotId, updatedAt: this.now().toISOString() };
+    await this.bindings.bindRecord(saved);
+    // Keep the old worker reachable until the replacement passes its capability check.
+    const replacement = await this.environments.restore(saved);
+    try {
+      if (!replacement.client.nativeEventPage) throw new Error("Restored worker cannot stream native events");
+      await replacement.client.nativeEventPage({ threadId: binding.t3ThreadId, offset: "-1", head: true });
+    } catch (error) {
+      await this.environments.discard(replacement).catch(() => undefined);
+      throw error;
+    }
+    const timestamp = this.now().toISOString();
+    const upgraded: T3ThreadBinding = { ...saved, sandboxId: replacement.sandboxId, baseUrl: replacement.client.baseUrl,
+      workerGeneration: (binding.workerGeneration ?? 1) + 1, workerState: "running", status: "ready",
+      sandboxStartedAt: timestamp, lastActiveAt: timestamp, updatedAt: timestamp };
+    await this.bindings.bindRecord(upgraded);
+    await this.environments.discard(environment).catch((error) => {
+      this.recordWorkerTransition("upgrade.cleanup-failed", upgraded, { errorName: error instanceof Error ? error.name : typeof error });
+    });
+    this.recordWorkerTransition("upgrade.completed", upgraded, { previousSandboxId: binding.sandboxId });
+    return { binding: upgraded, environment: replacement };
+  }
+
   /**
    * Runs provider-backed metadata generation outside the durable user thread
    * directory. The temporary T3 environment is always discarded, so title,
@@ -754,6 +799,7 @@ export class T3Gateway {
           existing,
         );
       }
+      if (input.beforeDispatch) connected = await this.ensureNativeWorkerUnlocked(connected);
       const environment = connected.environment;
       await input.beforeDispatch?.(connected);
       await this.prepareCodexAuth(environment, connected.binding, input.runId);
@@ -1168,6 +1214,10 @@ export class T3Gateway {
     return this.bindings.list();
   }
 
+  getBinding(canonicalThreadId: string) {
+    return this.bindings.get(canonicalThreadId);
+  }
+
   async snapshot(input: {
     canonicalThreadId: string;
     providerInstanceId: string;
@@ -1349,6 +1399,7 @@ export class T3Gateway {
 
   async waitForTerminal(input: {
     turn: T3GatewayTurn;
+    nativeEvents?: boolean;
     timeoutMs?: number;
     absoluteTimeoutMs?: number;
     signal?: AbortSignal;
@@ -1368,6 +1419,7 @@ export class T3Gateway {
         )
       : this.maxLiveMs - WATCH_LIFETIME_SAFETY_MS;
     const snapshot = await environment.client.waitForTurnTerminal({
+      nativeEvents: input.nativeEvents,
       threadId: input.turn.binding.t3ThreadId,
       minimumSequence: input.turn.dispatch.sequence,
       messageId: input.turn.dispatch.messageId,
@@ -1379,11 +1431,11 @@ export class T3Gateway {
       ),
       signal: input.signal,
       onSnapshot: async (nextSnapshot) => {
-        await this.snapshots?.save(input.turn.binding, nextSnapshot);
+        if (!input.nativeEvents) await this.snapshots?.save(input.turn.binding, nextSnapshot);
         await input.onSnapshot?.(nextSnapshot);
       },
     });
-    await this.snapshots?.save(input.turn.binding, snapshot);
+    if (!input.nativeEvents) await this.snapshots?.save(input.turn.binding, snapshot);
     const latestState = snapshot.thread.latestTurn?.state;
     const startFailure = preTurnStartFailure(
       snapshot,
@@ -1530,10 +1582,10 @@ export class T3Gateway {
   }
 
   /** Called only during completion. Reconnect never provisions/restores a worker. */
-  async captureWorkspaceReview(turn: T3GatewayTurn) {
+  async captureWorkspaceReview(turn: T3GatewayTurn, nativeCheckpoint?: { turnId: string; checkpointRef: string; checkpointTurnCount: number; status: "ready" }) {
     const environment = await this.environments.reconnect(turn.binding);
     if (!environment.sandbox || !environment.client.snapshot) throw new Error("Worker review capture is unavailable");
-    const snapshot = await environment.client.waitForTurnTerminal({
+    const snapshot = nativeCheckpoint ? await environment.client.threadSnapshot(turn.binding.t3ThreadId) : await environment.client.waitForTurnTerminal({
       threadId: turn.binding.t3ThreadId,
       minimumSequence: turn.dispatch.sequence,
       messageId: turn.dispatch.messageId,
@@ -1541,7 +1593,7 @@ export class T3Gateway {
       requireCheckpoint: true,
       timeoutMs: 60_000, absoluteTimeoutMs: 60_000,
     });
-    const checkpoint = reviewCheckpointForMessage(snapshot, turn.dispatch.messageId);
+    const checkpoint = nativeCheckpoint ?? reviewCheckpointForMessage(snapshot, turn.dispatch.messageId);
     if (checkpoint?.status !== "ready") throw new Error("Worker checkpoint was not captured");
     const projects = await environment.client.snapshot();
     const cwd = typeof snapshot.thread.worktreePath === "string" ? snapshot.thread.worktreePath

@@ -1,3 +1,4 @@
+import { NativeJournalUnavailableError } from "./native-events.js";
 import { T3Client } from "./client.js";
 import assert from "node:assert/strict";
 import test from "node:test";
@@ -2074,6 +2075,7 @@ test("binds native delivery before dispatch and retries setup without replacing 
   const order: string[] = [];
   const requests: Array<Parameters<T3Client["startTurn"]>[0]> = [];
   const client = new T3Client("https://worker.example", "unused");
+  client.nativeEventPage = async () => ({ events: [], nextOffset: "00000000000000000000", upToDate: true });
   client.createThread = async (input) => { order.push("create"); return input.threadId!; };
   client.startTurn = async (input) => { order.push("dispatch"); requests.push(input); return {
     commandId: input.commandId!, messageId: input.messageId!, threadId: input.threadId, createdAt: input.createdAt!, sequence: 3,
@@ -2093,4 +2095,45 @@ test("binds native delivery before dispatch and retries setup without replacing 
   assert.deepEqual(order, ["create", "bind", "bind", "dispatch"]);
   assert.equal(requests[0]?.commandId, "native-turn:run-1");
   assert.equal(requests[0]?.messageId, "native-user:run-1");
+});
+
+test("adopts an old worker only after an idle checkpoint and validated replacement", async () => {
+  const persistence = memoryPersistence();
+  const bindings = new T3ThreadBindingStore(persistence.stores.metadata);
+  const order: string[] = [];
+  const old = new T3Client("https://old.example", "unused");
+  const next = new T3Client("https://new.example", "unused");
+  old.nativeEventPage = async () => { throw new NativeJournalUnavailableError(); };
+  let busy = true;
+  old.shellSnapshot = async () => ({ threads: [{ id: "native", session: { status: "ready" },
+    backgroundLiveness: busy ? "working" : null, hasPendingApprovals: false, hasPendingUserInput: false }] });
+  old.stopSession = async () => { order.push("stop"); return 1; };
+  let invalidReplacement = true;
+  next.nativeEventPage = async () => { if (invalidReplacement) throw new NativeJournalUnavailableError(); return {events: [], nextOffset: "00000000000000000007", upToDate: true}; };
+  next.startTurn = async (input) => { order.push("dispatch"); return { threadId: input.threadId, messageId: "user", commandId: "cmd", sequence: 8, createdAt: new Date().toISOString() }; };
+  const environment = { sandboxId: "old", projectId: "project", client: old };
+  const replacement = { sandboxId: "new", projectId: "project", client: next };
+  const gateway = new T3Gateway(bindings, {
+    provision: async () => { throw new Error("must preserve native thread"); },
+    reconnect: async () => environment,
+    checkpoint: async () => { order.push("checkpoint"); return { snapshotId: "saved-filesystem" }; },
+    restore: async (binding) => { assert.equal(binding.workerSnapshotId, "saved-filesystem"); assert.equal(binding.t3ThreadId, "native"); order.push("restore"); return replacement; },
+    discard: async (connection) => { order.push(`discard:${connection.sandboxId}`); },
+  });
+  await bindings.bindRecord({ canonicalThreadId: "central", t3ThreadId: "native", providerInstanceId: "claudeAgent",
+    projectId: "project", sandboxId: "old", baseUrl: old.baseUrl, status: "ready", workerState: "running", workerGeneration: 1,
+    modelSelection: { instanceId: "claudeAgent", model: "test" }, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() });
+  const request = { canonicalThreadId: "central", title: "Existing history", text: "Continue", modelSelection: { instanceId: "claudeAgent", model: "test" },
+    beforeDispatch: async () => { order.push("bind"); } };
+  await assert.rejects(gateway.send(request), /still running/);
+  assert.deepEqual(order, []);
+  busy = false;
+  await assert.rejects(gateway.send(request), NativeJournalUnavailableError);
+  assert.equal((await bindings.get("central"))?.sandboxId, "old");
+  assert.deepEqual(order, ["stop", "checkpoint", "restore", "discard:new"]);
+  order.length = 0; invalidReplacement = false;
+  const turn = await gateway.send(request);
+  assert.deepEqual(order, ["stop", "checkpoint", "restore", "discard:old", "bind", "dispatch"]);
+  assert.equal(turn.binding.t3ThreadId, "native");
+  assert.equal(turn.binding.workerGeneration, 2);
 });

@@ -1,4 +1,5 @@
 import { copyNativeAttachments } from "../t3/native-attachments.js";
+import { nativeOutputCheckpoints, nativeOutputRunId, publishNativeRunOutputs } from "../t3/native-outputs.js";
 import { configuredCentralT3Client } from "../t3/central-conversation.js";
 import { T3EnvironmentUnavailableError } from "../t3/gateway.js";
 import { Context } from "@temporalio/activity";
@@ -24,7 +25,7 @@ import type {
 import type { NativeT3RunWorkflowInput } from "./shared.js";
 import type { PreviewActivationWorkflowInput } from "./shared.js";
 import { PreviewActivationStore } from "../services/preview-activation.js";
-import { getConfiguredNativeThreadDelivery, getConfiguredT3Gateway } from "../t3/runtime.js";
+import { buildRunRequestStore, getConfiguredNativeThreadDelivery, getConfiguredT3Gateway, getConfiguredT3ArtifactStore, getConfiguredWorkspaceReviewStore } from "../t3/runtime.js";
 
 const HEARTBEAT_INTERVAL_MS = 30_000;
 
@@ -251,17 +252,22 @@ export async function deliverNativeThreadEventsActivity(input: { threadId: strin
   const persistence = await getConfiguredThreadPersistence();
   const central = configuredCentralT3Client();
   if (!persistence || !central) throw new Error("Native attachment storage is not configured");
+  const requests = await buildRunRequestStore();
+  const artifacts = await getConfiguredT3ArtifactStore();
+  const reviews = process.env.COMPADRE_T3_WORKSPACE_REVIEWS_ENABLED === "true" ? await getConfiguredWorkspaceReviewStore() : null;
   const deadline = Date.now() + 30 * 60 * 1000;
   const timer = setInterval(() => context.heartbeat(input), HEARTBEAT_INTERVAL_MS);
   timer.unref();
+  let attached: Awaited<ReturnType<typeof gateway.attachWorker>> | undefined;
   try {
   while (Date.now() < deadline) {
     context.cancellationSignal.throwIfAborted();
     if (process.env.COMPADRE_NATIVE_EVENTS_PAUSED === "true") throw new Error("Native event delivery is paused");
     const state = await delivery.get(input.threadId);
     if (!state || state.epoch !== input.epoch) return "done";
-    let attached;
-    try { attached = await gateway.attachWorker(input.threadId); }
+    const binding = await gateway.getBinding(input.threadId);
+    if (!binding || binding.sandboxId !== state.sandboxId) return "done";
+    try { attached ??= await gateway.attachWorker(input.threadId); }
     catch (error) {
       if (!(error instanceof T3EnvironmentUnavailableError)) throw error;
       await delivery.close(state, context.cancellationSignal);
@@ -273,14 +279,34 @@ export async function deliverNativeThreadEventsActivity(input: { threadId: strin
     const page = await delivery.deliverPage({
       threadId: input.threadId, epoch: input.epoch, signal: context.cancellationSignal,
       prepare: (current, events, signal) => copyNativeAttachments({ metadata: persistence.persistence.stores.metadata, worker: client, central, sourceThreadId: current.sourceThreadId, events, signal }),
-      read: (current, signal) => client.nativeEventPage!({ threadId: current.sourceThreadId, offset: current.offset, live: true, signal }),
+      read: async (current, signal) => {
+        const page = await client.nativeEventPage!({ threadId: current.sourceThreadId, offset: current.offset, live: true, signal });
+        const checkpoints = nativeOutputCheckpoints(page.events);
+        if (checkpoints.length && current.runId) {
+          const request = await requests?.getRequest(current.runId);
+          const dispatch = await requests?.getDispatch(current.runId);
+          if (!request || !dispatch) throw new Error("Native checkpoint has no durable run context");
+          if (request.collectArtifacts) {
+            if (!artifacts) throw new Error("Native output storage is unavailable");
+            for (const checkpoint of checkpoints) await publishNativeRunOutputs({ gateway, artifactStore: artifacts, reviews,
+              metadata: persistence.persistence.stores.metadata, checkpoint, turn: { binding, dispatch: dispatch.dispatch },
+              request: { ...request, runId: nativeOutputRunId(current.sourceThreadId, checkpoint.turnId) },
+            });
+          }
+          // Output publication precedes acknowledgement. Retries revisit the
+          // same checkpoint, with stable output IDs and immutable review storage.
+          await gateway.checkpointWorkspace(input.threadId);
+        }
+        return page;
+      },
     });
-    if (state.runId && page.events.some((event) => {
+    const current = await delivery.get(input.threadId);
+    if (current?.epoch === input.epoch && current.runId && page.events.some((event) => {
       if (!event || typeof event !== "object" || !("type" in event) || event.type !== "thread.activity-appended" || !("payload" in event)) return false;
       const payload = event.payload;
       return Boolean(payload && typeof payload === "object" && "activity" in payload && payload.activity &&
         typeof payload.activity === "object" && "kind" in payload.activity && payload.activity.kind === "provider.turn.completed");
-    })) await gateway.releaseCodexAuth({ canonicalThreadId: input.threadId, runId: state.runId, nativeDelivery: true }).catch((error) => {
+    })) await gateway.releaseCodexAuth({ canonicalThreadId: input.threadId, runId: current.runId, nativeDelivery: true }).catch((error) => {
       console.warn("[native-delivery] Codex auth release retained for safety", { threadId: input.threadId, error: error instanceof Error ? error.name : "UnknownError" });
     });
     context.heartbeat({ threadId: input.threadId, epoch: input.epoch, offset: page.nextOffset });

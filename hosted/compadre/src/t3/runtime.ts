@@ -1,4 +1,3 @@
-import { publishNativeRunOutputs } from "./native-outputs.js";
 import { NativeThreadDelivery, nativeDeliverySink } from "./native-events.js";
 import { prepareNativeDelivery } from "./native-delivery.js";
 import { ensureNativeThreadDeliveryWorkflow } from "../temporal/client.js";
@@ -265,9 +264,8 @@ async function buildCollectArtifactEvents(
     ? await getConfiguredWorkspaceReviewStore() : null;
   return async (turn, request) => {
     if (request.nativeDelivery) {
-      const persistence = await getConfiguredThreadPersistence();
-      if (!persistence) throw new Error("Native output persistence is unavailable");
-      await publishNativeRunOutputs({ gateway, artifactStore, reviews, turn, request, metadata: persistence.persistence.stores.metadata });
+      // The per-thread journal consumer publishes every completed checkpoint,
+      // including continuations after this run's parent turn has returned.
       return [];
     }
     const events = await collectNativeT3ArtifactEvents({

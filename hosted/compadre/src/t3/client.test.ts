@@ -199,7 +199,7 @@ test("creates a native T3 thread before dispatching its first HTTP turn", async 
     threadId: "thread-1",
     createdAt: now.toISOString(),
   });
-  assert.equal(requests.length, 2);
+  assert.equal(requests.length, 4);
   assert.equal(
     requests[0]?.headers.get("authorization"),
     "Bearer access-token",
@@ -217,7 +217,7 @@ test("creates a native T3 thread before dispatching its first HTTP turn", async 
     worktreePath: null,
     createdAt: now.toISOString(),
   });
-  assert.deepEqual(await requests[1]?.json(), {
+  assert.deepEqual(await requests[3]?.json(), {
     type: "thread.turn.start",
     commandId: "turn-command",
     threadId: "thread-1",
@@ -892,4 +892,45 @@ test("saved reviews correlate legacy null turn IDs only within the completed wor
     assert.equal(reviewCheckpointForMessage(snapshot, "request"), undefined);
   }
   assert.equal(reviewCheckpointForMessage(snapshot, "absent"), undefined);
+});
+
+test("native observation long polls narration without repeatedly reading the full history", async () => {
+  let snapshots = 0, pages = 0;
+  const offsets: string[] = [];
+  const client = new T3Client("https://worker.example", "secret", { fetch: async (input) => {
+    const url = new URL(String(input));
+    if (url.pathname === "/api/compadre/native-events") {
+      pages++;
+      offsets.push(url.searchParams.get("offset")!);
+      assert.equal(url.searchParams.get("live"), "long-poll");
+      return new Response(JSON.stringify([{ type: pages < 3 ? "thread.message-sent" : "thread.session-set" }]), { headers: {
+        "x-compadre-native-event-version": "1", "stream-next-offset": String(9 + pages).padStart(20, "0"), "stream-up-to-date": "true",
+      } });
+    }
+    snapshots++;
+    const completed = pages === 3;
+    return json({ snapshotSequence: 10 + pages, thread: { id: "thread", projectId: "project", title: "Native",
+      modelSelection: { instanceId: "codex", model: "test" }, session: null,
+      messages: [{ id: "user", role: "user", text: "Start", turnId: "turn", streaming: false, createdAt: now.toISOString(), updatedAt: now.toISOString() }],
+      latestTurn: { turnId: "turn", state: completed ? "completed" : "running", requestedAt: now.toISOString(), startedAt: now.toISOString(), completedAt: completed ? now.toISOString() : null, assistantMessageId: null },
+    } });
+  } });
+  const result = await client.waitForTurnTerminal({ threadId: "thread", minimumSequence: 10, messageId: "user", nativeEvents: true });
+  assert.equal(result.thread.latestTurn?.state, "completed");
+  assert.equal(snapshots, 2);
+  assert.deepEqual(offsets, [9,10,11].map(n => String(n).padStart(20,"0")));
+});
+
+test("persists explicit thread modes before dispatch with retry-stable command IDs", async () => {
+  const commands: Array<Record<string, unknown>> = [];
+  const client = new T3Client("https://worker.example", "secret", { fetch: async (_url, init) => {
+    commands.push(JSON.parse(String(init?.body))); return json({ sequence: 1 });
+  } });
+  const request = { threadId: "thread", commandId: "native-turn:run", messageId: "native-user:run", createdAt: now.toISOString(), text: "Ask a question",
+    interactionMode: "plan" as const, runtimeMode: "approval-required" as const, modelSelection: { instanceId: "codex", model: "test" } };
+  await client.startTurn(request); await client.startTurn(request);
+  assert.deepEqual(commands.slice(0, 3), commands.slice(3));
+  assert.deepEqual(commands.map(c=>c.type).slice(0,3), ["thread.runtime-mode.set", "thread.interaction-mode.set", "thread.turn.start"]);
+  assert.equal(commands[0]!.runtimeMode, "approval-required");
+  assert.equal(commands[1]!.interactionMode, "plan");
 });

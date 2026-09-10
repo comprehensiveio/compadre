@@ -1,8 +1,8 @@
 # Native event delivery
 
-Production conversations still use the snapshot/custom-event bridge until a
-thread is explicitly adopted. The native delivery endpoint and controller
-reader are preparation for that cutover; their presence does not activate it.
+Native delivery is active for the production canary cohort. Other threads use
+the snapshot/custom-event bridge until adoption. The package pin and adoption
+cohort are controller settings; deployment alone does not adopt every thread.
 
 ## Durable owners
 
@@ -56,6 +56,9 @@ session closure to central T3. Transient connection failures retry.
 
 Question responses, approvals, interrupts and session stops route using the
 persisted central binding, without an in-memory Compadre adapter session.
+The per-thread consumer publishes files and reviews from native checkpoint
+completion, including checkpoints after the parent run ends. Publication happens
+before acknowledging that source page, using stable per-turn IDs on retries.
 Files are uploaded to the worker and become native assistant-completion commands;
 the consumer copies attachment objects to central storage before acknowledging
 their events. Saved workspace reviews replace worker-local checkpoint references
@@ -63,13 +66,21 @@ with durable review references through native checkpoint commands. Local refs
 remain marked missing centrally until that publication completes.
 
 For adopted runs, the controller records lifecycle receipts rather than copied
-conversation chunks. The web transport consumes those receipts while the native
+conversation chunks. Lifecycle observation long polls the journal and reads full
+snapshots only initially and when turn state changes; it does not save redundant
+recovery snapshots. The consumer reuses its worker connection across pages. The web transport consumes those receipts while the native
 journal independently supplies conversation and status. The temporary legacy
 projector/decoder remains only for unadopted runs during independent deployment.
 
-Before adopting a thread, reconcile its retained history and outstanding work,
-record its source boundary, and claim native ownership before dispatching new
-provider work. A parent response ending does not mean background agents or their
+An old live worker is upgraded under its dispatch lock only when its native
+shell reports no active turn, background work, or pending interaction. The
+controller stops the idle provider, checkpoints the filesystem, restores with
+the pinned package, and validates the journal before replacing its binding.
+Failed validation leaves the old binding intact. Canonical history and native
+thread IDs are retained. Already expired workers use ordinary snapshot restore.
+Adoption records the source boundary and claims ownership before new provider
+work. Explicit runtime and interaction modes are persisted with native mode
+commands before dispatch; a turn-command field alone does not change them. A parent response ending does not mean background agents or their
 continuations have ended. Delivery must follow the worker journal independently
 of individual provider turns. Questions and approvals must route answers back
 to the worker that owns their native request IDs.
@@ -87,7 +98,9 @@ lost acknowledgements, conflicting replay, source-thread isolation, generation
 fencing, bounded pages, authenticated HTTP delivery and native question payloads.
 Post-deploy API checks have also exercised authenticated ingestion, duplicate
 batch replay, late output, and unchanged existing central history. These checks
-do not establish live provider, Modal restore, Slack, or UI parity.
+have also verified real Codex and Claude tool output and final messages, plus
+a Claude choice-response round trip. They do not establish complete background,
+Modal restore, Slack, or visual UI parity.
 
 Before expansion, prove Codex and Claude, background continuations, interaction
 responses, controller/central restarts, restored workers and artifact delivery
