@@ -19,6 +19,7 @@ import { ProviderAdapterRequestError } from "../Errors.ts";
 const COMPADRE_T3_PROTOCOL_HEADER = "X-Compadre-T3-Protocol-Version";
 const COMPADRE_T3_PROTOCOL_VERSION = "2";
 const MAX_RECONNECT_DELAY_MS = 5_000;
+const decodeStreamValue = Schema.decodeEffect(Schema.fromJsonString(Schema.Unknown));
 
 export interface CompadreTurnRequest {
   readonly endpoint: string;
@@ -27,6 +28,8 @@ export interface CompadreTurnRequest {
   readonly runId: string;
   readonly messageId: string;
   readonly input: string;
+  readonly runtimeMode?: "full-access" | "approval-required" | "auto-accept-edits" | "auto";
+  readonly interactionMode?: "default" | "plan";
   readonly inputFiles: ReadonlyArray<{
     readonly name: string;
     readonly mimetype: string;
@@ -86,6 +89,8 @@ export function makeCompadreTransport(
       tools: [],
       context: [],
       forwardedProps: {
+        runtimeMode: input.runtimeMode,
+        interactionMode: input.interactionMode,
         ...(input.provider ? { provider: input.provider } : {}),
         ...(input.model ? { model: input.model } : {}),
         ...(input.modelOptions.length > 0 ? { modelOptions: input.modelOptions } : {}),
@@ -115,6 +120,7 @@ export function makeCompadreTransport(
         : HttpClientRequest.get(eventsUrl.toString());
       request = request.pipe(
         HttpClientRequest.setHeader("accept", "text/event-stream"),
+        HttpClientRequest.setHeader("x-compadre-native-delivery", "1"),
         HttpClientRequest.setHeader(COMPADRE_T3_PROTOCOL_HEADER, COMPADRE_T3_PROTOCOL_VERSION),
       );
       if (lastEventId) {
@@ -134,12 +140,12 @@ export function makeCompadreTransport(
           Effect.flatMap(HttpClientResponse.filterStatusOk),
           Effect.map((response) => {
             connected = true;
-            return response.stream.pipe(
+            const events = response.stream.pipe(
               Stream.decodeText(),
               Stream.pipeThroughChannel(Sse.decode()),
               Stream.filter((event) => event.data !== "[DONE]"),
               Stream.mapEffect((event) =>
-                Schema.decodeEffect(Schema.fromJsonString(Schema.Unknown))(event.data).pipe(
+                decodeStreamValue(event.data).pipe(
                   Effect.mapError(
                     (cause) =>
                       new ProviderAdapterRequestError({
@@ -169,6 +175,11 @@ export function makeCompadreTransport(
                 ),
               ),
             );
+            return response.headers["x-compadre-native-delivery"] === "1"
+              ? Stream.succeed({ type: "NATIVE_DELIVERY" } as CompadreStreamEvent).pipe(
+                  Stream.concat(events),
+                )
+              : events;
           }),
           Effect.mapError(
             (cause) =>

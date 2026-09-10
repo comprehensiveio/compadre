@@ -1,3 +1,4 @@
+import { NativeThreadControlsLive } from "./compadre/NativeThreadControls.ts";
 import { nativeThreadEventRoutes } from "./compadre/NativeThreadEventRoutes.ts";
 import { EnvironmentHttpApi } from "@t3tools/contracts";
 import * as Duration from "effect/Duration";
@@ -257,7 +258,11 @@ const PlatformServicesLive = Layer.unwrap(
 const ReactorLayerLive = Layer.empty.pipe(
   Layer.provideMerge(OrchestrationReactorLive),
   Layer.provideMerge(ProviderRuntimeIngestionLive),
-  Layer.provideMerge(ProviderCommandReactorLive),
+  Layer.provideMerge(
+    ProviderCommandReactorLive.pipe(
+      Layer.provide(NativeThreadControlsLive.pipe(Layer.provide(PersistenceLayerConfigLive))),
+    ),
+  ),
   Layer.provideMerge(CheckpointReactorLive),
   Layer.provideMerge(ThreadDeletionReactorLive),
   Layer.provideMerge(AgentAwarenessRelay.layer.pipe(Layer.provide(ServerSecretStore.layer))),

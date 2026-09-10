@@ -6,10 +6,11 @@ const offsetSchema = z.string().regex(/^\d{20}$/).refine((value) => Number.isSaf
 const stateSchema = z.object({
   version: z.literal(1), canonicalThreadId: z.string().min(1), sourceThreadId: z.string().min(1),
   epoch: z.number().int().positive(), sandboxId: z.string().min(1),
+  runId: z.string().optional(),
   offset: offsetSchema, startOffset: offsetSchema, checkpointOffset: z.number().int().nonnegative(),
 });
 export type NativeDeliveryState = z.infer<typeof stateSchema>;
-export interface NativeEventPage { events: unknown[]; nextOffset: string; upToDate: boolean; }
+export interface NativeEventPage { events: unknown[]; nextOffset: string; upToDate: boolean; backgroundLiveness?: "working" | "monitoring" | null; sessionStatus?: string; }
 const NAMESPACE = "compadre.t3.native-delivery.v1";
 
 /** The worker writes its own T3 journal; this is the Durable Streams read path. */
@@ -31,7 +32,10 @@ export async function readNativeEventPage(input: {
   if (!input.head && input.offset !== "-1" && nextOffset < input.offset) throw new Error("Worker journal offset moved backwards; reconcile its generation");
   const events = input.head ? [] : z.array(z.unknown()).max(128).parse(await response.json());
   if (events.length > 0 && nextOffset === input.offset) throw new Error("Worker journal did not advance");
-  return { events, nextOffset, upToDate: input.head || response.headers.get("stream-up-to-date") === "true" };
+  const background = response.headers.get("x-compadre-background-liveness");
+  return { events, nextOffset, ...(response.headers.get("x-compadre-session-status") ? { sessionStatus: response.headers.get("x-compadre-session-status")! } : {}), upToDate: input.head || response.headers.get("stream-up-to-date") === "true",
+    ...(background === "working" || background === "monitoring" ? { backgroundLiveness: background } : background === "none" ? { backgroundLiveness: null } : {}),
+  };
 }
 
 export class NativeThreadDelivery {
@@ -39,6 +43,7 @@ export class NativeThreadDelivery {
     private readonly metadata: MetadataStore,
     private readonly locks: LockStore,
     private readonly sink: {
+      close?(state: NativeDeliveryState, signal?: AbortSignal): Promise<void>;
       bind(state: NativeDeliveryState, signal?: AbortSignal): Promise<void>;
       append(state: NativeDeliveryState, events: unknown[], signal?: AbortSignal): Promise<void>;
     },
@@ -60,6 +65,7 @@ export class NativeThreadDelivery {
       if (current && current.epoch === state.epoch) {
         if (current.sourceThreadId !== state.sourceThreadId || current.sandboxId !== state.sandboxId || current.startOffset !== state.startOffset ||
             current.checkpointOffset !== state.checkpointOffset) throw new Error("Conflicting native delivery claim");
+        if (state.runId && current.runId !== state.runId) await this.metadata.set(NAMESPACE, state.canonicalThreadId, { ...current, runId: state.runId });
         await this.sink.bind(current, signal);
         return;
       }
@@ -68,23 +74,37 @@ export class NativeThreadDelivery {
     });
   }
 
+  async close(state: NativeDeliveryState, signal?: AbortSignal): Promise<void> {
+    if (!this.sink.close) throw new Error("Native stream closure is not configured");
+    await this.sink.close(state, signal);
+  }
+
   /** Central commands commit before the cursor; a lost acknowledgement replays safely. */
   async deliverPage(input: {
     threadId: string; epoch: number;
     read(state: NativeDeliveryState, signal: AbortSignal): Promise<NativeEventPage>;
+    prepare?(state: NativeDeliveryState, events: unknown[], signal: AbortSignal): Promise<unknown[]>;
     signal?: AbortSignal;
   }): Promise<NativeEventPage> {
+    const before = await this.get(input.threadId);
+    if (!before || before.epoch !== input.epoch) throw new Error("Native delivery claim was superseded");
+    const readSignal = input.signal ?? new AbortController().signal;
+    const page = await input.read(before, readSignal);
     return this.locks.withLock(`compadre:native-delivery:${input.threadId}`, async (lockSignal) => {
       const signal = AbortSignal.any([lockSignal, ...(input.signal ? [input.signal] : [])]);
       signal.throwIfAborted();
       const state = await this.get(input.threadId);
       if (!state || state.epoch !== input.epoch) throw new Error("Native delivery claim was superseded");
+      if (state.offset !== before.offset) return { events: [], nextOffset: state.offset, upToDate: false };
+      if (page.events.length === 0 && page.nextOffset === state.offset) return page;
       await this.sink.bind(state, signal);
-      const page = await input.read(state, signal);
       offsetSchema.parse(page.nextOffset);
       if (page.nextOffset < state.offset) throw new Error("Native delivery cursor moved backwards");
       if (page.events.length > 128 || (page.events.length > 0 && page.nextOffset === state.offset)) throw new Error("Invalid native event page");
-      if (page.events.length > 0) await this.sink.append(state, page.events, signal);
+      if (page.events.length > 0) {
+        const events = input.prepare ? await input.prepare(state, page.events, signal) : page.events;
+        await this.sink.append(state, events, signal);
+      }
       signal.throwIfAborted();
       await this.metadata.set(NAMESPACE, input.threadId, { ...state, offset: page.nextOffset });
       return page;
@@ -93,7 +113,7 @@ export class NativeThreadDelivery {
 }
 
 export function nativeDeliverySink(input: { baseUrl: string; apiKey: string; fetch?: typeof fetch }) {
-  const request = async (state: NativeDeliveryState, method: "PUT" | "POST", body: unknown, signal?: AbortSignal) => {
+  const request = async (state: NativeDeliveryState, method: "PUT" | "POST" | "DELETE", body: unknown, signal?: AbortSignal) => {
     const url = new URL(NATIVE_EVENTS_PATH, input.baseUrl);
     url.searchParams.set("threadId", state.canonicalThreadId);
     const response = await (input.fetch ?? fetch)(url, {
@@ -105,6 +125,11 @@ export function nativeDeliverySink(input: { baseUrl: string; apiKey: string; fet
     await response.arrayBuffer();
   };
   return {
+    close: (state: NativeDeliveryState, signal?: AbortSignal) => request(state, "DELETE", {
+      sourceThreadId: state.sourceThreadId, epoch: state.epoch,
+      commandId: `native-worker-lost:${state.canonicalThreadId}:${state.epoch}`,
+      createdAt: new Date().toISOString(), reason: "The worker is no longer available. Send a message to restore its saved workspace.",
+    }, signal),
     bind: (state: NativeDeliveryState, signal?: AbortSignal) => request(state, "PUT", {
       sourceThreadId: state.sourceThreadId, epoch: state.epoch,
       sourceSequence: Number(state.startOffset), checkpointOffset: state.checkpointOffset,

@@ -1,4 +1,12 @@
-import { AuthOrchestrationReadScope, ThreadId } from "@t3tools/contracts";
+import { resolveAttachmentPathById } from "../attachmentStore.ts";
+import { ServerConfig } from "../config.ts";
+import {
+  NativeWorkerOutputCommand,
+  AuthOrchestrationOperateScope,
+  NativeThreadStreamCloseCommand,
+  AuthOrchestrationReadScope,
+  ThreadId,
+} from "@t3tools/contracts";
 import * as NodeCrypto from "node:crypto";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
@@ -28,6 +36,8 @@ import { NativeThreadEventBatch, mapNativeThreadEvent } from "./NativeThreadEven
 export const NATIVE_THREAD_EVENTS_PATH = "/api/compadre/native-events";
 const decodeThreadId = Schema.decodeUnknownEffect(ThreadId);
 const decodeBatch = Schema.decodeUnknownEffect(NativeThreadEventBatch);
+const decodeClose = Schema.decodeUnknownEffect(NativeThreadStreamCloseCommand);
+const decodeOutput = Schema.decodeUnknownEffect(NativeWorkerOutputCommand);
 const PAGE_SIZE = 128;
 const headers = { "cache-control": "no-store", "x-compadre-native-event-version": "1" };
 export const nativeOffset = (sequence: number) => String(sequence).padStart(20, "0");
@@ -72,7 +82,8 @@ const read = Effect.gen(function* () {
   const { threadId, after } = decoded.value;
   const engine = yield* OrchestrationEngineService;
   const query = yield* ProjectionSnapshotQuery;
-  if (Option.isNone(yield* query.getThreadShellById(threadId))) {
+  const shell = yield* query.getThreadShellById(threadId);
+  if (Option.isNone(shell)) {
     return HttpServerResponse.empty({ status: 404 });
   }
   const tail = yield* engine.latestSequence;
@@ -83,6 +94,8 @@ const read = Effect.gen(function* () {
         ...headers,
         "content-type": "application/json",
         "stream-next-offset": nativeOffset(tail),
+        "x-compadre-background-liveness": shell.value.backgroundLiveness ?? "none",
+        "x-compadre-session-status": shell.value.session?.status ?? "idle",
       },
     });
   if (after > tail)
@@ -141,6 +154,21 @@ const receive = Effect.gen(function* () {
   )
     return HttpServerResponse.empty({ status: 401 });
   const threadId = new URL(request.url, "http://localhost").searchParams.get("threadId");
+  if (request.method === "DELETE") {
+    const input = yield* Effect.gen(function* () {
+      const canonical = yield* decodeThreadId(threadId);
+      const body = yield* request.json;
+      return yield* decodeClose({
+        ...(typeof body === "object" && body !== null ? body : {}),
+        type: "thread.native-stream.close",
+        threadId: canonical,
+      });
+    }).pipe(Effect.option);
+    if (Option.isNone(input)) return HttpServerResponse.empty({ status: 400 });
+    const engine = yield* OrchestrationEngineService;
+    yield* engine.dispatch(input.value);
+    return HttpServerResponse.jsonUnsafe({ closed: true }, { headers });
+  }
   if (request.method === "PUT") {
     const input = yield* Effect.gen(function* () {
       const canonical = yield* decodeThreadId(threadId);
@@ -176,6 +204,42 @@ const receive = Effect.gen(function* () {
   return HttpServerResponse.jsonUnsafe({ accepted: true }, { headers });
 });
 
+const workerOutput = Effect.gen(function* () {
+  yield* authenticateRawRouteWithScope(AuthOrchestrationOperateScope);
+  const request = yield* HttpServerRequest.HttpServerRequest;
+  const command = yield* request.json.pipe(Effect.flatMap(decodeOutput), Effect.option);
+  if (Option.isNone(command)) return HttpServerResponse.empty({ status: 400 });
+  const engine = yield* OrchestrationEngineService;
+  return HttpServerResponse.jsonUnsafe(yield* engine.dispatch(command.value), { headers });
+}).pipe(
+  Effect.catchTags({
+    EnvironmentAuthInvalidError: HttpServerRespondable.toResponse,
+    EnvironmentInternalError: HttpServerRespondable.toResponse,
+    EnvironmentScopeRequiredError: HttpServerRespondable.toResponse,
+  }),
+);
+
+const workerAttachment = Effect.gen(function* () {
+  yield* authenticateRawRouteWithScope(AuthOrchestrationReadScope);
+  const request = yield* HttpServerRequest.HttpServerRequest;
+  const config = yield* ServerConfig;
+  const fs = yield* FileSystem.FileSystem;
+  const id = new URL(request.url, "http://localhost").searchParams.get("id");
+  const path = id
+    ? resolveAttachmentPathById({ attachmentsDir: config.attachmentsDir, attachmentId: id })
+    : null;
+  if (!path) return HttpServerResponse.empty({ status: 400 });
+  const bytes = yield* fs.readFile(path).pipe(Effect.option);
+  if (Option.isNone(bytes)) return HttpServerResponse.empty({ status: 404 });
+  return HttpServerResponse.uint8Array(bytes.value, { headers });
+}).pipe(
+  Effect.catchTags({
+    EnvironmentAuthInvalidError: HttpServerRespondable.toResponse,
+    EnvironmentInternalError: HttpServerRespondable.toResponse,
+    EnvironmentScopeRequiredError: HttpServerRespondable.toResponse,
+  }),
+);
+
 export const nativeThreadEventRoutes = Layer.unwrap(
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
@@ -185,9 +249,12 @@ export const nativeThreadEventRoutes = Layer.unwrap(
       ? write.pipe(Effect.provideService(PersistenceBackend, backend.value))
       : write;
     return Layer.mergeAll(
+      HttpRouter.add("POST", "/api/compadre/native-output", workerOutput),
+      HttpRouter.add("GET", "/api/compadre/native-attachment", workerAttachment),
       HttpRouter.add("GET", NATIVE_THREAD_EVENTS_PATH, read),
       HttpRouter.add("POST", NATIVE_THREAD_EVENTS_PATH, boundWrite),
       HttpRouter.add("PUT", NATIVE_THREAD_EVENTS_PATH, boundWrite),
+      HttpRouter.add("DELETE", NATIVE_THREAD_EVENTS_PATH, boundWrite),
     );
   }),
 );

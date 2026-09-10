@@ -84,6 +84,11 @@ ${this.input.userMessage}`);
     }
   }
 
+  replaceAssistantTexts(messages: ReadonlyMap<string, string>): void {
+    this.assistantMessages.clear();
+    for (const [id, text] of messages) this.assistantMessages.set(id, text);
+  }
+
   observe(chunk: StreamChunk): void {
     if (chunk.type === EventType.TEXT_MESSAGE_START && chunk.messageId) {
       this.activeAssistantMessageId = chunk.messageId;

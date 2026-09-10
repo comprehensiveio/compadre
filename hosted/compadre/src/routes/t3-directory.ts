@@ -1,3 +1,7 @@
+import { z } from "zod";
+import { nativeControlSchema, nativeWorkerControl, nativeDeliveryCohortIncludes } from "../t3/native-delivery.js";
+import type { NativeThreadDelivery } from "../t3/native-events.js";
+import { getConfiguredNativeThreadDelivery, buildRunRequestStore } from "../t3/runtime.js";
 import { readWorkspaceReview, readWorkspaceReviewFile, type WorkspaceReviewStore } from "../t3/workspace-review.js";
 import { getConfiguredWorkspaceReviewStore } from "../t3/runtime.js";
 import { discoverProviderModels, claudeProviderVersion } from "../t3/provider-models.js";
@@ -60,6 +64,7 @@ const OUTPUT_ARTIFACT_INSTRUCTIONS = [
 ].join(" ");
 
 interface T3DirectoryGateway {
+  attachWorker?: T3Gateway["attachWorker"];
   list(): Promise<T3ThreadBinding[]>;
   generateText?(input: {
     prompt: string;
@@ -109,6 +114,8 @@ interface T3DirectoryGateway {
 }
 
 export interface T3DirectoryRoutesDependencies {
+  getNativeDelivery?(): Promise<Pick<NativeThreadDelivery, "get"> | null>;
+  getNativeRunMode?(runId: string): Promise<boolean>;
   discoverCodexModels?: typeof discoverProviderModels;
   enabled(): boolean;
   getGateway(): Promise<T3DirectoryGateway | null>;
@@ -122,6 +129,8 @@ export interface T3DirectoryRoutesDependencies {
 }
 
 const defaultDependencies: T3DirectoryRoutesDependencies = {
+  getNativeDelivery: getConfiguredNativeThreadDelivery,
+  getNativeRunMode: async (runId) => Boolean((await (await buildRunRequestStore())?.getRequest(runId))?.nativeDelivery),
   enabled: () => process.env.COMPADRE_T3_DIRECTORY_ENABLED === "true",
   getGateway: getConfiguredT3Gateway,
   getRunCoordinator: getConfiguredNativeT3RunCoordinator,
@@ -592,6 +601,10 @@ export function createT3DirectoryRoutes(
     const artifactStore = await dependencies.getArtifactStore?.();
     const runId = params.runId || dependencies.createId();
     const canonicalThreadId = params.threadId || dependencies.createId();
+    const bound = await (await dependencies.getNativeDelivery?.())?.get(canonicalThreadId);
+    const nativeDelivery = Boolean(bound) || nativeDeliveryCohortIncludes(canonicalThreadId);
+    if (nativeDelivery && c.req.header("x-compadre-native-delivery") !== "1") return c.json({ error: "This thread requires native event delivery" }, 409);
+    if (nativeDelivery && process.env.COMPADRE_NATIVE_EVENTS_PAUSED === "true") return c.json({ error: "Native event delivery is paused" }, 503);
     const selectedModel = nativeModelSelection(
       provider,
       params.forwardedProps.model,
@@ -644,6 +657,9 @@ export function createT3DirectoryRoutes(
         : undefined;
     const runRequest: NativeT3RunRequest = {
       runId,
+      ...(nativeDelivery ? { nativeDelivery: true } : {}),
+      runtimeMode: z.enum(["full-access", "approval-required", "auto-accept-edits", "auto"]).catch("full-access").parse(params.forwardedProps.runtimeMode),
+      interactionMode: params.forwardedProps.interactionMode === "plan" ? "plan" : "default",
       canonicalThreadId,
       provider,
       title:
@@ -700,6 +716,7 @@ export function createT3DirectoryRoutes(
       c.req.raw,
       {
         [NATIVE_T3_PROTOCOL_HEADER]: String(NATIVE_T3_PROTOCOL_VERSION),
+        ...(nativeDelivery ? { "x-compadre-native-delivery": "1" } : {}),
       },
       "-1",
     );
@@ -732,8 +749,29 @@ export function createT3DirectoryRoutes(
       });
     });
     return durableRunEventsResponse(reader.stream(runId), c.req.raw, {
+      ...((await dependencies.getNativeRunMode?.(runId)) ? { "x-compadre-native-delivery": "1" } : {}),
       [NATIVE_T3_PROTOCOL_HEADER]: String(NATIVE_T3_PROTOCOL_VERSION),
     });
+  }));
+
+  routes.post("/hosted/t3/native-threads/:threadId/control", guarded(async (c) => {
+    const parsed = nativeControlSchema.safeParse(await c.req.json());
+    if (!parsed.success) return c.json({ error: "Invalid native control" }, 400);
+    const threadId = routeParam(c, "threadId");
+    const state = await (await dependencies.getNativeDelivery?.())?.get(threadId);
+    if (!state) return c.json({ error: "Thread has no native delivery binding" }, 404);
+    if (state.sourceThreadId !== parsed.data.sourceThreadId || state.epoch !== parsed.data.epoch)
+      return c.json({ error: "Native worker binding changed" }, 409);
+    const gateway = await dependencies.getGateway();
+    const attached = await gateway?.attachWorker?.(threadId);
+    if (!attached || attached.binding.sandboxId !== state.sandboxId) return c.json({ error: "Native worker is unavailable" }, 409);
+    const client = attached.environment.client;
+    if (!client.dispatch) return c.json({ error: "Native worker controls are unavailable" }, 503);
+    let command;
+    try { command = nativeWorkerControl(parsed.data); }
+    catch { return c.json({ error: "Invalid native request" }, 400); }
+    const sequence = await client.dispatch(command);
+    return c.json({ accepted: true, sequence });
   }));
 
   routes.post("/hosted/t3/runs/:runId/cancel", guarded(async (c) => {

@@ -588,3 +588,15 @@ test("persists the saved review before announcing terminal completion", async (t
   assert.ok(review >= 0);
   assert.equal(events[review + 1]?.type, "RUN_FINISHED");
 });
+
+test("native delivery stores only lifecycle receipts while the worker owns the conversation", async (t) => {
+  const h = await harness("native-only", [async ({ onSnapshot }) => {
+    await onSnapshot?.(snapshotAt({ assistantText: "partial", streaming: true, terminal: false }));
+    return snapshotAt({ assistantText: "native final", streaming: false, terminal: true });
+  }]);
+  t.after(() => h.durability.close());
+  const request = await h.requests.getRequest(h.runId);
+  await h.requests.saveRequest({ ...request!, nativeDelivery: true });
+  await driveNativeT3Run({ ...h, prepareNativeDelivery: async () => {} }, h.runId);
+  assert.deepEqual((await h.chunks()).map((chunk) => chunk.type), ["RUN_STARTED", "RUN_FINISHED"]);
+});

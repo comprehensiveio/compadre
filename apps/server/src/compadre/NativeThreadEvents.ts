@@ -127,6 +127,9 @@ export function mapNativeThreadEvent(
         type: event.type,
         payload: {
           ...event.payload,
+          status: event.payload.checkpointRef.startsWith("compadre-review:")
+            ? event.payload.status
+            : "missing",
           threadId,
           turnId: TurnId.make(id(event.payload.turnId)),
           assistantMessageId:

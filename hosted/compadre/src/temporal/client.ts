@@ -101,3 +101,18 @@ export async function ensureWorkerTemplateBuildSchedule(): Promise<void> {
     throw error;
   }
 }
+
+/** One delivery workflow per worker claim, independent of provider-run lifetimes. */
+export async function ensureNativeThreadDeliveryWorkflow(state: { canonicalThreadId: string; epoch: number }): Promise<void> {
+  const client = await getTemporalClient();
+  try {
+    await client.workflow.start("nativeThreadDeliveryWorkflow", {
+      workflowId: `compadre-native-events-${state.canonicalThreadId}-${state.epoch}`,
+      taskQueue: NATIVE_T3_TASK_QUEUE,
+      args: [{ threadId: state.canonicalThreadId, epoch: state.epoch }],
+    });
+  } catch (error) {
+    if (error instanceof WorkflowExecutionAlreadyStartedError) return;
+    throw error;
+  }
+}

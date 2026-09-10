@@ -1,3 +1,4 @@
+import { NativeThreadControls } from "../../compadre/NativeThreadControls.ts";
 import {
   type ChatAttachment,
   CommandId,
@@ -307,6 +308,8 @@ const make = Effect.gen(function* () {
   const orchestrationEngine = yield* OrchestrationEngineService;
   const projectionSnapshotQuery = yield* ProjectionSnapshotQuery;
   const providerService = yield* ProviderService;
+  const nativeControls = yield* Effect.serviceOption(NativeThreadControls);
+  const nativeControl = Option.getOrElse(nativeControls, () => () => Effect.succeed(false));
   const providerRegistry = yield* ProviderRegistry;
   const gitWorkflow = yield* GitWorkflowService;
   const fileSystem = yield* FileSystem.FileSystem;
@@ -1232,6 +1235,22 @@ const make = Effect.gen(function* () {
   const processTurnInterruptRequested = Effect.fn("processTurnInterruptRequested")(function* (
     event: Extract<ProviderIntentEvent, { type: "thread.turn-interrupt-requested" }>,
   ) {
+    const handled = yield* nativeControl(event).pipe(
+      Effect.catchCause((cause) =>
+        appendProviderFailureActivity({
+          threadId: event.payload.threadId,
+          kind: "provider.turn.interrupt.failed",
+          summary: "Provider turn interrupt failed",
+          detail: Cause.pretty(cause),
+          turnId: null,
+          createdAt: event.payload.createdAt,
+          ...("requestId" in event.payload && typeof event.payload.requestId === "string"
+            ? { requestId: event.payload.requestId }
+            : {}),
+        }).pipe(Effect.as(true)),
+      ),
+    );
+    if (handled) return;
     const thread = yield* resolveThread(event.payload.threadId);
     if (!thread) {
       return;
@@ -1327,6 +1346,22 @@ const make = Effect.gen(function* () {
   const processApprovalResponseRequested = Effect.fn("processApprovalResponseRequested")(function* (
     event: Extract<ProviderIntentEvent, { type: "thread.approval-response-requested" }>,
   ) {
+    const handled = yield* nativeControl(event).pipe(
+      Effect.catchCause((cause) =>
+        appendProviderFailureActivity({
+          threadId: event.payload.threadId,
+          kind: "provider.approval.respond.failed",
+          summary: "Provider approval response failed",
+          detail: Cause.pretty(cause),
+          turnId: null,
+          createdAt: event.payload.createdAt,
+          ...("requestId" in event.payload && typeof event.payload.requestId === "string"
+            ? { requestId: event.payload.requestId }
+            : {}),
+        }).pipe(Effect.as(true)),
+      ),
+    );
+    if (handled) return;
     const thread = yield* resolveThread(event.payload.threadId);
     if (!thread) {
       return;
@@ -1371,6 +1406,22 @@ const make = Effect.gen(function* () {
     function* (
       event: Extract<ProviderIntentEvent, { type: "thread.user-input-response-requested" }>,
     ) {
+      const handled = yield* nativeControl(event).pipe(
+        Effect.catchCause((cause) =>
+          appendProviderFailureActivity({
+            threadId: event.payload.threadId,
+            kind: "provider.user-input.respond.failed",
+            summary: "Provider user input response failed",
+            detail: Cause.pretty(cause),
+            turnId: null,
+            createdAt: event.payload.createdAt,
+            ...("requestId" in event.payload && typeof event.payload.requestId === "string"
+              ? { requestId: event.payload.requestId }
+              : {}),
+          }).pipe(Effect.as(true)),
+        ),
+      );
+      if (handled) return;
       const thread = yield* resolveThread(event.payload.threadId);
       if (!thread) {
         return;
@@ -1415,6 +1466,22 @@ const make = Effect.gen(function* () {
   const processSessionStopRequested = Effect.fn("processSessionStopRequested")(function* (
     event: Extract<ProviderIntentEvent, { type: "thread.session-stop-requested" }>,
   ) {
+    const handled = yield* nativeControl(event).pipe(
+      Effect.catchCause((cause) =>
+        appendProviderFailureActivity({
+          threadId: event.payload.threadId,
+          kind: "provider.session.stop.failed",
+          summary: "Provider session stop failed",
+          detail: Cause.pretty(cause),
+          turnId: null,
+          createdAt: event.payload.createdAt,
+          ...("requestId" in event.payload && typeof event.payload.requestId === "string"
+            ? { requestId: event.payload.requestId }
+            : {}),
+        }).pipe(Effect.as(true)),
+      ),
+    );
+    if (handled) return;
     const thread = yield* resolveThread(event.payload.threadId);
     if (!thread) {
       return;

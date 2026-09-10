@@ -1,7 +1,10 @@
 import { nativeThreadStatusRecorder } from "../../compadre/NativeThreadStatus.ts";
 import * as ThreadBackgroundLiveness from "../ThreadBackgroundLiveness.ts";
 import * as ThreadPlanProgress from "../ThreadPlanProgress.ts";
-import { advanceNativeThreadStream } from "../../compadre/NativeThreadStreamStore.ts";
+import {
+  assertNativeThreadStream,
+  advanceNativeThreadStream,
+} from "../../compadre/NativeThreadStreamStore.ts";
 import type {
   OrchestrationClientOrigin,
   OrchestrationEvent,
@@ -356,6 +359,19 @@ const makeOrchestrationEngine = Effect.gen(function* () {
                 return { _tag: "Rejected" as const, error };
               }
               let eventBase = decision.value;
+              if (envelope.command.type === "thread.native-stream.close") {
+                yield* assertNativeThreadStream(envelope.command).pipe(
+                  Effect.provideService(SqlClient.SqlClient, sql),
+                  Effect.catchTag(
+                    "NativeThreadStreamConflict",
+                    (cause) =>
+                      new OrchestrationCommandInvariantError({
+                        commandType: envelope.command.type,
+                        detail: cause.detail,
+                      }),
+                  ),
+                );
+              }
               if (envelope.command.type === "thread.native-event.apply") {
                 const checkpointOffset = yield* advanceNativeThreadStream({
                   threadId: envelope.command.threadId,

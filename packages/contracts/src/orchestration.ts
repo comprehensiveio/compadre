@@ -1172,6 +1172,12 @@ const ThreadTitleRegenerationCompleteCommand = Schema.Struct({
   title: Schema.optional(TrimmedNonEmptyString),
 });
 
+// Controller-owned files and saved reviews enter the worker's native journal.
+export const NativeWorkerOutputCommand = Schema.Union([
+  ThreadMessageAssistantCompleteCommand,
+  ThreadTurnDiffCompleteCommand,
+  ThreadActivityAppendCommand,
+]);
 const InternalOrchestrationCommand = Schema.Union([
   ThreadSessionSetCommand,
   ThreadMessageAssistantDeltaCommand,
@@ -1643,10 +1649,20 @@ export const NativeThreadEventApplyCommand = Schema.Struct({
   threadId: ThreadId,
   event: OrchestrationEvent,
 });
+export const NativeThreadStreamCloseCommand = Schema.Struct({
+  type: Schema.Literal("thread.native-stream.close"),
+  commandId: CommandId,
+  threadId: ThreadId,
+  sourceThreadId: ThreadId,
+  epoch: Schema.Number.check(Schema.isInt(), Schema.isGreaterThanOrEqualTo(1)),
+  createdAt: IsoDateTime,
+  reason: TrimmedNonEmptyString,
+});
 export const OrchestrationCommand = Schema.Union([
   DispatchableClientOrchestrationCommand,
   InternalOrchestrationCommand,
   NativeThreadEventApplyCommand,
+  NativeThreadStreamCloseCommand,
 ]);
 export type OrchestrationCommand = typeof OrchestrationCommand.Type;
 

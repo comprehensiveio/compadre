@@ -1,3 +1,4 @@
+import { T3Client } from "./client.js";
 import assert from "node:assert/strict";
 import test from "node:test";
 import { memoryPersistence } from "@tanstack/ai-persistence";
@@ -276,10 +277,17 @@ test("hands one subscription lane between workers while concurrent work stays on
     false,
     "a stale finalizer must not stop a newer steer",
   );
-  await gateway.releaseCodexAuth({
-    canonicalThreadId: "owner",
-    runId: "run-steer",
-  });
+  let backgroundLiveness: "working" | null = "working";
+  let sessionStatus = "ready";
+  workers.get("owner")!.connection.client.nativeEventPage = async () => ({ events: [], nextOffset: "00000000000000000009", upToDate: true, backgroundLiveness, sessionStatus });
+  await gateway.releaseCodexAuth({ canonicalThreadId: "owner", runId: "run-steer", nativeDelivery: true });
+  assert.equal(workers.get("owner")!.stopped, false, "parent EOF must not stop live native children");
+  backgroundLiveness = null;
+  sessionStatus = "running";
+  await gateway.releaseCodexAuth({ canonicalThreadId: "owner", runId: "run-steer", nativeDelivery: true });
+  assert.equal(workers.get("owner")!.stopped, false, "a continuation must retain its provider");
+  sessionStatus = "ready";
+  await gateway.releaseCodexAuth({ canonicalThreadId: "owner", runId: "run-steer", nativeDelivery: true });
   assert.equal(workers.get("owner")!.stopped, true);
   assert.equal(
     workers.get("owner")!.files.get("/home/node/.codex/compadre-auth-route"),
@@ -2058,4 +2066,31 @@ test("terminal close checkpoints only an idle existing worker and leaves active-
   await bindings.bindRecord({ ...binding, activeRunId: "agent-run", status: "working" });
   await gateway.checkpointWorkspace("canonical");
   assert.equal(checkpoints, 1);
+});
+
+test("binds native delivery before dispatch and retries setup without replacing the empty worker", async () => {
+  const persistence = memoryPersistence();
+  const bindings = new T3ThreadBindingStore(persistence.stores.metadata);
+  const order: string[] = [];
+  const requests: Array<Parameters<T3Client["startTurn"]>[0]> = [];
+  const client = new T3Client("https://worker.example", "unused");
+  client.createThread = async (input) => { order.push("create"); return input.threadId!; };
+  client.startTurn = async (input) => { order.push("dispatch"); requests.push(input); return {
+    commandId: input.commandId!, messageId: input.messageId!, threadId: input.threadId, createdAt: input.createdAt!, sequence: 3,
+  }; };
+  const environment = { sandboxId: "worker-sandbox", projectId: "project", client };
+  const gateway = new T3Gateway(bindings, {
+    provision: async () => environment, reconnect: async () => environment,
+  }, () => "worker-thread");
+  let failBinding = true;
+  const input = { runId: "run-1", canonicalThreadId: "central", title: "Native", text: "Start",
+    modelSelection: { instanceId: "claude-code", model: "test" }, createdAt: "2026-09-10T00:00:00.000Z",
+    beforeDispatch: async () => { order.push("bind"); if (failBinding) { failBinding = false; throw new Error("central unavailable"); } },
+  };
+  await assert.rejects(gateway.send(input), /central unavailable/);
+  assert.deepEqual(order, ["create", "bind"]);
+  await gateway.send(input);
+  assert.deepEqual(order, ["create", "bind", "bind", "dispatch"]);
+  assert.equal(requests[0]?.commandId, "native-turn:run-1");
+  assert.equal(requests[0]?.messageId, "native-user:run-1");
 });

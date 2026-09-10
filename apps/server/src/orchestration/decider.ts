@@ -1183,6 +1183,33 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
       };
     }
 
+    case "thread.native-stream.close": {
+      const thread = yield* requireThread({ readModel, command, threadId: command.threadId });
+      return {
+        ...(yield* withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+          metadata: { adapterKey: "compadre-native" },
+        })),
+        type: "thread.session-set",
+        payload: {
+          threadId: command.threadId,
+          session: {
+            ...thread.session,
+            threadId: command.threadId,
+            status: "stopped",
+            activeTurnId: null,
+            providerName: thread.session?.providerName ?? null,
+            runtimeMode: thread.session?.runtimeMode ?? "full-access",
+            lastError: command.reason,
+            updatedAt: command.createdAt,
+          },
+        },
+      };
+    }
+
     case "thread.native-event.apply": {
       const thread = yield* requireThread({ readModel, command, threadId: command.threadId });
       const event = command.event;
