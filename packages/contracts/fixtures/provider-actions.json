@@ -1,0 +1,6 @@
+{
+  "valid": [{ "type": "compact" }],
+  "invalid": [{ "type": "shell" }, { "type": "future-action" }, {}, null],
+  "commands": [{ "text": " /compact\n", "action": { "type": "compact" }, "prompt": "/compact" }],
+  "prompts": ["Please /compact", "/compact some instructions", "/unknown", "metadata\n/compact"]
+}

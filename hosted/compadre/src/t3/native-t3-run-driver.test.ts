@@ -199,6 +199,23 @@ async function harness(runId: string, waitBehaviors: WaitBehavior[], workerBindi
   return { durability, requests, controls, gateway, calls, chunks, runId, prepareNativeDelivery: async () => {} };
 }
 
+test("provider actions never fold or accept steering", async (t) => {
+  const h = await harness("compact-steering", [async () => snapshotAt({ assistantText: "", streaming: false, terminal: true })]);
+  t.after(() => h.durability.close());
+  const request = await h.requests.getRequest(h.runId);
+  assert.ok(request);
+  // Use a new store entry: existing requests are immutable under retries.
+  const runId = "compact-steering-action";
+  await h.durability.runs.createOrResume({ runId, threadId: "thread-1", startedAt: Date.now() });
+  await h.requests.saveRequest({ ...request, runId, text: "/compact", providerAction: { type: "compact" } });
+  const instruction = { id: "steer", text: "run another task" };
+  await h.controls.enqueue(runId, instruction);
+  assert.equal(await deliverNativeT3Steering(h, runId, instruction), false);
+  await driveNativeT3Run(h, runId);
+  assert.deepEqual(h.calls.setupSteering, []);
+  assert.deepEqual(h.calls.liveSteering, []);
+});
+
 test("folds setup-time steering into the initial provider prompt in order", async (t) => {
   const h = await harness("run-early-steer", [
     async () => snapshotAt({ assistantText: "Counted to 50", streaming: false, terminal: true }),

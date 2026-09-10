@@ -41,6 +41,7 @@ import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 import { bindNativeThreadStream } from "./NativeThreadStreamStore.ts";
 import { nativeThreadEventRoutes, readNativeEventPage } from "./NativeThreadEventRoutes.ts";
+import { providerActionRoutes } from "./ProviderActionRoutes.ts";
 async function createOrchestrationSystem(central = false) {
   const ServerConfigLayer = ServerConfig.layerTest(process.cwd(), {
     prefix: "t3-orchestration-engine-test-",
@@ -387,7 +388,7 @@ describe("native thread replication", () => {
     });
     const serve = (system: typeof source) =>
       HttpRouter.toWebHandler(
-        nativeThreadEventRoutes.pipe(
+        Layer.merge(nativeThreadEventRoutes, providerActionRoutes).pipe(
           Layer.provideMerge(Layer.succeed(OrchestrationEngineService, system.engine)),
           Layer.provideMerge(Layer.succeed(ProjectionSnapshotQuery, system.snapshotQuery)),
           Layer.provideMerge(auth),
@@ -403,6 +404,57 @@ describe("native thread replication", () => {
     try {
       await seed(source, sourceThreadId);
       await seed(central, threadId);
+      const actionUrl = "http://localhost/api/compadre/provider-actions";
+      expect((await worker.handler(new Request(actionUrl))).status).toBe(401);
+      expect(
+        (
+          await worker.handler(
+            new Request(actionUrl, { headers: { authorization: "Bearer worker-test" } }),
+          )
+        ).status,
+      ).toBe(403);
+      const capabilities = await worker.handler(
+        new Request(actionUrl, { headers: { authorization: "Bearer worker-writer" } }),
+      );
+      expect(await capabilities.json()).toEqual({ version: 1, actions: ["compact"] });
+      const actionCommand = {
+        type: "thread.turn.start",
+        commandId: "compact-action",
+        threadId: sourceThreadId,
+        providerAction: { type: "compact" },
+        message: {
+          messageId: "compact-action-message",
+          role: "user",
+          text: "/compact",
+          attachments: [],
+        },
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        createdAt,
+      };
+      const sendAction = (command: unknown, token = "worker-writer") =>
+        worker.handler(
+          new Request(actionUrl, {
+            method: "POST",
+            headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+            body: JSON.stringify(command),
+          }),
+        );
+      expect((await sendAction(actionCommand, "worker-test")).status).toBe(403);
+      expect(
+        (await sendAction({ ...actionCommand, providerAction: { type: "unknown" } })).status,
+      ).toBe(400);
+      expect((await sendAction({ ...actionCommand, providerAction: undefined })).status).toBe(400);
+      const dispatched = await sendAction(actionCommand);
+      expect(dispatched.status).toBe(200);
+      expect(await (await sendAction(actionCommand)).json()).toEqual(await dispatched.json());
+      const actionPage = await source.run(readNativeEventPage(source.engine, sourceThreadId, 0));
+      const actionEvent = actionPage.events.find(
+        (event) => event.type === "thread.turn-start-requested",
+      );
+      expect(
+        actionEvent?.type === "thread.turn-start-requested" && actionEvent.payload.providerAction,
+      ).toEqual({ type: "compact" });
       await central.run(
         bindNativeThreadStream({
           threadId,
@@ -485,7 +537,7 @@ describe("native thread replication", () => {
       );
       expect(page.status).toBe(200);
       expect(page.headers.get("stream-up-to-date")).toBe("true");
-      expect(page.headers.get("stream-next-offset")).toBe("00000000000000000004");
+      expect(page.headers.get("stream-next-offset")).toBe("00000000000000000006");
       const events: unknown = await page.json();
       const body = JSON.stringify({ version: 1, sourceThreadId, epoch: 1, events });
       const post = () =>
@@ -520,10 +572,10 @@ describe("native thread replication", () => {
       );
       expect(head.status).toBe(200);
       expect(await head.text()).toBe("");
-      expect(head.headers.get("stream-next-offset")).toBe("00000000000000000004");
+      expect(head.headers.get("stream-next-offset")).toBe("00000000000000000006");
       const waiting = worker.handler(
         new Request(
-          `${url}?threadId=${sourceThreadId}&offset=00000000000000000004&live=long-poll`,
+          `${url}?threadId=${sourceThreadId}&offset=00000000000000000006&live=long-poll`,
           {
             headers: { authorization: "Bearer worker-test" },
           },

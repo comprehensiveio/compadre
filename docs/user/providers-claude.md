@@ -46,6 +46,12 @@ offers to compact the conversation before you continue. You can also select **Co
 from the context meter. On every client, you can enter `/compact` in the message composer, and
 Claude can show its own resume prompt when you continue an old session.
 
+In Compadre, manual compaction is a provider action, not a request for the agent
+to summarize its work. The buttons appear only when the provider advertises
+support. Wait for the current turn to finish and remove attachments first.
+Compaction succeeds only when Claude confirms it; unsupported or outdated workers
+report an error rather than sending `/compact` as an ordinary chat message.
+
 ## Where Claude Skills Are Loaded
 
 T3 Code looks for Claude skills in the Claude config directory's `skills` folder, then

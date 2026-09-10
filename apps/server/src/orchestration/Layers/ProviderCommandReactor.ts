@@ -1,3 +1,4 @@
+import { type ProviderAction } from "@t3tools/contracts";
 import { NativeThreadControls } from "../../compadre/NativeThreadControls.ts";
 import {
   type ChatAttachment,
@@ -776,6 +777,7 @@ const make = Effect.gen(function* () {
   });
 
   const buildSendTurnRequestForThread = Effect.fnUntraced(function* (input: {
+    readonly providerAction?: ProviderAction;
     readonly threadId: ThreadId;
     readonly messageText: string;
     readonly attachments?: ReadonlyArray<ChatAttachment>;
@@ -830,6 +832,7 @@ const make = Effect.gen(function* () {
     return {
       threadId: input.threadId,
       ...(normalizedInput ? { input: normalizedInput } : {}),
+      ...(input.providerAction ? { providerAction: input.providerAction } : {}),
       ...(normalizedAttachments.length > 0 ? { attachments: normalizedAttachments } : {}),
       ...(modelForTurn !== undefined ? { modelSelection: modelForTurn } : {}),
       ...(input.interactionMode !== undefined ? { interactionMode: input.interactionMode } : {}),
@@ -1209,6 +1212,7 @@ const make = Effect.gen(function* () {
       );
 
     const sendTurnRequest = yield* buildSendTurnRequestForThread({
+      ...(event.payload.providerAction ? { providerAction: event.payload.providerAction } : {}),
       threadId: event.payload.threadId,
       messageText: event.payload.providerPrompt ?? message.text,
       ...(message.attribution !== undefined ? { attribution: message.attribution } : {}),

@@ -1,3 +1,4 @@
+import type { ProviderAction } from "./provider-actions.js";
 import { NativeRunObservation } from "./native-run-observation.js";
 import {
   isTerminalRunStatus,
@@ -53,6 +54,7 @@ const CANCELLED_CODE = "NATIVE_T3_RUN_CANCELLED";
  */
 export interface NativeT3DriverGateway {
   send(input: {
+    providerAction?: ProviderAction;
     runId?: string;
     runtimeMode?: "full-access" | "approval-required" | "auto-accept-edits" | "auto";
     interactionMode?: "default" | "plan";
@@ -167,7 +169,7 @@ export async function deliverNativeT3Steering(
       return false;
     }
     const request = await deps.requests.getRequest(runId);
-    if (!request) {
+    if (!request || request.providerAction) {
       await deps.controls!.settle(runId, input.id, "rejected");
       return false;
     }
@@ -426,6 +428,7 @@ export async function driveNativeT3Run(
     heartbeat("dispatching native T3 turn");
     let setupSteering: NativeT3SteeringEntry[] = [];
     turn = await deps.gateway.send({
+      ...(request.providerAction ? { providerAction: request.providerAction } : {}),
       beforeDispatch: (connection) => deps.prepareNativeDelivery(request, connection),
       runId,
       createdAt: request.createdAt,
@@ -438,7 +441,7 @@ export async function driveNativeT3Run(
       ...(request.blockedSlackDestination
         ? { blockedSlackDestination: request.blockedSlackDestination }
         : {}),
-      ...(deps.controls
+      ...(deps.controls && !request.providerAction
         ? {
             loadInitialSteering: async () => {
               setupSteering = await deps.controls!.pending(runId);

@@ -57,6 +57,39 @@ function json(value: unknown, status = 200): Response {
   });
 }
 
+test("provider actions use a fail-closed endpoint and retain durable command ids", async () => {
+  const requests: Request[] = [];
+  const client = new T3Client("https://t3.example", "access-token", {
+    fetch: async (input, init) => {
+      const request = new Request(input, init);
+      requests.push(request);
+      return json(request.method === "GET" ? { version: 1, actions: ["compact"] } : { sequence: 42 });
+    },
+  });
+  await client.requireProviderAction({ type: "compact" });
+  const dispatch = await client.startTurn({
+    threadId: "thread-1", messageId: "message-1", commandId: "native-turn:run-1", text: "/compact",
+    providerAction: { type: "compact" }, modelSelection: { instanceId: "claudeAgent", model: "sonnet" },
+  });
+  assert.equal(dispatch.sequence, 42);
+  assert.equal(requests.length, 2);
+  assert.ok(requests.every((request) => new URL(request.url).pathname === "/api/compadre/provider-actions"));
+  const body = await requests[1]!.json();
+  assert.equal(body.commandId, "native-turn:run-1");
+  assert.deepEqual(body.providerAction, { type: "compact" });
+  assert.equal(body.message.text, "/compact");
+});
+
+test("old workers reject actions without a conversational fallback", async () => {
+  const paths: string[] = [];
+  const client = new T3Client("https://t3.example", "access-token", {
+    fetch: async (input) => { paths.push(new URL(String(input)).pathname); return json({ error: "not found" }, 404); },
+  });
+  await assert.rejects(client.requireProviderAction({ type: "compact" }), /does not support/);
+  await assert.rejects(client.startTurn({ threadId: "thread-1", text: "/compact", providerAction: { type: "compact" }, modelSelection: { instanceId: "claudeAgent", model: "sonnet" } }));
+  assert.ok(paths.every((path) => path === "/api/compadre/provider-actions"));
+});
+
 test("exchanges a one-time pairing credential for a scoped bot session", async () => {
   let request: Request | undefined;
   const result = await exchangeT3PairingToken({

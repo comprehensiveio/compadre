@@ -4916,11 +4916,12 @@ function ChatViewContent(props: ChatViewProps) {
       : !activeProject
         ? "Choose a project before compacting"
         : !compactionProviderAvailable
-          ? "Enable a Claude provider before compacting"
+          ? "This provider does not currently support compaction"
           : "Compacting is unavailable right now"
     : null;
   const resumeCompactionBannerItem = useMemo<ComposerBannerStackItem | null>(() => {
     if (
+      !compactionProviderAvailable ||
       !activeThread ||
       !activeContextWindow ||
       resumeCompactionKey === null ||
@@ -4977,6 +4978,7 @@ function ChatViewContent(props: ChatViewProps) {
     compactDisabled,
     compactDisabledReason,
     composerRef,
+    compactionProviderAvailable,
     dismissedResumeCompactionKeys,
     nativeResumeCompactionDismissed,
     nowMinute,
@@ -7246,6 +7248,7 @@ function ChatViewContent(props: ChatViewProps) {
                             activeThreadModelSelection={activeThread?.modelSelection}
                             activeContextWindow={activeContextWindow}
                             compactDisabled={compactDisabled}
+                            compactionProviderAvailable={compactionProviderAvailable}
                             compactDisabledReason={compactDisabledReason}
                             resolvedTheme={resolvedTheme}
                             settings={settings}

@@ -33,3 +33,4 @@ export * from "./resourceTelemetry.ts";
 export * from "./usage.ts";
 export * from "./compadreOperations.ts";
 export * from "./rpc.ts";
+export * from "./providerActions.ts";

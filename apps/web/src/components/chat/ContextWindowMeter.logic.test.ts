@@ -25,6 +25,7 @@ function claudeProvider(input: {
     auth: { status: "authenticated" },
     checkedAt: "2026-08-24T12:00:00.000Z",
     models: [],
+    providerActions: ["compact"],
     slashCommands: [],
     skills: [],
   };
@@ -32,6 +33,19 @@ function claudeProvider(input: {
 
 describe("hasAvailableClaudeCompactionProvider", () => {
   const originalInstanceId = ProviderInstanceId.make("claude_original");
+  it("does not infer action support from the provider name on older servers", () => {
+    const { providerActions: _actions, ...provider } = claudeProvider({
+      instanceId: originalInstanceId,
+      continuationGroupKey: "claude:home:/original",
+    });
+    expect(
+      hasAvailableClaudeCompactionProvider({
+        providers: deriveProviderInstanceEntries([provider]),
+        instanceId: originalInstanceId,
+        lockedInstanceId: originalInstanceId,
+      }),
+    ).toBe(false);
+  });
 
   it("rejects a fallback in a different locked continuation group", () => {
     const providers = deriveProviderInstanceEntries([

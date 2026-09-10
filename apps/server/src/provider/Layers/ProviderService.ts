@@ -10,6 +10,8 @@
  * @module ProviderServiceLive
  */
 import {
+  PROVIDER_ACTIONS,
+  providerActionPrompt,
   ModelSelection,
   NonNegativeInt,
   ThreadId,
@@ -730,7 +732,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
     });
 
     const attachments = parsed.attachments ?? [];
-    if (!parsed.input && attachments.length === 0) {
+    if (!parsed.input && !parsed.providerAction && attachments.length === 0) {
       return yield* toValidationError(
         "ProviderService.sendTurn",
         "Either input text or at least one attachment is required",
@@ -764,6 +766,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
       ...(inputTextWithAttachmentPaths !== undefined
         ? { input: inputTextWithAttachmentPaths }
         : {}),
+      ...(parsed.providerAction ? { input: providerActionPrompt(parsed.providerAction) } : {}),
     };
     yield* Effect.annotateCurrentSpan({
       "provider.operation": "send-turn",
@@ -780,6 +783,16 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
         allowRecovery: true,
       });
       metricProvider = routed.adapter.provider;
+      if (
+        input.providerAction &&
+        (PROVIDER_ACTIONS[input.providerAction.type].driverKind !== routed.adapter.provider ||
+          attachments.length > 0)
+      ) {
+        return yield* toValidationError(
+          "ProviderService.sendTurn",
+          "This provider action is unsupported or includes attachments.",
+        );
+      }
       metricModel = input.modelSelection?.model;
       yield* Effect.annotateCurrentSpan({
         "provider.kind": routed.adapter.provider,

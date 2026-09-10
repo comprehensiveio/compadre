@@ -927,6 +927,27 @@ it.effect(
 );
 
 routing.layer("ProviderServiceLive routing", (it) => {
+  it.effect("rejects unsupported provider actions before calling a conversational adapter", () =>
+    Effect.gen(function* () {
+      const provider = yield* ProviderService.ProviderService;
+      const threadId = asThreadId("unsupported-action");
+      yield* provider.startSession(threadId, {
+        provider: ProviderDriverKind.make("codex"),
+        providerInstanceId: codexInstanceId,
+        threadId,
+        cwd: "/tmp/project",
+        runtimeMode: "full-access",
+      });
+      routing.codex.sendTurn.mockClear();
+      const result = yield* Effect.result(
+        provider.sendTurn({ threadId, providerAction: { type: "compact" } }),
+      );
+      assert.equal(result._tag, "Failure");
+      assert.equal(routing.codex.sendTurn.mock.calls.length, 0);
+      yield* provider.stopSession({ threadId });
+      routing.codex.stopSession.mockClear();
+    }),
+  );
   it.effect("routes provider operations and rollback conversation", () =>
     Effect.gen(function* () {
       const provider = yield* ProviderService.ProviderService;

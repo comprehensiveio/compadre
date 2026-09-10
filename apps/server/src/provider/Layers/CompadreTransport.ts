@@ -1,3 +1,4 @@
+import { type ProviderAction } from "@t3tools/contracts";
 import {
   type MessageAttribution,
   type ProviderDriverKind,
@@ -22,6 +23,7 @@ const MAX_RECONNECT_DELAY_MS = 5_000;
 const decodeStreamValue = Schema.decodeEffect(Schema.fromJsonString(Schema.Unknown));
 
 export interface CompadreTurnRequest {
+  readonly providerAction?: ProviderAction;
   readonly endpoint: string;
   readonly apiKey: string | undefined;
   readonly threadId: string;
@@ -89,6 +91,7 @@ export function makeCompadreTransport(
       tools: [],
       context: [],
       forwardedProps: {
+        ...(input.providerAction ? { providerAction: input.providerAction } : {}),
         runtimeMode: input.runtimeMode,
         interactionMode: input.interactionMode,
         ...(input.provider ? { provider: input.provider } : {}),
@@ -106,6 +109,9 @@ export function makeCompadreTransport(
 
     const requestFor = (initial: boolean) => {
       const eventsUrl = new URL(input.endpoint);
+      if (initial && input.providerAction) {
+        eventsUrl.pathname = eventsUrl.pathname.replace(/\/chat\/?$/u, "/actions");
+      }
       if (!initial) {
         eventsUrl.pathname = eventsUrl.pathname.replace(
           /\/chat\/?$/u,

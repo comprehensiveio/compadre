@@ -519,6 +519,7 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
       checkedAt,
       models,
       slashCommands: dedupedSlashCommands,
+      providerActions: ["compact"],
       skills,
       probe: {
         installed: true,
@@ -541,6 +542,7 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
     checkedAt,
     models,
     slashCommands: dedupedSlashCommands,
+    providerActions: ["compact"],
     skills,
     probe: {
       installed: true,

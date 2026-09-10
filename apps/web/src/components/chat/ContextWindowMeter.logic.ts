@@ -30,10 +30,11 @@ export function hasAvailableClaudeCompactionProvider(input: {
       )
     : claudeProviders;
 
-  return (
-    resolveSelectableProviderInstanceEntry(compatibleProviders, input.instanceId ?? undefined) !==
-    undefined
+  const selected = resolveSelectableProviderInstanceEntry(
+    compatibleProviders,
+    input.instanceId ?? undefined,
   );
+  return selected?.snapshot.providerActions?.includes("compact") === true;
 }
 
 export function hasDismissedResumeCompaction(

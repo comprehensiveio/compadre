@@ -1,3 +1,4 @@
+import { type ProviderAction } from "@t3tools/contracts";
 import {
   ApprovalRequestId,
   EventId,
@@ -55,6 +56,7 @@ export interface CompadreAdapterOptions {
 }
 
 interface ActiveCompadreRun {
+  readonly providerAction?: ProviderAction;
   readonly runId: string;
   readonly fiber: Fiber.Fiber<void, ProviderAdapterRequestError>;
 }
@@ -267,6 +269,13 @@ export function makeCompadreAdapter(options: CompadreAdapterOptions) {
         const selectedProvider = options.provider;
 
         const previousRun = context.activeRun;
+        if (previousRun && (input.providerAction || previousRun.providerAction)) {
+          return yield* new ProviderAdapterValidationError({
+            provider: runtimeProvider,
+            operation: "sendTurn",
+            issue: "Wait for the current turn or provider action to finish before sending another.",
+          });
+        }
         const steeringTurnId =
           previousRun && context.session.status === "running"
             ? context.session.activeTurnId
@@ -286,6 +295,7 @@ export function makeCompadreAdapter(options: CompadreAdapterOptions) {
         };
 
         const transportInput = {
+          ...(input.providerAction ? { providerAction: input.providerAction } : {}),
           endpoint: options.endpoint,
           apiKey: options.apiKey,
           threadId: input.threadId,
@@ -370,7 +380,11 @@ export function makeCompadreAdapter(options: CompadreAdapterOptions) {
         });
 
         const fiber = yield* worker.pipe(Effect.forkIn(adapterScope));
-        activeRun = { runId, fiber };
+        activeRun = {
+          runId,
+          fiber,
+          ...(input.providerAction ? { providerAction: input.providerAction } : {}),
+        };
         context.activeRun = activeRun;
         yield* Fiber.await(fiber).pipe(
           Effect.tap(() =>

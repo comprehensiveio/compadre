@@ -220,6 +220,7 @@ export class TemporalNativeT3RunService implements NativeT3RunService {
     runId: string,
     input: NativeT3SteeringInput,
   ): Promise<boolean> {
+    if ((await this.requests.getRequest(runId))?.providerAction) return false;
     const run = await this.run(runId);
     if (!run || isTerminalRunStatus(run.status) || run.cancelRequested) {
       return false;

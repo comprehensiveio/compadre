@@ -847,7 +847,8 @@ describe("ClaudeAdapterLive", () => {
 
       yield* adapter.sendTurn({
         threadId: session.threadId,
-        input: "/compact",
+        providerAction: { type: "compact" },
+        input: "This metadata must not reach the harness action",
         attachments: [],
         modelSelection,
       });
@@ -861,6 +862,56 @@ describe("ClaudeAdapterLive", () => {
       Effect.provide(harness.layer),
     );
   });
+
+  for (const confirmed of [true, false]) {
+    it.effect(`requires a native compaction receipt (confirmed: ${confirmed})`, () => {
+      const harness = makeHarness();
+      return Effect.gen(function* () {
+        const adapter = yield* ClaudeAdapter;
+        const eventsFiber = yield* Stream.takeUntil(
+          adapter.streamEvents,
+          (event) => event.type === "turn.completed",
+        ).pipe(Stream.runCollect, Effect.forkChild);
+        yield* adapter.startSession({
+          threadId: THREAD_ID,
+          provider: ProviderDriverKind.make("claudeAgent"),
+          runtimeMode: "full-access",
+        });
+        yield* adapter.sendTurn({
+          threadId: THREAD_ID,
+          providerAction: { type: "compact" },
+          input: "/compact",
+        });
+        const steer = yield* Effect.result(
+          adapter.sendTurn({ threadId: THREAD_ID, input: "another instruction" }),
+        );
+        assert.equal(steer._tag, "Failure");
+        if (confirmed)
+          harness.query.emit({
+            type: "system",
+            subtype: "compact_boundary",
+            session_id: "sdk-session-1",
+            uuid: "compact-1",
+            compact_metadata: { trigger: "manual", pre_tokens: 120000 },
+          } as unknown as SDKMessage);
+        harness.query.emit({
+          type: "result",
+          subtype: "success",
+          is_error: false,
+          errors: [],
+          session_id: "sdk-session-1",
+          uuid: "result-1",
+        } as unknown as SDKMessage);
+        const events = Array.from(yield* Fiber.join(eventsFiber));
+        const completed = events.find((event) => event.type === "turn.completed");
+        assert.ok(completed?.type === "turn.completed");
+        assert.equal(completed.payload.state, confirmed ? "completed" : "failed");
+      }).pipe(
+        Effect.provideService(Random.Random, makeDeterministicRandomService()),
+        Effect.provide(harness.layer),
+      );
+    });
+  }
 
   it.effect("embeds image attachments in Claude user messages", () => {
     const baseDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "claude-attachments-"));

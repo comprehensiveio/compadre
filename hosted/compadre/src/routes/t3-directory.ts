@@ -1,3 +1,4 @@
+import { PROVIDER_ACTIONS, providerActionSchema, providerActionFromText } from "../t3/provider-actions.js";
 import { z } from "zod";
 import { nativeControlSchema, nativeWorkerControl } from "../t3/native-delivery.js";
 import type { NativeThreadDelivery } from "../t3/native-events.js";
@@ -432,7 +433,7 @@ export function createT3DirectoryRoutes(
 
   routes.get("/hosted/t3/providers/:provider/models", guarded(async (c) => {
     const provider = c.req.param("provider");
-    if (provider === "claude-code") return c.json(claudeProviderVersion);
+    if (provider === "claude-code") return c.json({ ...claudeProviderVersion, providerActions: ["compact"] });
     if (provider === "codex") return c.json(await (dependencies.discoverCodexModels ?? discoverProviderModels)());
     return c.json({ error: "unsupported provider" }, 400);
   }));
@@ -556,7 +557,7 @@ export function createT3DirectoryRoutes(
     return c.json({ result });
   }));
 
-  routes.post("/hosted/t3/chat", async (c) => {
+  routes.on("POST", ["/hosted/t3/chat", "/hosted/t3/actions"], async (c) => {
     if (!dependencies.enabled()) return c.notFound();
     const authError = requireCompadreApiKey(c);
     if (authError) return authError;
@@ -586,6 +587,15 @@ export function createT3DirectoryRoutes(
     }
     const text = await latestUserMessage(params.messages);
     if (!text) return c.json({ error: "a text user message is required" }, 400);
+    const parsedAction = providerActionSchema.optional().safeParse(params.forwardedProps.providerAction);
+    if (!parsedAction.success) return c.json({ error: "Invalid provider action" }, 400);
+    const providerAction = parsedAction.data ?? providerActionFromText(text);
+    if (c.req.path.endsWith("/actions") && !providerAction) {
+      return c.json({ error: "A provider action is required" }, 400);
+    }
+    if (providerAction && PROVIDER_ACTIONS[providerAction.type].provider !== provider) {
+      return c.json({ error: "This provider does not support the requested action" }, 400);
+    }
     const gateway = await dependencies.getGateway();
     if (!gateway) {
       return c.json({ error: "thread persistence requires durability" }, 503);
@@ -612,11 +622,14 @@ export function createT3DirectoryRoutes(
     if (!parsedInputFiles.success) {
       return c.json({ error: "forwardedProps.inputFiles is invalid" }, 400);
     }
+    if (providerAction && parsedInputFiles.data.length > 0) {
+      return c.json({ error: "Provider actions cannot include attachments" }, 400);
+    }
     const messageId = latestUserMessageId(params.messages);
     const forwardedProps = params.forwardedProps as typeof params.forwardedProps & {
       attribution?: unknown;
     };
-    const providerText = withTrustedRequesterContext(
+    const providerText = providerAction ? PROVIDER_ACTIONS[providerAction.type].command : withTrustedRequesterContext(
       text,
       forwardedProps.attribution,
     );
@@ -634,7 +647,7 @@ export function createT3DirectoryRoutes(
       );
     }
     const slackBinding =
-      process.env.COMPADRE_HOSTED_SLACK_DELIVERY_ENABLED !== "false" &&
+      !providerAction && process.env.COMPADRE_HOSTED_SLACK_DELIVERY_ENABLED !== "false" &&
       shouldMirrorNativeT3RunToSlack({
         messageId,
         attribution: forwardedProps.attribution,
@@ -652,6 +665,7 @@ export function createT3DirectoryRoutes(
           })
         : undefined;
     const runRequest: NativeT3RunRequest = {
+      ...(providerAction ? { providerAction } : {}),
       runId,
       runtimeMode: z.enum(["full-access", "approval-required", "auto-accept-edits", "auto"]).catch("full-access").parse(params.forwardedProps.runtimeMode),
       interactionMode: params.forwardedProps.interactionMode === "plan" ? "plan" : "default",
@@ -660,12 +674,12 @@ export function createT3DirectoryRoutes(
       title:
         nonEmptyString(params.forwardedProps.title, MAX_TITLE_LENGTH) ??
         "T3 thread",
-      text: artifactStore
+      text: artifactStore && !providerAction
         ? `${providerText}\n\n${OUTPUT_ARTIFACT_INSTRUCTIONS}`
         : providerText,
       modelSelection: selectedModel,
       inputFiles: parsedInputFiles.data,
-      ...(linkedSlackBinding
+      ...(linkedSlackBinding && !providerAction
         ? {
             blockedSlackDestination: {
               channelId: linkedSlackBinding.channelId,
@@ -696,7 +710,7 @@ export function createT3DirectoryRoutes(
             },
           }
         : {}),
-      collectArtifacts: Boolean(artifactStore),
+      collectArtifacts: Boolean(artifactStore) && !providerAction,
       createdAt: new Date().toISOString(),
     };
     await runService.startTurn(runRequest);

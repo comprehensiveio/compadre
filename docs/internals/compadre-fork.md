@@ -49,6 +49,10 @@ transport and orchestration, not a provider choice.
 
 ### Model discovery
 
+Harness operations use the [hosted provider action contract](hosted-provider-actions.md).
+Keep its capability discovery, typed dispatch, and native completion receipts
+intact when merging upstream actions; never route them through prompt decoration.
+
 The hosted provider snapshot refreshes through the normal T3 managed-provider
 lifecycle. It has no model allowlist. The controller's authenticated
 `GET /hosted/t3/providers/:provider/models` endpoint runs its pinned Codex CLI's

@@ -1,3 +1,4 @@
+import { type ProviderAction, ProviderActionsUnavailableError } from "./provider-actions.js";
 import { captureWorkspaceReview } from "./workspace-review-capture.js";
 import { reviewCheckpointForMessage, type T3OrchestrationSnapshot } from "./client.js";
 import { randomUUID } from "node:crypto";
@@ -38,6 +39,7 @@ import { appendSetupSteering } from "./run-control.js";
 import { NativeJournalUnavailableError } from "./native-events.js";
 
 export interface T3CommandClient {
+  requireProviderAction?: T3Client["requireProviderAction"];
   uploadAttachment?: T3Client["uploadAttachment"];
   readNativeAttachment?: T3Client["readNativeAttachment"];
   publishNativeOutput?: T3Client["publishNativeOutput"];
@@ -64,6 +66,7 @@ export interface T3CommandClient {
     signal?: AbortSignal;
   }): Promise<T3TurnDispatch>;
   startTurn(input: {
+    providerAction?: ProviderAction;
     threadId: string;
     messageId?: string;
     runtimeMode?: "full-access" | "approval-required" | "auto-accept-edits" | "auto";
@@ -553,15 +556,19 @@ export class T3Gateway {
     }
   }
 
-  /** Upgrade an idle pre-journal worker while retaining its native thread and filesystem. */
-  private async ensureNativeWorkerUnlocked(connected: { binding: T3ThreadBinding; environment: T3EnvironmentConnection }) {
+  /** Upgrade missing journal/action support while retaining the idle thread and filesystem. */
+  private async ensureNativeWorkerUnlocked(connected: { binding: T3ThreadBinding; environment: T3EnvironmentConnection }, action?: ProviderAction) {
     const { binding, environment } = connected;
     if (!environment.client.nativeEventPage) throw new Error("Worker client cannot check native event support");
     try {
       await environment.client.nativeEventPage({ threadId: binding.t3ThreadId, offset: "-1", head: true });
+      if (action) {
+        if (!environment.client.requireProviderAction) throw new ProviderActionsUnavailableError();
+        await environment.client.requireProviderAction(action);
+      }
       return connected;
     } catch (error) {
-      if (!(error instanceof NativeJournalUnavailableError)) throw error;
+      if (!(error instanceof NativeJournalUnavailableError) && !(error instanceof ProviderActionsUnavailableError)) throw error;
     }
     if (!this.environments.checkpoint || !this.environments.restore || !this.environments.discard ||
         !environment.client.shellSnapshot || !environment.client.stopSession) throw new Error("Worker upgrade is unavailable");
@@ -579,6 +586,10 @@ export class T3Gateway {
     try {
       if (!replacement.client.nativeEventPage) throw new Error("Restored worker cannot stream native events");
       await replacement.client.nativeEventPage({ threadId: binding.t3ThreadId, offset: "-1", head: true });
+      if (action) {
+        if (!replacement.client.requireProviderAction) throw new ProviderActionsUnavailableError();
+        await replacement.client.requireProviderAction(action);
+      }
     } catch (error) {
       await this.environments.discard(replacement).catch(() => undefined);
       throw error;
@@ -694,6 +705,7 @@ export class T3Gateway {
   }
 
   async send(input: {
+    providerAction?: ProviderAction;
     runId?: string;
     runtimeMode?: "full-access" | "approval-required" | "auto-accept-edits" | "auto";
     interactionMode?: "default" | "plan";
@@ -727,6 +739,7 @@ export class T3Gateway {
   }
 
   private async sendUnlocked(input: {
+    providerAction?: ProviderAction;
     runId?: string;
     runtimeMode?: "full-access" | "approval-required" | "auto-accept-edits" | "auto";
     interactionMode?: "default" | "plan";
@@ -776,7 +789,7 @@ export class T3Gateway {
       } catch (error) {
         if (
           !(error instanceof T3EnvironmentUnavailableError) ||
-          existing.workerSnapshotId
+          existing.workerSnapshotId || input.providerAction
         ) {
           throw error;
         }
@@ -798,11 +811,12 @@ export class T3Gateway {
           existing,
         );
       }
-      if (input.beforeDispatch) connected = await this.ensureNativeWorkerUnlocked(connected);
+      if (input.beforeDispatch || input.providerAction) connected = await this.ensureNativeWorkerUnlocked(connected, input.providerAction);
       const environment = connected.environment;
       await input.beforeDispatch?.(connected);
       await this.prepareCodexAuth(environment, connected.binding, input.runId);
       const dispatch = await environment.client.startTurn({
+        ...(input.providerAction ? { providerAction: input.providerAction } : {}),
         runtimeMode: input.runtimeMode, interactionMode: input.interactionMode,
         ...(input.beforeDispatch && input.runId ? { commandId: `native-turn:${input.runId}`, messageId: `native-user:${input.runId}`, createdAt: input.createdAt } : {}),
         threadId: connected.binding.t3ThreadId,
@@ -826,6 +840,7 @@ export class T3Gateway {
       return { binding: updated, dispatch };
     }
 
+    if (input.providerAction) throw new Error("Provider actions require an existing conversation.");
     return this.provisionTurn(input);
   }
 

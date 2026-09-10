@@ -1,3 +1,4 @@
+import { providerActionRoutes } from "./compadre/ProviderActionRoutes.ts";
 import { NativeThreadControlsLive } from "./compadre/NativeThreadControls.ts";
 import { nativeThreadEventRoutes } from "./compadre/NativeThreadEventRoutes.ts";
 import { EnvironmentHttpApi } from "@t3tools/contracts";
@@ -481,6 +482,7 @@ export const makeRoutesLayer = Layer.mergeAll(
     compadreBackupRouteLayer,
     compadreOperationsRouteLayer,
     nativeThreadEventRoutes.pipe(Layer.provide(PersistenceLayerConfigLive)),
+    providerActionRoutes,
     compadrePreviewsRouteLayer,
     compadreTriggeredPromptsRouteLayer,
     staticAndDevRouteLayer,
