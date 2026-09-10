@@ -38,6 +38,7 @@ import {
 import { appendSetupSteering } from "./run-control.js";
 
 export interface T3CommandClient {
+  nativeEventPage?: T3Client["nativeEventPage"];
   createThread?(input: {
     threadId?: string;
     projectId: string;

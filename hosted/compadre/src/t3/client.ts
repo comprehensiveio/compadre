@@ -1,3 +1,4 @@
+import { readNativeEventPage } from "./native-events.js";
 import { WorkerTerminalRpc } from "./terminal-rpc.js";
 import { randomUUID } from "node:crypto";
 import { log } from "../logging.js";
@@ -492,6 +493,10 @@ export class T3Client {
     this.idFactory = options.idFactory ?? randomUUID;
     this.now = options.now ?? (() => new Date());
     this.timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+  }
+
+  nativeEventPage(input: { threadId: string; offset: string; live?: boolean; head?: boolean; signal?: AbortSignal }) {
+    return readNativeEventPage({ ...input, baseUrl: this.baseUrl, accessToken: this.accessToken, fetch: this.fetch });
   }
 
   private async request<T>(

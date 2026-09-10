@@ -66,10 +66,11 @@ one row (`singleton_id = 1`) declaring both its `schema_version` and a
 recorded migration. Older schemas, missing declarations for newer schemas, and
 stale or invalid declarations prevent startup.
 
-The compatibility table is not introduced by the startup-check change. The
-first future migration that needs an older application to remain usable must
-create it, then maintain its declaration in the same transaction as the schema
-change and migration record. Subsequent migrations must update it even when
+PostgreSQL migration 2 adds the native delivery binding table and introduces
+the compatibility declaration with schema version 2 and minimum application
+version 1. SQLite migration 45 adds the same binding table. The declaration is
+written in the same transaction as the schema change and migration record.
+Subsequent migrations must update it even when
 they preserve the minimum application version. Compatibility covers old writes,
 queries, and persisted event shapes, not just whether added columns are nullable.
 Raise the minimum version when old application behavior is no longer supported.

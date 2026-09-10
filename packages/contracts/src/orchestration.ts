@@ -1184,12 +1184,6 @@ const InternalOrchestrationCommand = Schema.Union([
 ]);
 export type InternalOrchestrationCommand = typeof InternalOrchestrationCommand.Type;
 
-export const OrchestrationCommand = Schema.Union([
-  DispatchableClientOrchestrationCommand,
-  InternalOrchestrationCommand,
-]);
-export type OrchestrationCommand = typeof OrchestrationCommand.Type;
-
 export const OrchestrationEventType = Schema.Literals([
   "project.created",
   "project.meta-updated",
@@ -1639,6 +1633,22 @@ export const OrchestrationEvent = Schema.Union([
   }),
 ]);
 export type OrchestrationEvent = typeof OrchestrationEvent.Type;
+
+// Internal only: hosted replication never enters through client command dispatch.
+export const NativeThreadEventApplyCommand = Schema.Struct({
+  sourceThreadId: ThreadId,
+  epoch: Schema.Number.check(Schema.isInt(), Schema.isGreaterThanOrEqualTo(1)),
+  type: Schema.Literal("thread.native-event.apply"),
+  commandId: CommandId,
+  threadId: ThreadId,
+  event: OrchestrationEvent,
+});
+export const OrchestrationCommand = Schema.Union([
+  DispatchableClientOrchestrationCommand,
+  InternalOrchestrationCommand,
+  NativeThreadEventApplyCommand,
+]);
+export type OrchestrationCommand = typeof OrchestrationCommand.Type;
 
 export const OrchestrationThreadStreamItem = Schema.Union([
   Schema.Struct({

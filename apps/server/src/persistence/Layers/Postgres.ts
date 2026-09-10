@@ -9,6 +9,7 @@ import * as Reactivity from "effect/unstable/reactivity/Reactivity";
 import * as Migrator from "effect/unstable/sql/Migrator";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 
+import migration002NativeThreadStreams from "../Migrations/045_NativeThreadStreams.ts";
 import { migration001Initial } from "../CompadrePostgresSchema.ts";
 import {
   POSTGRES_MIGRATION_LOCK_KEY,
@@ -16,11 +17,23 @@ import {
 } from "../PostgresSchemaCompatibility.ts";
 import { PersistenceBackend, PersistenceReadClient } from "../Services/PersistenceBackend.ts";
 
-export const POSTGRES_SCHEMA_VERSION = 1;
-export const SQLITE_SCHEMA_VERSION = 44;
+export const POSTGRES_SCHEMA_VERSION = 2;
+export const SQLITE_SCHEMA_VERSION = 45;
 
 const migrate = Migrator.make({})({
-  loader: Migrator.fromRecord({ "1_compadre_initial": migration001Initial }),
+  loader: Migrator.fromRecord({
+    "1_compadre_initial": migration001Initial,
+    "2_native_thread_streams": Effect.gen(function* () {
+      yield* migration002NativeThreadStreams;
+      const sql = yield* SqlClient.SqlClient;
+      yield* sql`CREATE TABLE compadre_t3_schema_compatibility (
+      singleton_id SMALLINT PRIMARY KEY CHECK (singleton_id = 1),
+      schema_version INTEGER NOT NULL,
+      minimum_app_schema_version INTEGER NOT NULL
+    )`;
+      yield* sql`INSERT INTO compadre_t3_schema_compatibility VALUES (1, 2, 1)`;
+    }),
+  }),
   table: "compadre_t3_migrations",
 });
 

@@ -16,7 +16,7 @@ import { makeTestPostgresPersistence } from "../PostgresTest.ts";
 const postgresUrl = process.env.COMPADRE_T3_POSTGRES_TEST_URL;
 
 describe.runIf(postgresUrl)("PostgreSQL persistence", () => {
-  const PersistenceLive = makeTestPostgresPersistence(postgresUrl!);
+  const PersistenceLive = () => makeTestPostgresPersistence(postgresUrl!);
 
   it.effect("creates the full projection and auth schema", () =>
     Effect.gen(function* () {
@@ -50,8 +50,14 @@ describe.runIf(postgresUrl)("PostgreSQL persistence", () => {
         FROM compadre_t3_migrations
         ORDER BY migration_id
       `;
-      assert.deepEqual([...migrations], [{ migrationId: 1, name: "compadre_initial" }]);
-    }).pipe(Effect.provide(PersistenceLive)),
+      assert.deepEqual(
+        [...migrations],
+        [
+          { migrationId: 1, name: "compadre_initial" },
+          { migrationId: 2, name: "native_thread_streams" },
+        ],
+      );
+    }).pipe(Effect.provide(PersistenceLive())),
   );
 
   it.effect("does not reapply a completed migration", () =>
@@ -69,7 +75,7 @@ describe.runIf(postgresUrl)("PostgreSQL persistence", () => {
         WHERE migration_id = 1
       `;
       assert.deepEqual([...after], [...before]);
-    }).pipe(Effect.provide(PersistenceLive)),
+    }).pipe(Effect.provide(PersistenceLive())),
   );
 
   it.effect("supports the SQLite JSON query contract", () =>
@@ -79,7 +85,7 @@ describe.runIf(postgresUrl)("PostgreSQL persistence", () => {
         SELECT json_extract('{"requestId":"request-1"}', '$.requestId') AS "requestId"
       `;
       assert.deepEqual([...rows], [{ requestId: "request-1" }]);
-    }).pipe(Effect.provide(PersistenceLive)),
+    }).pipe(Effect.provide(PersistenceLive())),
   );
 
   it.effect("locks one orchestration key without blocking another key", () =>
@@ -111,7 +117,7 @@ describe.runIf(postgresUrl)("PostgreSQL persistence", () => {
 
       yield* Deferred.succeed(releaseFirst, undefined);
       yield* Fiber.join(first);
-    }).pipe(Effect.provide(PersistenceLive), Effect.scoped),
+    }).pipe(Effect.provide(PersistenceLive()), Effect.scoped),
   );
 
   it.effect("serializes two transactions that lock the same orchestration key", () =>
@@ -150,7 +156,7 @@ describe.runIf(postgresUrl)("PostgreSQL persistence", () => {
       yield* Fiber.join(first);
       yield* Deferred.await(secondLocked);
       yield* Fiber.join(second);
-    }).pipe(Effect.provide(PersistenceLive), Effect.scoped),
+    }).pipe(Effect.provide(PersistenceLive()), Effect.scoped),
   );
 
   it.effect("rolls back an event and projection together", () =>
@@ -202,7 +208,7 @@ describe.runIf(postgresUrl)("PostgreSQL persistence", () => {
         WHERE project_id = 'rollback-project'
       `;
       assert.deepEqual([...projects], [{ count: 0 }]);
-    }).pipe(Effect.provide(PersistenceLive)),
+    }).pipe(Effect.provide(PersistenceLive())),
   );
   it.effect("reserves command connections even when every UI read connection is occupied", () =>
     Effect.gen(function* () {
@@ -227,7 +233,7 @@ describe.runIf(postgresUrl)("PostgreSQL persistence", () => {
       assert.strictEqual(rows[0]?.alive, 1);
       yield* Deferred.succeed(release, undefined);
       yield* Fiber.join(busy);
-    }).pipe(Effect.provide(PersistenceLive), Effect.scoped),
+    }).pipe(Effect.provide(PersistenceLive()), Effect.scoped),
   );
 
   it.effect("fails closed for a missing database", () => {
@@ -268,12 +274,13 @@ describe.runIf(postgresUrl)("PostgreSQL persistence", () => {
               for (const table of [
                 ...CENTRAL_SQLITE_TABLES,
                 "compadre_t3_migrations",
+                "compadre_t3_schema_compatibility",
                 "orchestration_commit_order",
                 "compadre_t3_attachment_objects",
               ]) {
                 yield* sql`DROP TABLE ${sql(table)} CASCADE`;
               }
-              assert.strictEqual((yield* runPostgresMigrations).length, 1);
+              assert.strictEqual((yield* runPostgresMigrations).length, 2);
               assert.strictEqual((yield* runPostgresMigrations).length, 0);
               const namespace = yield* sql<{ name: string }>`SELECT current_schema() AS name`;
               assert.strictEqual(namespace[0]?.name, "compadre_t3");
@@ -295,6 +302,6 @@ describe.runIf(postgresUrl)("PostgreSQL persistence", () => {
               error === "rollback-controller-fixture" ? Effect.void : Effect.fail(error),
             ),
           );
-      }).pipe(Effect.provide(PersistenceLive)),
+      }).pipe(Effect.provide(PersistenceLive())),
   );
 });
