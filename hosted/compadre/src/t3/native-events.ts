@@ -6,10 +6,11 @@ const offsetSchema = z.string().regex(/^\d{20}$/).refine((value) => Number.isSaf
 const stateSchema = z.object({
   version: z.literal(1), canonicalThreadId: z.string().min(1), sourceThreadId: z.string().min(1),
   epoch: z.number().int().positive(), sandboxId: z.string().min(1),
+  runId: z.string().optional(),
   offset: offsetSchema, startOffset: offsetSchema, checkpointOffset: z.number().int().nonnegative(),
 });
 export type NativeDeliveryState = z.infer<typeof stateSchema>;
-export interface NativeEventPage { events: unknown[]; nextOffset: string; upToDate: boolean; }
+export interface NativeEventPage { events: unknown[]; nextOffset: string; upToDate: boolean; backgroundLiveness?: "working" | "monitoring" | null; sessionStatus?: string; }
 const NAMESPACE = "compadre.t3.native-delivery.v1";
 
 /** The worker writes its own T3 journal; this is the Durable Streams read path. */
@@ -31,7 +32,10 @@ export async function readNativeEventPage(input: {
   if (!input.head && input.offset !== "-1" && nextOffset < input.offset) throw new Error("Worker journal offset moved backwards; reconcile its generation");
   const events = input.head ? [] : z.array(z.unknown()).max(128).parse(await response.json());
   if (events.length > 0 && nextOffset === input.offset) throw new Error("Worker journal did not advance");
-  return { events, nextOffset, upToDate: input.head || response.headers.get("stream-up-to-date") === "true" };
+  const background = response.headers.get("x-compadre-background-liveness");
+  return { events, nextOffset, ...(response.headers.get("x-compadre-session-status") ? { sessionStatus: response.headers.get("x-compadre-session-status")! } : {}), upToDate: input.head || response.headers.get("stream-up-to-date") === "true",
+    ...(background === "working" || background === "monitoring" ? { backgroundLiveness: background } : background === "none" ? { backgroundLiveness: null } : {}),
+  };
 }
 
 export class NativeThreadDelivery {
@@ -61,6 +65,7 @@ export class NativeThreadDelivery {
       if (current && current.epoch === state.epoch) {
         if (current.sourceThreadId !== state.sourceThreadId || current.sandboxId !== state.sandboxId || current.startOffset !== state.startOffset ||
             current.checkpointOffset !== state.checkpointOffset) throw new Error("Conflicting native delivery claim");
+        if (state.runId && current.runId !== state.runId) await this.metadata.set(NAMESPACE, state.canonicalThreadId, { ...current, runId: state.runId });
         await this.sink.bind(current, signal);
         return;
       }

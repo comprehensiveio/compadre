@@ -277,10 +277,17 @@ test("hands one subscription lane between workers while concurrent work stays on
     false,
     "a stale finalizer must not stop a newer steer",
   );
-  await gateway.releaseCodexAuth({
-    canonicalThreadId: "owner",
-    runId: "run-steer",
-  });
+  let backgroundLiveness: "working" | null = "working";
+  let sessionStatus = "ready";
+  workers.get("owner")!.connection.client.nativeEventPage = async () => ({ events: [], nextOffset: "00000000000000000009", upToDate: true, backgroundLiveness, sessionStatus });
+  await gateway.releaseCodexAuth({ canonicalThreadId: "owner", runId: "run-steer", nativeDelivery: true });
+  assert.equal(workers.get("owner")!.stopped, false, "parent EOF must not stop live native children");
+  backgroundLiveness = null;
+  sessionStatus = "running";
+  await gateway.releaseCodexAuth({ canonicalThreadId: "owner", runId: "run-steer", nativeDelivery: true });
+  assert.equal(workers.get("owner")!.stopped, false, "a continuation must retain its provider");
+  sessionStatus = "ready";
+  await gateway.releaseCodexAuth({ canonicalThreadId: "owner", runId: "run-steer", nativeDelivery: true });
   assert.equal(workers.get("owner")!.stopped, true);
   assert.equal(
     workers.get("owner")!.files.get("/home/node/.codex/compadre-auth-route"),

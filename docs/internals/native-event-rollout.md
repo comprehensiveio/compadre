@@ -49,7 +49,9 @@ transport mode, so SSE reconnects cannot change modes during a rollout.
 
 A per-thread Temporal workflow follows the worker journal independently of run
 completion. A stopped controller retries from its acknowledged cursor; a newer
-worker epoch ends the old consumer. Confirmed worker loss sends a fenced native
+worker epoch ends the old consumer. Codex subscription cleanup waits for a native
+provider completion with no live background work or running continuation; parent
+EOF alone no longer stops that provider. Confirmed worker loss sends a fenced native
 session closure to central T3. Transient connection failures retry.
 
 Question responses, approvals, interrupts and session stops route using the

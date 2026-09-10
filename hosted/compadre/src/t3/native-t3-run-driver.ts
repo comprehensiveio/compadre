@@ -111,6 +111,7 @@ export interface NativeT3DriverGateway {
   releaseCodexAuth?(input: {
     canonicalThreadId: string;
     runId: string;
+    nativeDelivery?: boolean;
   }): Promise<void>;
 }
 
@@ -371,8 +372,9 @@ export async function driveNativeT3Run(
       ...(error ? { error } : {}),
     });
     await stream.close();
-    await deps.gateway
+    if (!request.nativeDelivery || status !== "completed") await deps.gateway
       .releaseCodexAuth?.({
+        nativeDelivery: request.nativeDelivery,
         canonicalThreadId: request.canonicalThreadId,
         runId,
       })
@@ -935,6 +937,7 @@ export async function finalizeNativeT3Run(
           : ("error" as const);
     await deps.gateway
       ?.releaseCodexAuth?.({
+        nativeDelivery: request.nativeDelivery,
         canonicalThreadId: request.canonicalThreadId,
         runId,
       })

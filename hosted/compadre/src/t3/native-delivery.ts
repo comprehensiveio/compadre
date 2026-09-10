@@ -32,7 +32,7 @@ export async function prepareNativeDelivery(input: {
   const current = await input.delivery.get(binding.canonicalThreadId);
   let state: NativeDeliveryState;
   if (current && current.sandboxId === binding.sandboxId && current.sourceThreadId === binding.t3ThreadId) {
-    state = current;
+    state = { ...current, runId: input.request.runId };
   } else {
     const head = await environment.client.nativeEventPage({ threadId: binding.t3ThreadId, offset: "-1", head: true });
     const restoredJournal = current?.sourceThreadId === binding.t3ThreadId;
@@ -47,7 +47,7 @@ export async function prepareNativeDelivery(input: {
     // A restored journal can lag the last acknowledgement. Replay its retained
     // prefix; central command receipts retain all already accepted output.
     const startOffset = current ? "00000000000000000000" : head.nextOffset;
-    state = { version: 1, canonicalThreadId: binding.canonicalThreadId,
+    state = { version: 1, runId: input.request.runId, canonicalThreadId: binding.canonicalThreadId,
       sourceThreadId: binding.t3ThreadId, sandboxId: binding.sandboxId,
       epoch: current ? current.epoch + 1 : (binding.workerGeneration ?? 1),
       startOffset, offset: startOffset, checkpointOffset };

@@ -82,7 +82,8 @@ const read = Effect.gen(function* () {
   const { threadId, after } = decoded.value;
   const engine = yield* OrchestrationEngineService;
   const query = yield* ProjectionSnapshotQuery;
-  if (Option.isNone(yield* query.getThreadShellById(threadId))) {
+  const shell = yield* query.getThreadShellById(threadId);
+  if (Option.isNone(shell)) {
     return HttpServerResponse.empty({ status: 404 });
   }
   const tail = yield* engine.latestSequence;
@@ -93,6 +94,8 @@ const read = Effect.gen(function* () {
         ...headers,
         "content-type": "application/json",
         "stream-next-offset": nativeOffset(tail),
+        "x-compadre-background-liveness": shell.value.backgroundLiveness ?? "none",
+        "x-compadre-session-status": shell.value.session?.status ?? "idle",
       },
     });
   if (after > tail)

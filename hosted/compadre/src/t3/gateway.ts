@@ -1068,12 +1068,22 @@ export class T3Gateway {
   async releaseCodexAuth(input: {
     canonicalThreadId: string;
     runId: string;
+    nativeDelivery?: boolean;
   }): Promise<void> {
     if (!this.codexSubscriptionLane?.enabled) return;
     await this.locks.withLock(
       this.lockKey(input.canonicalThreadId),
       async (signal) => {
         if (signal.aborted) throw signal.reason;
+        if (input.nativeDelivery) {
+          const binding = await this.bindings.get(input.canonicalThreadId);
+          if (binding) {
+            const environment = await this.environments.reconnect(binding);
+            const head = await environment.client.nativeEventPage?.({ threadId: binding.t3ThreadId, offset: "-1", head: true });
+            // Missing capability is conservative: never stop a provider that may own live children.
+            if (!head || head.backgroundLiveness !== null || !["ready", "stopped", "error"].includes(head.sessionStatus ?? "")) return;
+          }
+        }
         await this.releaseCodexAuthUnlocked(input);
       },
     );

@@ -275,6 +275,14 @@ export async function deliverNativeThreadEventsActivity(input: { threadId: strin
       prepare: (current, events, signal) => copyNativeAttachments({ metadata: persistence.persistence.stores.metadata, worker: client, central, sourceThreadId: current.sourceThreadId, events, signal }),
       read: (current, signal) => client.nativeEventPage!({ threadId: current.sourceThreadId, offset: current.offset, live: true, signal }),
     });
+    if (state.runId && page.events.some((event) => {
+      if (!event || typeof event !== "object" || !("type" in event) || event.type !== "thread.activity-appended" || !("payload" in event)) return false;
+      const payload = event.payload;
+      return Boolean(payload && typeof payload === "object" && "activity" in payload && payload.activity &&
+        typeof payload.activity === "object" && "kind" in payload.activity && payload.activity.kind === "provider.turn.completed");
+    })) await gateway.releaseCodexAuth({ canonicalThreadId: input.threadId, runId: state.runId, nativeDelivery: true }).catch((error) => {
+      console.warn("[native-delivery] Codex auth release retained for safety", { threadId: input.threadId, error: error instanceof Error ? error.name : "UnknownError" });
+    });
     context.heartbeat({ threadId: input.threadId, epoch: input.epoch, offset: page.nextOffset });
   }
   return "continue";
