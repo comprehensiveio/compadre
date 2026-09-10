@@ -122,7 +122,7 @@ type WaitBehavior = (input: {
   signal?: AbortSignal;
 }) => Promise<T3ThreadSnapshot>;
 
-function fakeGateway(waitBehaviors: WaitBehavior[]) {
+function fakeGateway(waitBehaviors: WaitBehavior[], workerBinding = binding) {
   const calls = {
     sends: 0,
     resumes: 0,
@@ -136,7 +136,7 @@ function fakeGateway(waitBehaviors: WaitBehavior[]) {
     async send(input) {
       calls.sends += 1;
       calls.setupSteering.push(...(await input.loadInitialSteering?.() ?? []));
-      return { binding, dispatch } satisfies T3GatewayTurn;
+      return { binding: workerBinding, dispatch } satisfies T3GatewayTurn;
     },
     async steer(input) {
       calls.liveSteering.push(input.text);
@@ -145,7 +145,7 @@ function fakeGateway(waitBehaviors: WaitBehavior[]) {
     async resumeTurn(canonicalThreadId, resumedDispatch) {
       calls.resumes += 1;
       assert.equal(canonicalThreadId, "thread-1");
-      return { binding, dispatch: resumedDispatch };
+      return { binding: workerBinding, dispatch: resumedDispatch };
     },
     async waitForTerminal(input) {
       const behavior = waitBehaviors[calls.waits];
@@ -166,7 +166,7 @@ function fakeGateway(waitBehaviors: WaitBehavior[]) {
   return { gateway, calls };
 }
 
-async function harness(runId: string, waitBehaviors: WaitBehavior[]) {
+async function harness(runId: string, waitBehaviors: WaitBehavior[], workerBinding = binding) {
   const durability = await createAgentRunDurability({
     COMPADRE_DURABILITY_BACKEND: "memory",
   });
@@ -174,7 +174,7 @@ async function harness(runId: string, waitBehaviors: WaitBehavior[]) {
   const metadata = memoryMetadata();
   const requests = new NativeT3RunRequestStore(metadata);
   const controls = new NativeT3RunControlStore(metadata, new InMemoryLockStore());
-  const { gateway, calls } = fakeGateway(waitBehaviors);
+  const { gateway, calls } = fakeGateway(waitBehaviors, workerBinding);
   const request: NativeT3RunRequest = {
     runId,
     canonicalThreadId: "thread-1",
@@ -543,13 +543,15 @@ test("a watch failure with no durable progress fails the attempt for retry", asy
 });
 
 
-test("a confirmed-dead worker terminalizes the run promptly instead of burning retries", async (t) => {
+for (const workerSnapshotId of [undefined, "im-saved-workspace"]) {
+test(`a confirmed-dead worker terminalizes promptly ${workerSnapshotId ? "with" : "without"} a saved workspace`, async (t) => {
   const deadBehavior = async () => {
     throw new T3EnvironmentUnavailableError("sandbox-1");
   };
   const { durability, requests, gateway, calls, chunks, runId } = await harness(
-    "run-worker-lost",
+    `run-worker-lost-${workerSnapshotId ?? "empty"}`,
     [deadBehavior, deadBehavior, deadBehavior, deadBehavior, deadBehavior, deadBehavior],
+    { ...binding, ...(workerSnapshotId ? { workerSnapshotId } : {}) },
   );
   t.after(() => durability.close());
 
@@ -568,6 +570,8 @@ test("a confirmed-dead worker terminalizes the run promptly instead of burning r
   assert.equal(terminal?.code, "NATIVE_T3_WORKER_LOST");
   assert.equal((await durability.runs.get(runId))?.status, "failed");
 });
+
+}
 
 test("native delivery stores only lifecycle receipts while the worker owns the conversation", async (t) => {
   const h = await harness("native-only", [async ({ onSnapshot }) => {

@@ -1506,10 +1506,8 @@ export class T3Gateway {
   }
 
   /**
-   * Park a binding whose worker is confirmed gone without a restorable
-   * checkpoint, so the next turn replaces the worker. No-ops when the
-   * sandbox changed or a checkpoint exists (those recover through the
-   * normal paths).
+   * Park the confirmed dead sandbox while retaining its checkpoint for the
+   * next turn. A newer sandbox binding must never be parked by an old driver.
    */
   async markWorkerLost(
     canonicalThreadId: string,
@@ -1520,7 +1518,7 @@ export class T3Gateway {
       async (signal) => {
         if (signal.aborted) throw signal.reason;
         const binding = await this.bindings.get(canonicalThreadId);
-        if (!binding || binding.workerSnapshotId) return;
+        if (!binding) return;
         if (expectedSandboxId && binding.sandboxId !== expectedSandboxId) {
           return;
         }
