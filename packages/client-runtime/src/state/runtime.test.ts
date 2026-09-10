@@ -113,6 +113,7 @@ const makeEnvironmentQueryHarness = Effect.fn("TestEnvironmentQuery.makeHarness"
 
   return {
     atom: family({ environmentId: QUERY_ENVIRONMENT.environmentId, input: undefined }),
+    family,
     supervisorSession,
     supervisorState,
   };
@@ -130,6 +131,42 @@ const mountEnvironmentQuery = Effect.fn("TestEnvironmentQuery.mount")(function* 
     }),
   );
   return registry;
+});
+
+describe("versioned query cache", () => {
+  it.effect("loads a published review after the same range failed before publication", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        let published = false;
+        let calls = 0;
+        const harness = yield* makeEnvironmentQueryHarness(
+          Effect.suspend(() => {
+            calls++;
+            return published
+              ? Effect.succeed("+verified change")
+              : Effect.fail(new TestQueryError({ message: "Review not published" }));
+          }),
+        );
+        const target = { environmentId: QUERY_ENVIRONMENT.environmentId, input: undefined };
+        const pending = harness.family({ ...target, cacheScope: "checkpoint:missing" });
+        const registry = yield* mountEnvironmentQuery(pending);
+        const failed = yield* Effect.exit(
+          AtomRegistry.getResult(registry, pending, { suspendOnWaiting: true }),
+        );
+        expect(Exit.isFailure(failed)).toBe(true);
+        published = true;
+        const ready = harness.family({ ...target, cacheScope: "compadre-review:published" });
+        expect(ready).not.toBe(pending);
+        expect(harness.family({ ...target, cacheScope: "compadre-review:published" })).toBe(ready);
+        const unmount = registry.mount(ready);
+        yield* Effect.addFinalizer(() => Effect.sync(unmount));
+        expect(yield* AtomRegistry.getResult(registry, ready, { suspendOnWaiting: true })).toBe(
+          "+verified change",
+        );
+        expect(calls).toBe(2);
+      }),
+    ),
+  );
 });
 
 describe("settleAsyncResult", () => {

@@ -281,6 +281,7 @@ export function useCheckpointDiff(target: CheckpointDiffTarget) {
     () => buildCheckpointDiffTargets(target),
     [
       target.environmentId,
+      target.cacheScope,
       target.fromTurnCount,
       target.ignoreWhitespace,
       target.threadId,

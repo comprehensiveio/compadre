@@ -9,6 +9,24 @@ describe("appQueries", () => {
     expect(normalizeComposerPathSearchQuery(null)).toBe("");
   });
 
+  it("keeps checkpoint revisions in the cache target and out of the RPC input", () => {
+    const target = {
+      environmentId: EnvironmentId.make("environment-a"),
+      threadId: ThreadId.make("thread-a"),
+      fromTurnCount: 0,
+      toTurnCount: 1,
+      ignoreWhitespace: false,
+      cacheScope: "compadre-review:published",
+    };
+    expect(buildCheckpointDiffTargets(target).turn).toMatchObject({
+      cacheScope: target.cacheScope,
+    });
+    expect(buildCheckpointDiffTargets(target).turn?.input).not.toHaveProperty("cacheScope");
+    expect(buildCheckpointDiffTargets({ ...target, toTurnCount: 2 }).fullThread).toMatchObject({
+      cacheScope: target.cacheScope,
+    });
+  });
+
   it("routes cumulative ranges through the full-thread diff query", () => {
     const environmentId = EnvironmentId.make("environment-a");
     const threadId = ThreadId.make("thread-a");

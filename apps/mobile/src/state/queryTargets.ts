@@ -6,6 +6,7 @@ export interface CheckpointDiffTarget {
   readonly fromTurnCount: number | null;
   readonly toTurnCount: number | null;
   readonly ignoreWhitespace: boolean;
+  readonly cacheScope?: string | null;
 }
 
 export function normalizeComposerPathSearchQuery(query: string | null): string {
@@ -26,6 +27,7 @@ export function buildCheckpointDiffTargets(target: CheckpointDiffTarget) {
     return {
       fullThread: {
         environmentId: target.environmentId,
+        ...(target.cacheScope == null ? {} : { cacheScope: target.cacheScope }),
         input: {
           threadId: target.threadId,
           toTurnCount: target.toTurnCount,
@@ -40,6 +42,7 @@ export function buildCheckpointDiffTargets(target: CheckpointDiffTarget) {
     fullThread: null,
     turn: {
       environmentId: target.environmentId,
+      ...(target.cacheScope == null ? {} : { cacheScope: target.cacheScope }),
       input: {
         threadId: target.threadId,
         fromTurnCount: target.fromTurnCount,
