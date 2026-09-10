@@ -179,6 +179,7 @@ function authorized(body?: unknown): RequestInit {
     ...(body === undefined ? {} : { method: "POST", body: JSON.stringify(body) }),
     headers: {
       Authorization: `Bearer ${process.env.COMPADRE_API_KEY}`,
+      "x-compadre-native-delivery": "1",
       ...(body === undefined ? {} : { "Content-Type": "application/json" }),
     },
   };
@@ -244,10 +245,10 @@ async function main() {
   console.log("[probe] starting Temporal worker...");
   const worker = await startNativeT3TemporalWorker();
   try {
-    // Scenario 1: crash mid-watch, Temporal retries, projection resumes.
+    // Scenario 1: crash mid-watch, Temporal retries, lifecycle observation resumes.
     {
       const { gateway, state } = probeGateway("retry-then-complete");
-      setNativeT3RunDriverDependenciesForTests({ gateway, durability, requests });
+      setNativeT3RunDriverDependenciesForTests({ gateway, durability, requests, prepareNativeDelivery: async () => {} });
       const runId = `probe-run-${crypto.randomUUID()}`;
       const threadId = `probe-thread-${crypto.randomUUID()}`;
       console.log(`[probe] scenario 1: runId=${runId}`);
@@ -265,13 +266,13 @@ async function main() {
       assert.equal(state.sends, 1, "worker turn dispatched exactly once");
       assert.ok(state.waits >= 2, `expected a Temporal retry, saw ${state.waits} watch attempts`);
       assert.equal(types.filter((type) => type === EventType.RUN_STARTED).length, 1);
-      assert.equal(types.filter((type) => type === EventType.TEXT_MESSAGE_START).length, 1);
+      assert.equal(types.filter((type) => type === EventType.TEXT_MESSAGE_START).length, 0);
       assert.equal(types.filter((type) => type === EventType.RUN_FINISHED).length, 1);
       const text = events
         .filter((event) => event.type === EventType.TEXT_MESSAGE_CONTENT)
         .map((event) => event.delta)
         .join("");
-      assert.equal(text, "Reliability is a durable workflow.");
+      assert.equal(text, "", "native conversations never enter the lifecycle log");
       const run = await durability.runs.get(runId);
       assert.equal(run?.status, "completed");
       console.log("[probe] scenario 1 passed: retry resumed without duplication");
@@ -280,7 +281,7 @@ async function main() {
     // Scenario 2: cancellation through the workflow.
     {
       const { gateway, state } = probeGateway("hang-until-cancel");
-      setNativeT3RunDriverDependenciesForTests({ gateway, durability, requests });
+      setNativeT3RunDriverDependenciesForTests({ gateway, durability, requests, prepareNativeDelivery: async () => {} });
       const runId = `probe-run-${crypto.randomUUID()}`;
       const threadId = `probe-thread-${crypto.randomUUID()}`;
       console.log(`[probe] scenario 2: runId=${runId}`);
