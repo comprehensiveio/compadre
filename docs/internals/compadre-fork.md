@@ -159,7 +159,9 @@ central server's `CompadreReview` adapter reads them without accessing Modal.
 Web/desktop and mobile diff queries include the selected checkpoint revision in
 their local cache identity. A later saved-review publication replaces an early
 unavailable result without requiring a page reload; this revision is not sent
-in the RPC payload.
+in the RPC payload. Hosted branch and working-tree views likewise follow the
+latest checkpoint revision, since its saved review can arrive after the native
+turn-completion event.
 
 The hosted terminal direct transport adds `terminal.connection` to the shared
 contract, `terminal/DirectTerminal.ts` to the worker HTTP routes and RPC handler,
