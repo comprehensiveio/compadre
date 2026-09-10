@@ -53,7 +53,13 @@ session closure to central T3. Transient connection failures retry.
 Question responses, approvals, interrupts and session stops route using the
 persisted central binding, without an in-memory Compadre adapter session.
 The per-thread consumer publishes files and reviews from native checkpoint
-completion, including checkpoints after the parent run ends. Publication happens
+completion, including checkpoints after the parent run ends. Native background
+task completion also collects files for the task's owning turn: Codex children
+can finish after the parent checkpoint without starting another parent turn.
+This emits ordinary native attachment messages without inventing a provider
+response or a new workspace review. On consumer catch-up, a quiescent completed
+worker is checked once for unpublished files, repairing missed completion edges.
+Publication happens
 before acknowledging that source page, using stable per-turn IDs on retries.
 Files are uploaded to the worker and become native assistant-completion commands;
 the consumer copies attachment objects to central storage before acknowledging
