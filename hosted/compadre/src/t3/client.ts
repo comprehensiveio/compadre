@@ -1,3 +1,4 @@
+import { type ProviderAction, ProviderActionsUnavailableError } from "./provider-actions.js";
 import { readNativeEventPage } from "./native-events.js";
 import { WorkerTerminalRpc } from "./terminal-rpc.js";
 import { randomUUID } from "node:crypto";
@@ -653,10 +654,21 @@ export class T3Client {
     );
   }
 
-  async dispatch(command: unknown, signal?: AbortSignal): Promise<number> {
+  async requireProviderAction(action: ProviderAction): Promise<void> {
+    const response = await this.fetch(new URL("/api/compadre/provider-actions", this.baseUrl), {
+      headers: { authorization: `Bearer ${this.accessToken}` },
+      signal: AbortSignal.timeout(30_000),
+    });
+    if (response.status === 404) throw new ProviderActionsUnavailableError();
+    if (!response.ok) throw new Error(`Provider action capability check failed with HTTP ${response.status}`);
+    const capabilities = z.object({ version: z.literal(1), actions: z.array(z.string()) }).parse(await response.json());
+    if (!capabilities.actions.includes(action.type)) throw new ProviderActionsUnavailableError();
+  }
+
+  async dispatch(command: unknown, signal?: AbortSignal, providerAction?: ProviderAction): Promise<number> {
     const result = await this.request<{ sequence: number }>(
       "command dispatch",
-      "/api/orchestration/dispatch",
+      providerAction ? "/api/compadre/provider-actions" : "/api/orchestration/dispatch",
       {
         method: "POST",
         body: command,
@@ -828,6 +840,7 @@ export class T3Client {
   }
 
   async startTurn(input: {
+    providerAction?: ProviderAction;
     threadId: string;
     messageId?: string;
     commandId?: string;
@@ -860,6 +873,7 @@ export class T3Client {
         type: "thread.turn.start",
         commandId,
         threadId: input.threadId,
+        ...(input.providerAction ? { providerAction: input.providerAction } : {}),
         message: {
           messageId,
           role: "user",
@@ -876,6 +890,7 @@ export class T3Client {
         createdAt,
       },
       input.signal,
+      input.providerAction,
     );
     return {
       sequence,

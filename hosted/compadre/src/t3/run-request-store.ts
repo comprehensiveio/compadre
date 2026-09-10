@@ -1,3 +1,4 @@
+import type { ProviderAction } from "./provider-actions.js";
 import type { MetadataStore } from "./storage.js";
 import type { T3ModelSelection, T3TurnDispatch } from "./client.js";
 import type { InputFile } from "../services/input-files.js";
@@ -21,6 +22,7 @@ export interface NativeT3RunSlackMirror {
  * relocated activity can rebuild the run from durable state alone.
  */
 export interface NativeT3RunRequest {
+  providerAction?: ProviderAction;
   runId: string;
   runtimeMode?: "full-access" | "approval-required" | "auto-accept-edits" | "auto";
   interactionMode?: "default" | "plan";

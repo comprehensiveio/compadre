@@ -1,4 +1,5 @@
 import { NativeJournalUnavailableError } from "./native-events.js";
+import { ProviderActionsUnavailableError } from "./provider-actions.js";
 import { T3Client } from "./client.js";
 import assert from "node:assert/strict";
 import test from "node:test";
@@ -2096,20 +2097,26 @@ test("binds native delivery before dispatch and retries setup without replacing 
   assert.equal(requests[0]?.messageId, "native-user:run-1");
 });
 
-test("adopts an old worker only after an idle checkpoint and validated replacement", async () => {
+for (const providerAction of [undefined, { type: "compact" as const }]) {
+test(`adopts an old worker only after an idle checkpoint and validated replacement (action: ${providerAction?.type ?? "none"})`, async () => {
   const persistence = memoryPersistence();
   const bindings = new T3ThreadBindingStore(persistence.stores.metadata);
   const order: string[] = [];
   const old = new T3Client("https://old.example", "unused");
   const next = new T3Client("https://new.example", "unused");
-  old.nativeEventPage = async () => { throw new NativeJournalUnavailableError(); };
+  old.nativeEventPage = async () => {
+    if (!providerAction) throw new NativeJournalUnavailableError();
+    return { events: [], nextOffset: "00000000000000000007", upToDate: true };
+  };
+  old.requireProviderAction = async () => { throw new ProviderActionsUnavailableError(); };
   let busy = true;
   old.shellSnapshot = async () => ({ threads: [{ id: "native", session: { status: "ready" },
     backgroundLiveness: busy ? "working" : null, hasPendingApprovals: false, hasPendingUserInput: false }] });
   old.stopSession = async () => { order.push("stop"); return 1; };
   let invalidReplacement = true;
-  next.nativeEventPage = async () => { if (invalidReplacement) throw new NativeJournalUnavailableError(); return {events: [], nextOffset: "00000000000000000007", upToDate: true}; };
-  next.startTurn = async (input) => { order.push("dispatch"); return { threadId: input.threadId, messageId: "user", commandId: "cmd", sequence: 8, createdAt: new Date().toISOString() }; };
+  next.nativeEventPage = async () => { if (invalidReplacement && !providerAction) throw new NativeJournalUnavailableError(); return {events: [], nextOffset: "00000000000000000007", upToDate: true}; };
+  next.requireProviderAction = async (action) => { assert.deepEqual(action, providerAction); if (invalidReplacement) throw new ProviderActionsUnavailableError(); };
+  next.startTurn = async (input) => { assert.deepEqual(input.providerAction, providerAction); order.push("dispatch"); return { threadId: input.threadId, messageId: "user", commandId: "cmd", sequence: 8, createdAt: new Date().toISOString() }; };
   const environment = { sandboxId: "old", projectId: "project", client: old };
   const replacement = { sandboxId: "new", projectId: "project", client: next };
   const gateway = new T3Gateway(bindings, {
@@ -2123,11 +2130,12 @@ test("adopts an old worker only after an idle checkpoint and validated replaceme
     projectId: "project", sandboxId: "old", baseUrl: old.baseUrl, status: "ready", workerState: "running", workerGeneration: 1,
     modelSelection: { instanceId: "claudeAgent", model: "test" }, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() });
   const request = { canonicalThreadId: "central", title: "Existing history", text: "Continue", modelSelection: { instanceId: "claudeAgent", model: "test" },
+    ...(providerAction ? { providerAction } : {}),
     beforeDispatch: async () => { order.push("bind"); } };
   await assert.rejects(gateway.send(request), /still running/);
   assert.deepEqual(order, []);
   busy = false;
-  await assert.rejects(gateway.send(request), NativeJournalUnavailableError);
+  await assert.rejects(gateway.send(request), providerAction ? ProviderActionsUnavailableError : NativeJournalUnavailableError);
   assert.equal((await bindings.get("central"))?.sandboxId, "old");
   assert.deepEqual(order, ["stop", "checkpoint", "restore", "discard:new"]);
   order.length = 0; invalidReplacement = false;
@@ -2136,3 +2144,4 @@ test("adopts an old worker only after an idle checkpoint and validated replaceme
   assert.equal(turn.binding.t3ThreadId, "native");
   assert.equal(turn.binding.workerGeneration, 2);
 });
+}

@@ -1,5 +1,5 @@
 import { memoryPersistence } from "@tanstack/ai-persistence";
-import { NativeT3RunRequestStore } from "../t3/run-request-store.js";
+import { NativeT3RunRequestStore, type NativeT3RunRequest } from "../t3/run-request-store.js";
 import { driveNativeT3Run } from "../t3/native-t3-run-driver.js";
 import { T3Client } from "../t3/client.js";
 import assert from "node:assert/strict";
@@ -807,6 +807,70 @@ test("streams a native Modal T3 turn through the central provider endpoint", asy
     undefined,
     { channelId: "C1", threadTs: "1.0" },
   ]);
+});
+
+test("provider actions survive durable dispatch without prompt decorations or delivery side effects", async (t) => {
+  const previousApiKey = process.env.COMPADRE_API_KEY;
+  process.env.COMPADRE_API_KEY = "test-key";
+  t.after(() => {
+    if (previousApiKey === undefined) delete process.env.COMPADRE_API_KEY;
+    else process.env.COMPADRE_API_KEY = previousApiKey;
+  });
+  const durability = await createAgentRunDurability({ COMPADRE_DURABILITY_BACKEND: "memory" });
+  assert.ok(durability);
+  t.after(() => durability.close());
+  const requests = new NativeT3RunRequestStore(memoryPersistence().stores.metadata);
+  const sent: unknown[] = [];
+  const gateway = {
+    async list() { return []; }, async snapshot() { return null; }, async open() { return null; }, async cancel() { return 0; },
+    async resumeTurn() { return null; },
+    async send(input: unknown) {
+      sent.push(input);
+      return { binding, dispatch: { sequence: 1, commandId: "command-1", messageId: "input-1", threadId: "native-thread-1", createdAt: "2026-08-26T15:00:01.000Z" } };
+    },
+    async waitForTerminal() { return { ...snapshot, thread: { ...snapshot.thread, messages: [{ id: "input-1", role: "user" as const, text: "/compact", turnId: "turn-1", streaming: false, createdAt: "2026-08-26T15:00:01.000Z", updatedAt: "2026-08-26T15:00:01.000Z" }, ...snapshot.thread.messages] } }; },
+  };
+  const service = new TemporalNativeT3RunService(new NativeT3RunCoordinator(durability), requests, {
+    async start({ input }) {
+      await driveNativeT3Run({ durability, requests, gateway, prepareNativeDelivery: async () => {} }, input.runId);
+      return { started: true };
+    },
+    cancel: async () => true, steer: async () => { throw new Error("Actions must not accept steering"); },
+  });
+  const app = createT3DirectoryRoutes({
+    enabled: () => true, createId: () => "generated", getGateway: async () => gateway,
+    getRunService: async () => service, watchTurn() {},
+    getArtifactStore: async () => ({} as T3ArtifactStore),
+    getSlackBinding: async () => ({ channelId: "C1", threadTs: "1.0" }),
+  });
+  const body = (runId: string, forwarded: Record<string, unknown> = {}) => ({
+    threadId: "central-thread", runId,
+    messages: [{ id: "input-1", role: "user", content: "/compact" }], tools: [], context: [], state: {},
+    forwardedProps: { provider: "claude-code", attribution: { userId: "user-1", displayName: "Isaac", origin: "web" }, ...forwarded },
+  });
+  for (const [index, path] of ["/hosted/t3/actions", "/hosted/t3/chat"].entries()) {
+    const runId = `compact-${index}`;
+    const response = await app.request(path, authorized(body(runId, index === 0 ? { providerAction: { type: "compact" } } : {})));
+    assert.equal(response.status, 200, await response.clone().text());
+    assert.match(await response.text(), /RUN_FINISHED/);
+    const request = await requests.getRequest(runId);
+    assert.ok(request);
+    assert.equal(request.text, "/compact");
+    assert.deepEqual(request.providerAction, { type: "compact" });
+    assert.equal(request.collectArtifacts, false);
+    assert.equal(request.slackMirror, undefined);
+    assert.equal(request.slackArtifactDestination, undefined);
+  }
+  assert.equal(sent.length, 2);
+  for (const input of sent) {
+    assert.deepEqual((input as NativeT3RunRequest).providerAction, { type: "compact" });
+    assert.equal((input as NativeT3RunRequest).text, "/compact");
+  }
+  for (const props of [{ providerAction: { type: "shell" } }, { provider: "codex" }, { inputFiles: [{ name: "x.txt", mimetype: "text/plain", sizeBytes: 1, dataBase64: "eA==" }] }]) {
+    assert.equal((await app.request("/hosted/t3/actions", authorized(body("invalid", props)))).status, 400);
+  }
+  assert.equal(sent.length, 2);
+  assert.equal(await service.steer("compact-0", { id: "steer", text: "continue" }), false);
 });
 
 test("rejects an unsupported native T3 protocol version before starting work", async (t) => {

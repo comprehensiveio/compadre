@@ -1,3 +1,4 @@
+import { type ProviderAction, providerActionPrompt } from "@t3tools/contracts";
 /**
  * ClaudeAdapterLive - Scoped live implementation for the Claude Agent provider adapter.
  *
@@ -137,6 +138,8 @@ interface ClaudeResumeState {
 }
 
 interface ClaudeTurnState {
+  readonly providerAction?: ProviderAction;
+  compactionObserved?: boolean;
   readonly turnId: TurnId;
   readonly startedAt: string;
   /**
@@ -1248,6 +1251,7 @@ function buildPromptText(
   boundInstanceId: ProviderInstanceId,
   catalog: ClaudeModelCatalog,
 ): string {
+  if (input.providerAction) return providerActionPrompt(input.providerAction);
   const rawEffort =
     input.modelSelection?.instanceId === boundInstanceId
       ? getModelSelectionStringOptionValue(input.modelSelection, "effort")
@@ -3031,8 +3035,15 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       return;
     }
 
-    const status = turnStatusFromResult(message);
-    const errorMessage = resultUserFacingError(message);
+    const missingActionReceipt =
+      context.turnState?.providerAction?.type === "compact" &&
+      !context.turnState.compactionObserved;
+    const status = missingActionReceipt ? "failed" : turnStatusFromResult(message);
+    const errorMessage =
+      resultUserFacingError(message) ??
+      (missingActionReceipt
+        ? "Claude did not confirm context compaction. The provider action was not completed."
+        : undefined);
 
     if (status === "failed") {
       yield* emitRuntimeError(context, errorMessage ?? "Claude turn failed.");
@@ -3180,6 +3191,8 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         });
         return;
       case "compact_boundary":
+        if (context.turnState?.providerAction?.type === "compact")
+          context.turnState.compactionObserved = true;
         yield* emitThreadTokenUsage(
           context,
           compactBoundaryTokenUsageSnapshot(
@@ -4547,6 +4560,13 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     // instead, so they don't block the user's next turn.
     const steeringTurnState =
       context.turnState && context.turnState.synthetic !== true ? context.turnState : null;
+    if (steeringTurnState && (input.providerAction || steeringTurnState.providerAction)) {
+      return yield* toRequestError(
+        input.threadId,
+        "sendTurn",
+        new Error("Wait for the current turn or provider action to finish."),
+      );
+    }
     if (context.turnState && steeringTurnState === null) {
       yield* completeTurn(context, "completed");
     }
@@ -4598,6 +4618,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     const turnId = steeringTurnState?.turnId ?? TurnId.make(yield* randomUUIDv4);
     if (steeringTurnState === null) {
       const turnState: ClaudeTurnState = {
+        ...(input.providerAction ? { providerAction: input.providerAction } : {}),
         turnId,
         startedAt: yield* nowIso,
         items: [],

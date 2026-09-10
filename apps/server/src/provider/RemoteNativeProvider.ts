@@ -19,7 +19,12 @@ import { makeCompadreTextGeneration } from "../textGeneration/CompadreTextGenera
 import { makeCompadreAdapter } from "./Layers/CompadreAdapter.ts";
 import { makeManualOnlyProviderMaintenanceCapabilities } from "./providerMaintenance.ts";
 
-const decodeProviderVersion = Schema.decodeUnknownEffect(Schema.Struct({ version: Schema.String }));
+const decodeProviderVersion = Schema.decodeUnknownEffect(
+  Schema.Struct({
+    version: Schema.String,
+    providerActions: Schema.optional(Schema.Array(Schema.String)),
+  }),
+);
 const decodeCodexModels = Schema.decodeUnknownEffect(CodexSchema.V2ModelListResponse);
 
 export interface RemoteNativeProviderOptions {
@@ -39,6 +44,7 @@ export function remoteNativeProviderSnapshot(
 ): ServerProvider {
   return {
     ...options.snapshot,
+    providerActions: [],
     enabled: options.enabled,
     installed: true,
     status: options.enabled ? "ready" : "disabled",
@@ -71,7 +77,7 @@ export function makeRemoteProviderModelCheck(
       Effect.flatMap((response) => response.json),
       Effect.timeout("25 seconds"),
     );
-    const { version } = yield* decodeProviderVersion(response);
+    const { version, providerActions } = yield* decodeProviderVersion(response);
     const catalog = yield* manifest.refresh;
     const models =
       options.agentProvider === "codex"
@@ -85,6 +91,10 @@ export function makeRemoteProviderModelCheck(
       ...remoteNativeProviderSnapshot(options),
       models,
       version,
+      providerActions:
+        options.agentProvider === "claude-code"
+          ? (providerActions ?? []).filter((action) => action === "compact")
+          : [],
       checkedAt: DateTime.formatIso(yield* DateTime.now),
     };
     return snapshotValue;

@@ -635,6 +635,7 @@ export interface ChatComposerProps {
 
   // Context window
   activeContextWindow: ContextWindowSnapshot | null;
+  compactionProviderAvailable: boolean;
   compactDisabled: boolean;
   compactDisabledReason: string | null;
 
@@ -731,6 +732,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     activeProjectDefaultModelSelection,
     activeThreadModelSelection,
     activeContextWindow,
+    compactionProviderAvailable,
     compactDisabled,
     compactDisabledReason,
     resolvedTheme,
@@ -4013,7 +4015,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                       compactDisabled || noProviderAvailable || isSendBusy || isConnecting
                     }
                     compactDisabledReason={resolvedCompactDisabledReason}
-                    {...(selectedProvider === "claudeAgent"
+                    {...(compactionProviderAvailable
                       ? { onCompactContext: compactThreadContext }
                       : {})}
                   />

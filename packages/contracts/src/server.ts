@@ -161,6 +161,8 @@ export const ServerProviderUpdateState = Schema.Struct({
 export type ServerProviderUpdateState = typeof ServerProviderUpdateState.Type;
 
 export const ServerProvider = Schema.Struct({
+  /** Explicit action capabilities; absent on older servers means unsupported. */
+  providerActions: Schema.optional(Schema.Array(TrimmedNonEmptyString)),
   // Routing key for the configured instance this snapshot represents. This
   // is the only stable identity consumers may use for provider routing.
   instanceId: ProviderInstanceId,

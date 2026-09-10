@@ -536,3 +536,10 @@ Native run projection emits additive `COMPADRE_AGENT_ACTIVITY` request/resolutio
 events for diagnostics; older consumers ignore unrecognized event types. These
 events do not implement approval responses for providers that lack that feature.
 The page shows recent bounded run events, not a complete container audit log.
+## Provider actions
+
+Harness operations such as compaction follow the
+[hosted provider action contract](../../../docs/internals/hosted-provider-actions.md).
+They retain typed metadata in the durable run request and use capability-checked
+worker dispatch. They bypass trusted requester prompt decoration, artifact
+instructions, and Slack mirroring; native provider events establish completion.

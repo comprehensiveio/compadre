@@ -54,78 +54,85 @@ it("preserves discovered models and their capabilities without a hosted allowlis
 });
 
 it.layer(Layer.merge(NodeServices.layer, FetchHttpClient.layer))("CompadreAdapter", (it) => {
-  it.effect("reconnects native lifecycle receipts without retransmitting the dispatch", () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const requests: Array<{ method: string; cursor?: string }> = [];
-        const server = NodeHttp.createServer((request, response) => {
-          requests.push({
-            method: request.method!,
-            ...(typeof request.headers["last-event-id"] === "string"
-              ? { cursor: request.headers["last-event-id"] }
-              : {}),
-          });
-          response.writeHead(200, {
-            "Content-Type": "text/event-stream",
-            "x-compadre-native-delivery": "1",
-            Connection: "close",
-          });
-          response.end(
-            request.method === "POST"
-              ? 'id: cursor-1\ndata: {"type":"RUN_STARTED"}\n\n'
-              : 'id: cursor-2\ndata: {"type":"RUN_FINISHED"}\n\n',
-          );
-        });
-        const port = yield* Effect.acquireRelease(
-          Effect.promise(
-            () =>
-              new Promise<number>((resolve) => {
-                server.listen(0, "127.0.0.1", () => {
-                  const address = server.address();
-                  if (address && typeof address !== "string") resolve(address.port);
-                });
-              }),
-          ),
-          () =>
-            Effect.promise(
+  for (const providerAction of [undefined, { type: "compact" as const }]) {
+    it.effect(
+      `reconnects native lifecycle receipts without retransmitting the dispatch (action: ${providerAction?.type ?? "none"})`,
+      () =>
+        Effect.scoped(
+          Effect.gen(function* () {
+            const requests: Array<{ method: string; path: string | undefined; cursor?: string }> =
+              [];
+            const server = NodeHttp.createServer((request, response) => {
+              requests.push({
+                method: request.method!,
+                path: request.url,
+                ...(typeof request.headers["last-event-id"] === "string"
+                  ? { cursor: request.headers["last-event-id"] }
+                  : {}),
+              });
+              response.writeHead(200, {
+                "Content-Type": "text/event-stream",
+                "x-compadre-native-delivery": "1",
+                Connection: "close",
+              });
+              response.end(
+                request.method === "POST"
+                  ? 'id: cursor-1\ndata: {"type":"RUN_STARTED"}\n\n'
+                  : 'id: cursor-2\ndata: {"type":"RUN_FINISHED"}\n\n',
+              );
+            });
+            const port = yield* Effect.acquireRelease(
+              Effect.promise(
+                () =>
+                  new Promise<number>((resolve) => {
+                    server.listen(0, "127.0.0.1", () => {
+                      const address = server.address();
+                      if (address && typeof address !== "string") resolve(address.port);
+                    });
+                  }),
+              ),
               () =>
-                new Promise<void>((resolve) => {
-                  server.close(() => resolve());
-                  server.closeAllConnections();
-                }),
-            ),
-        );
-        const transport = makeCompadreTransport(
-          yield* HttpClient.HttpClient,
-          ProviderDriverKind.make("codex"),
-          0,
-        );
-        const received = yield* Stream.runCollect(
-          transport({
-            endpoint: `http://127.0.0.1:${port}/hosted/t3/chat`,
-            apiKey: undefined,
-            threadId: "thread",
-            runId: "run",
-            messageId: "user",
-            input: "hello",
-            inputFiles: [],
-            provider: "codex",
-            model: "test",
-            modelOptions: [],
-            attribution: undefined,
+                Effect.promise(
+                  () =>
+                    new Promise<void>((resolve) => {
+                      server.close(() => resolve());
+                      server.closeAllConnections();
+                    }),
+                ),
+            );
+            const transport = makeCompadreTransport(
+              yield* HttpClient.HttpClient,
+              ProviderDriverKind.make("codex"),
+              0,
+            );
+            const received = yield* Stream.runCollect(
+              transport({
+                endpoint: `http://127.0.0.1:${port}/hosted/t3/chat`,
+                apiKey: undefined,
+                threadId: "thread",
+                runId: "run",
+                messageId: "user",
+                input: "hello",
+                inputFiles: [],
+                provider: "codex",
+                model: "test",
+                modelOptions: [],
+                attribution: undefined,
+                ...(providerAction ? { providerAction } : {}),
+              }),
+            );
+            assert.deepStrictEqual(
+              Array.from(received).map((event) => event.type),
+              ["RUN_STARTED", "RUN_FINISHED"],
+            );
+            assert.deepStrictEqual(requests, [
+              { method: "POST", path: providerAction ? "/hosted/t3/actions" : "/hosted/t3/chat" },
+              { method: "GET", path: "/hosted/t3/runs/run/events", cursor: "cursor-1" },
+            ]);
           }),
-        );
-        assert.deepStrictEqual(
-          Array.from(received).map((event) => event.type),
-          ["RUN_STARTED", "RUN_FINISHED"],
-        );
-        assert.deepStrictEqual(requests, [
-          { method: "POST" },
-          { method: "GET", cursor: "cursor-1" },
-        ]);
-      }),
-    ),
-  );
+        ),
+    );
+  }
 
   it.effect("lifecycle completion never synthesizes conversation or closes background work", () =>
     Effect.gen(function* () {

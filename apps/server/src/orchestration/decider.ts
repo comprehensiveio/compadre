@@ -1,3 +1,4 @@
+import { providerActionFromText } from "@t3tools/contracts";
 import {
   EventId,
   type OrchestrationCommand,
@@ -927,11 +928,23 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
     }
 
     case "thread.turn.start": {
+      const providerAction = command.providerAction ?? providerActionFromText(command.message.text);
       const targetThread = yield* requireThread({
         readModel,
         command,
         threadId: command.threadId,
       });
+      if (
+        providerAction &&
+        (command.message.attachments.length > 0 ||
+          targetThread.session?.status === "running" ||
+          targetThread.latestTurn?.state === "running")
+      ) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: "Provider actions require an idle thread and cannot include attachments.",
+        });
+      }
       const sourceProposedPlan = command.sourceProposedPlan;
       const sourceThread = sourceProposedPlan
         ? yield* requireThread({
@@ -989,6 +1002,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         causationEventId: userMessageEvent.eventId,
         type: "thread.turn-start-requested",
         payload: {
+          ...(providerAction ? { providerAction } : {}),
           threadId: command.threadId,
           messageId: command.message.messageId,
           ...(command.message.providerPrompt !== undefined
