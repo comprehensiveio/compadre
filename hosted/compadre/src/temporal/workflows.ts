@@ -12,6 +12,7 @@ import {
   allHandlersFinished,
   CancellationScope,
   condition,
+  continueAsNew,
   isCancellation,
   log,
   patched,
@@ -228,4 +229,16 @@ export async function triggeredPromptWorkflow(
   }
   const result = await deliverTriggeredPromptActivity(record);
   await recordTriggerFiredActivity(input.triggerId, result);
+}
+
+
+/** Delivery outlives the parent turn and rolls its Temporal history periodically. */
+export async function nativeThreadDeliveryWorkflow(input: { threadId: string; epoch: number }): Promise<void> {
+  const { deliverNativeThreadEventsActivity } = proxyActivities<typeof activities>({
+    startToCloseTimeout: "35 minutes", heartbeatTimeout: "2 minutes",
+    cancellationType: ActivityCancellationType.WAIT_CANCELLATION_COMPLETED,
+    retry: { initialInterval: "5 seconds", maximumInterval: "1 minute" },
+  });
+  const result = await deliverNativeThreadEventsActivity(input);
+  if (result === "continue") await continueAsNew<typeof nativeThreadDeliveryWorkflow>(input);
 }

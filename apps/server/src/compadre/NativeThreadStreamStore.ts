@@ -90,3 +90,16 @@ export const bindNativeThreadStream = Effect.fn("bindNativeThreadStream")(functi
     }),
   );
 });
+
+/** Fences lifecycle changes without consuming an invented source sequence. */
+export const assertNativeThreadStream = Effect.fn("assertNativeThreadStream")(function* (
+  input: Pick<NativeThreadStreamBinding, "threadId" | "sourceThreadId" | "epoch">,
+) {
+  const sql = yield* SqlClient.SqlClient;
+  const rows = yield* sql`SELECT thread_id FROM native_thread_streams
+    WHERE thread_id = ${input.threadId} AND source_thread_id = ${input.sourceThreadId} AND epoch = ${input.epoch}`;
+  if (rows.length !== 1)
+    return yield* new NativeThreadStreamConflict({
+      detail: "Native worker binding was superseded.",
+    });
+});

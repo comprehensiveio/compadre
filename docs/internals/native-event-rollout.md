@@ -41,8 +41,29 @@ Keep the rollout controls small: an adoption cohort and a pause for native
 execution/delivery. Removing a thread from the adoption cohort must not send an
 already adopted thread through the legacy projector. A pause must preserve
 history, bindings, source events, and cursors. Resuming retries native delivery.
-These controls and per-thread Temporal delivery are required before activation;
-the endpoint preparation alone does not implement the production switch.
+`COMPADRE_NATIVE_EVENT_THREADS` is a comma-separated cohort (`*` selects all
+threads). `COMPADRE_NATIVE_EVENTS_PAUSED=true` pauses new native runs and delivery
+without changing their ownership. Bound threads require the native-capable
+transport even after removal from the cohort. The run request persists its
+transport mode, so SSE reconnects cannot change modes during a rollout.
+
+A per-thread Temporal workflow follows the worker journal independently of run
+completion. A stopped controller retries from its acknowledged cursor; a newer
+worker epoch ends the old consumer. Confirmed worker loss sends a fenced native
+session closure to central T3. Transient connection failures retry.
+
+Question responses, approvals, interrupts and session stops route using the
+persisted central binding, without an in-memory Compadre adapter session.
+Files are uploaded to the worker and become native assistant-completion commands;
+the consumer copies attachment objects to central storage before acknowledging
+their events. Saved workspace reviews replace worker-local checkpoint references
+with durable review references through native checkpoint commands. Local refs
+remain marked missing centrally until that publication completes.
+
+For adopted runs, the controller records lifecycle receipts rather than copied
+conversation chunks. The web transport consumes those receipts while the native
+journal independently supplies conversation and status. The temporary legacy
+projector/decoder remains only for unadopted runs during independent deployment.
 
 Before adopting a thread, reconcile its retained history and outstanding work,
 record its source boundary, and claim native ownership before dispatching new
@@ -62,7 +83,9 @@ reverse-migration system is deliberately out of scope.
 Local tests cover real worker/central T3 projections, SQLite and PostgreSQL,
 lost acknowledgements, conflicting replay, source-thread isolation, generation
 fencing, bounded pages, authenticated HTTP delivery and native question payloads.
-They do not establish live provider, Modal restore, Slack, or UI parity.
+Post-deploy API checks have also exercised authenticated ingestion, duplicate
+batch replay, late output, and unchanged existing central history. These checks
+do not establish live provider, Modal restore, Slack, or UI parity.
 
 Before expansion, prove Codex and Claude, background continuations, interaction
 responses, controller/central restarts, restored workers and artifact delivery

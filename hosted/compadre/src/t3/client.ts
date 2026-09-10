@@ -655,6 +655,19 @@ export class T3Client {
     return result.sequence;
   }
 
+  async publishNativeOutput(command: unknown, signal?: AbortSignal): Promise<void> {
+    await this.request("native output", "/api/compadre/native-output", { method: "POST", body: command, signal, schema: z.unknown() });
+  }
+
+  async readNativeAttachment(id: string, signal?: AbortSignal): Promise<Uint8Array> {
+    const url = new URL("/api/compadre/native-attachment", this.baseUrl);
+    url.searchParams.set("id", id);
+    const response = await this.fetch(url, { headers: { authorization: `Bearer ${this.accessToken}` },
+      signal: AbortSignal.any([AbortSignal.timeout(30_000), ...(signal ? [signal] : [])]) });
+    if (!response.ok) throw new Error(`Native attachment read failed with HTTP ${response.status}`);
+    return new Uint8Array(await response.arrayBuffer());
+  }
+
   /** Upload one attachment before dispatch so large batches do not ride in one JSON body. */
   async uploadAttachment(input: {
     name: string;
@@ -805,6 +818,8 @@ export class T3Client {
   async startTurn(input: {
     threadId: string;
     messageId?: string;
+    commandId?: string;
+    createdAt?: string;
     text: string;
     displayText?: string;
     attribution?: T3MessageAttribution;
@@ -815,9 +830,9 @@ export class T3Client {
     interactionMode?: T3InteractionMode;
     signal?: AbortSignal;
   }): Promise<T3TurnDispatch> {
-    const commandId = this.idFactory();
+    const commandId = input.commandId ?? this.idFactory();
     const messageId = input.messageId ?? this.idFactory();
-    const createdAt = this.now().toISOString();
+    const createdAt = input.createdAt ?? this.now().toISOString();
     const sequence = await this.dispatch(
       {
         type: "thread.turn.start",

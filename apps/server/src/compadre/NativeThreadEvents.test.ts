@@ -1,6 +1,10 @@
+import { makeNativeThreadControls } from "./NativeThreadControls.ts";
+import * as FileSystem from "effect/FileSystem";
+import { resolveAttachmentPath } from "../attachmentStore.ts";
 import * as NodeCrypto from "node:crypto";
 import {
   AuthOrchestrationReadScope,
+  AuthOrchestrationOperateScope,
   AuthSessionId,
   EventId,
   CommandId,
@@ -32,7 +36,7 @@ import { ProjectionSnapshotQuery } from "../orchestration/Services/ProjectionSna
 import { ServerConfig } from "../config.ts";
 
 import { mapNativeThreadEvent, nativeId } from "./NativeThreadEvents.ts";
-import { HttpRouter } from "effect/unstable/http";
+import { HttpRouter, HttpClient, HttpClientResponse } from "effect/unstable/http";
 import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 import { bindNativeThreadStream } from "./NativeThreadStreamStore.ts";
@@ -67,6 +71,8 @@ async function createOrchestrationSystem(central = false) {
   const snapshotQuery = await runtime.runPromise(Effect.service(ProjectionSnapshotQuery));
   return {
     engine,
+    config: await runtime.runPromise(Effect.service(ServerConfig)),
+    fileSystem: await runtime.runPromise(Effect.service(FileSystem.FileSystem)),
     snapshotQuery,
     sql: await runtime.runPromise(Effect.service(SqlClient.SqlClient)),
     readModel: () => runtime.runPromise(snapshotQuery.getSnapshot()),
@@ -221,6 +227,114 @@ describe("native thread replication", () => {
     }
   });
 
+  it("a lost worker closes only its current claim and retries cannot stop its replacement", async () => {
+    const central = await createOrchestrationSystem(true);
+    const threadId = ThreadId.make(NodeCrypto.randomUUID());
+    const sourceThreadId = ThreadId.make(NodeCrypto.randomUUID());
+    try {
+      await seed(central, threadId);
+      await central.run(
+        bindNativeThreadStream({
+          threadId,
+          sourceThreadId,
+          epoch: 1,
+          sourceSequence: 0,
+          checkpointOffset: 0,
+        }),
+      );
+      await central.run(
+        bindNativeThreadStream({
+          threadId,
+          sourceThreadId,
+          epoch: 2,
+          sourceSequence: 0,
+          checkpointOffset: 0,
+        }),
+      );
+      const command = {
+        type: "thread.native-stream.close" as const,
+        commandId: CommandId.make(NodeCrypto.randomUUID()),
+        threadId,
+        sourceThreadId,
+        epoch: 1,
+        createdAt,
+        reason: "Worker terminated",
+      };
+      await expect(central.run(central.engine.dispatch(command))).rejects.toThrow("superseded");
+      await central.run(central.engine.dispatch({ ...command, epoch: 2 }));
+      const after = await central.readModel();
+      expect(after.threads.find((thread) => thread.id === threadId)?.session?.status).toBe(
+        "stopped",
+      );
+      const sequence = after.snapshotSequence;
+      await central.run(central.engine.dispatch({ ...command, epoch: 2 }));
+      expect((await central.readModel()).snapshotSequence).toBe(sequence);
+    } finally {
+      await central.dispose();
+    }
+  });
+
+  it("routes native question responses from the persisted binding without an adapter session", async () => {
+    const previous = process.env.COMPADRE_NATIVE_T3_URL;
+    process.env.COMPADRE_NATIVE_T3_URL = "https://controller.example/hosted/t3/chat";
+    const central = await createOrchestrationSystem(true);
+    const threadId = ThreadId.make(NodeCrypto.randomUUID());
+    const sourceThreadId = ThreadId.make(NodeCrypto.randomUUID());
+    const requests: unknown[] = [];
+    try {
+      await seed(central, threadId);
+      const control = await central.run(
+        makeNativeThreadControls.pipe(
+          Effect.provideService(
+            HttpClient.HttpClient,
+            HttpClient.make((request) => {
+              requests.push(request.url);
+              return Effect.succeed(
+                HttpClientResponse.fromWeb(request, Response.json({ accepted: true })),
+              );
+            }),
+          ),
+        ),
+      );
+      const event = {
+        sequence: 1,
+        eventId: EventId.make("control"),
+        aggregateKind: "thread" as const,
+        aggregateId: threadId,
+        occurredAt: createdAt,
+        commandId: null,
+        causationEventId: null,
+        correlationId: null,
+        metadata: {},
+        type: "thread.user-input-response-requested" as const,
+        payload: {
+          threadId,
+          createdAt,
+          requestId: "request" as import("@t3tools/contracts").ApprovalRequestId,
+          answers: { option: "A" },
+        },
+      };
+      expect(await central.run(control(event))).toBe(false);
+      await central.run(
+        bindNativeThreadStream({
+          threadId,
+          sourceThreadId,
+          epoch: 3,
+          sourceSequence: 0,
+          checkpointOffset: 0,
+        }),
+      );
+      expect(await central.run(control(event))).toBe(true);
+      expect(requests).toEqual([
+        `https://controller.example/hosted/t3/native-threads/${threadId}/control`,
+      ]);
+    } finally {
+      if (previous === undefined) delete process.env.COMPADRE_NATIVE_T3_URL;
+      else process.env.COMPADRE_NATIVE_T3_URL = previous;
+      await central.dispose();
+    }
+  });
+
   it("advances over other aggregates without exposing their events and bounds each page", async () => {
     const sourceThreadId = ThreadId.make(NodeCrypto.randomUUID());
     const source = await createOrchestrationSystem();
@@ -259,12 +373,15 @@ describe("native thread replication", () => {
     process.env.COMPADRE_API_KEY = "native-test-controller";
     const auth = Layer.mock(EnvironmentAuth.EnvironmentAuth, {
       authenticateHttpRequest: (request) =>
-        request.headers.authorization === "Bearer worker-test"
+        ["Bearer worker-test", "Bearer worker-writer"].includes(request.headers.authorization ?? "")
           ? Effect.succeed({
               sessionId: AuthSessionId.make("test"),
               subject: "test",
               method: "bearer-access-token" as const,
-              scopes: [AuthOrchestrationReadScope],
+              scopes:
+                request.headers.authorization === "Bearer worker-writer"
+                  ? [AuthOrchestrationReadScope, AuthOrchestrationOperateScope]
+                  : [AuthOrchestrationReadScope],
             })
           : Effect.fail(new EnvironmentAuth.ServerAuthMissingCredentialError({})),
     });
@@ -274,6 +391,8 @@ describe("native thread replication", () => {
           Layer.provideMerge(Layer.succeed(OrchestrationEngineService, system.engine)),
           Layer.provideMerge(Layer.succeed(ProjectionSnapshotQuery, system.snapshotQuery)),
           Layer.provideMerge(auth),
+          Layer.provideMerge(Layer.succeed(ServerConfig, system.config)),
+          Layer.provideMerge(NodeServices.layer),
           Layer.provideMerge(Layer.succeed(SqlClient.SqlClient, system.sql)),
         ),
         { disableLogger: true },
@@ -323,6 +442,42 @@ describe("native thread replication", () => {
           createdAt,
         }),
       );
+      const attachment = {
+        type: "file" as const,
+        id: `pending-${NodeCrypto.randomUUID()}-txt`,
+        name: "result.txt",
+        mimeType: "text/plain",
+        sizeBytes: 12,
+      };
+      const path = resolveAttachmentPath({
+        attachmentsDir: source.config.attachmentsDir,
+        attachment,
+      });
+      if (!path) throw new Error("Invalid test attachment path");
+      await source.run(source.fileSystem.writeFileString(path, "native bytes"));
+      const output = {
+        type: "thread.message.assistant.complete",
+        commandId: "file-output",
+        threadId: sourceThreadId,
+        messageId: "file-output",
+        attachments: [attachment],
+        createdAt,
+      };
+      const outputRequest = (token: string) =>
+        new Request("http://localhost/api/compadre/native-output", {
+          method: "POST",
+          headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+          body: JSON.stringify(output),
+        });
+      expect((await worker.handler(outputRequest("worker-test"))).status).toBe(403);
+      expect((await worker.handler(outputRequest("worker-writer"))).status).toBe(200);
+      const file = await worker.handler(
+        new Request(`http://localhost/api/compadre/native-attachment?id=${attachment.id}`, {
+          headers: { authorization: "Bearer worker-test" },
+        }),
+      );
+      expect(file.status).toBe(200);
+      expect(await file.text()).toBe("native bytes");
       const readUrl = `${url}?threadId=${sourceThreadId}&offset=-1`;
       expect((await worker.handler(new Request(readUrl))).status).toBe(401);
       const page = await worker.handler(
@@ -330,7 +485,7 @@ describe("native thread replication", () => {
       );
       expect(page.status).toBe(200);
       expect(page.headers.get("stream-up-to-date")).toBe("true");
-      expect(page.headers.get("stream-next-offset")).toBe("00000000000000000003");
+      expect(page.headers.get("stream-next-offset")).toBe("00000000000000000004");
       const events: unknown = await page.json();
       const body = JSON.stringify({ version: 1, sourceThreadId, epoch: 1, events });
       const post = () =>
@@ -365,10 +520,10 @@ describe("native thread replication", () => {
       );
       expect(head.status).toBe(200);
       expect(await head.text()).toBe("");
-      expect(head.headers.get("stream-next-offset")).toBe("00000000000000000003");
+      expect(head.headers.get("stream-next-offset")).toBe("00000000000000000004");
       const waiting = worker.handler(
         new Request(
-          `${url}?threadId=${sourceThreadId}&offset=00000000000000000003&live=long-poll`,
+          `${url}?threadId=${sourceThreadId}&offset=00000000000000000004&live=long-poll`,
           {
             headers: { authorization: "Bearer worker-test" },
           },

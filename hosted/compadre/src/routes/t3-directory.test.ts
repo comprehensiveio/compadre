@@ -1,3 +1,4 @@
+import { T3Client } from "../t3/client.js";
 import assert from "node:assert/strict";
 import test from "node:test";
 import { Hono } from "hono";
@@ -874,4 +875,30 @@ test("does not expose Modal bootstrap details when provisioning fails", async (t
   const body = await response.text();
   assert.match(body, /T3 environment operation failed/);
   assert.doesNotMatch(body, /private repository details/);
+});
+
+test("native controls require authentication and the exact durable worker claim", async (t) => {
+  const previous = process.env.COMPADRE_API_KEY;
+  process.env.COMPADRE_API_KEY = "test-key";
+  t.after(() => { if (previous === undefined) delete process.env.COMPADRE_API_KEY; else process.env.COMPADRE_API_KEY = previous; });
+  const commands: unknown[] = [];
+  const client = new T3Client("https://worker.example", "unused");
+  client.dispatch = async (command) => { commands.push(command); return 9; };
+  const app = new Hono();
+  app.route("/", createT3DirectoryRoutes({ enabled: () => true, createId: () => "unused", watchTurn() {},
+    getNativeDelivery: async () => ({ get: async () => ({ version: 1, canonicalThreadId: "central", sourceThreadId: "worker",
+      epoch: 2, sandboxId: "sandbox", offset: "00000000000000000003", startOffset: "00000000000000000000", checkpointOffset: 0 }) }),
+    getGateway: async () => ({ list: async () => [], send: async () => { throw new Error("unused"); },
+      snapshot: async () => null, open: async () => null, cancel: async () => null, waitForTerminal: async () => { throw new Error("unused"); },
+      attachWorker: async () => ({ binding: { ...binding, canonicalThreadId: "central", t3ThreadId: "worker", sandboxId: "sandbox" }, environment: { sandboxId: "sandbox", projectId: "project", client } }),
+    }),
+  }));
+  const body = { sourceThreadId: "worker", epoch: 2, commandId: "native-control:question", createdAt: "2026-09-10T00:00:00.000Z",
+    type: "thread.user-input-response-requested", requestId: "compadre-native:worker:question", answers: { choice: "A" } };
+  const url = "/hosted/t3/native-threads/central/control";
+  assert.equal((await app.request(url, { method: "POST", body: JSON.stringify(body) })).status, 401);
+  assert.equal((await app.request(url, authorized({ ...body, epoch: 1 }))).status, 409);
+  assert.equal((await app.request(url, authorized({ ...body, requestId: "compadre-native:other:question" }))).status, 400);
+  assert.equal((await app.request(url, authorized(body))).status, 200);
+  assert.deepEqual(commands, [{ type: "thread.user-input.respond", commandId: body.commandId, threadId: "worker", createdAt: body.createdAt, requestId: "question", answers: body.answers }]);
 });

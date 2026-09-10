@@ -1,3 +1,7 @@
+import { publishNativeRunOutputs } from "./native-outputs.js";
+import { NativeThreadDelivery, nativeDeliverySink } from "./native-events.js";
+import { prepareNativeDelivery } from "./native-delivery.js";
+import { ensureNativeThreadDeliveryWorkflow } from "../temporal/client.js";
 import { WorkspaceReviewStore } from "./workspace-review.js";
 import crypto from "node:crypto";
 import { log } from "../logging.js";
@@ -234,7 +238,7 @@ export async function recoverConfiguredNativeT3Runs(): Promise<
   };
 }
 
-async function buildRunRequestStore(): Promise<NativeT3RunRequestStore | null> {
+export async function buildRunRequestStore(): Promise<NativeT3RunRequestStore | null> {
   const runtime = await getConfiguredThreadPersistence();
   if (!runtime) return null;
   return new NativeT3RunRequestStore(runtime.persistence.stores.metadata);
@@ -260,6 +264,12 @@ async function buildCollectArtifactEvents(
   const reviews = process.env.COMPADRE_T3_WORKSPACE_REVIEWS_ENABLED === "true"
     ? await getConfiguredWorkspaceReviewStore() : null;
   return async (turn, request) => {
+    if (request.nativeDelivery) {
+      const persistence = await getConfiguredThreadPersistence();
+      if (!persistence) throw new Error("Native output persistence is unavailable");
+      await publishNativeRunOutputs({ gateway, artifactStore, reviews, turn, request, metadata: persistence.persistence.stores.metadata });
+      return [];
+    }
     const events = await collectNativeT3ArtifactEvents({
       gateway,
       artifactStore,
@@ -299,6 +309,15 @@ export function setNativeT3RunDriverDependenciesForTests(
   overriddenDriverDependencies = dependencies;
 }
 
+export async function getConfiguredNativeThreadDelivery(): Promise<NativeThreadDelivery | null> {
+  const persistence = await getConfiguredThreadPersistence();
+  const central = configuredCentralT3Client();
+  const apiKey = process.env.COMPADRE_API_KEY?.trim();
+  if (!persistence || !central || !apiKey) return null;
+  return new NativeThreadDelivery(persistence.persistence.stores.metadata, persistence.locks,
+    nativeDeliverySink({ baseUrl: central.baseUrl, apiKey }));
+}
+
 /** Dependencies for the durable drive/finalize activities. */
 export async function getConfiguredNativeT3RunDriverDependencies(): Promise<NativeT3RunDriverDependencies | null> {
   if (overriddenDriverDependencies) return overriddenDriverDependencies;
@@ -317,6 +336,14 @@ export async function getConfiguredNativeT3RunDriverDependencies(): Promise<Nati
     requests,
     controls,
     locks: persistence.locks,
+    prepareNativeDelivery: async (request, connection) => {
+      const delivery = await getConfiguredNativeThreadDelivery();
+      const central = configuredCentralT3Client();
+      if (!delivery || !central) throw new Error("Native event delivery is not configured");
+      const attached = connection ?? await gateway.attachWorker(request.canonicalThreadId);
+      if (!attached) throw new Error("Native event worker is unavailable");
+      await prepareNativeDelivery({ delivery, central, request, connection: attached, start: ensureNativeThreadDeliveryWorkflow });
+    },
     ...(collectArtifactEvents ? { collectArtifactEvents } : {}),
   };
 }

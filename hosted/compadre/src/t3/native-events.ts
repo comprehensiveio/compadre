@@ -39,6 +39,7 @@ export class NativeThreadDelivery {
     private readonly metadata: MetadataStore,
     private readonly locks: LockStore,
     private readonly sink: {
+      close?(state: NativeDeliveryState, signal?: AbortSignal): Promise<void>;
       bind(state: NativeDeliveryState, signal?: AbortSignal): Promise<void>;
       append(state: NativeDeliveryState, events: unknown[], signal?: AbortSignal): Promise<void>;
     },
@@ -68,23 +69,37 @@ export class NativeThreadDelivery {
     });
   }
 
+  async close(state: NativeDeliveryState, signal?: AbortSignal): Promise<void> {
+    if (!this.sink.close) throw new Error("Native stream closure is not configured");
+    await this.sink.close(state, signal);
+  }
+
   /** Central commands commit before the cursor; a lost acknowledgement replays safely. */
   async deliverPage(input: {
     threadId: string; epoch: number;
     read(state: NativeDeliveryState, signal: AbortSignal): Promise<NativeEventPage>;
+    prepare?(state: NativeDeliveryState, events: unknown[], signal: AbortSignal): Promise<unknown[]>;
     signal?: AbortSignal;
   }): Promise<NativeEventPage> {
+    const before = await this.get(input.threadId);
+    if (!before || before.epoch !== input.epoch) throw new Error("Native delivery claim was superseded");
+    const readSignal = input.signal ?? new AbortController().signal;
+    const page = await input.read(before, readSignal);
     return this.locks.withLock(`compadre:native-delivery:${input.threadId}`, async (lockSignal) => {
       const signal = AbortSignal.any([lockSignal, ...(input.signal ? [input.signal] : [])]);
       signal.throwIfAborted();
       const state = await this.get(input.threadId);
       if (!state || state.epoch !== input.epoch) throw new Error("Native delivery claim was superseded");
+      if (state.offset !== before.offset) return { events: [], nextOffset: state.offset, upToDate: false };
+      if (page.events.length === 0 && page.nextOffset === state.offset) return page;
       await this.sink.bind(state, signal);
-      const page = await input.read(state, signal);
       offsetSchema.parse(page.nextOffset);
       if (page.nextOffset < state.offset) throw new Error("Native delivery cursor moved backwards");
       if (page.events.length > 128 || (page.events.length > 0 && page.nextOffset === state.offset)) throw new Error("Invalid native event page");
-      if (page.events.length > 0) await this.sink.append(state, page.events, signal);
+      if (page.events.length > 0) {
+        const events = input.prepare ? await input.prepare(state, page.events, signal) : page.events;
+        await this.sink.append(state, events, signal);
+      }
       signal.throwIfAborted();
       await this.metadata.set(NAMESPACE, input.threadId, { ...state, offset: page.nextOffset });
       return page;
@@ -93,7 +108,7 @@ export class NativeThreadDelivery {
 }
 
 export function nativeDeliverySink(input: { baseUrl: string; apiKey: string; fetch?: typeof fetch }) {
-  const request = async (state: NativeDeliveryState, method: "PUT" | "POST", body: unknown, signal?: AbortSignal) => {
+  const request = async (state: NativeDeliveryState, method: "PUT" | "POST" | "DELETE", body: unknown, signal?: AbortSignal) => {
     const url = new URL(NATIVE_EVENTS_PATH, input.baseUrl);
     url.searchParams.set("threadId", state.canonicalThreadId);
     const response = await (input.fetch ?? fetch)(url, {
@@ -105,6 +120,11 @@ export function nativeDeliverySink(input: { baseUrl: string; apiKey: string; fet
     await response.arrayBuffer();
   };
   return {
+    close: (state: NativeDeliveryState, signal?: AbortSignal) => request(state, "DELETE", {
+      sourceThreadId: state.sourceThreadId, epoch: state.epoch,
+      commandId: `native-worker-lost:${state.canonicalThreadId}:${state.epoch}`,
+      createdAt: new Date().toISOString(), reason: "The worker is no longer available. Send a message to restore its saved workspace.",
+    }, signal),
     bind: (state: NativeDeliveryState, signal?: AbortSignal) => request(state, "PUT", {
       sourceThreadId: state.sourceThreadId, epoch: state.epoch,
       sourceSequence: Number(state.startOffset), checkpointOffset: state.checkpointOffset,

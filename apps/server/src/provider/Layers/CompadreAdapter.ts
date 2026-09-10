@@ -429,17 +429,6 @@ export function makeCompadreAdapter(options: CompadreAdapterOptions) {
           ...(selectedModel ? { model: selectedModel } : {}),
           updatedAt: yield* nowIso,
         };
-        if (!steeringTurnId) {
-          yield* publish({
-            type: "turn.started",
-            ...(yield* makeEventStamp()),
-            provider: runtimeProvider,
-            providerInstanceId: boundInstanceId,
-            threadId: input.threadId,
-            turnId,
-            payload: context.session.model ? { model: context.session.model } : {},
-          });
-        }
 
         const transportInput = {
           endpoint: options.endpoint,
@@ -448,6 +437,8 @@ export function makeCompadreAdapter(options: CompadreAdapterOptions) {
           runId,
           messageId,
           input: text,
+          runtimeMode: context.session.runtimeMode,
+          interactionMode: input.interactionMode ?? "default",
           inputFiles,
           provider: selectedProvider,
           model: selectedModel,
@@ -522,6 +513,8 @@ export function makeCompadreAdapter(options: CompadreAdapterOptions) {
           const artifactAttachments = new Map<string, ChatAttachment>();
           let lastAssistantItemId: RuntimeItemId | undefined;
           let terminal = false;
+          let nativeDelivery = false;
+          let announcedTurn = false;
           let pendingText:
             | {
                 readonly sourceId: string;
@@ -539,6 +532,7 @@ export function makeCompadreAdapter(options: CompadreAdapterOptions) {
               if (terminal) return;
               terminal = true;
               yield* setSessionReady(context);
+              if (nativeDelivery) return;
               yield* publish({
                 type: "turn.completed",
                 ...(yield* makeEventStamp()),
@@ -970,6 +964,33 @@ export function makeCompadreAdapter(options: CompadreAdapterOptions) {
 
           const handleStreamEvent = (event: CompadreStreamEvent) =>
             Effect.gen(function* () {
+              if (event.type === "NATIVE_DELIVERY") {
+                nativeDelivery = true;
+                return;
+              }
+              if (nativeDelivery) {
+                if (event.type === "RUN_FINISHED" || event.type === "RUN_ERROR") {
+                  if (event.type === "RUN_FINISHED") yield* completeTurn("completed");
+                  else
+                    yield* failTurn(stringField(event, "message") ?? "Native worker run failed.");
+                  return;
+                }
+                return;
+              }
+              if (!announcedTurn) {
+                announcedTurn = true;
+                if (!steeringTurnId) {
+                  yield* publish({
+                    type: "turn.started",
+                    ...(yield* makeEventStamp()),
+                    provider: runtimeProvider,
+                    providerInstanceId: boundInstanceId,
+                    threadId: input.threadId,
+                    turnId,
+                    payload: context.session.model ? { model: context.session.model } : {},
+                  });
+                }
+              }
               if (event.type !== "TEXT_MESSAGE_CONTENT") {
                 yield* flushPendingText();
                 yield* handleEvent(event);

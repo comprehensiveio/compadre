@@ -25,6 +25,7 @@ export interface CollectNativeT3ArtifactEventsInput {
     recipientTeamId?: string;
   };
   botToken?: string;
+  publishNative?(artifact: T3OutputArtifact): Promise<void>;
 }
 
 /**
@@ -55,6 +56,7 @@ export async function collectNativeT3ArtifactEvents(
         mimetype: artifact.mimetype,
         bytes: artifact.bytes,
       });
+      await input.publishNative?.(artifact);
       if (input.slackDestination && input.botToken && slackTeamId) {
         try {
           await new SlackClient({
@@ -75,7 +77,7 @@ export async function collectNativeT3ArtifactEvents(
           });
         }
       }
-      events.push({
+      if (!input.publishNative) events.push({
         type: "OUTPUT_ARTIFACT",
         timestamp: Date.now(),
         artifact: {
@@ -90,6 +92,7 @@ export async function collectNativeT3ArtifactEvents(
       });
     },
   );
+  if (input.publishNative && collection.failures.length) throw new Error(`Native output publication failed: ${collection.failures.join("; ")}`);
   for (const failure of collection.failures) {
     console.warn("[t3-artifacts] output artifact was not published", {
       runId: input.runId,

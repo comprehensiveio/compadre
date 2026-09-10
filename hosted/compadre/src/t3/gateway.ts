@@ -38,6 +38,10 @@ import {
 import { appendSetupSteering } from "./run-control.js";
 
 export interface T3CommandClient {
+  uploadAttachment?: T3Client["uploadAttachment"];
+  readNativeAttachment?: T3Client["readNativeAttachment"];
+  publishNativeOutput?: T3Client["publishNativeOutput"];
+  dispatch?: T3Client["dispatch"];
   nativeEventPage?: T3Client["nativeEventPage"];
   createThread?(input: {
     threadId?: string;
@@ -61,6 +65,10 @@ export interface T3CommandClient {
   startTurn(input: {
     threadId: string;
     messageId?: string;
+    runtimeMode?: "full-access" | "approval-required" | "auto-accept-edits" | "auto";
+    interactionMode?: "default" | "plan";
+    commandId?: string;
+    createdAt?: string;
     text: string;
     displayText?: string;
     modelSelection: T3ModelSelection;
@@ -160,6 +168,8 @@ export interface T3WorkerLifecycleOptions {
   /** Modal sandbox lifetime; the only lifecycle clock (default 24 h). */
   maxLiveMs?: number;
 }
+
+export type T3BeforeTurnDispatch = (connection: { binding: T3ThreadBinding; environment: T3EnvironmentConnection }) => Promise<void>;
 
 export interface T3GatewayTurn {
   binding: T3ThreadBinding;
@@ -641,6 +651,10 @@ export class T3Gateway {
 
   async send(input: {
     runId?: string;
+    runtimeMode?: "full-access" | "approval-required" | "auto-accept-edits" | "auto";
+    interactionMode?: "default" | "plan";
+    beforeDispatch?: T3BeforeTurnDispatch;
+    createdAt?: string;
     canonicalThreadId: string;
     title: string;
     text: string;
@@ -670,6 +684,10 @@ export class T3Gateway {
 
   private async sendUnlocked(input: {
     runId?: string;
+    runtimeMode?: "full-access" | "approval-required" | "auto-accept-edits" | "auto";
+    interactionMode?: "default" | "plan";
+    beforeDispatch?: T3BeforeTurnDispatch;
+    createdAt?: string;
     canonicalThreadId: string;
     title: string;
     text: string;
@@ -737,8 +755,11 @@ export class T3Gateway {
         );
       }
       const environment = connected.environment;
+      await input.beforeDispatch?.(connected);
       await this.prepareCodexAuth(environment, connected.binding, input.runId);
       const dispatch = await environment.client.startTurn({
+        runtimeMode: input.runtimeMode, interactionMode: input.interactionMode,
+        ...(input.beforeDispatch && input.runId ? { commandId: `native-turn:${input.runId}`, messageId: `native-user:${input.runId}`, createdAt: input.createdAt } : {}),
         threadId: connected.binding.t3ThreadId,
         text: input.text,
         displayText: input.displayText,
@@ -767,6 +788,10 @@ export class T3Gateway {
   private async provisionTurn(
     input: {
       runId?: string;
+    runtimeMode?: "full-access" | "approval-required" | "auto-accept-edits" | "auto";
+    interactionMode?: "default" | "plan";
+    beforeDispatch?: T3BeforeTurnDispatch;
+    createdAt?: string;
       canonicalThreadId: string;
       title: string;
       text: string;
@@ -782,6 +807,22 @@ export class T3Gateway {
     },
     replacing?: T3ThreadBinding,
   ): Promise<T3GatewayTurn> {
+    if (input.beforeDispatch) {
+      const connected = await this.provisionWorkerUnlocked(input, async (environment, threadId) => {
+        if (!environment.client.createThread) throw new Error("Worker cannot create a native thread before dispatch");
+        await environment.client.createThread({ threadId, projectId: environment.projectId, title: input.title, modelSelection: input.modelSelection });
+      }, "working", replacing);
+      await input.beforeDispatch(connected);
+      await this.prepareCodexAuth(connected.environment, connected.binding, input.runId);
+      const initialSteering = (await input.loadInitialSteering?.()) ?? [];
+      const dispatch = await connected.environment.client.startTurn({
+        runtimeMode: input.runtimeMode, interactionMode: input.interactionMode,
+        ...(input.runId ? { commandId: `native-turn:${input.runId}`, messageId: `native-user:${input.runId}`, createdAt: input.createdAt } : {}),
+        threadId: connected.binding.t3ThreadId, text: appendSetupSteering(input.text, initialSteering.map((text) => ({ text }))),
+        displayText: input.displayText, inputFiles: input.inputFiles, modelSelection: input.modelSelection, signal: input.signal,
+      });
+      return { binding: connected.binding, dispatch };
+    }
     const connected = await this.provisionWorkerUnlocked(
       input,
       async (environment, t3ThreadId) => {

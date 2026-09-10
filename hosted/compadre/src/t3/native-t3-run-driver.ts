@@ -1,3 +1,4 @@
+import { NativeRunObservation } from "./native-run-observation.js";
 import {
   isTerminalRunStatus,
   type StreamChunk as DurableStreamChunk,
@@ -24,6 +25,7 @@ import type {
 import {
   T3EnvironmentUnavailableError,
   type T3GatewayTurn,
+  type T3BeforeTurnDispatch,
 } from "./gateway.js";
 import {
   NativeT3RunRequestStore,
@@ -53,6 +55,10 @@ const CANCELLED_CODE = "NATIVE_T3_RUN_CANCELLED";
 export interface NativeT3DriverGateway {
   send(input: {
     runId?: string;
+    runtimeMode?: "full-access" | "approval-required" | "auto-accept-edits" | "auto";
+    interactionMode?: "default" | "plan";
+    beforeDispatch?: T3BeforeTurnDispatch;
+    createdAt?: string;
     canonicalThreadId: string;
     title: string;
     text: string;
@@ -128,6 +134,7 @@ export interface NativeT3RunDriverDependencies {
     turn: T3GatewayTurn,
     request: NativeT3RunRequest,
   ): Promise<StreamChunk[]>;
+  prepareNativeDelivery?(request: NativeT3RunRequest, connection?: Parameters<T3BeforeTurnDispatch>[0]): Promise<void>;
   now?: () => number;
 }
 
@@ -240,6 +247,7 @@ function terminalStatusFromChunks(
 interface MirrorHandle {
   start(): Promise<void>;
   observe(chunk: StreamChunk): void;
+  replaceAssistantTexts?(messages: ReadonlyMap<string, string>): void;
   finish(): Promise<void>;
 }
 
@@ -428,11 +436,16 @@ export async function driveNativeT3Run(
       );
     }
     turn = resumed;
+    if (request.nativeDelivery) await deps.prepareNativeDelivery?.(request);
   } else {
     heartbeat("dispatching native T3 turn");
     let setupSteering: NativeT3SteeringEntry[] = [];
+    if (request.nativeDelivery && !deps.prepareNativeDelivery) throw new NativeT3RunStateError("Native delivery is not configured");
     turn = await deps.gateway.send({
+      ...(request.nativeDelivery ? { beforeDispatch: (connection) => deps.prepareNativeDelivery!(request, connection) } : {}),
       runId,
+      createdAt: request.createdAt,
+      runtimeMode: request.runtimeMode, interactionMode: request.interactionMode,
       canonicalThreadId: request.canonicalThreadId,
       title: request.title,
       text: request.text,
@@ -477,7 +490,9 @@ export async function driveNativeT3Run(
       }),
     );
 
-  const projector = NativeT3SnapshotProjector.restore(
+  const projector = request.nativeDelivery
+    ? new NativeRunObservation(runId, turn.dispatch.messageId, persisted)
+    : NativeT3SnapshotProjector.restore(
     runId,
     request.canonicalThreadId,
     turn.dispatch.messageId,
@@ -600,6 +615,7 @@ export async function driveNativeT3Run(
         const artifactEvents = await deps
           .collectArtifactEvents(turn, request)
           .catch((error) => {
+            if (request.nativeDelivery) throw error;
             console.warn("[native-t3-driver] artifact collection failed", {
               runId,
               error,
@@ -611,7 +627,7 @@ export async function driveNativeT3Run(
           mirror?.observe(artifactEvent);
         }
       }
-      await append(chunk);
+      if (!request.nativeDelivery || [EventType.RUN_STARTED, EventType.RUN_FINISHED, EventType.RUN_ERROR, "NATIVE_TURN"].includes(chunk.type)) await append(chunk);
       mirror?.observe(chunk);
       if (
         chunk.type === EventType.RUN_FINISHED ||
@@ -640,6 +656,7 @@ export async function driveNativeT3Run(
           lastProgressAt = now();
         }
         pending.push(...projector.project(snapshot));
+        if (request.nativeDelivery) mirror?.replaceAssistantTexts?.(projector.assistantTexts);
       };
       const waiter = deps.gateway
         .waitForTerminal({

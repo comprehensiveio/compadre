@@ -1,3 +1,6 @@
+import { copyNativeAttachments } from "../t3/native-attachments.js";
+import { configuredCentralT3Client } from "../t3/central-conversation.js";
+import { T3EnvironmentUnavailableError } from "../t3/gateway.js";
 import { Context } from "@temporalio/activity";
 import { ApplicationFailure } from "@temporalio/common";
 import { isTerminalRunStatus } from "@tanstack/ai";
@@ -21,7 +24,7 @@ import type {
 import type { NativeT3RunWorkflowInput } from "./shared.js";
 import type { PreviewActivationWorkflowInput } from "./shared.js";
 import { PreviewActivationStore } from "../services/preview-activation.js";
-import { getConfiguredT3Gateway } from "../t3/runtime.js";
+import { getConfiguredNativeThreadDelivery, getConfiguredT3Gateway } from "../t3/runtime.js";
 
 const HEARTBEAT_INTERVAL_MS = 30_000;
 
@@ -238,4 +241,42 @@ export async function recordTriggerFiredActivity(
   result: TriggeredPromptDeliveryResult,
 ): Promise<void> {
   await (await requiredTriggeredPromptStore()).recordFired(triggerId, result);
+}
+
+
+export async function deliverNativeThreadEventsActivity(input: { threadId: string; epoch: number }): Promise<"done" | "continue"> {
+  const context = Context.current();
+  const [delivery, gateway] = await Promise.all([getConfiguredNativeThreadDelivery(), getConfiguredT3Gateway()]);
+  if (!delivery || !gateway) throw new Error("Native delivery is not configured");
+  const persistence = await getConfiguredThreadPersistence();
+  const central = configuredCentralT3Client();
+  if (!persistence || !central) throw new Error("Native attachment storage is not configured");
+  const deadline = Date.now() + 30 * 60 * 1000;
+  const timer = setInterval(() => context.heartbeat(input), HEARTBEAT_INTERVAL_MS);
+  timer.unref();
+  try {
+  while (Date.now() < deadline) {
+    context.cancellationSignal.throwIfAborted();
+    if (process.env.COMPADRE_NATIVE_EVENTS_PAUSED === "true") throw new Error("Native event delivery is paused");
+    const state = await delivery.get(input.threadId);
+    if (!state || state.epoch !== input.epoch) return "done";
+    let attached;
+    try { attached = await gateway.attachWorker(input.threadId); }
+    catch (error) {
+      if (!(error instanceof T3EnvironmentUnavailableError)) throw error;
+      await delivery.close(state, context.cancellationSignal);
+      return "done";
+    }
+    if (!attached || attached.binding.sandboxId !== state.sandboxId) return "done";
+    const client = attached.environment.client;
+    if (!client.nativeEventPage) throw new Error("Worker cannot stream native events");
+    const page = await delivery.deliverPage({
+      threadId: input.threadId, epoch: input.epoch, signal: context.cancellationSignal,
+      prepare: (current, events, signal) => copyNativeAttachments({ metadata: persistence.persistence.stores.metadata, worker: client, central, sourceThreadId: current.sourceThreadId, events, signal }),
+      read: (current, signal) => client.nativeEventPage!({ threadId: current.sourceThreadId, offset: current.offset, live: true, signal }),
+    });
+    context.heartbeat({ threadId: input.threadId, epoch: input.epoch, offset: page.nextOffset });
+  }
+  return "continue";
+  } finally { clearInterval(timer); }
 }

@@ -83,3 +83,22 @@ test("central binding and append use distinct methods and require a versioned ac
   assert.deepEqual(calls[0]?.body, { sourceThreadId: "worker", epoch: 1, sourceSequence: 7, checkpointOffset: 0 });
   assert.equal(calls[1]?.method, "POST");
 });
+
+test("a pending long poll does not block a replacement claim or deliver its stale page", async () => {
+  const appended: unknown[][] = [];
+  const delivery = new NativeThreadDelivery(metadata(), new InMemoryLockStore(), {
+    bind: async () => {}, append: async (_state, events) => { appended.push(events); },
+  });
+  await delivery.bind(initial);
+  let resolvePage!: (value: { events: unknown[]; nextOffset: string; upToDate: boolean }) => void;
+  const pagePromise = new Promise<{ events: unknown[]; nextOffset: string; upToDate: boolean }>((resolve) => { resolvePage = resolve; });
+  let resolveStarted!: () => void;
+  const startedPromise = new Promise<void>((resolve) => { resolveStarted = resolve; });
+  const first = delivery.deliverPage({ threadId: "central", epoch: 1, read: async () => { resolveStarted(); return pagePromise; } });
+  await startedPromise;
+  await delivery.bind({ ...initial, epoch: 2, sandboxId: "sandbox-2" });
+  resolvePage({ events: [{ eventId: "old-worker-event" }], nextOffset: offset(8), upToDate: true });
+  await assert.rejects(first, /superseded/);
+  assert.deepEqual(appended, []);
+  assert.equal((await delivery.get("central"))?.epoch, 2);
+});
