@@ -13,6 +13,10 @@ export type NativeDeliveryState = z.infer<typeof stateSchema>;
 export interface NativeEventPage { events: unknown[]; nextOffset: string; upToDate: boolean; backgroundLiveness?: "working" | "monitoring" | null; sessionStatus?: string; }
 const NAMESPACE = "compadre.t3.native-delivery.v1";
 
+export class NativeJournalUnavailableError extends Error {
+  constructor() { super("Worker does not expose the native event journal"); }
+}
+
 /** The worker writes its own T3 journal; this is the Durable Streams read path. */
 export async function readNativeEventPage(input: {
   baseUrl: string; accessToken: string; threadId: string; offset: string;
@@ -26,6 +30,7 @@ export async function readNativeEventPage(input: {
     method: input.head ? "HEAD" : "GET", headers: { authorization: `Bearer ${input.accessToken}` },
     signal: AbortSignal.any([AbortSignal.timeout(30_000), ...(input.signal ? [input.signal] : [])]),
   });
+  if (response.status === 404) throw new NativeJournalUnavailableError();
   if (!response.ok) throw new Error(`Native event journal returned HTTP ${response.status}`);
   if (response.headers.get("x-compadre-native-event-version") !== "1") throw new Error("Worker does not support native event delivery version 1");
   const nextOffset = offsetSchema.parse(response.headers.get("stream-next-offset"));

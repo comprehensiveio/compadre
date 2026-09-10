@@ -6,7 +6,7 @@ import type {
   T3ThreadSnapshot,
   T3TurnDispatch,
 } from "../t3/client.js";
-import type { T3Gateway, T3GatewayTurn } from "../t3/gateway.js";
+import type { T3GatewayTurn } from "../t3/gateway.js";
 
 const T3_SLACK_TIMEOUT_MS = 20 * 60 * 1_000;
 
@@ -161,7 +161,7 @@ export function finalAssistantTextForDispatch(
 }
 
 export async function runT3SlackConversation(input: {
-  gateway: T3SlackGateway | T3Gateway;
+  gateway: T3SlackGateway;
   canonicalThreadId: string;
   title: string;
   prompt: string;

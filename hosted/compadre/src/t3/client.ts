@@ -476,6 +476,12 @@ export interface T3TurnDispatch {
   createdAt: string;
 }
 
+const shellSnapshotSchema = z.object({ threads: z.array(z.object({
+  id: z.string(), session: z.object({ status: z.string() }).nullable(),
+  backgroundLiveness: z.enum(["working", "monitoring"]).nullable().optional(),
+  hasPendingApprovals: z.boolean(), hasPendingUserInput: z.boolean(),
+})) });
+
 export class T3Client {
   readonly baseUrl: string;
   private readonly fetch: Fetch;
@@ -613,6 +619,12 @@ export class T3Client {
     return this.readWithTransientRetry("snapshot", "/api/orchestration/snapshot", {
       schema: orchestrationSnapshotSchema,
       signal,
+    });
+  }
+
+  shellSnapshot(signal?: AbortSignal): Promise<z.infer<typeof shellSnapshotSchema>> {
+    return this.readWithTransientRetry("shell snapshot", "/api/orchestration/shell", {
+      schema: shellSnapshotSchema, signal,
     });
   }
 
@@ -833,6 +845,16 @@ export class T3Client {
     const commandId = input.commandId ?? this.idFactory();
     const messageId = input.messageId ?? this.idFactory();
     const createdAt = input.createdAt ?? this.now().toISOString();
+    // Native T3 starts from the thread's persisted modes, not the similarly
+    // named fields accepted by the turn command. Apply explicit changes first.
+    if (input.runtimeMode !== undefined) await this.dispatch({
+      type: "thread.runtime-mode.set", commandId: `${commandId}:runtime-mode`,
+      threadId: input.threadId, runtimeMode: input.runtimeMode, createdAt,
+    }, input.signal);
+    if (input.interactionMode !== undefined) await this.dispatch({
+      type: "thread.interaction-mode.set", commandId: `${commandId}:interaction-mode`,
+      threadId: input.threadId, interactionMode: input.interactionMode, createdAt,
+    }, input.signal);
     const sequence = await this.dispatch(
       {
         type: "thread.turn.start",
@@ -909,6 +931,7 @@ export class T3Client {
     timeoutMs?: number;
     absoluteTimeoutMs?: number;
     pollIntervalMs?: number;
+    nativeEvents?: boolean;
     requireCheckpoint?: boolean;
     signal?: AbortSignal;
     onSnapshot?(snapshot: T3ThreadSnapshot): void | Promise<void>;
@@ -920,6 +943,8 @@ export class T3Client {
     let progressDeadline = startedAt + timeoutMs;
     let latestSequence = -1;
     const pollIntervalMs = input.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS;
+    let nativeOffset = String(Math.max(0, input.minimumSequence - 1)).padStart(20, "0");
+    let readSnapshot = true;
     while (
       this.now().getTime() < progressDeadline &&
       this.now().getTime() < absoluteDeadline
@@ -941,7 +966,19 @@ export class T3Client {
         : deadlineSignal;
       let snapshot: T3ThreadSnapshot;
       try {
+        if (input.nativeEvents && !readSnapshot) {
+          const page = await this.nativeEventPage({ threadId: input.threadId, offset: nativeOffset, live: true, signal: snapshotSignal });
+          if (page.nextOffset !== nativeOffset) progressDeadline = this.now().getTime() + timeoutMs;
+          nativeOffset = page.nextOffset;
+          readSnapshot = page.events.some((event) => event && typeof event === "object" && "type" in event &&
+            (event.type === "thread.session-set" || event.type === "thread.turn-diff-completed" ||
+              (event.type === "thread.activity-appended" && "payload" in event && event.payload && typeof event.payload === "object" &&
+               "activity" in event.payload && event.payload.activity && typeof event.payload.activity === "object" &&
+               "kind" in event.payload.activity && ["provider.turn.completed", "provider.turn.failed"].includes(String(event.payload.activity.kind)))));
+          if (!readSnapshot) continue;
+        }
         snapshot = await this.threadSnapshot(input.threadId, snapshotSignal);
+        readSnapshot = false;
       } catch (error) {
         if (
           !input.signal?.aborted &&
@@ -1063,6 +1100,7 @@ export class T3Client {
       ) {
         return snapshot;
       }
+      if (input.nativeEvents) continue;
       await new Promise<void>((resolve, reject) => {
         const onAbort = () => {
           clearTimeout(timer);
