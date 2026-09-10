@@ -1882,7 +1882,7 @@ test("replaces a lost worker (no snapshot) with a fresh native thread on the nex
   ]);
 });
 
-test("markWorkerLost parks only the confirmed sandbox and never a restorable one", async () => {
+test("markWorkerLost parks only the confirmed sandbox and retains its restore checkpoint", async () => {
   const persistence = memoryPersistence();
   const bindings = new T3ThreadBindingStore(persistence.stores.metadata);
   const base = {
@@ -1923,9 +1923,10 @@ test("markWorkerLost parks only the confirmed sandbox and never a restorable one
   await gateway.markWorkerLost("run-thread", "sandbox-a");
   assert.equal(
     (await bindings.get("run-thread"))?.workerState,
-    "running",
-    "a restorable worker is never parked",
+    "suspended",
+    "the dead worker is parked even when its filesystem is restorable",
   );
+  assert.equal((await bindings.get("run-thread"))?.workerSnapshotId, "im-snapshot");
 });
 
 test("terminal startup shares restore serialization and attach-only access never restores", async () => {

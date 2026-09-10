@@ -43,7 +43,7 @@ const RECONNECT_DELAY_MS = 15_000;
 // this many consecutive ones (~1 minute) the worker is confirmed gone.
 const MAX_CONSECUTIVE_UNAVAILABLE = 4;
 const WORKER_LOST_MESSAGE =
-  "The thread's isolated worker ended before this turn completed (sandbox lifetime reached or the worker crashed). A follow-up message continues on a fresh worker from the saved context.";
+  "The thread's isolated worker ended before this turn completed (sandbox lifetime reached or the worker crashed). A follow-up message starts a replacement worker using saved state when available.";
 const WORKER_LOST_CODE = "NATIVE_T3_WORKER_LOST";
 const CANCELLED_CODE = "NATIVE_T3_RUN_CANCELLED";
 
@@ -654,12 +654,10 @@ export async function driveNativeT3Run(
       if (watchFailure instanceof T3EnvironmentUnavailableError) {
         consecutiveUnavailable += 1;
         if (
-          consecutiveUnavailable >= MAX_CONSECUTIVE_UNAVAILABLE &&
-          !turn.binding.workerSnapshotId
+          consecutiveUnavailable >= MAX_CONSECUTIVE_UNAVAILABLE
         ) {
-          // The worker is confirmed dead with nothing to restore: retrying
-          // (this attempt or the next) cannot revive the turn. Converge
-          // promptly instead of burning the inactivity budget three times.
+          // A filesystem checkpoint cannot revive the running process. Fail
+          // this turn and retain its checkpoint for the next explicit turn.
           log.error(
             {
               runId,
