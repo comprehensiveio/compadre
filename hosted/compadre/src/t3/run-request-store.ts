@@ -1,7 +1,9 @@
 import type { ProviderAction } from "./provider-actions.js";
 import type { MetadataStore } from "./storage.js";
 import type { T3ModelSelection, T3TurnDispatch } from "./client.js";
-import type { InputFile } from "../services/input-files.js";
+import { MAX_INPUT_REQUEST_BYTES, type InputFile } from "../services/input-files.js";
+import { createHash } from "node:crypto";
+import type { T3ArtifactObjectStore } from "./artifact-store.js";
 
 const REQUEST_NAMESPACE = "compadre.t3.run-requests.v1";
 const DISPATCH_NAMESPACE = "compadre.t3.run-dispatches.v1";
@@ -79,19 +81,52 @@ function isDispatch(value: unknown): value is T3TurnDispatch {
 }
 
 export class NativeT3RunRequestStore {
-  constructor(private readonly metadata: MetadataStore) {}
+  constructor(
+    private readonly metadata: MetadataStore,
+    private readonly objects?: Pick<T3ArtifactObjectStore, "put" | "get">,
+    private readonly beforePersist?: (threadId: string) => Promise<void>,
+  ) {}
 
   async saveRequest(request: NativeT3RunRequest): Promise<void> {
-    await this.metadata.set(REQUEST_NAMESPACE, request.runId, request);
+    if (request.inputFiles.reduce((total, file) => total + file.sizeBytes, 0) > MAX_INPUT_REQUEST_BYTES) {
+      throw new Error("Combined input attachments exceed the 100 MiB request limit");
+    }
+    const inputFiles = [];
+    for (const { dataBase64, ...file } of request.inputFiles) {
+      if (!this.objects) throw new Error("Native input attachment object storage is not configured");
+      const bytes = Buffer.from(dataBase64, "base64");
+      const sha256 = createHash("sha256").update(bytes).digest("hex");
+      const runKey = createHash("sha256").update(request.runId).digest("hex");
+      const objectKey = `attachments/native-inputs/v1/${runKey}/${sha256}`;
+      await this.objects.put({ key: objectKey, artifactId: sha256, mimetype: file.mimetype, bytes });
+      inputFiles.push({ ...file, objectKey, sha256 });
+    }
+    await this.beforePersist?.(request.canonicalThreadId);
+    await this.metadata.set(REQUEST_NAMESPACE, request.runId, { ...request, inputFiles });
   }
 
-  async getRequest(runId: string): Promise<NativeT3RunRequest | null> {
+  async getRequest(runId: string, options?: { includeInputFiles: boolean }): Promise<NativeT3RunRequest | null> {
     const value = await this.metadata.get(REQUEST_NAMESPACE, runId);
     if (value === null) return null;
     if (!isRecord(value) || typeof value.runId !== "string") {
       throw new Error(`Invalid persisted native T3 run request for ${runId}`);
     }
-    return value as unknown as NativeT3RunRequest;
+    const request = value as unknown as Omit<NativeT3RunRequest, "inputFiles"> & {
+      inputFiles: Array<InputFile | (Omit<InputFile, "dataBase64"> & { objectKey: string; sha256: string })>;
+    };
+    if (options?.includeInputFiles === false) return { ...request, inputFiles: [] };
+    const inputFiles: InputFile[] = [];
+    for (const file of request.inputFiles) {
+      // Read requests written before object-backed inputs were deployed.
+      if ("dataBase64" in file) { inputFiles.push(file); continue; }
+      if (!this.objects) throw new Error("Native input attachment object storage is not configured");
+      const bytes = await this.objects.get(file.objectKey);
+      if (bytes.byteLength !== file.sizeBytes || createHash("sha256").update(bytes).digest("hex") !== file.sha256) {
+        throw new Error("Native input attachment failed integrity validation");
+      }
+      inputFiles.push({ name: file.name, mimetype: file.mimetype, sizeBytes: file.sizeBytes, dataBase64: Buffer.from(bytes).toString("base64") });
+    }
+    return { ...request, inputFiles };
   }
 
   async saveDispatch(runId: string, record: NativeT3RunDispatch): Promise<void> {
@@ -112,15 +147,16 @@ export class NativeT3RunRequestStore {
   }
 
   /**
-   * Attachments dominate the request record's size and are only needed until
-   * dispatch. Terminal runs keep a trimmed request for diagnostics.
+   * Trim legacy inline bytes after terminal; retain small object references
+   * for storage verification and diagnostics without fetching their contents.
    */
   async trimTerminalRequest(runId: string): Promise<void> {
-    const request = await this.getRequest(runId);
-    if (!request || request.inputFiles.length === 0) return;
+    const request = await this.metadata.get(REQUEST_NAMESPACE, runId);
+    if (!isRecord(request) || !Array.isArray(request.inputFiles) || request.inputFiles.length === 0) return;
+    if (!request.inputFiles.some((file) => isRecord(file) && "dataBase64" in file)) return;
     await this.metadata.set(REQUEST_NAMESPACE, runId, {
       ...request,
-      inputFiles: [],
+      inputFiles: request.inputFiles.filter((file) => isRecord(file) && !("dataBase64" in file)),
     });
   }
 }

@@ -12,6 +12,7 @@ import {
 } from "../t3/worker-templates.js";
 import type { MetadataStore } from "../t3/storage.js";
 import { requireCompadreApiKey } from "./auth.js";
+import { createT3VerificationRoutes } from "./t3-verification.js";
 
 export interface T3OperationsRoutesDependencies {
   enabled(): boolean;
@@ -127,4 +128,4 @@ export function createT3OperationsRoutes(
   return routes;
 }
 
-export const t3OperationsRoutes = createT3OperationsRoutes();
+export const t3OperationsRoutes = createT3OperationsRoutes().route("/", createT3VerificationRoutes());

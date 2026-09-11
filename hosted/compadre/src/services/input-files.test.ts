@@ -6,7 +6,7 @@ import {
   materializeInputFiles,
 } from "./input-files.js";
 
-test("accepts more than eight input files without a combined-size cap", () => {
+test("accepts more than eight input files within the aggregate byte limit", () => {
   const files = Array.from({ length: 12 }, (_, index) => ({
     name: `file-${index}.txt`,
     mimetype: "text/plain",
@@ -14,6 +14,14 @@ test("accepts more than eight input files without a combined-size cap", () => {
     dataBase64: "YQ==",
   }));
   assert.equal(inputFilesSchema.parse(files).length, 12);
+});
+
+test("rejects aggregate attachments over 100 MiB while retaining the 50 MiB per-file limit", () => {
+  const bytes = Buffer.alloc(26 * 1024 * 1024);
+  const file = { name: "image.png", mimetype: "image/png", sizeBytes: bytes.length, dataBase64: bytes.toString("base64") };
+  const result = inputFilesSchema.safeParse([file, file, file, file]);
+  assert.equal(result.success, false);
+  if (!result.success) assert.ok(result.error.issues.some((issue) => issue.message.includes("Combined input attachments")));
 });
 
 test("materializes an authenticated browser image for Modal", () => {

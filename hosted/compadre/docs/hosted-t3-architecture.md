@@ -241,6 +241,12 @@ authenticated same-origin proxy. See [Triggered prompts](./triggered-prompts.md)
 
 ## Thread operations diagnostics
 
+Agent-operated reliability canaries use authenticated
+`/internal/operations/verification` routes. They create dedicated central threads,
+exercise normal turns with one-shot delivery or request-persistence faults, and
+return the canonical UI snapshot alongside run and delivery state. See
+[API reliability verification](./runbooks/api-reliability-verification.md).
+
 `GET /internal/operations/threads` is the controller's authenticated,
 read-only agent debugging API. It combines the durable T3 thread binding,
 active run record, and recent Postgres stream events into one ordered snapshot.
@@ -432,7 +438,9 @@ turn. Slack accepts attachment-only messages and arbitrary file types. Files are
 downloaded with the bot credential, uploaded sequentially to central attachment
 storage, and forwarded to the native T3 harness without becoming a second
 transcript. There is no product-level count cap; each file remains limited to
-50 MB. Generated files
+50 MB, and combined input attachments are capped at 100 MiB per request. Native
+run requests store input object references in Postgres; bytes live in the private
+artifact bucket, with sequential upload and integrity-checked hydration. Generated files
 written under `/tmp/agent-outputs` are content-addressed into the private S3
 bucket; Postgres retains their metadata, while authenticated controller reads
 serve the central UI and the same bytes are uploaded to a linked Slack thread.

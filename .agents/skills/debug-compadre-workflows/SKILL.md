@@ -66,6 +66,12 @@ authenticated tool request fails.
 
 Prefer exact identifiers and narrow time windows. Render service instance suffixes such as `web-8cv7x` are ephemeral; use the stable host/service identity and discovered IDs instead of copying an old suffix.
 
+For headless live verification, use the API-key-protected, canary-only routes in
+`hosted/compadre/docs/runbooks/api-reliability-verification.md`. They exercise
+canonical commands, expose central projections and delivery cursors, and offer
+expiring one-shot faults without crashing shared infrastructure. Verify that the
+routes are deployed before using them; GET inspection never wakes a worker.
+
 ## Interpret the evidence
 
 - For Modal, distinguish controller failure, sandbox lifecycle failure,

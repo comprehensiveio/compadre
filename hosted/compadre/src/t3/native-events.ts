@@ -7,6 +7,7 @@ const stateSchema = z.object({
   version: z.literal(1), canonicalThreadId: z.string().min(1), sourceThreadId: z.string().min(1),
   epoch: z.number().int().positive(), sandboxId: z.string().min(1),
   runId: z.string().optional(),
+  blocked: z.object({ reason: z.string(), at: z.string() }).optional(),
   offset: offsetSchema, startOffset: offsetSchema, checkpointOffset: z.number().int().nonnegative(),
 });
 export type NativeDeliveryState = z.infer<typeof stateSchema>;
@@ -15,6 +16,10 @@ const NAMESPACE = "compadre.t3.native-delivery.v1";
 
 export class NativeJournalUnavailableError extends Error {
   constructor() { super("Worker does not expose the native event journal"); }
+}
+
+export class NativeDeliveryRejectedError extends Error {
+  override name = "NativeDeliveryRejectedError";
 }
 
 /** The worker writes its own T3 journal; this is the Durable Streams read path. */
@@ -48,7 +53,7 @@ export class NativeThreadDelivery {
     private readonly metadata: MetadataStore,
     private readonly locks: LockStore,
     private readonly sink: {
-      close?(state: NativeDeliveryState, signal?: AbortSignal): Promise<void>;
+      close?(state: NativeDeliveryState, signal?: AbortSignal, reason?: string): Promise<void>;
       bind(state: NativeDeliveryState, signal?: AbortSignal): Promise<void>;
       append(state: NativeDeliveryState, events: unknown[], signal?: AbortSignal): Promise<void>;
     },
@@ -70,7 +75,10 @@ export class NativeThreadDelivery {
       if (current && current.epoch === state.epoch) {
         if (current.sourceThreadId !== state.sourceThreadId || current.sandboxId !== state.sandboxId || current.startOffset !== state.startOffset ||
             current.checkpointOffset !== state.checkpointOffset) throw new Error("Conflicting native delivery claim");
-        if (state.runId && current.runId !== state.runId) await this.metadata.set(NAMESPACE, state.canonicalThreadId, { ...current, runId: state.runId });
+        if (state.runId && current.runId !== state.runId) {
+          const { blocked: _blocked, ...resumed } = current;
+          await this.metadata.set(NAMESPACE, state.canonicalThreadId, { ...resumed, runId: state.runId });
+        }
         await this.sink.bind(current, signal);
         return;
       }
@@ -82,6 +90,18 @@ export class NativeThreadDelivery {
   async close(state: NativeDeliveryState, signal?: AbortSignal): Promise<void> {
     if (!this.sink.close) throw new Error("Native stream closure is not configured");
     await this.sink.close(state, signal);
+  }
+
+  /** Keep the replay cursor while making a failed consumer visible centrally. */
+  async block(threadId: string, epoch: number, reason: string): Promise<void> {
+    await this.locks.withLock(`compadre:native-delivery:${threadId}`, async (signal) => {
+      const state = await this.get(threadId);
+      if (!state || state.epoch !== epoch) return;
+      const blocked = state.blocked ?? { reason, at: new Date().toISOString() };
+      await this.metadata.set(NAMESPACE, threadId, { ...state, blocked });
+      if (!this.sink.close) throw new Error("Native stream closure is not configured");
+      await this.sink.close({ ...state, blocked }, signal, blocked.reason);
+    });
   }
 
   /** Central commands commit before the cursor; a lost acknowledgement replays safely. */
@@ -111,29 +131,44 @@ export class NativeThreadDelivery {
         await this.sink.append(state, events, signal);
       }
       signal.throwIfAborted();
-      await this.metadata.set(NAMESPACE, input.threadId, { ...state, offset: page.nextOffset });
+      const { blocked: _blocked, ...resumed } = state;
+      await this.metadata.set(NAMESPACE, input.threadId, { ...resumed, offset: page.nextOffset });
       return page;
     });
   }
 }
 
-export function nativeDeliverySink(input: { baseUrl: string; apiKey: string; fetch?: typeof fetch }) {
+export function nativeDeliverySink(input: { baseUrl: string; apiKey: string; fetch?: typeof fetch;
+  verificationFault?(threadId: string): Promise<string | null>;
+}) {
   const request = async (state: NativeDeliveryState, method: "PUT" | "POST" | "DELETE", body: unknown, signal?: AbortSignal) => {
     const url = new URL(NATIVE_EVENTS_PATH, input.baseUrl);
     url.searchParams.set("threadId", state.canonicalThreadId);
+    const fault = method === "POST" ? await input.verificationFault?.(state.canonicalThreadId) : null;
+    if (fault === "delivery-rejected") throw new NativeDeliveryRejectedError("Verification: Central native event POST returned HTTP 403");
+    if (fault === "delivery-transient") throw new Error("Verification: Central native event POST returned HTTP 503");
     const response = await (input.fetch ?? fetch)(url, {
       method, headers: { authorization: `Bearer ${input.apiKey}`, "content-type": "application/json" },
       body: JSON.stringify(body), signal: AbortSignal.any([AbortSignal.timeout(30_000), ...(signal ? [signal] : [])]),
     });
-    if (!response.ok) throw new Error(`Central native event ${method} returned HTTP ${response.status}`);
+    if (!response.ok) {
+      await response.body?.cancel();
+      const message = `Central native event ${method} returned HTTP ${response.status}`;
+      if (response.status >= 400 && response.status < 500 && ![408, 425, 429].includes(response.status)) {
+        throw new NativeDeliveryRejectedError(message);
+      }
+      throw new Error(message);
+    }
     if (response.headers.get("x-compadre-native-event-version") !== "1") throw new Error("Central native event protocol version mismatch");
     await response.arrayBuffer();
+    if (fault === "delivery-ack-lost") throw new Error("Verification: acknowledgement lost after central commit");
   };
   return {
-    close: (state: NativeDeliveryState, signal?: AbortSignal) => request(state, "DELETE", {
+    close: (state: NativeDeliveryState, signal?: AbortSignal, reason?: string) => request(state, "DELETE", {
       sourceThreadId: state.sourceThreadId, epoch: state.epoch,
-      commandId: `native-worker-lost:${state.canonicalThreadId}:${state.epoch}`,
-      createdAt: new Date().toISOString(), reason: "The worker is no longer available. Send a message to restore its saved workspace.",
+      commandId: reason ? `native-delivery-blocked:${state.canonicalThreadId}:${state.epoch}:${state.blocked?.at ?? state.offset}` : `native-worker-lost:${state.canonicalThreadId}:${state.epoch}`,
+      createdAt: new Date().toISOString(), reason: reason ?? "The worker is no longer available. Send a message to restore its saved workspace.",
+      ...(reason ? { status: "error" } : {}),
     }, signal),
     bind: (state: NativeDeliveryState, signal?: AbortSignal) => request(state, "PUT", {
       sourceThreadId: state.sourceThreadId, epoch: state.epoch,

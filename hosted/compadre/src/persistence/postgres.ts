@@ -8,7 +8,7 @@ import {
   type InterruptRecord,
   type RunStore,
 } from "@tanstack/ai-persistence";
-import { and, asc, eq, type SQL } from "drizzle-orm";
+import { and, asc, eq, sql, type SQL } from "drizzle-orm";
 import type { LockStore } from "@tanstack/ai/locks";
 import pg from "pg";
 import type { CompadreDatabase } from "../db/client.js";
@@ -166,7 +166,7 @@ export function createPostgresChatPersistence(
         .values({ namespace, key, value })
         .onConflictDoUpdate({
           target: [aiMetadata.namespace, aiMetadata.key],
-          set: { value },
+          set: { value: sql`excluded.value` },
         });
     },
 

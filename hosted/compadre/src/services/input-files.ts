@@ -2,6 +2,7 @@ import path from "node:path";
 import { z } from "zod";
 
 export const MAX_INPUT_FILE_BYTES = 50 * 1024 * 1024;
+export const MAX_INPUT_REQUEST_BYTES = 100 * 1024 * 1024;
 const MAX_BASE64_CHARS = Math.ceil(MAX_INPUT_FILE_BYTES / 3) * 4;
 
 const IMAGE_EXTENSIONS: Record<string, string> = {
@@ -39,7 +40,10 @@ export const inputFileSchema = z
     }
   });
 
-export const inputFilesSchema = z.array(inputFileSchema);
+export const inputFilesSchema = z.array(inputFileSchema).refine(
+  (files) => files.reduce((total, file) => total + file.sizeBytes, 0) <= MAX_INPUT_REQUEST_BYTES,
+  "Combined input attachments exceed the 100 MiB request limit",
+);
 
 export type InputFile = z.infer<typeof inputFileSchema>;
 

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { NativeThreadDelivery, readNativeEventPage, nativeDeliverySink, type NativeDeliveryState } from "./native-events.js";
+import { NativeThreadDelivery, NativeDeliveryRejectedError, readNativeEventPage, nativeDeliverySink, type NativeDeliveryState } from "./native-events.js";
 import { InMemoryLockStore, type MetadataStore } from "./storage.js";
 
 const offset = (value: number) => String(value).padStart(20, "0");
@@ -8,6 +8,38 @@ const initial: NativeDeliveryState = {
   version: 1, canonicalThreadId: "central", sourceThreadId: "worker", sandboxId: "sandbox-1", epoch: 1,
   offset: offset(7), startOffset: offset(7), checkpointOffset: 0,
 };
+
+test("permanent HTTP rejections stop retries while overload and server errors remain retryable", async () => {
+  for (const status of [400, 401, 403, 409, 413, 429, 503]) {
+    const sink = nativeDeliverySink({ baseUrl: "https://central.example", apiKey: "secret", fetch: async () => new Response("private response", { status }) });
+    await assert.rejects(sink.append(initial, []), (error: unknown) => {
+      assert.ok(error instanceof Error);
+      assert.equal(error instanceof NativeDeliveryRejectedError, status < 429);
+      assert.ok(!error.message.includes("private response"));
+      return true;
+    });
+  }
+});
+
+test("blocking delivery preserves its cursor even if central is down, and replay clears the block", async () => {
+  const store = metadata();
+  let unavailable = true;
+  const delivery = new NativeThreadDelivery(store, new InMemoryLockStore(), {
+    async bind() {}, async append() {},
+    async close(_state, _signal, reason) { assert.equal(reason, "Delivery blocked"); if (unavailable) throw new Error("central down"); },
+  });
+  await delivery.bind(initial);
+  await assert.rejects(delivery.block("central", 1, "Delivery blocked"), /central down/);
+  assert.equal((await delivery.get("central"))?.offset, initial.offset);
+  assert.equal((await delivery.get("central"))?.blocked?.reason, "Delivery blocked");
+  unavailable = false;
+  await delivery.block("central", 1, "Delivery blocked");
+  await delivery.deliverPage({ threadId: "central", epoch: 1, read: async () => ({ events: [{}], nextOffset: offset(8), upToDate: true }) });
+  assert.equal((await delivery.get("central"))?.blocked, undefined);
+  await delivery.bind({ ...initial, epoch: 2, sandboxId: "replacement" });
+  await delivery.block("central", 1, "Delivery blocked");
+  assert.equal((await delivery.get("central"))?.blocked, undefined);
+});
 function metadata(): MetadataStore {
   const values = new Map<string, unknown>();
   return { get: async (ns, key) => values.get(`${ns}:${key}`) ?? null,

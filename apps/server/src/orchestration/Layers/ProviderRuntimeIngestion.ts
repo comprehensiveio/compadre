@@ -27,6 +27,7 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Schedule from "effect/Schedule";
 import * as Stream from "effect/Stream";
 import { makeFairDrainableWorker } from "@t3tools/shared/DrainableWorker";
 
@@ -971,9 +972,11 @@ const make = Effect.gen(function* () {
   const projectionTurnRepository = yield* ProjectionTurnRepository;
   const serverSettingsService = yield* ServerSettingsService;
   const providerCommandId = (event: ProviderRuntimeEvent, tag: string) =>
-    crypto.randomUUIDv4.pipe(
-      Effect.map((uuid) => CommandId.make(`provider:${event.eventId}:${tag}:${uuid}`)),
-    );
+    event.type === "runtime.error"
+      ? Effect.succeed(CommandId.make(`provider:${event.eventId}:${tag}`))
+      : crypto.randomUUIDv4.pipe(
+          Effect.map((uuid) => CommandId.make(`provider:${event.eventId}:${tag}:${uuid}`)),
+        );
 
   const turnMessageIdsByTurnKey = yield* Cache.make<string, Set<MessageId>>({
     capacity: TURN_MESSAGE_IDS_BY_TURN_CACHE_CAPACITY,
@@ -2180,6 +2183,16 @@ const make = Effect.gen(function* () {
 
   const processInputSafely = (input: RuntimeIngestionInput) =>
     processInput(input).pipe(
+      // Error events have no worker journal to replay when start fails. Keep
+      // this ordered item through a brief database recovery; stable command IDs
+      // make a retry after a committed-but-unacknowledged write safe.
+      Effect.retry({
+        schedule: Schedule.max([Schedule.exponential("1 second"), Schedule.recurs(5)]),
+        while: (error) =>
+          input.source === "runtime" &&
+          input.event.type === "runtime.error" &&
+          error._tag === "PersistenceSqlError",
+      }),
       Effect.catchCause((cause) => {
         if (Cause.hasInterruptsOnly(cause)) {
           return Effect.failCause(cause);
@@ -2188,6 +2201,8 @@ const make = Effect.gen(function* () {
           source: input.source,
           eventId: input.event.eventId,
           eventType: input.event.type,
+          threadId:
+            input.source === "runtime" ? input.event.threadId : input.event.payload.threadId,
           cause: Cause.pretty(cause),
         });
       }),
