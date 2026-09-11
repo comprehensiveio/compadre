@@ -46,6 +46,26 @@ admission path; no mobile-only button is added. Settings' automatic compaction i
 a separate Claude configuration feature. Codex, Cursor, Grok, and OpenCode do not
 advertise this action until their adapters implement its native completion contract.
 
+### Native timeline presentation
+
+Web/desktop reuse upstream T3's compaction separator and progress presentation
+from `c5ba51d62` (#9293) in the existing `MessagesTimeline` components. The exact
+attachment-free command remains in central storage for attribution, replay, and
+turn boundaries, but is rendered as a system action rather than a chat bubble.
+The resume banner, context meter, and typed `/compact` therefore converge on the
+same presentation. Do not add a hosted-only compaction widget or infer success
+from assistant prose.
+
+Optimistic and persisted requests show `Compacting…` instead of `Thinking` while
+active. A native `context-compaction` activity replaces the request marker with
+the normal system separator and stays outside folded tool groups. Cancellation
+and unconfirmed requests remain distinguishable from successful compaction.
+Cancellation also follows native `provider.turn.completed` receipts with
+`state: interrupted`: checkpoint completion can mark the turn row completed,
+but must not erase the cancellation label on reload or a later turn.
+The presentation follows persisted events on reload and remote connections;
+it does not change the wire schema, provider execution, or mobile rendering.
+
 ## Adding an action or merging upstream actions
 
 1. Add a discriminated action schema, arguments, native mapping, and supported
