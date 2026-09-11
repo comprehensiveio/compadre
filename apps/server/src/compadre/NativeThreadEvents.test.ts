@@ -228,52 +228,75 @@ describe("native thread replication", () => {
     }
   });
 
-  it("a lost worker closes only its current claim and retries cannot stop its replacement", async () => {
-    const central = await createOrchestrationSystem(true);
-    const threadId = ThreadId.make(NodeCrypto.randomUUID());
-    const sourceThreadId = ThreadId.make(NodeCrypto.randomUUID());
-    try {
-      await seed(central, threadId);
-      await central.run(
-        bindNativeThreadStream({
+  it.each([null, "Worker stopped during the run", "Failed to restore workspace"])(
+    "worker closure preserves error %s and cannot stop a newer claim",
+    async (lastError) => {
+      const central = await createOrchestrationSystem(true);
+      const threadId = ThreadId.make(NodeCrypto.randomUUID());
+      const sourceThreadId = ThreadId.make(NodeCrypto.randomUUID());
+      try {
+        await seed(central, threadId);
+        await central.run(
+          central.engine.dispatch({
+            type: "thread.session.set",
+            commandId: CommandId.make(NodeCrypto.randomUUID()),
+            threadId,
+            session: {
+              threadId,
+              status: lastError ? "error" : "ready",
+              activeTurnId: null,
+              providerName: "claudeAgent",
+              runtimeMode: "full-access",
+              lastError,
+              updatedAt: createdAt,
+            },
+            createdAt,
+          }),
+        );
+        await central.run(
+          bindNativeThreadStream({
+            threadId,
+            sourceThreadId,
+            epoch: 1,
+            sourceSequence: 0,
+            checkpointOffset: 0,
+          }),
+        );
+        await central.run(
+          bindNativeThreadStream({
+            threadId,
+            sourceThreadId,
+            epoch: 2,
+            sourceSequence: 0,
+            checkpointOffset: 0,
+          }),
+        );
+        const command = {
+          type: "thread.native-stream.close" as const,
+          commandId: CommandId.make(NodeCrypto.randomUUID()),
           threadId,
           sourceThreadId,
           epoch: 1,
-          sourceSequence: 0,
-          checkpointOffset: 0,
-        }),
-      );
-      await central.run(
-        bindNativeThreadStream({
-          threadId,
-          sourceThreadId,
-          epoch: 2,
-          sourceSequence: 0,
-          checkpointOffset: 0,
-        }),
-      );
-      const command = {
-        type: "thread.native-stream.close" as const,
-        commandId: CommandId.make(NodeCrypto.randomUUID()),
-        threadId,
-        sourceThreadId,
-        epoch: 1,
-        createdAt,
-        reason: "Worker terminated",
-      };
-      await expect(central.run(central.engine.dispatch(command))).rejects.toThrow("superseded");
-      await central.run(central.engine.dispatch({ ...command, epoch: 2 }));
-      const after = await central.readModel();
-      expect(after.threads.find((thread) => thread.id === threadId)?.session?.status).toBe(
-        "stopped",
-      );
-      const sequence = after.snapshotSequence;
-      await central.run(central.engine.dispatch({ ...command, epoch: 2 }));
-      expect((await central.readModel()).snapshotSequence).toBe(sequence);
-    } finally {
-      await central.dispose();
-    }
-  });
+          createdAt,
+          reason: "Worker terminated",
+        };
+        await expect(central.run(central.engine.dispatch(command))).rejects.toThrow("superseded");
+        await central.run(central.engine.dispatch({ ...command, epoch: 2 }));
+        const after = await central.readModel();
+        expect(after.threads.find((thread) => thread.id === threadId)?.session?.status).toBe(
+          "stopped",
+        );
+        expect(after.threads.find((thread) => thread.id === threadId)?.session?.lastError).toBe(
+          lastError,
+        );
+        const sequence = after.snapshotSequence;
+        await central.run(central.engine.dispatch({ ...command, epoch: 2 }));
+        expect((await central.readModel()).snapshotSequence).toBe(sequence);
+      } finally {
+        await central.dispose();
+      }
+    },
+  );
 
   it("routes native question responses from the persisted binding without an adapter session", async () => {
     const previous = process.env.COMPADRE_NATIVE_T3_URL;

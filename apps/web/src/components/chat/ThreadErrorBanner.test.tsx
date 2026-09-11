@@ -10,6 +10,19 @@ import {
 } from "./ThreadErrorBanner";
 
 describe("ThreadErrorBanner", () => {
+  it("hides the persisted idle-worker notice while retaining actual failures", () => {
+    expect(
+      shouldShowThreadErrorBanner(
+        "env:expired-thread",
+        "The worker is no longer available. Send a message to restore its saved workspace.",
+        false,
+      ),
+    ).toBe(false);
+    for (const error of ["Worker stopped during the run", "Failed to restore workspace"]) {
+      expect(shouldShowThreadErrorBanner("env:expired-thread", error, false)).toBe(true);
+    }
+  });
+
   it("stays hidden after its current error is dismissed", () => {
     const bannerKey = getThreadErrorBannerKey("env:thread-a", "Aborted");
     dismissThreadErrorBannerForSession(bannerKey);

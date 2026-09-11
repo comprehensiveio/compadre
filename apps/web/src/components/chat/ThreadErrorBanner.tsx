@@ -13,6 +13,13 @@ export function shouldShowThreadErrorBanner(
   error: string | null,
   isDismissed: boolean,
 ): boolean {
+  // Older native-stream closures persisted routine worker expiry as an error.
+  // Keep those historical records without asking users to repair idle compute.
+  if (
+    error === "The worker is no longer available. Send a message to restore its saved workspace."
+  ) {
+    return false;
+  }
   return getThreadErrorBannerKey(threadKey, error) !== null && !isDismissed;
 }
 

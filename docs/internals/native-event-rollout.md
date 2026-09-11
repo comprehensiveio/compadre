@@ -49,6 +49,11 @@ worker epoch ends the old consumer. Codex subscription cleanup waits for a nativ
 provider completion with no live background work or running continuation; parent
 EOF alone no longer stops that provider. Confirmed worker loss sends a fenced native
 session closure to central T3. Transient connection failures retry.
+Stream closure marks the session stopped without adding an error: idle worker
+expiry is normal, and the next message or explicit preview activation restores
+the workspace when a checkpoint is available. The run driver still reports
+interrupted work, and restore failures remain errors. Web/desktop suppress the
+old generic expiry notice already persisted by earlier controllers.
 
 Question responses, approvals, interrupts and session stops route using the
 persisted central binding, without an in-memory Compadre adapter session.

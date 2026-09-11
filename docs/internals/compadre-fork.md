@@ -158,6 +158,11 @@ The parity test intentionally fails when the SQLite migration tip changes. Keep
 runtime persistence selection dynamic and server composition hooks additive.
 
 Hosted diff reads use [durable workspace reviews](hosted-workspace-reviews.md).
+Native-stream closure stops a hosted session without introducing an error;
+the run driver owns interrupted-run failures. `ThreadErrorBanner` suppresses
+the generic idle-expiry notice persisted by earlier versions so existing
+threads also remain quiet while awaiting their next explicit restore action.
+
 The controller publishes immutable checkpoint patches and file context; the
 central server's `CompadreReview` adapter reads them without accessing Modal.
 Web/desktop and mobile diff queries include the selected checkpoint revision in
