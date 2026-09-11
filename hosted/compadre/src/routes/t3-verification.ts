@@ -35,6 +35,7 @@ const defaults: Dependencies = {
     if (!central || !persistence || !delivery || !runs) return null;
     return { central, delivery, runs, store: new T3VerificationStore(persistence.persistence.stores.metadata, persistence.locks),
       async latestRun(threadId) {
+        if (!persistence.persistence.stores.runs.listByThread) throw new Error("Verification requires run history support");
         const history = await persistence.persistence.stores.runs.listByThread(threadId);
         return history.sort((a, b) => b.startedAt - a.startedAt)[0] ?? null;
       },
