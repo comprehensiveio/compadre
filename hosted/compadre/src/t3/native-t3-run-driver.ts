@@ -390,7 +390,6 @@ export async function driveNativeT3Run(
           error: markerError,
         }),
       );
-    await deps.requests.trimTerminalRequest(runId).catch(() => undefined);
     return { status };
   };
 
@@ -914,6 +913,5 @@ export async function finalizeNativeT3Run(
           error,
         }),
       );
-    await deps.requests.trimTerminalRequest(runId).catch(() => undefined);
   }
 }

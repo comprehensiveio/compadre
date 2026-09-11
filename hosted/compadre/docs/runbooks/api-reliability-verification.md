@@ -73,8 +73,11 @@ New request attachments use the existing private artifact bucket under
 `attachments/native-inputs/v1/<hashed-run-id>/<sha256>`. Missing object storage
 fails the request; there is no inline database fallback. Files remain limited
 to 50 MiB each, with a 100 MiB aggregate request limit. Uploads and reads are
-sequential. Existing inline requests remain readable and terminal trimming
-removes their attachment data. This is not a bulk backfill of historical rows.
+sequential. Persisted inputs have one format: object references. Before rollout,
+check the request namespace for inline records. If any exist, upload their bytes
+and replace only their input-file entries with verified references before recovery;
+do not preserve an inline reader or delete user attachments. Recheck after the
+old instance drains. Small references remain after completion for inspection.
 
 New delivery workflow executions retry transient failures at most five attempts;
 permanent HTTP 4xx failures other than 408/425/429 do not retry. On exhaustion

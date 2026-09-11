@@ -29,7 +29,6 @@ test("large image requests persist references only and hydrate from private obje
   const restored = new NativeT3RunRequestStore(metadata, storage);
   assert.deepEqual(await restored.getRequest(input.runId), input);
   objects.clear();
-  await restored.trimTerminalRequest(input.runId);
   assert.deepEqual((await restored.getRequest(input.runId, { includeInputFiles: false }))?.inputFiles, []);
   assert.equal(JSON.stringify(await metadata.get("compadre.t3.run-requests.v1", input.runId)), persisted);
 });
@@ -44,11 +43,11 @@ test("failed or unconfigured uploads never fall back to database bytes", async (
   assert.equal(await metadata.get("compadre.t3.run-requests.v1", input.runId), null);
 });
 
-test("legacy inline requests remain readable and corrupt object bytes are rejected", async () => {
+test("inline records require migration and corrupt object bytes are rejected", async () => {
   const metadata = memoryPersistence().stores.metadata;
   const input = { ...request, inputFiles: [{ name: "x.png", mimetype: "image/png", sizeBytes: 1, dataBase64: "eA==" }] };
   await metadata.set("compadre.t3.run-requests.v1", input.runId, input);
-  assert.deepEqual(await new NativeT3RunRequestStore(metadata).getRequest(input.runId), input);
+  await assert.rejects(new NativeT3RunRequestStore(metadata).getRequest(input.runId), /migrate inline/);
   const store = new NativeT3RunRequestStore(metadata, { async put() {}, async get() { return Buffer.from("y"); } });
   await store.saveRequest(input);
   await assert.rejects(store.getRequest(input.runId), /integrity/);

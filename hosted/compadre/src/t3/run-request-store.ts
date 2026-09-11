@@ -112,13 +112,14 @@ export class NativeT3RunRequestStore {
       throw new Error(`Invalid persisted native T3 run request for ${runId}`);
     }
     const request = value as unknown as Omit<NativeT3RunRequest, "inputFiles"> & {
-      inputFiles: Array<InputFile | (Omit<InputFile, "dataBase64"> & { objectKey: string; sha256: string })>;
+      inputFiles: Array<Omit<InputFile, "dataBase64"> & { objectKey: string; sha256: string }>;
     };
     if (options?.includeInputFiles === false) return { ...request, inputFiles: [] };
     const inputFiles: InputFile[] = [];
     for (const file of request.inputFiles) {
-      // Read requests written before object-backed inputs were deployed.
-      if ("dataBase64" in file) { inputFiles.push(file); continue; }
+      if (typeof file.objectKey !== "string" || typeof file.sha256 !== "string") {
+        throw new Error("Native input attachments require object references; migrate inline records before recovery");
+      }
       if (!this.objects) throw new Error("Native input attachment object storage is not configured");
       const bytes = await this.objects.get(file.objectKey);
       if (bytes.byteLength !== file.sizeBytes || createHash("sha256").update(bytes).digest("hex") !== file.sha256) {
@@ -146,17 +147,4 @@ export class NativeT3RunRequestStore {
     return value as unknown as NativeT3RunDispatch;
   }
 
-  /**
-   * Trim legacy inline bytes after terminal; retain small object references
-   * for storage verification and diagnostics without fetching their contents.
-   */
-  async trimTerminalRequest(runId: string): Promise<void> {
-    const request = await this.metadata.get(REQUEST_NAMESPACE, runId);
-    if (!isRecord(request) || !Array.isArray(request.inputFiles) || request.inputFiles.length === 0) return;
-    if (!request.inputFiles.some((file) => isRecord(file) && "dataBase64" in file)) return;
-    await this.metadata.set(REQUEST_NAMESPACE, runId, {
-      ...request,
-      inputFiles: request.inputFiles.filter((file) => isRecord(file) && !("dataBase64" in file)),
-    });
-  }
 }
