@@ -1176,31 +1176,34 @@ describe("MessagesTimeline", () => {
     expect(markup).toContain('data-user-message-footer="true"');
   });
 
-  it("renders native context compaction as a system separator outside the work log", () => {
-    const markup = renderToStaticMarkup(
-      <MessagesTimeline
-        {...buildProps()}
-        timelineEntries={[
-          {
-            id: "entry-1",
-            kind: "work",
-            createdAt: "2026-03-17T19:12:28.000Z",
-            entry: {
-              id: "work-1",
+  it.each(["Context compacted", "Compacted context 60.9K → 9.65K tokens"])(
+    "renders the provider compaction summary as a system separator: %s",
+    (label) => {
+      const markup = renderToStaticMarkup(
+        <MessagesTimeline
+          {...buildProps()}
+          timelineEntries={[
+            {
+              id: "entry-1",
+              kind: "work",
               createdAt: "2026-03-17T19:12:28.000Z",
-              label: "Context compacted",
-              sourceActivityKind: "context-compaction",
-              tone: "info",
+              entry: {
+                id: "work-1",
+                createdAt: "2026-03-17T19:12:28.000Z",
+                label,
+                sourceActivityKind: "context-compaction",
+                tone: "info",
+              },
             },
-          },
-        ]}
-      />,
-    );
+          ]}
+        />,
+      );
 
-    expect(markup).toContain("Context compacted");
-    expect(markup).toContain('role="separator"');
-    expect(markup).not.toContain("Work Log");
-  });
+      expect(markup).toContain(label);
+      expect(markup).toContain('role="separator"');
+      expect(markup).not.toContain("Work Log");
+    },
+  );
 
   it("renders a Compact button request as native progress, without a user bubble or Thinking", () => {
     const markup = renderToStaticMarkup(
@@ -1213,6 +1216,7 @@ describe("MessagesTimeline", () => {
     );
     expect(markup).toContain("Compacting…");
     expect(markup).toContain('role="status"');
+    expect(markup).not.toContain('role="separator"');
     expect(markup).not.toContain('data-message-role="user"');
     expect(markup).not.toContain("/compact");
     expect(markup).not.toContain("Thinking");

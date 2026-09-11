@@ -1550,7 +1550,7 @@ const TurnPlanTimelineRow = memo(function TurnPlanTimelineRow({
 function ContextCompactionTimelineRow({
   row,
 }: {
-  row: Pick<Extract<TimelineRow, { kind: "context-compaction" }>, "label">;
+  row: Extract<TimelineRow, { kind: "context-compaction" }>;
 }) {
   return (
     <div
@@ -1570,34 +1570,41 @@ function ContextCompactionTimelineRow({
 
 function WorkingTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "working" }> }) {
   const { isCompacting, workingStepLabel } = use(TimelineRowActivityCtx);
-  if (isCompacting)
-    return (
-      <div role="status">
-        <ContextCompactionTimelineRow row={{ label: "Compacting…" }} />
-      </div>
-    );
   return (
     <div>
       <div className="border-b border-border/60 pb-2 pt-1">
         <div className="px-1 text-sm leading-relaxed text-muted-foreground tabular-nums">
-          {row.createdAt ? (
+          {isCompacting ? (
+            <span role="status">
+              <CompactingLabel />
+            </span>
+          ) : row.createdAt ? (
             <>
               Working for <WorkingTimer createdAt={row.createdAt} />
             </>
           ) : (
             "Working..."
           )}
-          {workingStepLabel ? (
+          {!isCompacting && workingStepLabel ? (
             <span className="ml-2 text-muted-foreground/55">· {workingStepLabel}</span>
           ) : null}
         </div>
       </div>
-      {row.showThinking ? (
+      {!isCompacting && row.showThinking ? (
         <div className="mt-1">
           <ThinkingActivityRow />
         </div>
       ) : null}
     </div>
+  );
+}
+
+function CompactingLabel() {
+  return (
+    <span className="inline-flex items-center gap-1.5">
+      <Minimize2Icon aria-hidden="true" className="size-3" />
+      Compacting…
+    </span>
   );
 }
 
