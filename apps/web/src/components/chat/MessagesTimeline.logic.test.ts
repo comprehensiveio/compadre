@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vite-plus/test";
+import { TurnId } from "@t3tools/contracts";
 import {
   computeStableMessagesTimelineRows,
   computeMessageDurationStart,
@@ -7,6 +8,47 @@ import {
   resolveAssistantMessageCopyState,
   shouldPreserveAssistantLineBreaks,
 } from "./MessagesTimeline.logic";
+
+describe("compaction folding", () => {
+  it.each([false, true])("matches upstream compaction folding (other work: %s)", (otherWork) => {
+    const turnId = TurnId.make("compacted-turn");
+    const compaction = {
+      id: "compact-entry",
+      kind: "work" as const,
+      createdAt: "2026-09-11T00:00:02.000Z",
+      entry: {
+        id: "compacted",
+        createdAt: "2026-09-11T00:00:02.000Z",
+        turnId,
+        sourceActivityKind: "context-compaction",
+        label: "Compacted context 60.9K → 9.65K tokens",
+        tone: "info" as const,
+      },
+    };
+    const work = {
+      ...compaction,
+      id: "tool-entry",
+      entry: {
+        ...compaction.entry,
+        id: "tool",
+        sourceActivityKind: "tool.completed",
+        label: "Read file",
+      },
+    };
+    const input = {
+      timelineEntries: otherWork ? [work, compaction] : [compaction],
+      isWorking: false,
+      activeTurnStartedAt: null,
+      turnDiffSummaryByAssistantMessageId: new Map(),
+      revertTurnCountByUserMessageId: new Map(),
+    };
+    const collapsed = deriveMessagesTimelineRows(input);
+    expect(collapsed.some((row) => row.kind === "context-compaction")).toBe(!otherWork);
+    expect(collapsed.some((row) => row.kind === "turn-fold")).toBe(otherWork);
+    const expanded = deriveMessagesTimelineRows({ ...input, expandedTurnIds: new Set([turnId]) });
+    expect(expanded.some((row) => row.kind === "context-compaction")).toBe(true);
+  });
+});
 
 describe("shouldPreserveAssistantLineBreaks", () => {
   it("preserves Claude insight formatting without changing regular markdown", () => {

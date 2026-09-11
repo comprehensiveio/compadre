@@ -913,6 +913,44 @@ describe("ClaudeAdapterLive", () => {
     });
   }
 
+  for (const preTokens of [60_877, undefined]) {
+    it.effect(`emits upstream compaction token fields (before: ${preTokens})`, () => {
+      const harness = makeHarness();
+      return Effect.gen(function* () {
+        const adapter = yield* ClaudeAdapter;
+        const eventsFiber = yield* Stream.takeUntil(
+          adapter.streamEvents,
+          (event) => event.type === "thread.state.changed" && event.payload.state === "compacted",
+        ).pipe(Stream.runCollect, Effect.forkChild);
+        yield* adapter.startSession({
+          threadId: THREAD_ID,
+          provider: ProviderDriverKind.make("claudeAgent"),
+          runtimeMode: "full-access",
+        });
+        yield* adapter.sendTurn({
+          threadId: THREAD_ID,
+          providerAction: { type: "compact" },
+          input: "/compact",
+        });
+        harness.query.emit({
+          type: "system",
+          subtype: "compact_boundary",
+          session_id: "sdk-session-1",
+          uuid: "compact-1",
+          compact_metadata: { trigger: "manual", pre_tokens: preTokens, post_tokens: 9_651 },
+        } as unknown as SDKMessage);
+        const events = Array.from(yield* Fiber.join(eventsFiber));
+        const compacted = events.find((event) => event.type === "thread.state.changed");
+        assert.ok(compacted?.type === "thread.state.changed");
+        assert.equal(compacted.payload.beforeTokens, preTokens);
+        assert.equal(compacted.payload.afterTokens, 9_651);
+      }).pipe(
+        Effect.provideService(Random.Random, makeDeterministicRandomService()),
+        Effect.provide(harness.layer),
+      );
+    });
+  }
+
   it.effect("embeds image attachments in Claude user messages", () => {
     const baseDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "claude-attachments-"));
     const harness = makeHarness({

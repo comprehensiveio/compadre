@@ -13,6 +13,8 @@ import {
   ProjectId,
   ThreadId,
   ProviderInstanceId,
+  ProviderDriverKind,
+  TurnId,
 } from "@t3tools/contracts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Effect from "effect/Effect";
@@ -36,6 +38,7 @@ import { ProjectionSnapshotQuery } from "../orchestration/Services/ProjectionSna
 import { ServerConfig } from "../config.ts";
 
 import { mapNativeThreadEvent, nativeId } from "./NativeThreadEvents.ts";
+import { runtimeEventToActivities } from "../orchestration/Layers/ProviderRuntimeIngestion.ts";
 import { HttpRouter, HttpClient, HttpClientResponse } from "effect/unstable/http";
 import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
@@ -116,6 +119,64 @@ async function seed(system: Awaited<ReturnType<typeof createOrchestrationSystem>
 }
 
 describe("native thread replication", () => {
+  it("preserves upstream compaction counts and summary through central storage and replay", async () => {
+    const threadId = ThreadId.make(NodeCrypto.randomUUID());
+    const sourceThreadId = ThreadId.make(NodeCrypto.randomUUID());
+    const source = await createOrchestrationSystem();
+    const central = await createOrchestrationSystem(true);
+    try {
+      await seed(source, sourceThreadId);
+      await seed(central, threadId);
+      await central.run(
+        bindNativeThreadStream({
+          threadId,
+          sourceThreadId,
+          epoch: 1,
+          sourceSequence: 0,
+          checkpointOffset: 0,
+        }),
+      );
+      const [activity] = runtimeEventToActivities({
+        type: "thread.state.changed",
+        eventId: EventId.make("compacted"),
+        provider: ProviderDriverKind.make("claudeAgent"),
+        threadId: sourceThreadId,
+        turnId: TurnId.make("compact-turn"),
+        createdAt,
+        payload: { state: "compacted", beforeTokens: 60_877, afterTokens: 9_651 },
+      });
+      if (!activity) throw new Error("Missing compaction activity");
+      await source.run(
+        source.engine.dispatch({
+          type: "thread.activity.append",
+          commandId: CommandId.make("compact-activity"),
+          threadId: sourceThreadId,
+          activity,
+          createdAt,
+        }),
+      );
+      const page = await source.run(readNativeEventPage(source.engine, sourceThreadId, 0));
+      for (const event of page.events) {
+        const command = mapNativeThreadEvent(sourceThreadId, threadId, event, 1);
+        if (!command) continue;
+        await central.run(central.engine.dispatch(command));
+        await central.run(central.engine.dispatch(command));
+      }
+      const snapshot = await central.readModel();
+      const activities = snapshot.threads.find((thread) => thread.id === threadId)?.activities;
+      expect(activities).toHaveLength(1);
+      expect(activities?.[0]).toMatchObject({
+        summary: "Compacted context 60.9K → 9.65K tokens",
+        kind: "context-compaction",
+        payload: { state: "compacted", beforeTokens: 60_877, afterTokens: 9_651 },
+        turnId: nativeId(sourceThreadId, "compact-turn"),
+      });
+    } finally {
+      await source.dispose();
+      await central.dispose();
+    }
+  });
+
   it("preserves old history and replays deltas, completion, and later background output exactly once", async () => {
     const threadId = ThreadId.make(NodeCrypto.randomUUID());
     const sourceThreadId = ThreadId.make(NodeCrypto.randomUUID());

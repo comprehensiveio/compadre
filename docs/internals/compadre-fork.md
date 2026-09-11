@@ -43,6 +43,7 @@ It is “concentrate each product difference behind a narrow seam.”
 | Triggered prompts          | `apps/server/src/auth/CompadreTriggeredPrompts.ts` and `apps/web/src/components/settings/TriggeredPromptsSettings*`     | One proxy route layer, one settings section, trigger attribution in contracts and timeline                        |
 | Message attribution        | migrations `043` and `044` plus command attribution hooks                                                               | Contracts, projection, and UI                                                                                     |
 | Compadre product UI        | branding, session, sidebar, chat, usage, and CSS hooks in `apps/web`                                                    | Narrow components and styles                                                                                      |
+| Hosted provider actions    | Typed durable dispatch; see [provider actions](hosted-provider-actions.md)                                              | Native compaction fields and presentation; hosted request/cancellation correlation                                |
 
 Codex and Claude Code remain the provider identities shown to users. Compadre is
 transport and orchestration, not a provider choice.
@@ -52,6 +53,11 @@ transport and orchestration, not a provider choice.
 Harness operations use the [hosted provider action contract](hosted-provider-actions.md).
 Keep its capability discovery, typed dispatch, and native completion receipts
 intact when merging upstream actions; never route them through prompt decoration.
+Compaction presentation and normalized token fields are ported into their
+upstream-owned files, not a parallel hosted widget. Keep the native journal
+payload stable across replay and limit custom lifecycle handling to the hosted
+transport boundary. The provider-action guide records the source upstream
+commits and intentional remaining differences for future merges.
 
 The hosted provider snapshot refreshes through the normal T3 managed-provider
 lifecycle. It has no model allowlist. The controller's authenticated

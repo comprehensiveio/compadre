@@ -6,6 +6,22 @@ import { classifyTaskAgentKind, ProviderRuntimeEvent } from "./providerRuntime.t
 const decodeRuntimeEvent = Schema.decodeUnknownSync(ProviderRuntimeEvent);
 
 describe("ProviderRuntimeEvent", () => {
+  it.each([{}, { beforeTokens: 60_877, afterTokens: 9_651 }, { afterTokens: 0 }])(
+    "preserves optional upstream compaction counts: %j",
+    (counts) => {
+      const payload = { state: "compacted", ...counts };
+      const parsed = decodeRuntimeEvent({
+        type: "thread.state.changed",
+        eventId: "compacted",
+        provider: "claudeAgent",
+        threadId: "thread-1",
+        createdAt: "2026-09-11T00:00:00.000Z",
+        payload,
+      });
+      expect(parsed.payload).toEqual(payload);
+    },
+  );
+
   it("accepts fork-provided driver kinds as branded slugs", () => {
     const parsed = decodeRuntimeEvent({
       type: "session.started",
