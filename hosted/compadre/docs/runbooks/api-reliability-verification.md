@@ -67,6 +67,11 @@ remain after terminal completion. Verify the private `compadre` bucket
 object's existence and normal attachment access. The GET endpoint deliberately
 does not expose object bytes or storage credentials.
 
+Preflight the controller IAM identity's GetObject/PutObject access to
+`attachments/native-inputs/v1/*`; HeadBucket and central attachment uploads
+alone do not prove that grant. The existing `attachments/v1/*` permission does
+not include this prefix. See [production bindings](../production-secrets.md).
+
 ## Recovery implementation and rollout limits
 
 New request attachments use the existing private artifact bucket under

@@ -279,7 +279,9 @@ Canonical endpoints:
 - [x] Create the private `s3://compadre` bucket in Comprehensive AWS account
   `629591269808`, block public access, enable encryption and versioning, and
   grant the Render `compadre` identity `s3:GetBucketLocation`/`s3:ListBucket`
-  plus `s3:GetObject`/`s3:PutObject` on `attachments/v1/*` only.
+  plus `s3:GetObject`/`s3:PutObject` on `attachments/v1/*`,
+  `attachments/native-inputs/v1/*`, and `backups/t3-state/v1/*`; no bucket-wide
+  object grant or delete permission.
 - [x] Set `COMPADRE_T3_ARTIFACT_BUCKET=compadre` and
   `COMPADRE_T3_ARTIFACT_REGION=us-west-2` on the Comprehensive production API
   service.

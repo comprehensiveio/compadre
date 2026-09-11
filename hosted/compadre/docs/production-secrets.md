@@ -117,3 +117,18 @@ existing disk's browser/asset/upload signing secrets and stable environment ID.
 Their managed-secret migration is a disk-removal blocker. Do not retire
 `COMPADRE_BACKUP_TOKEN` until both sides have switched and the final immutable
 SQLite backup is archived. Follow the central PostgreSQL cutover runbook.
+
+## Native input objects
+
+Controller run inputs use `COMPADRE_T3_ARTIFACT_BUCKET=compadre` and region
+`us-west-2`. The Render `compadre` IAM identity also needs `s3:GetObject` and
+`s3:PutObject` on `arn:aws:s3:::compadre/attachments/native-inputs/v1/*`.
+This is a separate prefix from central attachments; access to `attachments/v1/*`
+does not cover it. Keep the bucket private and preserve the existing attachment
+and backup grants when updating `CompadreAttachmentBucketAccess`. Do not grant
+bucket-wide object access or add delete permission for this feature.
+
+Verify an actual native input upload and hydrated worker request, not only
+HeadBucket or central attachment upload. Missing prefix permission must fail
+before run creation; it must never fall back to inline database bytes. See
+[API reliability verification](runbooks/api-reliability-verification.md).
