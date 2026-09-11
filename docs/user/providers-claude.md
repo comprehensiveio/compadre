@@ -52,6 +52,14 @@ support. Wait for the current turn to finish and remove attachments first.
 Compaction succeeds only when Claude confirms it; unsupported or outdated workers
 report an error rather than sending `/compact` as an ordinary chat message.
 
+On web and desktop, manual compaction appears as **Compacting…** in the working
+status row, then a system separator after Claude confirms completion. It shows
+the before/after counts when available, for example **Compacted context 60.9K →
+9.65K tokens**, or **Context compacted** when counts are unavailable. A standalone
+compaction stays visible; one within folded turn history appears when expanded.
+Large conversations can take several minutes. Stop cancels the action; a
+cancelled or unconfirmed request is not shown as successful compaction.
+
 ## Where Claude Skills Are Loaded
 
 T3 Code looks for Claude skills in the Claude config directory's `skills` folder, then

@@ -72,6 +72,28 @@ const asMessageId = (value: string): MessageId => MessageId.make(value);
 const asThreadId = (value: string): ThreadId => ThreadId.make(value);
 const asTurnId = (value: string): TurnId => TurnId.make(value);
 
+it.each([
+  {
+    counts: { beforeTokens: 60_877, afterTokens: 9_651 },
+    label: "Compacted context 60.9K → 9.65K tokens",
+  },
+  { counts: { beforeTokens: 120_000, afterTokens: 0 }, label: "Compacted context 120K → 0 tokens" },
+  { counts: { beforeTokens: 60_877 }, label: "Context compacted" },
+  { counts: { afterTokens: 9_651 }, label: "Context compacted" },
+  { counts: {}, label: "Context compacted" },
+])("uses the upstream compaction summary: $label", ({ counts, label }) => {
+  const [activity] = runtimeEventToActivities({
+    type: "thread.state.changed",
+    eventId: asEventId("compacted"),
+    provider: ProviderDriverKind.make("claudeAgent"),
+    threadId: asThreadId("thread-1"),
+    createdAt: "2026-09-11T00:00:00.000Z",
+    payload: { state: "compacted", ...counts },
+  });
+  expect(activity?.summary).toBe(label);
+  expect(activity?.payload).toEqual({ state: "compacted", ...counts });
+});
+
 it("persists provider stop reasons as non-visible completion metadata", () => {
   const activities = runtimeEventToActivities({
     type: "turn.completed",
@@ -3347,6 +3369,71 @@ describe("ProviderRuntimeIngestion", () => {
       durationMs: 43_567,
     });
   });
+
+  it.each([
+    {
+      usage: [120_000, 30_000],
+      previousBoundary: false,
+      label: "Compacted context 120K → 30K tokens",
+    },
+    { usage: [120_000, 0], previousBoundary: false, label: "Compacted context 120K → 0 tokens" },
+    { usage: [30_000, 120_000], previousBoundary: false, label: "Context compacted" },
+    { usage: [120_000, 30_000], previousBoundary: true, label: "Context compacted" },
+  ])(
+    "uses upstream usage fallback without reusing old boundaries: %j",
+    async ({ usage, previousBoundary, label }) => {
+      const harness = await createHarness();
+      const threadId = asThreadId("thread-1");
+      for (const [index, usedTokens] of usage.entries()) {
+        const createdAt = `2026-01-01T00:00:0${index + 1}.000Z`;
+        await harness.dispatch({
+          type: "thread.activity.append",
+          commandId: CommandId.make(`usage-${index}`),
+          threadId,
+          createdAt,
+          activity: {
+            id: asEventId(`usage-${index}`),
+            kind: "context-window.updated",
+            tone: "info",
+            summary: "Context window updated",
+            payload: { usedTokens },
+            turnId: null,
+            createdAt,
+          },
+        });
+      }
+      if (previousBoundary) {
+        await harness.dispatch({
+          type: "thread.activity.append",
+          commandId: CommandId.make("previous-compaction"),
+          threadId,
+          createdAt: "2026-01-01T00:00:03.000Z",
+          activity: {
+            id: asEventId("previous-compaction"),
+            kind: "context-compaction",
+            tone: "info",
+            summary: "Context compacted",
+            payload: { state: "compacted" },
+            turnId: null,
+            createdAt: "2026-01-01T00:00:03.000Z",
+          },
+        });
+      }
+      harness.emit({
+        type: "thread.state.changed",
+        eventId: asEventId("compacted-fallback"),
+        provider: ProviderDriverKind.make("codex"),
+        threadId,
+        createdAt: "2026-01-01T00:00:04.000Z",
+        payload: { state: "compacted" },
+      });
+      await harness.drain();
+      const thread = (await harness.readModel()).threads.find((entry) => entry.id === threadId);
+      expect(
+        thread?.activities.find((activity) => activity.id === "compacted-fallback")?.summary,
+      ).toBe(label);
+    },
+  );
 
   it("projects compacted thread state into context compaction activities", async () => {
     const harness = await createHarness();

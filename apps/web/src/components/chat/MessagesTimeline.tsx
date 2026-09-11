@@ -65,6 +65,7 @@ import {
   GlobeIcon,
   HammerIcon,
   MessageCircleIcon,
+  Minimize2Icon,
   MousePointerClickIcon,
   PaintbrushIcon,
   SearchIcon,
@@ -163,6 +164,7 @@ interface TimelineRowSharedState {
 
 interface TimelineRowActivityState {
   isWorking: boolean;
+  isCompacting: boolean;
   isRevertingCheckpoint: boolean;
   latestTurnId: TurnId | null;
   /** Current plan step label for the working row, when the turn has a plan. */
@@ -220,6 +222,8 @@ interface MessagesTimelineProps {
   agentPanelModel?: AgentPanelModel;
   onOpenAgents?: () => void;
   isWorking: boolean;
+  isCompacting?: boolean;
+  cancelledCompactionMessageIds?: ReadonlySet<MessageId>;
   workingStepLabel?: string | null;
   activeTurnStartedAt: string | null;
   listRef: React.RefObject<LegendListRef | null>;
@@ -265,6 +269,8 @@ interface MessagesTimelineProps {
 
 export const MessagesTimeline = memo(function MessagesTimeline({
   isWorking,
+  isCompacting = false,
+  cancelledCompactionMessageIds,
   workingStepLabel = null,
   activeTurnStartedAt,
   agentPanelModel = EMPTY_AGENT_PANEL_MODEL,
@@ -430,6 +436,8 @@ export const MessagesTimeline = memo(function MessagesTimeline({
         expandedTurnIds,
         expandedWorkGroupIds,
         isWorking,
+        isCompacting,
+        cancelledCompactionMessageIds,
         activeTurnStartedAt,
         turnDiffSummaryByAssistantMessageId,
         revertTurnCountByUserMessageId,
@@ -441,6 +449,8 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       expandedTurnIds,
       expandedWorkGroupIds,
       isWorking,
+      isCompacting,
+      cancelledCompactionMessageIds,
       activeTurnStartedAt,
       turnDiffSummaryByAssistantMessageId,
       revertTurnCountByUserMessageId,
@@ -574,11 +584,12 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   const activityState = useMemo<TimelineRowActivityState>(
     () => ({
       isWorking,
+      isCompacting,
       isRevertingCheckpoint,
       latestTurnId: latestTurn?.turnId ?? null,
       workingStepLabel,
     }),
-    [isRevertingCheckpoint, isWorking, latestTurn?.turnId, workingStepLabel],
+    [isCompacting, isRevertingCheckpoint, isWorking, latestTurn?.turnId, workingStepLabel],
   );
 
   // Stable renderItem — no closure deps. Row components read shared state
@@ -997,6 +1008,7 @@ const TimelineRowContent = memo(function TimelineRowContent({ row }: { row: Time
       {row.kind === "work-live" ? <LiveWorkEntryTimelineRow row={row} /> : null}
       {row.kind === "work-toggle" ? <WorkGroupToggleTimelineRow row={row} /> : null}
       {row.kind === "turn-fold" ? <TurnFoldTimelineRow row={row} /> : null}
+      {row.kind === "context-compaction" ? <ContextCompactionTimelineRow row={row} /> : null}
       {row.kind === "message" && row.message.role === "user" ? <UserTimelineRow row={row} /> : null}
       {row.kind === "message" && row.message.role === "assistant" ? (
         <AssistantTimelineRow row={row} />
@@ -1534,30 +1546,65 @@ const TurnPlanTimelineRow = memo(function TurnPlanTimelineRow({
   );
 });
 
+// Native T3 #9293's separator, shared by requested and confirmed compactions.
+function ContextCompactionTimelineRow({
+  row,
+}: {
+  row: Extract<TimelineRow, { kind: "context-compaction" }>;
+}) {
+  return (
+    <div
+      role="separator"
+      aria-label={row.label}
+      className="mx-auto flex w-full max-w-3xl items-center gap-3 py-1 text-muted-foreground text-xs"
+    >
+      <span className="h-px flex-1 bg-border/70" />
+      <span className="flex shrink-0 items-center gap-1.5">
+        <Minimize2Icon aria-hidden="true" className="size-3" />
+        {row.label}
+      </span>
+      <span className="h-px flex-1 bg-border/70" />
+    </div>
+  );
+}
+
 function WorkingTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "working" }> }) {
-  const { workingStepLabel } = use(TimelineRowActivityCtx);
+  const { isCompacting, workingStepLabel } = use(TimelineRowActivityCtx);
   return (
     <div>
       <div className="border-b border-border/60 pb-2 pt-1">
         <div className="px-1 text-sm leading-relaxed text-muted-foreground tabular-nums">
-          {row.createdAt ? (
+          {isCompacting ? (
+            <span role="status">
+              <CompactingLabel />
+            </span>
+          ) : row.createdAt ? (
             <>
               Working for <WorkingTimer createdAt={row.createdAt} />
             </>
           ) : (
             "Working..."
           )}
-          {workingStepLabel ? (
+          {!isCompacting && workingStepLabel ? (
             <span className="ml-2 text-muted-foreground/55">· {workingStepLabel}</span>
           ) : null}
         </div>
       </div>
-      {row.showThinking ? (
+      {!isCompacting && row.showThinking ? (
         <div className="mt-1">
           <ThinkingActivityRow />
         </div>
       ) : null}
     </div>
+  );
+}
+
+function CompactingLabel() {
+  return (
+    <span className="inline-flex items-center gap-1.5">
+      <Minimize2Icon aria-hidden="true" className="size-3" />
+      Compacting…
+    </span>
   );
 }
 

@@ -92,9 +92,11 @@ explicitly. A failed epoch can be resumed without resetting its cursor.
 
 Deploy the web change before controller failure publication to retain the
 explanatory error status (older web versions close as stopped). Object-reference
-requests require updated controller readers: stage reader support before
-switching writers during a mixed-version rollout. Do not roll back to a reader
-that understands only inline files while referenced requests are live.
+requests require the updated controller. Verify attachment canaries after the
+old controller's shutdown window ends; an old activity that encounters a new
+reference must retry on the replacement. Do not roll back to a reader that
+understands only inline files while referenced requests are live. Prefer a
+targeted data migration to adding more compatibility modes for future changes.
 
 Pre-dispatch runtime errors retry SQL failures five times with exponential
 backoff (31 seconds of delay), using stable command IDs. This covers brief

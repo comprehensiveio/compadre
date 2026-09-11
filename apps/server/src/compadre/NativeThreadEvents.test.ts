@@ -13,6 +13,8 @@ import {
   ProjectId,
   ThreadId,
   ProviderInstanceId,
+  ProviderDriverKind,
+  TurnId,
 } from "@t3tools/contracts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Effect from "effect/Effect";
@@ -36,6 +38,7 @@ import { ProjectionSnapshotQuery } from "../orchestration/Services/ProjectionSna
 import { ServerConfig } from "../config.ts";
 
 import { mapNativeThreadEvent, nativeId } from "./NativeThreadEvents.ts";
+import { runtimeEventToActivities } from "../orchestration/Layers/ProviderRuntimeIngestion.ts";
 import { HttpRouter, HttpClient, HttpClientResponse } from "effect/unstable/http";
 import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
@@ -116,6 +119,64 @@ async function seed(system: Awaited<ReturnType<typeof createOrchestrationSystem>
 }
 
 describe("native thread replication", () => {
+  it("preserves upstream compaction counts and summary through central storage and replay", async () => {
+    const threadId = ThreadId.make(NodeCrypto.randomUUID());
+    const sourceThreadId = ThreadId.make(NodeCrypto.randomUUID());
+    const source = await createOrchestrationSystem();
+    const central = await createOrchestrationSystem(true);
+    try {
+      await seed(source, sourceThreadId);
+      await seed(central, threadId);
+      await central.run(
+        bindNativeThreadStream({
+          threadId,
+          sourceThreadId,
+          epoch: 1,
+          sourceSequence: 0,
+          checkpointOffset: 0,
+        }),
+      );
+      const [activity] = runtimeEventToActivities({
+        type: "thread.state.changed",
+        eventId: EventId.make("compacted"),
+        provider: ProviderDriverKind.make("claudeAgent"),
+        threadId: sourceThreadId,
+        turnId: TurnId.make("compact-turn"),
+        createdAt,
+        payload: { state: "compacted", beforeTokens: 60_877, afterTokens: 9_651 },
+      });
+      if (!activity) throw new Error("Missing compaction activity");
+      await source.run(
+        source.engine.dispatch({
+          type: "thread.activity.append",
+          commandId: CommandId.make("compact-activity"),
+          threadId: sourceThreadId,
+          activity,
+          createdAt,
+        }),
+      );
+      const page = await source.run(readNativeEventPage(source.engine, sourceThreadId, 0));
+      for (const event of page.events) {
+        const command = mapNativeThreadEvent(sourceThreadId, threadId, event, 1);
+        if (!command) continue;
+        await central.run(central.engine.dispatch(command));
+        await central.run(central.engine.dispatch(command));
+      }
+      const snapshot = await central.readModel();
+      const activities = snapshot.threads.find((thread) => thread.id === threadId)?.activities;
+      expect(activities).toHaveLength(1);
+      expect(activities?.[0]).toMatchObject({
+        summary: "Compacted context 60.9K → 9.65K tokens",
+        kind: "context-compaction",
+        payload: { state: "compacted", beforeTokens: 60_877, afterTokens: 9_651 },
+        turnId: nativeId(sourceThreadId, "compact-turn"),
+      });
+    } finally {
+      await source.dispose();
+      await central.dispose();
+    }
+  });
+
   it("preserves old history and replays deltas, completion, and later background output exactly once", async () => {
     const threadId = ThreadId.make(NodeCrypto.randomUUID());
     const sourceThreadId = ThreadId.make(NodeCrypto.randomUUID());
@@ -228,113 +289,136 @@ describe("native thread replication", () => {
     }
   });
 
-  it("a lost worker closes only its current claim and retries cannot stop its replacement", async () => {
-    const central = await createOrchestrationSystem(true);
-    const threadId = ThreadId.make(NodeCrypto.randomUUID());
-    const sourceThreadId = ThreadId.make(NodeCrypto.randomUUID());
-    try {
-      await seed(central, threadId);
-      await central.run(
-        bindNativeThreadStream({
+  it.each([null, "Worker stopped during the run", "Failed to restore workspace"])(
+    "worker closure preserves error %s and cannot stop a newer claim",
+    async (lastError) => {
+      const central = await createOrchestrationSystem(true);
+      const threadId = ThreadId.make(NodeCrypto.randomUUID());
+      const sourceThreadId = ThreadId.make(NodeCrypto.randomUUID());
+      try {
+        await seed(central, threadId);
+        await central.run(
+          central.engine.dispatch({
+            type: "thread.session.set",
+            commandId: CommandId.make(NodeCrypto.randomUUID()),
+            threadId,
+            session: {
+              threadId,
+              status: lastError ? "error" : "ready",
+              activeTurnId: null,
+              providerName: "claudeAgent",
+              runtimeMode: "full-access",
+              lastError,
+              updatedAt: createdAt,
+            },
+            createdAt,
+          }),
+        );
+        await central.run(
+          bindNativeThreadStream({
+            threadId,
+            sourceThreadId,
+            epoch: 1,
+            sourceSequence: 0,
+            checkpointOffset: 0,
+          }),
+        );
+        await central.run(
+          bindNativeThreadStream({
+            threadId,
+            sourceThreadId,
+            epoch: 2,
+            sourceSequence: 0,
+            checkpointOffset: 0,
+          }),
+        );
+        const command = {
+          type: "thread.native-stream.close" as const,
+          commandId: CommandId.make(NodeCrypto.randomUUID()),
           threadId,
           sourceThreadId,
           epoch: 1,
-          sourceSequence: 0,
-          checkpointOffset: 0,
-        }),
-      );
-      await central.run(
-        bindNativeThreadStream({
-          threadId,
-          sourceThreadId,
-          epoch: 2,
-          sourceSequence: 0,
-          checkpointOffset: 0,
-        }),
-      );
-      const command = {
-        type: "thread.native-stream.close" as const,
-        commandId: CommandId.make(NodeCrypto.randomUUID()),
-        threadId,
-        sourceThreadId,
-        epoch: 1,
-        createdAt,
-        reason: "Worker terminated",
-      };
-      await expect(central.run(central.engine.dispatch(command))).rejects.toThrow("superseded");
-      await central.run(central.engine.dispatch({ ...command, epoch: 2 }));
-      const after = await central.readModel();
-      expect(after.threads.find((thread) => thread.id === threadId)?.session?.status).toBe(
-        "stopped",
-      );
-      const sequence = after.snapshotSequence;
-      await central.run(central.engine.dispatch({ ...command, epoch: 2 }));
-      expect((await central.readModel()).snapshotSequence).toBe(sequence);
-      await central.run(
-        central.engine.dispatch({
-          type: "thread.session.set",
-          commandId: CommandId.make(NodeCrypto.randomUUID()),
-          threadId,
-          session: {
-            threadId,
-            status: "starting",
-            providerName: "codex",
-            runtimeMode: "full-access",
-            activeTurnId: null,
-            lastError: null,
-            updatedAt: createdAt,
-          },
           createdAt,
-        }),
-      );
-      await central.run(
-        central.engine.dispatch({
-          ...command,
-          epoch: 2,
-          commandId: CommandId.make(NodeCrypto.randomUUID()),
-          status: "error",
-          reason: "Event delivery blocked; pending output retained",
-        }),
-      );
-      const blocked = (await central.readModel()).threads.find(
-        (thread) => thread.id === threadId,
-      )?.session;
-      expect(blocked?.status).toBe("error");
-      expect(blocked?.activeTurnId).toBeNull();
-      expect(blocked?.lastError).toBe("Event delivery blocked; pending output retained");
-      await central.run(
-        central.engine.dispatch({
-          type: "thread.session.set",
-          commandId: CommandId.make(NodeCrypto.randomUUID()),
-          threadId,
-          session: {
+          reason: "Worker terminated",
+        };
+        await expect(central.run(central.engine.dispatch(command))).rejects.toThrow("superseded");
+        await central.run(central.engine.dispatch({ ...command, epoch: 2 }));
+        const after = await central.readModel();
+        expect(after.threads.find((thread) => thread.id === threadId)?.session?.status).toBe(
+          "stopped",
+        );
+        expect(after.threads.find((thread) => thread.id === threadId)?.session?.lastError).toBe(
+          lastError,
+        );
+        const sequence = after.snapshotSequence;
+        await central.run(central.engine.dispatch({ ...command, epoch: 2 }));
+        expect((await central.readModel()).snapshotSequence).toBe(sequence);
+        await central.run(
+          central.engine.dispatch({
+            type: "thread.session.set",
+            commandId: CommandId.make(NodeCrypto.randomUUID()),
             threadId,
-            status: "ready",
-            providerName: "codex",
-            runtimeMode: "full-access",
-            activeTurnId: null,
-            lastError: null,
-            updatedAt: createdAt,
-          },
-          createdAt,
-        }),
-      );
-      await central.run(
-        central.engine.dispatch({
-          ...command,
-          epoch: 2,
-          commandId: CommandId.make(NodeCrypto.randomUUID()),
-          status: "error",
-        }),
-      );
-      expect(
-        (await central.readModel()).threads.find((thread) => thread.id === threadId)?.session
-          ?.status,
-      ).toBe("ready");
-    } finally {
-      await central.dispose();
-    }
-  });
+            session: {
+              threadId,
+              status: "starting",
+              providerName: "codex",
+              runtimeMode: "full-access",
+              activeTurnId: null,
+              lastError: null,
+              updatedAt: createdAt,
+            },
+            createdAt,
+          }),
+        );
+        await central.run(
+          central.engine.dispatch({
+            ...command,
+            epoch: 2,
+            commandId: CommandId.make(NodeCrypto.randomUUID()),
+            status: "error",
+            reason: "Event delivery blocked; pending output retained",
+          }),
+        );
+        const blocked = (await central.readModel()).threads.find(
+          (thread) => thread.id === threadId,
+        )?.session;
+        expect(blocked?.status).toBe("error");
+        expect(blocked?.activeTurnId).toBeNull();
+        expect(blocked?.lastError).toBe("Event delivery blocked; pending output retained");
+        await central.run(
+          central.engine.dispatch({
+            type: "thread.session.set",
+            commandId: CommandId.make(NodeCrypto.randomUUID()),
+            threadId,
+            session: {
+              threadId,
+              status: "ready",
+              providerName: "codex",
+              runtimeMode: "full-access",
+              activeTurnId: null,
+              lastError: null,
+              updatedAt: createdAt,
+            },
+            createdAt,
+          }),
+        );
+        await central.run(
+          central.engine.dispatch({
+            ...command,
+            epoch: 2,
+            commandId: CommandId.make(NodeCrypto.randomUUID()),
+            status: "error",
+          }),
+        );
+        expect(
+          (await central.readModel()).threads.find((thread) => thread.id === threadId)?.session
+            ?.status,
+        ).toBe("ready");
+      } finally {
+        await central.dispose();
+      }
+    },
+  );
 
   it("routes native question responses from the persisted binding without an adapter session", async () => {
     const previous = process.env.COMPADRE_NATIVE_T3_URL;

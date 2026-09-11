@@ -1,3 +1,4 @@
+import { deriveCancelledCompactionMessageIds, isCompactionInProgress } from "../compaction";
 import {
   type ApprovalRequestId,
   type ChatFileAttachment,
@@ -2453,6 +2454,15 @@ function ChatViewContent(props: ChatViewProps) {
     threadError,
   });
   const isWorking = phase === "running" || isSendBusy || isConnecting || isRevertingCheckpoint;
+  const isCompacting = isCompactionInProgress({
+    thread: activeThread,
+    optimisticMessages: optimisticUserMessages,
+    isWorking,
+  });
+  const cancelledCompactionMessageIds = useMemo(
+    () => deriveCancelledCompactionMessageIds(activeThread),
+    [activeThread?.messages, activeThread?.activities],
+  );
   const activeWorkStartedAt = deriveActiveWorkStartedAt(
     activeLatestTurn,
     activeThread?.session ?? null,
@@ -7090,6 +7100,8 @@ function ChatViewContent(props: ChatViewProps) {
                 activeTurnStartedAt={activeWorkStartedAt}
                 listRef={legendListRef}
                 timelineEntries={timelineEntries}
+                isCompacting={isCompacting}
+                cancelledCompactionMessageIds={cancelledCompactionMessageIds}
                 latestTurn={activeLatestTurn}
                 runningTurnId={activeRunningTurnId}
                 turnDiffSummaryByAssistantMessageId={turnDiffSummaryByAssistantMessageId}

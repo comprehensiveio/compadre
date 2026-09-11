@@ -46,6 +46,53 @@ admission path; no mobile-only button is added. Settings' automatic compaction i
 a separate Claude configuration feature. Codex, Cursor, Grok, and OpenCode do not
 advertise this action until their adapters implement its native completion contract.
 
+### Native timeline presentation
+
+Web/desktop reuse upstream T3's compaction separator, `CompactingLabel`, and
+working-row presentation from `c5ba51d62` (#9293) in the existing
+`MessagesTimeline` components. The exact
+attachment-free command remains in central storage for attribution, replay, and
+turn boundaries, but is rendered as a system action rather than a chat bubble.
+The resume banner, context meter, and typed `/compact` therefore converge on the
+same presentation. Do not add a hosted-only compaction widget or infer success
+from assistant prose.
+
+Optimistic and persisted requests show `Compacting…` in the working row instead
+of `Thinking` while active, not in a completion separator. The existing static
+activity styling is retained; Compadre does not add upstream's continuous shimmer.
+A native `context-compaction` activity replaces the request marker with the normal
+system separator. Upstream `5f878d2a8` (#9623) supplies the folding rule: a lone
+compaction stays visible; compaction inside a turn with other folded work folds
+with that work and reappears when expanded. Cancellation
+and unconfirmed requests remain distinguishable from successful compaction.
+Cancellation also follows native `provider.turn.completed` receipts with
+`state: interrupted`: checkpoint completion can mark the turn row completed,
+but must not erase the cancellation label on reload or a later turn.
+The presentation follows persisted events on reload and remote connections.
+
+Token counts follow upstream #9293 end to end: optional `beforeTokens` and
+`afterTokens` in `ThreadStateChangedPayload`, Claude's compact-boundary mapping,
+and `ProviderRuntimeIngestion.runtimeEventToActivities` using the shared
+`formatTokens` formatter. The activity summary is
+`Compacted context 60.9K → 9.65K tokens` when both counts are known, otherwise
+`Context compacted`. The upstream usage-activity fallback is retained for
+providers without explicit counts; it never reuses usage before the preceding
+compaction boundary. Web, desktop, and mobile consume the same persisted summary.
+Do not parse Claude metadata or recompute counts in a client widget.
+
+Native journal delivery preserves the activity unchanged except for identity
+mapping. New/restored workers must run the updated fork to emit the normalized
+counts and summary; a web-only rollout cannot update an already-running worker.
+Older workers and historical receipts retain their original summaries. Do not
+rewrite replayed events to enrich them: changing a mapped payload changes its
+digest and conflicts with the immutable source event already stored centrally.
+
+The remaining Compadre-specific code is the capability-checked durable action
+transport and its request/cancellation correlation. Upstream's in-process
+compaction wait cannot replace that distributed lifecycle directly. Keep those
+seams narrow; bring future upstream presentation and event-field changes into
+the existing upstream files rather than cloning a parallel Compadre UI.
+
 ## Adding an action or merging upstream actions
 
 1. Add a discriminated action schema, arguments, native mapping, and supported

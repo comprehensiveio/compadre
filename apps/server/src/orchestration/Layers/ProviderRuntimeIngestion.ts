@@ -27,9 +27,11 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Predicate from "effect/Predicate";
 import * as Schedule from "effect/Schedule";
 import * as Stream from "effect/Stream";
 import { makeFairDrainableWorker } from "@t3tools/shared/DrainableWorker";
+import { formatTokens } from "@t3tools/shared/usageFormat";
 
 import { ProviderService } from "../../provider/Services/ProviderService.ts";
 import { ProjectionTurnRepository } from "../../persistence/Services/ProjectionTurns.ts";
@@ -253,10 +255,43 @@ function assistantSegmentMessageId(baseKey: string, segmentIndex: number): Messa
 function buildContextWindowActivityPayload(
   event: ProviderRuntimeEvent,
 ): ThreadTokenUsageSnapshot | undefined {
-  if (event.type !== "thread.token-usage.updated" || event.payload.usage.usedTokens <= 0) {
+  if (event.type !== "thread.token-usage.updated" || event.payload.usage.usedTokens < 0) {
     return undefined;
   }
   return event.payload.usage;
+}
+
+function compactedTokenCountsFromActivities(
+  activities: ReadonlyArray<OrchestrationThreadActivity> | undefined,
+): { readonly beforeTokens: number; readonly afterTokens: number } | undefined {
+  const lastCompactionIndex = activities?.findLastIndex(
+    (activity) => activity.kind === "context-compaction",
+  );
+  const lastCompaction =
+    lastCompactionIndex !== undefined && lastCompactionIndex >= 0
+      ? activities?.[lastCompactionIndex]
+      : undefined;
+  const activitiesSinceLastCompaction = activities?.slice((lastCompactionIndex ?? -1) + 1) ?? [];
+  const usedTokens = activitiesSinceLastCompaction.flatMap((activity) => {
+    if (activity.kind !== "context-window.updated") return [];
+    if (lastCompaction !== undefined) {
+      const isAfterLastCompaction =
+        activity.sequence !== undefined && lastCompaction.sequence !== undefined
+          ? activity.sequence > lastCompaction.sequence
+          : activity.createdAt > lastCompaction.createdAt;
+      if (!isAfterLastCompaction) return [];
+    }
+    const payload = Predicate.isObject(activity.payload) ? activity.payload : undefined;
+    return Predicate.isNumber(payload?.usedTokens) && payload.usedTokens >= 0
+      ? [payload.usedTokens]
+      : [];
+  });
+  const beforeTokens = usedTokens.at(-2);
+  const afterTokens = usedTokens.at(-1);
+  if (beforeTokens === undefined || afterTokens === undefined || afterTokens >= beforeTokens) {
+    return undefined;
+  }
+  return { beforeTokens, afterTokens };
 }
 
 function normalizeRuntimeTurnState(
@@ -779,15 +814,24 @@ export function runtimeEventToActivities(
         return [];
       }
 
+      const beforeTokens = event.payload.beforeTokens;
+      const afterTokens = event.payload.afterTokens;
+      const summary =
+        beforeTokens !== undefined && afterTokens !== undefined
+          ? `Compacted context ${formatTokens(beforeTokens)} → ${formatTokens(afterTokens)} tokens`
+          : "Context compacted";
       return [
         {
           id: event.eventId,
           createdAt: event.createdAt,
           tone: "info",
           kind: "context-compaction",
-          summary: "Context compacted",
+          summary,
           payload: {
             state: event.payload.state,
+            ...(beforeTokens !== undefined ? { beforeTokens } : {}),
+            ...(afterTokens !== undefined ? { afterTokens } : {}),
+            ...(event.requestId !== undefined ? { requestId: event.requestId } : {}),
             ...(event.payload.detail !== undefined ? { detail: event.payload.detail } : {}),
           },
           turnId: toTurnId(event.turnId) ?? null,
@@ -2160,7 +2204,28 @@ const make = Effect.gen(function* () {
         reasoningText = next.summary || next.text;
       }
 
-      const activities = runtimeEventToActivities(event, taskTitle, reasoningText);
+      let activityEvent = event;
+      if (
+        activityEvent.type === "thread.state.changed" &&
+        activityEvent.payload.state === "compacted" &&
+        (activityEvent.payload.beforeTokens === undefined ||
+          activityEvent.payload.afterTokens === undefined)
+      ) {
+        const threadDetail = yield* resolveThreadDetail(thread.id);
+        const tokenCounts = compactedTokenCountsFromActivities(threadDetail?.activities);
+        if (tokenCounts) {
+          activityEvent = {
+            ...activityEvent,
+            payload: {
+              ...activityEvent.payload,
+              beforeTokens: activityEvent.payload.beforeTokens ?? tokenCounts.beforeTokens,
+              afterTokens: activityEvent.payload.afterTokens ?? tokenCounts.afterTokens,
+            },
+          };
+        }
+      }
+
+      const activities = runtimeEventToActivities(activityEvent, taskTitle, reasoningText);
       yield* Effect.forEach(activities, (activity) =>
         providerCommandId(event, "thread-activity-append").pipe(
           Effect.flatMap((commandId) =>
