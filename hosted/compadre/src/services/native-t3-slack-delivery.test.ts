@@ -4,6 +4,7 @@ import { EventType, type StreamChunk } from "../t3/agui-protocol.js";
 import {
   mirrorNativeT3RunToSlack,
   type NativeT3SlackDeliveryStream,
+  SlackRunMirror,
 } from "./native-t3-slack-delivery.js";
 
 async function* chunks(): AsyncIterable<StreamChunk> {
@@ -140,13 +141,11 @@ test("a Slack delivery outage does not interrupt the central T3 stream", async (
   assert.equal(mirrored.at(-1)?.type, EventType.RUN_FINISHED);
 });
 
-test("a superseded web mirror leaves final Slack delivery to the newest steer", async () => {
+test("a web mirror stays responsible for the final answer after steering", async () => {
   const calls: string[] = [];
   const slack: NativeT3SlackDeliveryStream = {
-    async postThreadMessage(message, _clientMsgId, sessionLink) {
-      calls.push(
-        sessionLink ? `post:${message} [${sessionLink.url}]` : `post:${message}`,
-      );
+    async postThreadMessage(message) {
+      calls.push(`post:${message}`);
     },
     async setStatus(status) {
       calls.push(`status:${status}`);
@@ -155,27 +154,27 @@ test("a superseded web mirror leaves final Slack delivery to the newest steer", 
       calls.push("clear");
     },
   };
-  const mirrored: StreamChunk[] = [];
-  for await (const chunk of mirrorNativeT3RunToSlack(
-    chunks(),
+  const mirror = new SlackRunMirror(
     {
       binding: { channelId: "C1", threadTs: "123.4" },
       userMessage: "First browser prompt",
       botToken: "test-token",
-      async shouldDeliverFinal() {
-        return false;
-      },
     },
+    undefined,
     slack,
-  )) {
-    mirrored.push(chunk);
-  }
+  );
 
-  assert.equal(mirrored.at(-1)?.type, EventType.RUN_FINISHED);
+  await mirror.start();
+  mirror.replaceAssistantTexts(
+    new Map([["assistant-after-steer", "Answer after steering"]]),
+  );
+  await mirror.finish();
+
   assert.deepEqual(calls, [
     "post:*From Compadre web:*\nFirst browser prompt",
     "status:is thinking...",
-    "status:is github.get_repo...",
+    "post:Answer after steering",
+    "clear",
   ]);
 });
 

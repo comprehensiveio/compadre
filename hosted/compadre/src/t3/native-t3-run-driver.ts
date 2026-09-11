@@ -8,7 +8,6 @@ import {
 import type { AgentRunDurability } from "../durability/runtime.js";
 import { log, serializeError } from "../logging.js";
 import { SlackRunMirror } from "../services/native-t3-slack-delivery.js";
-import { dispatchWasSuperseded } from "../services/t3-slack-conversation.js";
 import type { T3ThreadBinding } from "../services/t3-thread-bindings.js";
 import { InMemoryLockStore, type LockStore } from "./storage.js";
 import {
@@ -240,7 +239,6 @@ interface MirrorHandle {
 function buildMirror(
   request: NativeT3RunRequest,
   assistantTexts: ReadonlyMap<string, string>,
-  shouldDeliverFinal?: () => Promise<boolean>,
 ): MirrorHandle | null {
   const mirror = request.slackMirror;
   const botToken = process.env.SLACK_BOT_TOKEN?.trim();
@@ -260,7 +258,6 @@ function buildMirror(
       userMessage: mirror.userMessage,
       ...(mirror.detailsUrl ? { detailsUrl: mirror.detailsUrl } : {}),
       botToken,
-      ...(shouldDeliverFinal ? { shouldDeliverFinal } : {}),
     },
     { assistantTexts },
   );
@@ -477,27 +474,10 @@ export async function driveNativeT3Run(
     );
 
   const projector = new NativeRunObservation(runId, turn.dispatch.messageId, persisted);
-  // A later steer of the same worker turn owns the shared Slack final answer.
-  const shouldDeliverFinal = async (): Promise<boolean> => {
-    if (!deps.gateway.workerSnapshot) return true;
-    try {
-      const latest = await deps.gateway.workerSnapshot(request.canonicalThreadId);
-      return latest
-        ? !dispatchWasSuperseded(latest, turn.dispatch)
-        : true;
-    } catch (error) {
-      console.warn(
-        "[native-t3-driver] could not determine final delivery owner",
-        { runId, error },
-      );
-      return true;
-    }
-  };
-  const mirror = buildMirror(
-    request,
-    projector.assistantTexts,
-    shouldDeliverFinal,
-  );
+  // A steer stays inside this durable run and does not create another Slack
+  // mirror. Keep the run's original mirror responsible for its final answer
+  // and terminal session status.
+  const mirror = buildMirror(request, projector.assistantTexts);
 
   if (projector.isTerminal) {
     // A previous attempt persisted the terminal event but died before the

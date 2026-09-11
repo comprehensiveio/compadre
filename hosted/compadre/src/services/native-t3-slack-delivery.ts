@@ -45,7 +45,6 @@ export class SlackRunMirror {
       userMessage: string;
       detailsUrl?: string;
       botToken: string;
-      shouldDeliverFinal?: () => Promise<boolean>;
     },
     resume?: { assistantTexts?: ReadonlyMap<string, string> },
     private readonly slack: NativeT3SlackDeliveryStream = new SlackStream({
@@ -130,11 +129,6 @@ ${this.input.userMessage}`);
   async finish(): Promise<void> {
     if (!this.deliveryEnabled) return;
     try {
-      const ownsFinal = (await this.input.shouldDeliverFinal?.()) ?? true;
-      if (!ownsFinal) {
-        // A later steer owns the shared Slack status and final answer.
-        return;
-      }
       const finalText = [...this.assistantMessages.values()]
         .reverse()
         .find((text) => text.trim().length > 0);
@@ -190,7 +184,6 @@ export async function* mirrorNativeT3RunToSlack(
     userMessage: string;
     detailsUrl?: string;
     botToken: string;
-    shouldDeliverFinal?: () => Promise<boolean>;
   },
   slack: NativeT3SlackDeliveryStream = new SlackStream({
     channel: input.binding.channelId,
@@ -263,12 +256,6 @@ ${input.userMessage}`);
       yield chunk;
     }
     if (deliveryEnabled) {
-      const ownsFinal = (await input.shouldDeliverFinal?.()) ?? true;
-      if (!ownsFinal) {
-        // A later steer owns the shared Slack status and final answer. Its
-        // delivery path will settle both, so this older mirror exits quietly.
-        return;
-      }
       const finalText = [...assistantMessages.values()]
         .reverse()
         .find((text) => text.trim().length > 0);

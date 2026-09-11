@@ -102,8 +102,10 @@ persistence. Slack-originated final delivery remains controller/outbox-owned.
 Mid-generation browser and Slack messages are steers on the same visible T3
 turn. The hosted adapter detaches its older controller-stream reader (the
 durable producer continues) before opening the steering stream. At terminal,
-the newest user message owns Slack final delivery; superseded outbox/mirror
-paths must not post a failure, duplicate the answer, or clear shared status.
+the Slack outbox row or browser mirror attached to the durable run remains the
+sole delivery owner. A steer changes the instruction answered by the final
+assistant message but does not create a replacement delivery owner; the existing
+owner must post that final answer and clear the shared processing status.
 
 For a protocol change:
 

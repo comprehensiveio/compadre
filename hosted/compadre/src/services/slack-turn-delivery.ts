@@ -7,7 +7,6 @@ import {
 import type { T3TurnDispatch } from "../t3/client.js";
 import { incompleteProviderStopReason } from "../t3/client.js";
 import {
-  dispatchWasSuperseded,
   finalAssistantTextForDispatch,
   t3SlackSessionLink,
 } from "./t3-slack-conversation.js";
@@ -118,7 +117,6 @@ export async function deliverClaimedSlackTurn(input: {
     span.setAttribute("compadre.wait_terminal_ms", Date.now() - startedAt);
     span.addEvent("t3.turn.terminal");
     const state = snapshot.thread.latestTurn?.state;
-    const superseded = dispatchWasSuperseded(snapshot, dispatch);
     const incompleteReason = incompleteProviderStopReason(
       snapshot,
       snapshot.thread.latestTurn?.turnId,
@@ -144,26 +142,11 @@ export async function deliverClaimedSlackTurn(input: {
       throw new SlackDeliveryClaimLostError(delivery);
     }
 
-    if (superseded) {
-      // A newer web or Slack steer owns the shared thread status, details link,
-      // and eventual final answer. Settle only this trigger's reaction and its
-      // outbox row; clearing thread-level UI here would make the newer turn
-      // appear idle while it is still working.
-      await slack.markRunSucceeded(delivery.triggerMessageTs);
-      if (!(await store.markDelivered(delivery))) {
-        throw new SlackDeliveryClaimLostError(delivery);
-      }
-      span.setAttribute("compadre.delivery.superseded", true);
-      logger.info("[slack-delivery] relinquished superseded completion", {
-        deliveryId: delivery.id,
-        messageId: delivery.messageId,
-        threadId: delivery.t3ThreadId,
-      });
-      return true;
-    }
-
     // The session link rides inside the answer message as a context footer
-    // rather than a second message.
+    // rather than a second message. This outbox row remains the delivery owner
+    // when a later browser or Slack message steers the same run: steering does
+    // not create a replacement outbox row, and the final assistant message is
+    // already the response to the newest instruction in that turn.
     await slack.postThreadMessage(
       response,
       delivery.id,
