@@ -1176,7 +1176,7 @@ describe("MessagesTimeline", () => {
     expect(markup).toContain('data-user-message-footer="true"');
   });
 
-  it("renders context compaction entries in the normal work log", () => {
+  it("renders native context compaction as a system separator outside the work log", () => {
     const markup = renderToStaticMarkup(
       <MessagesTimeline
         {...buildProps()}
@@ -1189,6 +1189,7 @@ describe("MessagesTimeline", () => {
               id: "work-1",
               createdAt: "2026-03-17T19:12:28.000Z",
               label: "Context compacted",
+              sourceActivityKind: "context-compaction",
               tone: "info",
             },
           },
@@ -1197,7 +1198,131 @@ describe("MessagesTimeline", () => {
     );
 
     expect(markup).toContain("Context compacted");
-    expect(markup).toContain("Work Log");
+    expect(markup).toContain('role="separator"');
+    expect(markup).not.toContain("Work Log");
+  });
+
+  it("renders a Compact button request as native progress, without a user bubble or Thinking", () => {
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        isWorking
+        isCompacting
+        timelineEntries={[buildUserTimelineEntry("/compact")]}
+      />,
+    );
+    expect(markup).toContain("Compacting…");
+    expect(markup).toContain('role="status"');
+    expect(markup).not.toContain('data-message-role="user"');
+    expect(markup).not.toContain("/compact");
+    expect(markup).not.toContain("Thinking");
+    expect(markup).not.toContain("Working for");
+  });
+
+  it("keeps an unconfirmed compaction request visible without claiming success", () => {
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline {...buildProps()} timelineEntries={[buildUserTimelineEntry("/compact")]} />,
+    );
+    expect(markup).toContain("Compaction requested");
+    expect(markup).not.toContain("Context compacted");
+    expect(markup).not.toContain('data-message-role="user"');
+  });
+
+  it("keeps a cancelled compaction marker after its checkpoint settles and later work starts", () => {
+    const request = buildUserTimelineEntry("/compact");
+    const later = buildUserTimelineEntry("Continue");
+    later.id = "later-entry";
+    later.message = {
+      ...later.message,
+      id: MessageId.make("later"),
+      createdAt: "2026-03-17T19:15:00.000Z",
+    };
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        cancelledCompactionMessageIds={new Set([request.message.id])}
+        timelineEntries={[request, later]}
+      />,
+    );
+    expect(markup).toContain('aria-label="Compaction cancelled"');
+    expect(markup).not.toContain("Compaction requested");
+    expect(markup).not.toContain("Context compacted");
+  });
+
+  it("replaces a completed request with the native receipt, including on reload", () => {
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        timelineEntries={[
+          buildUserTimelineEntry("/compact"),
+          {
+            id: "receipt",
+            kind: "work",
+            createdAt: "2026-03-17T19:14:28.000Z",
+            entry: {
+              id: "receipt",
+              createdAt: "2026-03-17T19:14:28.000Z",
+              label: "Context compacted",
+              sourceActivityKind: "context-compaction",
+              tone: "info",
+            },
+          },
+        ]}
+      />,
+    );
+    expect(markup.match(/role="separator"/g)).toHaveLength(1);
+    expect(markup).toContain("Context compacted");
+    expect(markup).not.toContain("Compaction requested");
+    expect(markup).not.toContain('data-message-role="user"');
+  });
+
+  it("labels a cancelled command without claiming it compacted", () => {
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        latestTurn={{
+          turnId: TurnId.make("cancelled"),
+          state: "interrupted",
+          startedAt: MESSAGE_CREATED_AT,
+          completedAt: "2026-03-17T19:14:28.000Z",
+        }}
+        timelineEntries={[buildUserTimelineEntry("/compact")]}
+      />,
+    );
+    expect(markup).toContain("Compaction cancelled");
+    expect(markup).not.toContain("Context compacted");
+    expect(markup).not.toContain("Compacting…");
+  });
+
+  it("does not let a later compaction hide an earlier unconfirmed request", () => {
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        timelineEntries={[
+          buildUserTimelineEntry("/compact"),
+          {
+            ...buildUserTimelineEntry("Continue"),
+            id: "next",
+            message: { ...buildUserTimelineEntry("Continue").message, id: MessageId.make("next") },
+          },
+          {
+            id: "auto",
+            kind: "work",
+            createdAt: "2026-03-17T19:14:28.000Z",
+            entry: {
+              id: "auto",
+              createdAt: "2026-03-17T19:14:28.000Z",
+              label: "Context compacted",
+              sourceActivityKind: "context-compaction",
+              tone: "info",
+            },
+          },
+        ]}
+      />,
+    );
+    expect(markup).toContain("Compaction requested");
+    expect(markup).toContain("Context compacted");
+    expect(markup).toContain("Continue");
   });
 
   it("summarizes changed files in one line", () => {

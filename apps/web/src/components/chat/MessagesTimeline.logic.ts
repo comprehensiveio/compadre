@@ -1,4 +1,5 @@
 import * as Equal from "effect/Equal";
+import { isCompactCommandMessage } from "../../compaction";
 import {
   formatDuration,
   workEntryDisplayIndicatesToolFailure,
@@ -178,6 +179,12 @@ export type TimelineLatestTurn = Pick<
 >;
 
 export type MessagesTimelineRow =
+  | {
+      kind: "context-compaction";
+      id: string;
+      createdAt: string;
+      label: string;
+    }
   | {
       kind: "work";
       id: string;
@@ -604,7 +611,11 @@ function deriveTurnFolds(input: {
       // Agent-spawn CTA rows never fold: workflows outlive their launching
       // turn (dynamic spawns, background execution), and folding the CTA
       // when the turn settles makes a still-running fleet invisible.
-      if (entry.kind === "work" && entry.entry.agentSpawn !== undefined) {
+      if (
+        entry.kind === "work" &&
+        (entry.entry.agentSpawn !== undefined ||
+          entry.entry.sourceActivityKind === "context-compaction")
+      ) {
         continue;
       }
       hiddenEntryIds.add(entry.id);
@@ -663,11 +674,29 @@ export function deriveMessagesTimelineRows(input: {
   expandedTurnIds?: ReadonlySet<TurnId>;
   expandedWorkGroupIds?: ReadonlySet<string>;
   isWorking: boolean;
+  isCompacting?: boolean;
+  cancelledCompactionMessageIds?: ReadonlySet<MessageId> | undefined;
   activeTurnStartedAt: string | null;
   turnDiffSummaryByAssistantMessageId: ReadonlyMap<MessageId, TurnDiffSummary>;
   revertTurnCountByUserMessageId: ReadonlyMap<MessageId, number>;
 }): MessagesTimelineRow[] {
   const nextRows: MessagesTimelineRow[] = [];
+  const latestUserIndex = lastUserMessageIndex(input.timelineEntries);
+  // Keep command messages as turn boundaries, but not conversational bubbles.
+  // A native receipt replaces the request marker only within that exchange.
+  const completedCompactRequests = new Set<string>();
+  let compactRequestId: string | undefined;
+  for (const entry of input.timelineEntries) {
+    if (entry.kind === "message" && entry.message.role === "user") {
+      compactRequestId = isCompactCommandMessage(entry.message) ? entry.id : undefined;
+    } else if (
+      compactRequestId &&
+      entry.kind === "work" &&
+      entry.entry.sourceActivityKind === "context-compaction"
+    ) {
+      completedCompactRequests.add(compactRequestId);
+    }
+  }
   const durationStartByMessageId = computeMessageDurationStart(
     input.timelineEntries.flatMap((entry) => (entry.kind === "message" ? [entry.message] : [])),
   );
@@ -828,6 +857,41 @@ export function deriveMessagesTimelineRows(input: {
       continue;
     }
 
+    if (timelineEntry.kind === "message" && isCompactCommandMessage(timelineEntry.message)) {
+      if (
+        completedCompactRequests.has(timelineEntry.id) ||
+        (input.isCompacting && index === latestUserIndex)
+      )
+        continue;
+      const cancelled =
+        input.cancelledCompactionMessageIds?.has(timelineEntry.message.id) ||
+        (index === latestUserIndex &&
+          input.latestTurn?.state === "interrupted" &&
+          input.latestTurn.completedAt !== null &&
+          Date.parse(input.latestTurn.completedAt) >= Date.parse(timelineEntry.createdAt));
+      nextRows.push({
+        kind: "context-compaction",
+        id: timelineEntry.id,
+        createdAt: timelineEntry.createdAt,
+        label: cancelled ? "Compaction cancelled" : "Compaction requested",
+      });
+      continue;
+    }
+
+    // Native T3 #9293: compaction is a system separator, not a grouped tool call.
+    if (
+      timelineEntry.kind === "work" &&
+      timelineEntry.entry.sourceActivityKind === "context-compaction"
+    ) {
+      nextRows.push({
+        kind: "context-compaction",
+        id: timelineEntry.id,
+        createdAt: timelineEntry.createdAt,
+        label: timelineEntry.entry.label,
+      });
+      continue;
+    }
+
     if (timelineEntry.kind === "work") {
       const groupedEntries = [timelineEntry.entry];
       let cursor = index + 1;
@@ -836,6 +900,7 @@ export function deriveMessagesTimelineRows(input: {
         if (
           !nextEntry ||
           nextEntry.kind !== "work" ||
+          nextEntry.entry.sourceActivityKind === "context-compaction" ||
           activeWorkEntryIds.has(nextEntry.id) ||
           collapsedEntryIds.has(nextEntry.id) ||
           foldsByAnchorEntryId.has(nextEntry.id)
@@ -1072,6 +1137,11 @@ function isRowUnchanged(a: MessagesTimelineRow, b: MessagesTimelineRow): boolean
     case "turn-fold": {
       const bf = b as typeof a;
       return a.createdAt === bf.createdAt && a.label === bf.label && a.expanded === bf.expanded;
+    }
+
+    case "context-compaction": {
+      const bc = b as typeof a;
+      return a.createdAt === bc.createdAt && a.label === bc.label;
     }
 
     case "proposed-plan":
