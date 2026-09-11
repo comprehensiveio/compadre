@@ -17,6 +17,7 @@ interface VerificationResources {
   store: T3VerificationStore;
   delivery: Pick<NativeThreadDelivery, "get">;
   runs: Pick<NativeT3RunService, "run" | "activeRun" | "cancel">;
+  latestRun(threadId: string): ReturnType<NativeT3RunService["run"]>;
   requestStorage(runId: string): Promise<unknown>;
   workflow(threadId: string, epoch: number, action?: "resume" | "cancel"): Promise<unknown>;
 }
@@ -33,6 +34,11 @@ const defaults: Dependencies = {
     ]);
     if (!central || !persistence || !delivery || !runs) return null;
     return { central, delivery, runs, store: new T3VerificationStore(persistence.persistence.stores.metadata, persistence.locks),
+      async latestRun(threadId) {
+        if (!persistence.persistence.stores.runs.listByThread) throw new Error("Verification requires run history support");
+        const history = await persistence.persistence.stores.runs.listByThread(threadId);
+        return history.sort((a, b) => b.startedAt - a.startedAt)[0] ?? null;
+      },
       async requestStorage(runId) {
         const value = await persistence.persistence.stores.metadata.get("compadre.t3.run-requests.v1", runId);
         if (!value) return null;
@@ -95,7 +101,7 @@ export function createT3VerificationRoutes(deps: Dependencies = defaults): Hono 
     if (!parsed.success) return c.json({ error: "projectId and native modelSelection required" }, 400);
     const resources = await deps.resources();
     if (!resources) return c.json({ error: "Verification unavailable" }, 503);
-    const threadId = `verify-${randomUUID()}`;
+    const threadId = randomUUID().replace(/^[^-]+/, "c0decafe");
     await resources.store.register(threadId);
     await resources.central.createThread({ ...parsed.data, threadId, title: "[Verification] API reliability canary" });
     return c.json({ threadId }, 201);
@@ -111,7 +117,7 @@ export function createT3VerificationRoutes(deps: Dependencies = defaults): Hono 
     const [central, delivery, verification] = await Promise.all([
       resources.central.threadSnapshot(threadId), resources.delivery.get(threadId), resources.store.get(threadId),
     ]);
-    const run = delivery?.runId ? await resources.runs.run(delivery.runId) : await resources.runs.activeRun(threadId);
+    const run = await resources.latestRun(threadId);
     return c.json({ central, delivery, verification, run,
       requestStorage: run ? await resources.requestStorage(run.runId) : null,
       workflow: delivery ? await resources.workflow(threadId, delivery.epoch) : null });

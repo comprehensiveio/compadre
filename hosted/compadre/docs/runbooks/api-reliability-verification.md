@@ -14,8 +14,8 @@ the existing authenticated `/hosted/t3/providers/<provider>/models` routes.
 1. `POST /internal/operations/verification` with
    `{"projectId":"<central project id>","modelSelection":{"instanceId":"codex","model":"<available model>"}}`.
    The response is `201 {threadId}`. `claudeAgent` is also supported. This creates
-   an empty central thread, not a Modal worker. The server chooses a `verify-`
-   ID and records its eligibility for fault injection; ordinary threads cannot
+   an empty central thread, not a Modal worker. The server chooses a `c0decafe-`
+   UUID prefix and records its eligibility for fault injection; ordinary threads cannot
    be opted in. Use the same configured project as normal hosted conversations.
 2. `POST /internal/operations/verification/<threadId>/turn` with
    `{"messageId":"<unique probe id>","scenario":"delivery-ack-lost"}`.
@@ -26,7 +26,7 @@ the existing authenticated `/hosted/t3/providers/<provider>/models` routes.
    Starting a turn performs real provider work and incurs ordinary worker/model
    costs. Reusing a message ID already present in the thread does not resend it.
 3. `GET /internal/operations/verification/<threadId>` returns `central`
-   (the same persisted thread snapshot clients render), `run`, `delivery`
+   (the same persisted thread snapshot clients render), `run` (latest, including failure before delivery binding), `delivery`
    (epoch/cursor/block), `workflow` (status/pending attempts), and `verification`
    (scenario/remaining/injectedAt/expiry), and `requestStorage` (reference-only
    file metadata and `containsInlineBytes`, never file contents). Reads never provision or restore a
