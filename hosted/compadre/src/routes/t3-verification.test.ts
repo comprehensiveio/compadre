@@ -1,3 +1,4 @@
+import { devBackupAccessProjection } from "../t3/dev-backups.js";
 import assert from "node:assert/strict";
 import test from "node:test";
 import { memoryPersistence } from "@tanstack/ai-persistence";
@@ -25,6 +26,7 @@ test("verification is key-protected, canary-only, and uses central commands and 
     delivery: { async get(threadId) { return { version: 1, canonicalThreadId: threadId, sourceThreadId: "worker", sandboxId: "sandbox", epoch: 1,
       offset: "00000000000000000010", startOffset: "00000000000000000000", checkpointOffset: 0 }; } },
     runs: { async run() { return null; }, async activeRun() { return null; }, async cancel() { return { found: false, requested: false, local: false }; } },
+    async latestRun() { return { runId: "completed-before-binding", threadId: snapshot.thread.id, status: "failed", startedAt: 1 }; },
     async requestStorage() { return null; },
     async workflow(_thread, _epoch, action) { calls.push(action ?? "workflow-read"); return { status: "FAILED" }; },
   }) });
@@ -40,8 +42,13 @@ test("verification is key-protected, canary-only, and uses central commands and 
   const created = await app.request(base, { method: "POST", headers, body: JSON.stringify({ projectId: "project", modelSelection: snapshot.thread.modelSelection }) });
   assert.equal(created.status, 201);
   const { threadId } = await created.json() as { threadId: string };
-  assert.ok(threadId.startsWith("verify-"));
-  for (const path of ["ordinary", "verify-unregistered", "ordinary/turn", "ordinary/resume-delivery", "ordinary/stop"]) {
+  assert.ok(threadId.startsWith("c0decafe-"));
+  assert.doesNotThrow(() => devBackupAccessProjection({
+    COMPADRE_DEV_ENVIRONMENT_ENABLED: "true", COMPADRE_DEV_PRODUCTION_DATA_ENABLED: "true",
+    COMPADRE_CANONICAL_THREAD_ID: threadId, COMPADRE_DEV_BACKUP_ACCESS_SECRET: "test-secret",
+    COMPADRE_PUBLIC_URL: "https://controller.example",
+  }));
+  for (const path of ["ordinary", "c0decafe-0000-4000-8000-000000000002", "ordinary/turn", "ordinary/resume-delivery", "ordinary/stop"]) {
     assert.equal((await app.request(`${base}/${path}`, { method: path.includes("/") ? "POST" : "GET", headers })).status, 404);
   }
   const turn = await app.request(`${base}/${threadId}/turn`, { method: "POST", headers, body: JSON.stringify({ messageId: "probe-1", scenario: "delivery-ack-lost" }) });
@@ -50,7 +57,9 @@ test("verification is key-protected, canary-only, and uses central commands and 
   const read = await app.request(`${base}/${threadId}`, { headers });
   assert.equal(read.status, 200);
   assert.equal(read.headers.get("cache-control"), "no-store");
-  assert.equal((await read.json() as { central: T3ThreadSnapshot }).central.snapshotSequence, 10);
+  const inspected = await read.json() as { central: T3ThreadSnapshot; run: { runId: string } };
+  assert.equal(inspected.central.snapshotSequence, 10);
+  assert.equal(inspected.run.runId, "completed-before-binding");
   assert.equal((await app.request(`${base}/${threadId}/resume-delivery`, { method: "POST", headers })).status, 202);
   assert.equal((await store.get(threadId))?.remaining, 0);
   assert.equal((await app.request(`${base}/${threadId}/stop`, { method: "POST", headers })).status, 200);

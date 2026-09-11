@@ -13,12 +13,12 @@ export class T3VerificationStore {
   constructor(private readonly metadata: MetadataStore, private readonly locks: LockStore, private readonly now = Date.now) {}
 
   async register(threadId: string): Promise<void> {
-    if (!threadId.startsWith("verify-")) throw new Error("Verification thread id required");
+    if (!threadId.startsWith("c0decafe-")) throw new Error("Verification thread id required");
     await this.metadata.set(namespace, threadId, { createdAt: new Date(this.now()).toISOString(), scenario: "none", remaining: 0, expiresAt: 0 });
   }
 
   async get(threadId: string) {
-    if (!threadId.startsWith("verify-")) return null;
+    if (!threadId.startsWith("c0decafe-")) return null;
     const value = await this.metadata.get(namespace, threadId);
     return value === null ? null : recordSchema.parse(value);
   }
@@ -35,7 +35,7 @@ export class T3VerificationStore {
   }
 
   async consume(threadId: string, phase: "request" | "delivery") {
-    if (!threadId.startsWith("verify-")) return null;
+    if (!threadId.startsWith("c0decafe-")) return null;
     return this.locks.withLock(`compadre:verification:${threadId}`, async () => {
       const state = await this.get(threadId);
       if (!state || !state.remaining || state.expiresAt <= this.now()) return null;
