@@ -1661,6 +1661,7 @@ export const NativeThreadStreamCloseCommand = Schema.Struct({
   epoch: Schema.Number.check(Schema.isInt(), Schema.isGreaterThanOrEqualTo(1)),
   createdAt: IsoDateTime,
   reason: TrimmedNonEmptyString,
+  status: Schema.optional(Schema.Literals(["stopped", "error"])),
 });
 export const OrchestrationCommand = Schema.Union([
   DispatchableClientOrchestrationCommand,

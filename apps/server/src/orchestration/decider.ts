@@ -1199,6 +1199,14 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
 
     case "thread.native-stream.close": {
       const thread = yield* requireThread({ readModel, command, threadId: command.threadId });
+      // A lost acknowledgement can exhaust delivery retries after central has
+      // already committed completion. Do not replace that terminal state: a
+      // duplicate replay is receipt-deduplicated and cannot restore it later.
+      const alreadySettled =
+        command.status === "error" &&
+        thread.session !== null &&
+        thread.session.status !== "starting" &&
+        thread.session.status !== "running";
       return {
         ...(yield* withEventBase({
           aggregateKind: "thread",
@@ -1210,18 +1218,19 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         type: "thread.session-set",
         payload: {
           threadId: command.threadId,
-          session: {
-            ...thread.session,
-            threadId: command.threadId,
-            status: "stopped",
-            activeTurnId: null,
-            providerName: thread.session?.providerName ?? null,
-            runtimeMode: thread.session?.runtimeMode ?? "full-access",
-            // Closing delivery is normal after idle worker expiry. The run
-            // driver reports interrupted work separately; retain that error.
-            lastError: thread.session?.lastError ?? null,
-            updatedAt: command.createdAt,
-          },
+          session: alreadySettled
+            ? thread.session
+            : {
+                ...thread.session,
+                threadId: command.threadId,
+                status: command.status ?? "stopped",
+                activeTurnId: null,
+                providerName: thread.session?.providerName ?? null,
+                runtimeMode: thread.session?.runtimeMode ?? "full-access",
+                lastError:
+                  command.status === "error" ? command.reason : (thread.session?.lastError ?? null),
+                updatedAt: command.createdAt,
+              },
         },
       };
     }

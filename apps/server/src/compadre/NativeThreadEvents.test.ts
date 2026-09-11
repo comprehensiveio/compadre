@@ -353,6 +353,67 @@ describe("native thread replication", () => {
         const sequence = after.snapshotSequence;
         await central.run(central.engine.dispatch({ ...command, epoch: 2 }));
         expect((await central.readModel()).snapshotSequence).toBe(sequence);
+        await central.run(
+          central.engine.dispatch({
+            type: "thread.session.set",
+            commandId: CommandId.make(NodeCrypto.randomUUID()),
+            threadId,
+            session: {
+              threadId,
+              status: "starting",
+              providerName: "codex",
+              runtimeMode: "full-access",
+              activeTurnId: null,
+              lastError: null,
+              updatedAt: createdAt,
+            },
+            createdAt,
+          }),
+        );
+        await central.run(
+          central.engine.dispatch({
+            ...command,
+            epoch: 2,
+            commandId: CommandId.make(NodeCrypto.randomUUID()),
+            status: "error",
+            reason: "Event delivery blocked; pending output retained",
+          }),
+        );
+        const blocked = (await central.readModel()).threads.find(
+          (thread) => thread.id === threadId,
+        )?.session;
+        expect(blocked?.status).toBe("error");
+        expect(blocked?.activeTurnId).toBeNull();
+        expect(blocked?.lastError).toBe("Event delivery blocked; pending output retained");
+        await central.run(
+          central.engine.dispatch({
+            type: "thread.session.set",
+            commandId: CommandId.make(NodeCrypto.randomUUID()),
+            threadId,
+            session: {
+              threadId,
+              status: "ready",
+              providerName: "codex",
+              runtimeMode: "full-access",
+              activeTurnId: null,
+              lastError: null,
+              updatedAt: createdAt,
+            },
+            createdAt,
+          }),
+        );
+        await central.run(
+          central.engine.dispatch({
+            ...command,
+            epoch: 2,
+            commandId: CommandId.make(NodeCrypto.randomUUID()),
+            status: "error",
+          }),
+        );
+        expect(
+          (await central.readModel()).threads.find((thread) => thread.id === threadId)?.session
+            ?.status,
+        ).toBe("ready");
       } finally {
         await central.dispose();
       }

@@ -234,11 +234,26 @@ export async function triggeredPromptWorkflow(
 
 /** Delivery outlives the parent turn and rolls its Temporal history periodically. */
 export async function nativeThreadDeliveryWorkflow(input: { threadId: string; epoch: number }): Promise<void> {
+  const bounded = patched("native-delivery-bounded-retries-v1");
   const { deliverNativeThreadEventsActivity } = proxyActivities<typeof activities>({
     startToCloseTimeout: "35 minutes", heartbeatTimeout: "2 minutes",
     cancellationType: ActivityCancellationType.WAIT_CANCELLATION_COMPLETED,
-    retry: { initialInterval: "5 seconds", maximumInterval: "1 minute" },
+    retry: { initialInterval: "5 seconds", maximumInterval: "1 minute",
+      ...(bounded ? { maximumAttempts: 5, nonRetryableErrorTypes: ["NativeDeliveryRejectedError"] } : {}),
+    },
   });
-  const result = await deliverNativeThreadEventsActivity(input);
+  let result;
+  try {
+    result = await deliverNativeThreadEventsActivity(input);
+  } catch (error) {
+    if (bounded) {
+      const { blockNativeThreadDeliveryActivity } = proxyActivities<typeof activities>({
+        startToCloseTimeout: "1 minute",
+        retry: { initialInterval: "5 seconds", maximumInterval: "1 minute", maximumAttempts: 5 },
+      });
+      await CancellationScope.nonCancellable(() => blockNativeThreadDeliveryActivity(input));
+    }
+    throw error;
+  }
   if (result === "continue") await continueAsNew<typeof nativeThreadDeliveryWorkflow>(input);
 }

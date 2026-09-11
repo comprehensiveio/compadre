@@ -168,7 +168,7 @@ export async function deliverNativeT3Steering(
       await deps.controls!.settle(runId, input.id, "rejected");
       return false;
     }
-    const request = await deps.requests.getRequest(runId);
+    const request = await deps.requests.getRequest(runId, { includeInputFiles: false });
     if (!request || request.providerAction) {
       await deps.controls!.settle(runId, input.id, "rejected");
       return false;
@@ -390,7 +390,6 @@ export async function driveNativeT3Run(
           error: markerError,
         }),
       );
-    await deps.requests.trimTerminalRequest(runId).catch(() => undefined);
     return { status };
   };
 
@@ -877,7 +876,7 @@ export async function finalizeNativeT3Run(
     await stream.close();
   }
 
-  const request = await deps.requests.getRequest(runId).catch(() => null);
+  const request = await deps.requests.getRequest(runId, { includeInputFiles: false }).catch(() => null);
   if (request) {
     const markerStatus =
       run && isTerminalRunStatus(run.status)
@@ -914,6 +913,5 @@ export async function finalizeNativeT3Run(
           error,
         }),
       );
-    await deps.requests.trimTerminalRequest(runId).catch(() => undefined);
   }
 }

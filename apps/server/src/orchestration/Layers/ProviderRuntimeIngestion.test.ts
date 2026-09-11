@@ -36,6 +36,7 @@ import { it as effectIt } from "@effect/vitest";
 import { afterEach, describe, expect, it } from "vite-plus/test";
 
 import { OrchestrationEventStoreLive } from "../../persistence/Layers/OrchestrationEventStore.ts";
+import { PersistenceSqlError } from "../../persistence/Errors.ts";
 import { OrchestrationCommandReceiptRepositoryLive } from "../../persistence/Layers/OrchestrationCommandReceipts.ts";
 import { SqlitePersistenceMemory } from "../../persistence/Layers/Sqlite.ts";
 import {
@@ -287,6 +288,7 @@ describe("ProviderRuntimeIngestion", () => {
   async function createHarness(options?: {
     serverSettings?: Partial<ServerSettings>;
     threadTitle?: string;
+    failRuntimeErrorWrite?: "before" | "after";
   }) {
     const workspaceRoot = makeTempDir("t3-provider-project-");
     NodeFS.mkdirSync(NodePath.join(workspaceRoot, ".git"));
@@ -303,8 +305,31 @@ describe("ProviderRuntimeIngestion", () => {
       Layer.provide(RepositoryIdentityResolver.layer),
       Layer.provide(SqlitePersistenceMemory),
     );
+    let failedRuntimeErrorWrite = false;
+    const recoveringEngine = Layer.effect(
+      OrchestrationEngineService,
+      Effect.gen(function* () {
+        const engine = yield* OrchestrationEngineService;
+        return {
+          ...engine,
+          dispatch: (command: OrchestrationCommand) =>
+            Effect.gen(function* () {
+              if (
+                options?.failRuntimeErrorWrite &&
+                !failedRuntimeErrorWrite &&
+                command.commandId.includes("runtime-error-session-set")
+              ) {
+                failedRuntimeErrorWrite = true;
+                if (options.failRuntimeErrorWrite === "after") yield* engine.dispatch(command);
+                return yield* new PersistenceSqlError({ operation: "test.outage" });
+              }
+              return yield* engine.dispatch(command);
+            }),
+        };
+      }),
+    ).pipe(Layer.provide(orchestrationLayer));
     const layer = ProviderRuntimeIngestionLive.pipe(
-      Layer.provideMerge(orchestrationLayer),
+      Layer.provideMerge(recoveringEngine),
       Layer.provideMerge(projectionSnapshotLayer),
       // Single shared liveness instance across ingestion (writer), the
       // engine, and the snapshot query (reader).
@@ -2788,6 +2813,28 @@ describe("ProviderRuntimeIngestion", () => {
     expect(resolvedPayload?.requestKind).toBe("command");
     expect(resolvedPayload?.requestType).toBe("command_execution_approval");
   });
+
+  it.each(["before", "after"] as const)(
+    "recovers runtime errors after database failure %s commit",
+    async (failure) => {
+      const harness = await createHarness({ failRuntimeErrorWrite: failure });
+      harness.emit({
+        type: "runtime.error",
+        eventId: asEventId("evt-database-recovery"),
+        provider: ProviderDriverKind.make("codex"),
+        threadId: asThreadId("thread-1"),
+        createdAt: "2026-01-01T00:00:01.000Z",
+        payload: { message: "Start failed" },
+      });
+      await harness.drain();
+      const thread = (await harness.readModel()).threads.find((entry) => entry.id === "thread-1");
+      expect(thread?.session?.status).toBe("error");
+      expect(thread?.session?.lastError).toBe("Start failed");
+      expect(
+        thread?.activities.filter((activity) => activity.id === "evt-database-recovery"),
+      ).toHaveLength(1);
+    },
+  );
 
   it("maps runtime.error into errored session state", async () => {
     const harness = await createHarness();

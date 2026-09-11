@@ -129,6 +129,21 @@ Verify:
 - the legacy relay received no `/slack/events` traffic;
 - the delivery log came from the intended Render instance.
 
+### Headless native reliability verification
+
+For request persistence, native delivery retries, duplicate acknowledgments,
+and central session state, use the API-key-protected canary routes documented in
+`hosted/compadre/docs/runbooks/api-reliability-verification.md`. Start through
+central commands, then inspect the persisted central projection, controller run,
+delivery cursor/block, and Temporal attempts together. A completed worker alone
+does not prove the UI's read model received its output. GET inspection must not
+wake Modal. Exercise faults only on server-registered verification threads;
+never crash the shared database to prove recovery.
+
+Verify image writes have private S3 objects and reference-only request metadata.
+Record deployed instances, canary IDs and terminal evidence, then stop canary
+work. Report browser rendering as untested when verification is API-only.
+
 ### Compatibility API
 
 - authenticate with the real compatibility credential without printing it;

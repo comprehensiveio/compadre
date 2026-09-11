@@ -1,4 +1,5 @@
 import { NativeThreadDelivery, nativeDeliverySink } from "./native-events.js";
+import { T3VerificationStore } from "./verification.js";
 import { prepareNativeDelivery } from "./native-delivery.js";
 import { ensureNativeThreadDeliveryWorkflow } from "../temporal/client.js";
 import { WorkspaceReviewStore } from "./workspace-review.js";
@@ -223,7 +224,15 @@ export async function recoverConfiguredNativeT3Runs(): Promise<
 export async function buildRunRequestStore(): Promise<NativeT3RunRequestStore | null> {
   const runtime = await getConfiguredThreadPersistence();
   if (!runtime) return null;
-  return new NativeT3RunRequestStore(runtime.persistence.stores.metadata);
+  const bucket = process.env.COMPADRE_T3_ARTIFACT_BUCKET?.trim();
+  const region = process.env.COMPADRE_T3_ARTIFACT_REGION?.trim() || process.env.AWS_REGION?.trim() || process.env.AWS_DEFAULT_REGION?.trim();
+  return new NativeT3RunRequestStore(runtime.persistence.stores.metadata,
+    bucket && region ? new S3T3ArtifactObjectStore(bucket, { region }) : undefined,
+    async (threadId) => {
+      if (await new T3VerificationStore(runtime.persistence.stores.metadata, runtime.locks).consume(threadId, "request")) {
+        throw new Error("Verification: request persistence failed");
+      }
+    });
 }
 
 async function buildRunControlStore(): Promise<NativeT3RunControlStore | null> {
@@ -248,7 +257,9 @@ export async function getConfiguredNativeThreadDelivery(): Promise<NativeThreadD
   const apiKey = process.env.COMPADRE_API_KEY?.trim();
   if (!persistence || !central || !apiKey) return null;
   return new NativeThreadDelivery(persistence.persistence.stores.metadata, persistence.locks,
-    nativeDeliverySink({ baseUrl: central.baseUrl, apiKey }));
+    nativeDeliverySink({ baseUrl: central.baseUrl, apiKey,
+      verificationFault: (threadId) => new T3VerificationStore(persistence.persistence.stores.metadata, persistence.locks).consume(threadId, "delivery"),
+    }));
 }
 
 /** Dependencies for the durable drive/finalize activities. */
@@ -283,13 +294,14 @@ export async function getConfiguredNativeT3RunDriverDependencies(): Promise<Nati
 export async function getConfiguredNativeT3RunService(): Promise<NativeT3RunService | null> {
   if (!configuredRunService) {
     const initialization = (async () => {
-      const [gateway, coordinator, requests] = await Promise.all([
+      const [gateway, coordinator, requests, persistence] = await Promise.all([
         getConfiguredT3Gateway(),
         getConfiguredNativeT3RunCoordinator(),
         buildRunRequestStore(),
+        getConfiguredThreadPersistence(),
       ]);
-      if (!gateway || !coordinator || !requests) return null;
-      return new TemporalNativeT3RunService(coordinator, requests, createTemporalNativeT3WorkflowLauncher());
+      if (!gateway || !coordinator || !requests || !persistence) return null;
+      return new TemporalNativeT3RunService(coordinator, requests, createTemporalNativeT3WorkflowLauncher(), Date.now, persistence.locks);
     })().catch((error) => {
       if (configuredRunService === initialization) {
         configuredRunService = undefined;

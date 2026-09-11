@@ -661,7 +661,11 @@ test("streams a native Modal T3 turn through the central provider endpoint", asy
   });
   assert.ok(durability);
   const runCoordinator = new NativeT3RunCoordinator(durability);
-  const requests = new NativeT3RunRequestStore(memoryPersistence().stores.metadata);
+  const inputObjects = new Map<string, Uint8Array>();
+  const requests = new NativeT3RunRequestStore(memoryPersistence().stores.metadata, {
+    async put({ key, bytes }) { inputObjects.set(key, bytes); },
+    async get(key) { const bytes = inputObjects.get(key); assert.ok(bytes); return bytes; },
+  });
   t.after(() => durability.close());
   const app = new Hono();
   app.route("/", createT3DirectoryRoutes({

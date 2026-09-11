@@ -9,6 +9,7 @@ import {
   WorkflowFailedError,
 } from "@temporalio/client";
 import { getTemporalClient } from "../temporal/client.js";
+import { InMemoryLockStore, type LockStore } from "./storage.js";
 import {
   NATIVE_T3_TASK_QUEUE,
   nativeT3RunWorkflowId,
@@ -135,6 +136,7 @@ export class TemporalNativeT3RunService implements NativeT3RunService {
     private readonly requests: NativeT3RunRequestStore,
     private readonly launcher: NativeT3WorkflowLauncher,
     private readonly now: () => number = Date.now,
+    private readonly locks: LockStore = new InMemoryLockStore(),
   ) {}
 
   stream(runId: string, options?: DurableStreamOptions) {
@@ -150,6 +152,10 @@ export class TemporalNativeT3RunService implements NativeT3RunService {
   }
 
   async startTurn(request: NativeT3RunRequest): Promise<NativeT3RunStartResult> {
+    return this.locks.withLock(`compadre:native-t3-run-start:${request.runId}`, () => this.startTurnLocked(request));
+  }
+
+  private async startTurnLocked(request: NativeT3RunRequest): Promise<NativeT3RunStartResult> {
     const durability = this.coordinator.durability;
     const existing = await durability.runs.get(request.runId);
     if (existing && existing.threadId !== request.canonicalThreadId) {
@@ -161,6 +167,9 @@ export class TemporalNativeT3RunService implements NativeT3RunService {
       return { run: existing, started: false };
     }
 
+    // Persist all inputs before advertising a running execution. Failed uploads
+    // or database writes must not leave a run with no recoverable request.
+    if (!existing) await this.requests.saveRequest(request);
     const run =
       existing ??
       (await durability.runs.createOrResume({
@@ -173,8 +182,6 @@ export class TemporalNativeT3RunService implements NativeT3RunService {
         `Native T3 run ${request.runId} was concurrently created for thread ${run.threadId}`,
       );
     }
-    await this.requests.saveRequest(request);
-
     try {
       const launched = await this.launcher.start({
         workflowId: nativeT3RunWorkflowId(request.runId),

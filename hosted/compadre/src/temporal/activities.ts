@@ -29,6 +29,14 @@ import { buildRunRequestStore, getConfiguredNativeThreadDelivery, getConfiguredT
 
 const HEARTBEAT_INTERVAL_MS = 30_000;
 
+export async function blockNativeThreadDeliveryActivity(input: { threadId: string; epoch: number }): Promise<void> {
+  const delivery = await getConfiguredNativeThreadDelivery();
+  if (!delivery) throw new Error("Native delivery is not configured");
+  console.error("[native-delivery] delivery blocked; saved cursor retained", input);
+  await delivery.block(input.threadId, input.epoch,
+    "Event delivery is blocked. Agent work may have completed or may still be running; its latest output has not been synchronized. Delivery requires recovery.");
+}
+
 async function driverDependencies() {
   const deps = await getConfiguredNativeT3RunDriverDependencies();
   if (!deps) {
@@ -293,7 +301,7 @@ export async function deliverNativeThreadEventsActivity(input: { threadId: strin
           reconcileOutputs = false;
         }
         if ((checkpoints.length || backgroundTurns.size) && current.runId) {
-          const request = await requests?.getRequest(current.runId);
+          const request = await requests?.getRequest(current.runId, { includeInputFiles: false });
           const dispatch = await requests?.getDispatch(current.runId);
           if (!request || !dispatch) throw new Error("Native output has no durable run context");
           let published = 0;
