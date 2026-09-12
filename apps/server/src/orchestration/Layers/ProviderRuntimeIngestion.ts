@@ -1565,8 +1565,12 @@ const make = Effect.gen(function* () {
 
   const processRuntimeEvent = (event: ProviderRuntimeEvent) =>
     Effect.gen(function* () {
-      if (event.type === "content.delta" && event.payload.streamKind !== "assistant_text" &&
-          event.payload.streamKind !== "reasoning_text" && event.payload.streamKind !== "reasoning_summary_text") {
+      if (
+        event.type === "content.delta" &&
+        event.payload.streamKind !== "assistant_text" &&
+        event.payload.streamKind !== "reasoning_text" &&
+        event.payload.streamKind !== "reasoning_summary_text"
+      ) {
         return;
       }
 

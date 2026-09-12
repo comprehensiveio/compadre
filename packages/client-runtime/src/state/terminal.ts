@@ -44,9 +44,9 @@ export function createTerminalEnvironmentAtoms<R, E>(
       label: "environment-data:terminal:attach",
       subscribe: (input: EnvironmentRpcInput<typeof WS_METHODS.terminalAttach>) =>
         Stream.suspend(() =>
-          direct.attach(input).pipe(
-            Stream.scan(nextTerminalAttachSeedState(), applyTerminalAttachStreamEvent),
-          ),
+          direct
+            .attach(input)
+            .pipe(Stream.scan(nextTerminalAttachSeedState(), applyTerminalAttachStreamEvent)),
         ),
     }),
     events: createEnvironmentRpcSubscriptionAtomFamily(runtime, {

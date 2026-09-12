@@ -1,6 +1,6 @@
 import { test, afterAll } from "vite-plus/test";
-import { createRequire } from "node:module";
-const require = createRequire(import.meta.url);
+import * as NodeModule from "node:module";
+const require = NodeModule.createRequire(import.meta.url);
 const assert = require("node:assert/strict");
 const dns = require("node:dns");
 const original = { lookup: dns.lookup, resolve4: dns.resolve4 };

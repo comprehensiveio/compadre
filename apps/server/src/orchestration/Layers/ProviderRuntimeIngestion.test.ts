@@ -554,7 +554,9 @@ describe("ProviderRuntimeIngestion", () => {
     });
 
     await harness.drain();
-    const thread = (await harness.readModel()).threads.find((entry) => entry.id === asThreadId("thread-1"))!;
+    const thread = (await harness.readModel()).threads.find(
+      (entry) => entry.id === asThreadId("thread-1"),
+    )!;
     const reasoning = thread.activities.filter((activity) => activity.kind === "reasoning.updated");
     expect(reasoning).toHaveLength(1);
     expect(reasoning[0]?.id).toBe("reasoning:thread-1:turn-1:reasoning-1");

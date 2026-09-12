@@ -451,13 +451,10 @@ export function makeCompadreAdapter(options: CompadreAdapterOptions) {
       _answers: ProviderUserInputAnswers,
     ) => unsupported("respondToUserInput");
     const readThread = (threadId: ThreadId) =>
-      Effect.map(
-        requireSession(threadId),
-        (context): ProviderThreadSnapshot => ({
-          threadId,
-          turns: context.turns.map((turn) => ({ ...turn, items: [...turn.items] })),
-        }),
-      );
+      Effect.map(requireSession(threadId), (context): ProviderThreadSnapshot => ({
+        threadId,
+        turns: context.turns.map((turn) => ({ ...turn, items: [...turn.items] })),
+      }));
     const rollbackThread = (threadId: ThreadId, numTurns: number) =>
       Effect.map(requireSession(threadId), (context): ProviderThreadSnapshot => {
         context.turns.splice(Math.max(0, context.turns.length - numTurns), numTurns);

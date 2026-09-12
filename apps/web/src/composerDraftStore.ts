@@ -4084,8 +4084,9 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
               ...movedFiles.map((file) => fileContextReference(file).contextId),
             ]);
             const movedPrompt = ensureInlineContextReferences(
-              replaceComposerContextReferences(migrateLegacyTerminalContextPlaceholders(source.prompt, source.terminalContexts), (reference) =>
-                movedContextIds.has(reference.contextId) ? reference.source : "",
+              replaceComposerContextReferences(
+                migrateLegacyTerminalContextPlaceholders(source.prompt, source.terminalContexts),
+                (reference) => (movedContextIds.has(reference.contextId) ? reference.source : ""),
               ),
               destination.terminalContexts.map(terminalContextReference),
             );

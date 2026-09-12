@@ -1,11 +1,11 @@
-import { randomUUID } from "node:crypto";
+import * as NodeCrypto from "node:crypto";
 import * as NodeFS from "node:fs";
 import { assertLocalStack } from "./config.mjs";
 const dir = process.argv[2],
   threadId = process.argv[3];
 const cfg = JSON.parse(NodeFS.readFileSync(dir + "/private.json"));
 assertLocalStack(cfg);
-const nonce = randomUUID();
+const nonce = NodeCrypto.randomUUID();
 const terminalId = "readiness-terminal";
 async function request(operation) {
   const r = await fetch(`http://127.0.0.1:${cfg.controller.PORT}/hosted/t3/terminal`, {

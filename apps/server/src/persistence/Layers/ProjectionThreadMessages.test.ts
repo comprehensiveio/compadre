@@ -73,7 +73,11 @@ layer("ProjectionThreadMessageRepository", (it) => {
       const threadId = ThreadId.make("thread-context");
       const messageId = MessageId.make("message-context");
       const createdAt = "2026-02-28T19:05:00.000Z";
-      const attribution = { userId: "canonical-user", displayName: "Maintainer", origin: "web" as const };
+      const attribution = {
+        userId: "canonical-user",
+        displayName: "Maintainer",
+        origin: "web" as const,
+      };
       const context = {
         version: 1 as const,
         records: [
@@ -116,7 +120,13 @@ layer("ProjectionThreadMessageRepository", (it) => {
       assert.deepStrictEqual(rows[0]?.context, context);
       assert.deepStrictEqual(rows[0]?.attribution, attribution);
       yield* repository.appendStreaming({
-        messageId, threadId, turnId: null, role: "user", text: " more", createdAt, updatedAt: createdAt,
+        messageId,
+        threadId,
+        turnId: null,
+        role: "user",
+        text: " more",
+        createdAt,
+        updatedAt: createdAt,
       });
       const appended = yield* repository.listByThreadId({ threadId });
       assert.deepStrictEqual(appended[0]?.context, context);
