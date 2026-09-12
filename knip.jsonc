@@ -14,7 +14,13 @@
     },
     "scripts": {
       // Knip loads its preprocessor through a CLI option, not a source import.
-      "entry": ["knip-schemas.ts"],
+      "entry": [
+        "knip-schemas.ts",
+        "compadre-e2e.mjs",
+        "compadre-e2e/check-storage.mjs",
+        "compadre-e2e/check-terminal.mjs",
+        "compadre-e2e/resume.mjs",
+      ],
     },
     "apps/server": {
       // Vite+ pack entries and the launcher used by installed background services.
@@ -23,6 +29,8 @@
         "src/service-launcher.ts!",
         "src/claudeHistoryWorker.ts!",
         "scripts/cli.ts",
+        "scripts/import-central-attachments.ts",
+        "scripts/import-sqlite-to-postgres.ts",
         "src/provider/testFixtures/*.mjs",
       ],
       // Keep the transitive Effect runtime pinned for standalone npm installs.

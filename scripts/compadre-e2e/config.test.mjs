@@ -1,4 +1,4 @@
-import * as NodeTest from "node:test";
+import * as NodeTest from "vite-plus/test";
 import * as NodeAssert from "node:assert/strict";
 import { developmentCredentials, assertLocalStack, issuedToken } from "./config.mjs";
 const credentials = {

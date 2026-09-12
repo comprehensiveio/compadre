@@ -1,4 +1,6 @@
-const { test, after } = require("node:test");
+import { test, afterAll } from "vite-plus/test";
+import { createRequire } from "node:module";
+const require = createRequire(import.meta.url);
 const assert = require("node:assert/strict");
 const dns = require("node:dns");
 const original = { lookup: dns.lookup, resolve4: dns.resolve4 };
@@ -11,7 +13,7 @@ dns.resolve4 = (host, callback) => {
 };
 const { allow } = require("./dns.cjs");
 allow("fixture.trycloudflare.com");
-after(() => Object.assign(dns, original));
+afterAll(() => Object.assign(dns, original));
 test("does not intercept local or unregistered hostnames", async () => {
   for (const host of ["localhost", "other.trycloudflare.com"]) {
     await new Promise((resolve) =>

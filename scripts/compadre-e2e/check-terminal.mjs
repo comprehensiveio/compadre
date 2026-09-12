@@ -1,9 +1,11 @@
+import { randomUUID } from "node:crypto";
 import * as NodeFS from "node:fs";
 import { assertLocalStack } from "./config.mjs";
 const dir = process.argv[2],
   threadId = process.argv[3];
 const cfg = JSON.parse(NodeFS.readFileSync(dir + "/private.json"));
 assertLocalStack(cfg);
+const nonce = randomUUID();
 const terminalId = "readiness-terminal";
 async function request(operation) {
   const r = await fetch(`http://127.0.0.1:${cfg.controller.PORT}/hosted/t3/terminal`, {
@@ -56,12 +58,12 @@ async function prove(stage, expectedHistory) {
           JSON.stringify({
             type: "write",
             id: ++sent,
-            data: `printf 'RECONNECT_%s\\n' '${stage}_6198'\r`,
+            data: `printf 'RECONNECT_%s\\n' '${stage}_${nonce}'\r`,
           }),
         );
       } else if (event.type === "output") {
         history += event.data;
-        if (history.includes("RECONNECT_" + stage + "_6198")) {
+        if (history.includes("RECONNECT_" + stage + "_" + nonce)) {
           clearTimeout(deadline);
           ws.close();
           resolve({
@@ -75,4 +77,4 @@ async function prove(stage, expectedHistory) {
   });
 }
 console.log(await prove("FIRST"));
-console.log(await prove("SECOND", "RECONNECT_FIRST_6198"));
+console.log(await prove("SECOND", "RECONNECT_FIRST_" + nonce));
