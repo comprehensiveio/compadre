@@ -178,6 +178,44 @@ test("a web mirror stays responsible for the final answer after steering", async
   ]);
 });
 
+test("a web mirror yields when a steering message has a durable Slack owner", async () => {
+  const calls: string[] = [];
+  const slack: NativeT3SlackDeliveryStream = {
+    async postThreadMessage(message) {
+      calls.push(`post:${message}`);
+    },
+    async setStatus(status) {
+      calls.push(`status:${status}`);
+    },
+    async clearStatus() {
+      calls.push("clear");
+    },
+  };
+  const mirror = new SlackRunMirror(
+    {
+      binding: { channelId: "C1", threadTs: "123.4" },
+      userMessage: "First browser prompt",
+      botToken: "test-token",
+      async shouldDeliverFinal() {
+        return false;
+      },
+    },
+    undefined,
+    slack,
+  );
+
+  await mirror.start();
+  mirror.replaceAssistantTexts(
+    new Map([["assistant-after-steer", "Answer after steering"]]),
+  );
+  await mirror.finish();
+
+  assert.deepEqual(calls, [
+    "post:*From Compadre web:*\nFirst browser prompt",
+    "status:is thinking...",
+  ]);
+});
+
 test("a cancelled native run posts a stopped notice even after partial text", async () => {
   async function* cancelled(): AsyncIterable<StreamChunk> {
     yield {

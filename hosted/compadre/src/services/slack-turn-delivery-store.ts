@@ -1,4 +1,4 @@
-import { and, asc, eq, lte, or, sql } from "drizzle-orm";
+import { and, asc, eq, inArray, lte, or, sql } from "drizzle-orm";
 import type { CompadreDatabase } from "../db/client.js";
 import { slackTurnDeliveries } from "../db/schema.js";
 import type { T3TurnDispatch } from "../t3/client.js";
@@ -99,6 +99,16 @@ export class SlackTurnDeliveryStore {
           .limit(1)
       )[0] ?? null
     );
+  }
+
+  async hasAnyMessageId(messageIds: ReadonlyArray<string>): Promise<boolean> {
+    if (messageIds.length === 0) return false;
+    const [row] = await this.db
+      .select({ id: slackTurnDeliveries.id })
+      .from(slackTurnDeliveries)
+      .where(inArray(slackTurnDeliveries.messageId, [...messageIds]))
+      .limit(1);
+    return row !== undefined;
   }
 
   async claimNext(now = new Date()): Promise<SlackTurnDelivery | null> {
