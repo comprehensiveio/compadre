@@ -89,6 +89,9 @@ function slackRecorder() {
     async clearStatus() {
       calls.push(["clear"]);
     },
+    relinquishStatus() {
+      calls.push(["relinquish"]);
+    },
     async markRunSucceeded(...args) {
       calls.push(["succeeded", ...args]);
     },
@@ -393,5 +396,8 @@ test("yields Slack delivery ownership when a later steer has an outbox row", asy
 
   assert.equal(completed, true);
   assert.deepEqual(delivered, [job.id]);
-  assert.deepEqual(calls, [["succeeded", job.triggerMessageTs]]);
+  assert.deepEqual(calls, [
+    ["relinquish"],
+    ["succeeded", job.triggerMessageTs],
+  ]);
 });

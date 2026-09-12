@@ -18,6 +18,7 @@ export interface NativeT3SlackDeliveryStream {
   ): Promise<void>;
   setStatus(text: string): Promise<void>;
   clearStatus(): Promise<void>;
+  relinquishStatus?(): void;
 }
 
 function toolName(chunk: StreamChunk): string | null {
@@ -131,7 +132,10 @@ ${this.input.userMessage}`);
     if (!this.deliveryEnabled) return;
     try {
       const ownsFinal = (await this.input.shouldDeliverFinal?.()) ?? true;
-      if (!ownsFinal) return;
+      if (!ownsFinal) {
+        this.slack.relinquishStatus?.();
+        return;
+      }
       const finalText = [...this.assistantMessages.values()]
         .reverse()
         .find((text) => text.trim().length > 0);
@@ -261,7 +265,10 @@ ${input.userMessage}`);
     }
     if (deliveryEnabled) {
       const ownsFinal = (await input.shouldDeliverFinal?.()) ?? true;
-      if (!ownsFinal) return;
+      if (!ownsFinal) {
+        slack.relinquishStatus?.();
+        return;
+      }
       const finalText = [...assistantMessages.values()]
         .reverse()
         .find((text) => text.trim().length > 0);

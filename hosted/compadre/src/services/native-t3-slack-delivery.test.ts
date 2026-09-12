@@ -190,6 +190,9 @@ test("a web mirror yields when a steering message has a durable Slack owner", as
     async clearStatus() {
       calls.push("clear");
     },
+    relinquishStatus() {
+      calls.push("relinquish");
+    },
   };
   const mirror = new SlackRunMirror(
     {
@@ -213,6 +216,7 @@ test("a web mirror yields when a steering message has a durable Slack owner", as
   assert.deepEqual(calls, [
     "post:*From Compadre web:*\nFirst browser prompt",
     "status:is thinking...",
+    "relinquish",
   ]);
 });
 

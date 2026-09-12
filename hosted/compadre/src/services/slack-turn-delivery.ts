@@ -34,6 +34,7 @@ export interface SlackTurnDeliveryClient {
     sessionLink?: SlackSessionLink,
   ): Promise<void>;
   clearStatus(): Promise<void>;
+  relinquishStatus?(): void;
   markRunSucceeded(messageTs: string): Promise<void>;
   markRunFailed(messageTs: string): Promise<void>;
 }
@@ -157,6 +158,7 @@ export async function deliverClaimedSlackTurn(input: {
       // second outbox row for a message that becomes a steer. Only yield when
       // that durable replacement really exists; browser steers create no row,
       // so this original delivery must remain responsible for the final.
+      slack.relinquishStatus?.();
       await slack.markRunSucceeded(delivery.triggerMessageTs);
       if (!(await store.markDelivered(delivery))) {
         throw new SlackDeliveryClaimLostError(delivery);
