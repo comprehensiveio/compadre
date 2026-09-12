@@ -304,7 +304,7 @@ describe("scoped settings writes", () => {
 
 describe("scoped settings mixed values", () => {
   it("compares only requested settings across connected targets", () => {
-    const changed = environment("Changed", { settings: { enableAgentBrowserAccess: false } });
+    const changed = environment("Changed", { settings: { enableAgentBrowserAccess: true } });
     const targets = resolveScopedSettingsTargets(all, [laptop, changed]);
     expect(scopedSettingsAreMixed(targets, ["enableAgentBrowserAccess"])).toBe(true);
     expect(scopedSettingsAreMixed(targets, ["enableProviderUpdateChecks"])).toBe(false);

@@ -93,7 +93,8 @@ vi.mock("@t3tools/client-runtime/environment", () => ({
   scopeProjectRef: (environmentId: string, projectId: string) => ({ environmentId, projectId }),
   scopeThreadRef: (environmentId: string, threadId: string) => ({ environmentId, threadId }),
 }));
-vi.mock("@t3tools/contracts", () => ({
+vi.mock("@t3tools/contracts", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@t3tools/contracts")>()),
   DEFAULT_RUNTIME_MODE: "default",
   DEFAULT_SERVER_SETTINGS: {},
 }));
@@ -139,6 +140,7 @@ vi.mock("../lib/chatThreadActions", async (importOriginal) => ({
 vi.mock("../lib/t3ProjectFileDefaults", () => ({
   readT3ProjectFileDefaultThreadEnvMode: () => testState.projectFileRead,
 }));
+vi.mock("../components/ui/toast", () => ({ toastManager: { add: vi.fn() } }));
 vi.mock("../lib/utils", () => ({
   newDraftId: () => "draft-delayed",
   newThreadId: () => "thread-delayed",
