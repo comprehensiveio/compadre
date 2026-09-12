@@ -8,7 +8,7 @@ import {
 import type { AgentRunDurability } from "../durability/runtime.js";
 import { log, serializeError } from "../logging.js";
 import { SlackRunMirror } from "../services/native-t3-slack-delivery.js";
-import { dispatchWasSuperseded } from "../services/t3-slack-conversation.js";
+import { laterUserMessageIdsForDispatch } from "../services/t3-slack-conversation.js";
 import type { T3ThreadBinding } from "../services/t3-thread-bindings.js";
 import { InMemoryLockStore, type LockStore } from "./storage.js";
 import {
@@ -114,6 +114,9 @@ export interface NativeT3RunDriverDependencies {
   durability: AgentRunDurability;
   requests: NativeT3RunRequestStore;
   controls?: NativeT3RunControlStore;
+  hasSlackDeliveryForMessageIds?(
+    messageIds: ReadonlyArray<string>,
+  ): Promise<boolean>;
   /**
    * Serializes driver-epoch claims. Fresh attempts claim `driverEpoch + 1`
    * under the same lock key so one producer owns the run's lifecycle log
@@ -477,17 +480,23 @@ export async function driveNativeT3Run(
     );
 
   const projector = new NativeRunObservation(runId, turn.dispatch.messageId, persisted);
-  // A later steer of the same worker turn owns the shared Slack final answer.
   const shouldDeliverFinal = async (): Promise<boolean> => {
-    if (!deps.gateway.workerSnapshot) return true;
+    if (!deps.gateway.workerSnapshot || !deps.hasSlackDeliveryForMessageIds) {
+      return true;
+    }
     try {
-      const latest = await deps.gateway.workerSnapshot(request.canonicalThreadId);
-      return latest
-        ? !dispatchWasSuperseded(latest, turn.dispatch)
-        : true;
+      const latest = await deps.gateway.workerSnapshot(
+        request.canonicalThreadId,
+      );
+      if (!latest) return true;
+      const laterMessageIds = laterUserMessageIdsForDispatch(
+        latest,
+        turn.dispatch,
+      );
+      return !(await deps.hasSlackDeliveryForMessageIds(laterMessageIds));
     } catch (error) {
       console.warn(
-        "[native-t3-driver] could not determine final delivery owner",
+        "[native-t3-driver] could not determine Slack delivery owner",
         { runId, error },
       );
       return true;

@@ -5,8 +5,8 @@ import type { T3GatewayTurn } from "../t3/gateway.js";
 import {
   assistantTextForDispatch,
   canonicalSlackThreadId,
-  dispatchWasSuperseded,
   finalAssistantTextForDispatch,
+  laterUserMessageIdsForDispatch,
   runT3SlackConversation,
   t3ModelSelectionForProfile,
   t3SlackDetailsMarkdown,
@@ -131,31 +131,6 @@ test("does not project an older assistant turn into Slack", () => {
   assert.equal(assistantTextForDispatch(old, turn.dispatch), "");
 });
 
-test("recognizes when a later user message steers the same running turn", () => {
-  const steered = snapshot("answer after steering", "completed");
-  steered.thread.messages = [
-    steered.thread.messages[0]!,
-    {
-      id: "user-2",
-      role: "user",
-      text: "Focus on the API instead",
-      turnId: "turn-1",
-      streaming: false,
-      createdAt: "2026-08-26T15:00:00.500Z",
-      updatedAt: "2026-08-26T15:00:00.500Z",
-    },
-    ...steered.thread.messages.slice(1),
-  ];
-  assert.equal(dispatchWasSuperseded(steered, turn.dispatch), true);
-  assert.equal(
-    dispatchWasSuperseded(steered, {
-      ...turn.dispatch,
-      messageId: "user-2",
-    }),
-    false,
-  );
-});
-
 test("selects the final answer produced after a later steering message", () => {
   const steered = snapshot("old answer", "completed");
   steered.thread.latestTurn = {
@@ -196,6 +171,13 @@ test("selects the final answer produced after a later steering message", () => {
   assert.equal(
     finalAssistantTextForDispatch(steered, steeringDispatch),
     "answer after steering",
+  );
+  assert.deepEqual(laterUserMessageIdsForDispatch(steered, turn.dispatch), [
+    "user-steer",
+  ]);
+  assert.deepEqual(
+    laterUserMessageIdsForDispatch(steered, steeringDispatch),
+    [],
   );
 });
 

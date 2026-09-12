@@ -766,6 +766,10 @@ async function handleAIMessage(
       .then(async (result) => {
         stopReservationHeartbeat();
         if (result.steered) {
+          // The original delivery observer owns the terminal transition. Stop
+          // this follow-up observer's processing refresh without prematurely
+          // clearing the shared Slack session status.
+          slackStream?.relinquishStatus();
           if (!isDM && slackStream) {
             await slackStream.markRunSucceeded(event.ts);
           }

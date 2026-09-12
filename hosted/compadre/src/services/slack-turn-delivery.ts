@@ -7,8 +7,8 @@ import {
 import type { T3TurnDispatch } from "../t3/client.js";
 import { incompleteProviderStopReason } from "../t3/client.js";
 import {
-  dispatchWasSuperseded,
   finalAssistantTextForDispatch,
+  laterUserMessageIdsForDispatch,
   t3SlackSessionLink,
 } from "./t3-slack-conversation.js";
 import type { SlackSessionLink } from "./slack-markdown.js";
@@ -34,6 +34,7 @@ export interface SlackTurnDeliveryClient {
     sessionLink?: SlackSessionLink,
   ): Promise<void>;
   clearStatus(): Promise<void>;
+  relinquishStatus?(): void;
   markRunSucceeded(messageTs: string): Promise<void>;
   markRunFailed(messageTs: string): Promise<void>;
 }
@@ -73,7 +74,9 @@ function dispatchFor(delivery: SlackTurnDelivery): T3TurnDispatch {
 export async function deliverClaimedSlackTurn(input: {
   delivery: SlackTurnDelivery;
   store: Pick<SlackTurnDeliveryStore, "markDelivered" | "markFailed"> &
-    Partial<Pick<SlackTurnDeliveryStore, "renewClaim">>;
+    Partial<
+      Pick<SlackTurnDeliveryStore, "hasAnyMessageId" | "renewClaim">
+    >;
   t3: CentralT3ConversationClient;
   slack: SlackTurnDeliveryClient;
   logger?: Pick<Console, "info" | "warn" | "error">;
@@ -118,7 +121,6 @@ export async function deliverClaimedSlackTurn(input: {
     span.setAttribute("compadre.wait_terminal_ms", Date.now() - startedAt);
     span.addEvent("t3.turn.terminal");
     const state = snapshot.thread.latestTurn?.state;
-    const superseded = dispatchWasSuperseded(snapshot, dispatch);
     const incompleteReason = incompleteProviderStopReason(
       snapshot,
       snapshot.thread.latestTurn?.turnId,
@@ -144,17 +146,25 @@ export async function deliverClaimedSlackTurn(input: {
       throw new SlackDeliveryClaimLostError(delivery);
     }
 
-    if (superseded) {
-      // A newer web or Slack steer owns the shared thread status, details link,
-      // and eventual final answer. Settle only this trigger's reaction and its
-      // outbox row; clearing thread-level UI here would make the newer turn
-      // appear idle while it is still working.
+    const laterMessageIds = laterUserMessageIdsForDispatch(
+      snapshot,
+      dispatch,
+    );
+    const replacementOwnsFinal =
+      laterMessageIds.length > 0 &&
+      Boolean(await store.hasAnyMessageId?.(laterMessageIds));
+    if (replacementOwnsFinal) {
+      // Slack can race the central running-state projection and reserve a
+      // second outbox row for a message that becomes a steer. Only yield when
+      // that durable replacement really exists; browser steers create no row,
+      // so this original delivery must remain responsible for the final.
+      slack.relinquishStatus?.();
       await slack.markRunSucceeded(delivery.triggerMessageTs);
       if (!(await store.markDelivered(delivery))) {
         throw new SlackDeliveryClaimLostError(delivery);
       }
-      span.setAttribute("compadre.delivery.superseded", true);
-      logger.info("[slack-delivery] relinquished superseded completion", {
+      span.setAttribute("compadre.delivery.replaced", true);
+      logger.info("[slack-delivery] relinquished to replacement delivery", {
         deliveryId: delivery.id,
         messageId: delivery.messageId,
         threadId: delivery.t3ThreadId,
@@ -163,7 +173,9 @@ export async function deliverClaimedSlackTurn(input: {
     }
 
     // The session link rides inside the answer message as a context footer
-    // rather than a second message.
+    // rather than a second message. Browser steers do not create replacement
+    // outbox rows, so the original row posts the newest answer and settles the
+    // shared status.
     await slack.postThreadMessage(
       response,
       delivery.id,

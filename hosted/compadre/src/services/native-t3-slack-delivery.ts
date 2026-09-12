@@ -18,6 +18,7 @@ export interface NativeT3SlackDeliveryStream {
   ): Promise<void>;
   setStatus(text: string): Promise<void>;
   clearStatus(): Promise<void>;
+  relinquishStatus?(): void;
 }
 
 function toolName(chunk: StreamChunk): string | null {
@@ -132,7 +133,7 @@ ${this.input.userMessage}`);
     try {
       const ownsFinal = (await this.input.shouldDeliverFinal?.()) ?? true;
       if (!ownsFinal) {
-        // A later steer owns the shared Slack status and final answer.
+        this.slack.relinquishStatus?.();
         return;
       }
       const finalText = [...this.assistantMessages.values()]
@@ -265,8 +266,7 @@ ${input.userMessage}`);
     if (deliveryEnabled) {
       const ownsFinal = (await input.shouldDeliverFinal?.()) ?? true;
       if (!ownsFinal) {
-        // A later steer owns the shared Slack status and final answer. Its
-        // delivery path will settle both, so this older mirror exits quietly.
+        slack.relinquishStatus?.();
         return;
       }
       const finalText = [...assistantMessages.values()]
