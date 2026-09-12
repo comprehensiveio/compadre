@@ -33,16 +33,16 @@ import { ProjectionSnapshotQuery } from "../orchestration/Services/ProjectionSna
 import { bindNativeThreadStream } from "./NativeThreadStreamStore.ts";
 import { NativeThreadEventBatch, mapNativeThreadEvent } from "./NativeThreadEvents.ts";
 
-export const NATIVE_THREAD_EVENTS_PATH = "/api/compadre/native-events";
+const NATIVE_THREAD_EVENTS_PATH = "/api/compadre/native-events";
 const decodeThreadId = Schema.decodeUnknownEffect(ThreadId);
 const decodeBatch = Schema.decodeUnknownEffect(NativeThreadEventBatch);
 const decodeClose = Schema.decodeUnknownEffect(NativeThreadStreamCloseCommand);
 const decodeOutput = Schema.decodeUnknownEffect(NativeWorkerOutputCommand);
 const PAGE_SIZE = 128;
 const headers = { "cache-control": "no-store", "x-compadre-native-event-version": "1" };
-export const nativeOffset = (sequence: number) => String(sequence).padStart(20, "0");
+const nativeOffset = (sequence: number) => String(sequence).padStart(20, "0");
 
-export function parseNativeOffset(value: string | null): number {
+function parseNativeOffset(value: string | null): number {
   if (value === null || value === "-1") return 0;
   if (!/^\d{20}$/.test(value) || !Number.isSafeInteger(Number(value))) {
     throw new Error("Invalid native event offset.");

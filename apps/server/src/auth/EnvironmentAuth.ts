@@ -1034,7 +1034,7 @@ export const layer = Layer.effect(EnvironmentAuth, make).pipe(
   Layer.provideMerge(EnvironmentAuthPolicy.layer),
 );
 
-export const storageLayer = Layer.mergeAll(ServerSecretStore.layer, PersistenceLayer);
+const storageLayer = Layer.mergeAll(ServerSecretStore.layer, PersistenceLayer);
 
 export const runtimeLayer = layer.pipe(
   Layer.provideMerge(storageLayer),

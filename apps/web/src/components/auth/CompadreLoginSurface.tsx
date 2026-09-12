@@ -11,7 +11,7 @@ export function rememberCompadreAuthReturnTo(path: string): void {
   }
 }
 
-export function compadreSlackLoginUrl(): string {
+function compadreSlackLoginUrl(): string {
   const returnTo = window.sessionStorage.getItem(RETURN_TO_KEY) ?? "/";
   return `/auth/slack/start?return_to=${encodeURIComponent(returnTo)}`;
 }

@@ -1001,7 +1001,7 @@ const WsTerminalOpenRpc = Rpc.make(WS_METHODS.terminalOpen, {
   error: Schema.Union([TerminalError, EnvironmentAuthorizationError]),
 });
 
-export const WsTerminalConnectionRpc = Rpc.make(WS_METHODS.terminalConnection, {
+const WsTerminalConnectionRpc = Rpc.make(WS_METHODS.terminalConnection, {
   payload: TerminalAttachInput,
   success: Schema.NullOr(TerminalConnection),
   error: Schema.Union([TerminalError, EnvironmentAuthorizationError]),
