@@ -6,6 +6,7 @@ import {
   assistantTextForDispatch,
   canonicalSlackThreadId,
   finalAssistantTextForDispatch,
+  laterUserMessageIdsForDispatch,
   runT3SlackConversation,
   t3ModelSelectionForProfile,
   t3SlackDetailsMarkdown,
@@ -170,6 +171,13 @@ test("selects the final answer produced after a later steering message", () => {
   assert.equal(
     finalAssistantTextForDispatch(steered, steeringDispatch),
     "answer after steering",
+  );
+  assert.deepEqual(laterUserMessageIdsForDispatch(steered, turn.dispatch), [
+    "user-steer",
+  ]);
+  assert.deepEqual(
+    laterUserMessageIdsForDispatch(steered, steeringDispatch),
+    [],
   );
 });
 

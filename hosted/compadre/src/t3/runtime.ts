@@ -9,6 +9,7 @@ import { getConfiguredAgentRunDurability } from "../durability/runtime.js";
 import { getConfiguredThreadPersistence } from "../persistence/runtime.js";
 import { recoverCentralT3DurableRuns } from "../services/central-t3-run.js";
 import { T3ThreadBindingStore } from "../services/t3-thread-bindings.js";
+import { SlackTurnDeliveryStore } from "../services/slack-turn-delivery-store.js";
 import { T3Gateway } from "./gateway.js";
 import { CodexSubscriptionLane } from "./codex-subscription-lane.js";
 import { configuredCentralT3Client } from "./central-conversation.js";
@@ -273,12 +274,17 @@ export async function getConfiguredNativeT3RunDriverDependencies(): Promise<Nati
     getConfiguredThreadPersistence(),
   ]);
   if (!gateway || !durability || !requests || !controls || !persistence) return null;
+  const slackDeliveries = persistence.database
+    ? new SlackTurnDeliveryStore(persistence.database)
+    : null;
   return {
     gateway,
     durability,
     requests,
     controls,
     locks: persistence.locks,
+    hasSlackDeliveryForMessageIds: async (messageIds) =>
+      slackDeliveries?.hasAnyMessageId(messageIds) ?? false,
     prepareNativeDelivery: async (request, connection) => {
       const delivery = await getConfiguredNativeThreadDelivery();
       const central = configuredCentralT3Client();

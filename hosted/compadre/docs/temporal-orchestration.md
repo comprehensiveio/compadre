@@ -31,8 +31,9 @@ record by a retried finalize step.
    A separate per-thread workflow forwards the worker's native journal into central
    T3, including events after the parent run completes. Retry resumes its acknowledged
    cursor; central command receipts deduplicate accepted events. Slack final delivery
-   stays with the outbox row or mirror attached to the durable run, including
-   when later browser or Slack messages steer that run.
+   stays with the outbox row or mirror attached to the durable run for browser
+   steers, and transfers only when a racing Slack steer has actually reserved a
+   durable replacement outbox row.
 3. Retry semantics are split by cost, deliberately. Within one attempt the
    driver rides out interrupted watches: a CPU-starved sandbox stops
    answering snapshot reads while the harness keeps working (observed

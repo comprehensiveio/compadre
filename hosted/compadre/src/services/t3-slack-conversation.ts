@@ -110,6 +110,28 @@ function assistantMessagesForDispatch(
   );
 }
 
+/** Later user messages that were folded into the same visible T3 turn. */
+export function laterUserMessageIdsForDispatch(
+  snapshot: T3ThreadSnapshot,
+  dispatch: T3TurnDispatch,
+): string[] {
+  const requestedIndex = snapshot.thread.messages.findIndex(
+    (message) => message.id === dispatch.messageId && message.role === "user",
+  );
+  if (requestedIndex < 0) return [];
+  const requested = snapshot.thread.messages[requestedIndex];
+  return snapshot.thread.messages
+    .slice(requestedIndex + 1)
+    .filter(
+      (message) =>
+        message.role === "user" &&
+        (requested?.turnId == null ||
+          message.turnId == null ||
+          message.turnId === requested.turnId),
+    )
+    .map((message) => message.id);
+}
+
 /** Complete provider narration for durable streams and compatibility clients. */
 export function assistantTextForDispatch(
   snapshot: T3ThreadSnapshot,

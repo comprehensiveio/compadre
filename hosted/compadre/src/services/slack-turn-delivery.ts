@@ -8,6 +8,7 @@ import type { T3TurnDispatch } from "../t3/client.js";
 import { incompleteProviderStopReason } from "../t3/client.js";
 import {
   finalAssistantTextForDispatch,
+  laterUserMessageIdsForDispatch,
   t3SlackSessionLink,
 } from "./t3-slack-conversation.js";
 import type { SlackSessionLink } from "./slack-markdown.js";
@@ -72,7 +73,9 @@ function dispatchFor(delivery: SlackTurnDelivery): T3TurnDispatch {
 export async function deliverClaimedSlackTurn(input: {
   delivery: SlackTurnDelivery;
   store: Pick<SlackTurnDeliveryStore, "markDelivered" | "markFailed"> &
-    Partial<Pick<SlackTurnDeliveryStore, "renewClaim">>;
+    Partial<
+      Pick<SlackTurnDeliveryStore, "hasAnyMessageId" | "renewClaim">
+    >;
   t3: CentralT3ConversationClient;
   slack: SlackTurnDeliveryClient;
   logger?: Pick<Console, "info" | "warn" | "error">;
@@ -142,11 +145,35 @@ export async function deliverClaimedSlackTurn(input: {
       throw new SlackDeliveryClaimLostError(delivery);
     }
 
+    const laterMessageIds = laterUserMessageIdsForDispatch(
+      snapshot,
+      dispatch,
+    );
+    const replacementOwnsFinal =
+      laterMessageIds.length > 0 &&
+      Boolean(await store.hasAnyMessageId?.(laterMessageIds));
+    if (replacementOwnsFinal) {
+      // Slack can race the central running-state projection and reserve a
+      // second outbox row for a message that becomes a steer. Only yield when
+      // that durable replacement really exists; browser steers create no row,
+      // so this original delivery must remain responsible for the final.
+      await slack.markRunSucceeded(delivery.triggerMessageTs);
+      if (!(await store.markDelivered(delivery))) {
+        throw new SlackDeliveryClaimLostError(delivery);
+      }
+      span.setAttribute("compadre.delivery.replaced", true);
+      logger.info("[slack-delivery] relinquished to replacement delivery", {
+        deliveryId: delivery.id,
+        messageId: delivery.messageId,
+        threadId: delivery.t3ThreadId,
+      });
+      return true;
+    }
+
     // The session link rides inside the answer message as a context footer
-    // rather than a second message. This outbox row remains the delivery owner
-    // when a later browser or Slack message steers the same run: steering does
-    // not create a replacement outbox row, and the final assistant message is
-    // already the response to the newest instruction in that turn.
+    // rather than a second message. Browser steers do not create replacement
+    // outbox rows, so the original row posts the newest answer and settles the
+    // shared status.
     await slack.postThreadMessage(
       response,
       delivery.id,
