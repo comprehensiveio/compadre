@@ -445,6 +445,22 @@
         "licenseId": "MIT",
         "copyrights": ["Copyright (c) 2025 opencode"]
       }
+    },
+    {
+      "name": "pg-types",
+      "sourceUrl": "https://github.com/brianc/node-pg-types#license",
+      "generatedNotice": {
+        "licenseId": "MIT",
+        "copyrights": ["Copyright (c) 2014 Brian M. Carlson"]
+      }
+    },
+    {
+      "name": "pgpass",
+      "sourceUrl": "https://github.com/hoegaarden/pgpass#license",
+      "generatedNotice": {
+        "licenseId": "MIT",
+        "copyrights": ["Copyright (c) 2013-2016 Hannes Hörl"]
+      }
     }
   ]
 }
