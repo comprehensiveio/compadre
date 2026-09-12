@@ -187,10 +187,12 @@ prompt. After dispatch, the update uses the worker T3 server's native
 Steering therefore stays inside one durable controller run and one terminal
 observer.
 
-Only the newest user message in the turn owns the eventual Slack answer, thread
-status, and web link. Older Slack outbox rows and browser mirrors settle as
-superseded without posting failure warnings, duplicate answers, or clearing a
-newer turn's status.
+The Slack delivery owner attached when the durable run starts remains responsible
+for the eventual Slack answer, thread status, and web link through every steer.
+Steering changes which user message the final assistant response answers, but it
+does not create a replacement Slack outbox row or browser mirror. The existing
+owner therefore publishes the run's final response and clears the processing
+status exactly once.
 
 The HTTP run transport negotiates `X-Compadre-T3-Protocol-Version: 2` and
 `x-compadre-native-delivery: 1`, carrying lifecycle receipts only. Native delivery
