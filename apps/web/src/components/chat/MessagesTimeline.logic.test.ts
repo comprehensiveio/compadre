@@ -1353,6 +1353,43 @@ describe("deriveMessagesTimelineRows", () => {
     expect(assistantRow?.assistantTurnDiffSummary).toBe(assistantTurnDiffSummary);
   });
 
+  it("keeps the final answer visible when an artifact-only message follows it", () => {
+    const turnId = TurnId.make("artifact-turn");
+    const entries = ["Working", "CODEX_E2E_OK Hello World!", ""].map((text, index) => {
+      const createdAt = `2026-01-01T00:00:0${index}Z`;
+      return {
+        id: `answer-${index}`,
+        kind: "message" as const,
+        createdAt,
+        message: {
+          id: MessageId.make(`answer-${index}`),
+          role: "assistant" as const,
+          text,
+          turnId,
+          createdAt,
+          updatedAt: createdAt,
+          streaming: false,
+        },
+      };
+    });
+    const rows = deriveMessagesTimelineRows({
+      timelineEntries: entries,
+      isWorking: false,
+      activeTurnStartedAt: null,
+      turnDiffSummaries: [],
+      supportsConversationRollback: false,
+    });
+    expect(
+      rows.some(
+        (row) => row.kind === "message" && row.message.text === "CODEX_E2E_OK Hello World!",
+      ),
+    ).toBe(true);
+    expect(rows.some((row) => row.kind === "message" && row.message.id === "answer-2")).toBe(true);
+    expect(rows.some((row) => row.kind === "message" && row.message.text === "Working")).toBe(
+      false,
+    );
+  });
+
   it("folds the first assistant message and settled work before the terminal response", () => {
     const timelineEntries = [
       {

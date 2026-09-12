@@ -86,6 +86,11 @@ if (await NodeFSP.stat(NodePath.join(controller, ".env.local")).catch(() => null
 }
 const selected = parse(await NodeFSP.readFile(option("--credentials")));
 const credentials = developmentCredentials(selected, process.env);
+if (option("--codex-auth")) {
+  credentials.CODEX_AUTH_JSON_BASE64 = (await NodeFSP.readFile(option("--codex-auth"))).toString(
+    "base64",
+  );
+}
 const { ModalClient } = requireController("modal");
 const modal = new ModalClient({
   tokenId: credentials.MODAL_TOKEN_ID,
@@ -123,6 +128,7 @@ const apiKey = secret();
 const exchange = secret();
 const dbUrl = `postgres://e2e:${secret()}@127.0.0.1:${pgPort}/compadre_e2e_test`;
 const pgPassword = new URL(dbUrl).password;
+const s3Password = secret();
 function start(label, executable, argv, env = base, cwd = root) {
   const log = NodePath.join(dir, `${label}.log`);
   const fd = NodeFS.openSync(log, "a", 0o600);
@@ -179,6 +185,7 @@ try {
   composeEnv = {
     ...base,
     E2E_POSTGRES_PASSWORD: pgPassword,
+    E2E_S3_PASSWORD: s3Password,
     E2E_POSTGRES_PORT: String(pgPort),
     E2E_TEMPORAL_PORT: String(temporalPort),
     E2E_S3_PORT: String(s3Port),
@@ -209,11 +216,10 @@ try {
   const awsEnv = {
     AWS_ENDPOINT_URL_S3: `http://127.0.0.1:${s3Port}`,
     AWS_ACCESS_KEY_ID: "e2e",
-    AWS_SECRET_ACCESS_KEY: secret(),
+    AWS_SECRET_ACCESS_KEY: s3Password,
     AWS_REGION: "us-east-1",
   };
-  const { S3Client, CreateBucketCommand, HeadBucketCommand } =
-    requireController("@aws-sdk/client-s3");
+  const { S3Client, HeadBucketCommand } = requireController("@aws-sdk/client-s3");
   const s3 = new S3Client({
     region: awsEnv.AWS_REGION,
     endpoint: awsEnv.AWS_ENDPOINT_URL_S3,
@@ -225,7 +231,7 @@ try {
   });
   await waitFor("S3", async () => {
     try {
-      await s3.send(new CreateBucketCommand({ Bucket: "compadre-e2e" }));
+      await s3.send(new HeadBucketCommand({ Bucket: "compadre-e2e" }));
       return true;
     } catch {
       return false;
@@ -238,8 +244,6 @@ try {
     "/dev/null",
     "--url",
     `http://127.0.0.1:${s3Port}`,
-    "--http-host-header",
-    "localhost",
     "--no-autoupdate",
   ]);
   awsEnv.AWS_ENDPOINT_URL_S3 = await waitFor(
@@ -305,10 +309,12 @@ try {
     base,
     NodePath.join(root, "apps/server"),
   );
-  const archive = NodePath.join(
-    dir,
-    (await NodeFSP.readdir(dir)).find((name) => name.endsWith(".tgz")),
-  );
+  const archive =
+    option("--worker-archive") ??
+    NodePath.join(
+      dir,
+      (await NodeFSP.readdir(dir)).find((name) => name.endsWith(".tgz")),
+    );
   const digest = NodeCrypto.createHash("sha256")
     .update(await NodeFSP.readFile(archive))
     .digest("hex");
@@ -448,12 +454,12 @@ try {
   );
   start("controller", "node", ["--import", "tsx", "src/start.ts"], controllerEnv, controller);
   await waitFor("controller health", async () =>
-    fetch(`http://127.0.0.1:${apiPort}/health`)
+    fetch(`http://127.0.0.1:${apiPort}/health`, { signal: AbortSignal.timeout(5000) })
       .then((r) => r.ok)
       .catch(() => false),
   );
   await waitFor("central server", async () =>
-    fetch(`http://127.0.0.1:${serverPort}/api/auth/session`)
+    fetch(`http://127.0.0.1:${serverPort}/api/auth/session`, { signal: AbortSignal.timeout(5000) })
       .then((r) => r.ok)
       .catch(() => false),
   );
@@ -482,7 +488,7 @@ try {
   });
   if (!seeded.ok) throw new Error(`Fixture project creation failed (${seeded.status})`);
   await waitFor("web", async () =>
-    fetch(webUrl)
+    fetch(webUrl, { signal: AbortSignal.timeout(5000) })
       .then((r) => r.ok)
       .catch(() => false),
   );

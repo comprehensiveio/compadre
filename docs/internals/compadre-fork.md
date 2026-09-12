@@ -209,3 +209,7 @@ retain the upstream storage key.
 The hosted sidebar omits project scope and project creation controls for the
 single configured project. Search and new-thread creation remain available;
 the identity filter has spacing above the search row.
+
+Hosted artifact-only assistant messages can follow the final answer. The chat
+timeline keeps that last text answer visible when folding completed work, while
+leaving later artifact messages visible.

@@ -480,7 +480,11 @@ function deriveTerminalAssistantMessageIds(timelineEntries: ReadonlyArray<Timeli
       continue;
     }
 
-    lastAssistantMessageIdByResponse.set(responseIndex, message.id);
+    // Hosted artifact messages can follow the final answer without text.
+    // Keep the answer visible when those later files arrive.
+    if (message.text.trim() || !lastAssistantMessageIdByResponse.has(responseIndex)) {
+      lastAssistantMessageIdByResponse.set(responseIndex, message.id);
+    }
   }
 
   return new Set(lastAssistantMessageIdByResponse.values());

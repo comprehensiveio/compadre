@@ -23,6 +23,11 @@ node scripts/compadre-e2e.mjs up --credentials /absolute/path/to/development.env
 The credential file must contain `MODAL_TOKEN_ID`, `MODAL_TOKEN_SECRET`, and
 `ANTHROPIC_API_KEY`. Optional Codex credentials are `CODEX_API_KEY`,
 `OPENAI_API_KEY`, or the existing `CODEX_AUTH_JSON_BASE64` subscription seed.
+For a local ChatGPT Codex sign-in, add `--codex-auth "$HOME/.codex/auth.json"`.
+This copies the sign-in into the disposable worker credential seed; it never
+writes refreshed credentials back to your local account file. Model discovery
+currently requires an API key, so a subscription-only test can show a discovery
+warning even when real Codex turns work.
 The launcher selects only these keys. It does not inherit production databases,
 Slack tokens, cloud storage credentials, telemetry credentials, or controller
 URLs. Modal credentials must resolve to Comprehensive's `comprehensiveio`
@@ -55,7 +60,7 @@ Do not include the grant URLs or `private.json` in screenshots or shared reports
 | Controller            | Host, this worktree's source | Independent loopback port; `public` schema in the same disposable Postgres                                    |
 | Postgres              | Compose, PostgreSQL 17       | Random loopback port; database `compadre_e2e_test`                                                            |
 | Temporal              | Compose                      | Independent frontend port, namespace, and PostgreSQL 16 store                                                 |
-| S3                    | Compose, LocalStack          | Dedicated local bucket and fake credentials; a separate temporary tunnel makes object URLs reachable by Modal |
+| S3                    | Compose, SeaweedFS           | Dedicated local bucket and fake credentials; a separate temporary tunnel makes object URLs reachable by Modal |
 | Modal worker          | Comprehensive Modal          | Unique E2E application, public Hello-World fixture checkout, packaged integration build                       |
 | Worker tool callbacks | Temporary Cloudflare tunnel  | Forwards to this test controller; authenticated by a generated E2E credential                                 |
 
@@ -84,10 +89,11 @@ records the archive SHA-256 and checkout location. Start a fresh environment to
 verify changed worker code; hot reload of the local server does not update an
 already-running worker.
 
-Local S3 proves the SDK/storage integration, not AWS IAM, networking, or managed
+SeaweedFS stores objects on its Compose volume across restarts (see the
+[upstream setup guide](https://github.com/seaweedfs/seaweedfs/wiki/Quick-Start-with-weed-mini)). Local S3 proves the SDK/storage integration, not AWS IAM, networking, or managed
 storage behavior. `AWS_ENDPOINT_URL_S3` points to its temporary tunnel and the
 S3 adapters use path-style addressing for that custom endpoint, so presigned
-object URLs are reachable by Modal. The exposed emulator contains only synthetic
+object URLs are reachable by Modal. The exposed object store contains only synthetic
 test data and fake credentials; never copy real user data or production secrets
 into it. Verify an actual attachment transfer before claiming that flow passed.
 
@@ -109,6 +115,50 @@ Record exact flows that passed and those not attempted. Infrastructure readiness
 and green unit tests alone are not a completed end-to-end proof. For upstream
 integrations, also verify an existing worker version against the new central
 server and review schema compatibility before calling the change deploy-ready.
+
+## Repeatable readiness checks
+
+After a completed browser turn, run these against that disposable environment:
+
+```sh
+node scripts/compadre-e2e/check-terminal.mjs /state/directory CANONICAL_THREAD_ID
+node scripts/compadre-e2e/check-storage.mjs /state/directory
+```
+
+The terminal probe uses the real controller-issued direct connection, verifies
+shell output, disconnects, and requires replay plus new output after reconnect.
+It reports transport round-trip timing; that is not a browser rendering benchmark.
+The storage probe writes random bytes, stops and starts only the local S3 service,
+and checks the exact bytes before deleting its test object. Run it when no test
+is actively uploading files.
+
+For mixed-version checks, launch a separate environment with
+`--worker-archive /absolute/path/to/verified-production-worker.tgz`. Central and
+controller still run the integration, while Modal receives that exact archive.
+Verify the installed worker hash, complete real turns, and reconnect its terminal.
+
+To resume after stopping the launcher, preserving database and object volumes:
+
+```sh
+node scripts/compadre-e2e/resume.mjs /state/directory
+```
+
+Resume refreshes both temporary tunnels, checks public S3 access, and starts the
+host applications with saved credentials and state. Keep its process alive. It
+uses the existing worker archive and the original central bearer lifetime (eight
+hours); after that expires, start a fresh environment. Keep the same checkout.
+Do not resume an already-running environment. Old LocalStack sessions are not
+compatible with the persistent SeaweedFS configuration; start a fresh session.
+
+During central restart, the UI can briefly report a lost provider session before
+native replay catches up; require the final persisted result rather than treating
+that intermediate warning as a terminal outcome.
+
+A recovery proof should keep a provider turn blocked on a test FIFO while local
+services restart, release it only after readiness, and verify one terminal result
+and unchanged worker/native thread IDs. Separately terminate an exact checkpointed
+test sandbox, open stored history without waking it, then send a follow-up that
+reads a saved marker. Require a new sandbox generation and the same native thread.
 
 ## Logs and lifecycle
 
