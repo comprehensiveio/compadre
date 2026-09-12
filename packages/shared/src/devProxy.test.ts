@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vite-plus/test";
-import { isDevProxiedPath } from "./devProxy";
+import { isDevProxiedPath } from "./devProxy.ts";
 
 describe("hosted login in single-origin development", () => {
   it("routes login callbacks and logout to the central server", () => {
