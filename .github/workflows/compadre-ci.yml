@@ -1,10 +1,10 @@
 name: Compadre CI
 
 on:
+  # Large upstream merges can exceed GitHub’s path-filter file limit.
+  # Always validate the controller on PRs, including those integrations.
   pull_request:
-    paths:
-      - hosted/compadre/**
-      - .github/workflows/compadre-ci.yml
+  workflow_dispatch:
   push:
     branches: [main]
     paths:
