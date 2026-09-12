@@ -223,3 +223,13 @@ See [the hosted T3 architecture](docs/hosted-t3-architecture.md) for data
 ownership and flow. Maintainers changing any part of this system should load
 [the change-compadre-stack skill](.agents/skills/change-compadre-stack/SKILL.md)
 before editing.
+
+## Assembled-product development
+
+For browser → central T3 → controller → Temporal → real Modal validation, use
+[the local end-to-end runbook](../../docs/operations/local-compadre-e2e.md).
+The root `scripts/compadre-e2e.mjs` launcher provisions isolated Compose
+Postgres/Temporal/S3 dependencies, wires both services, builds the worker archive,
+and provides synthetic test-user login grants. This is the same flow for ordinary
+Compadre updates and upstream integrations; the fake-Modal Temporal probe remains
+a separate deterministic check.

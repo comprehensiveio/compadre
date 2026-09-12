@@ -76,6 +76,19 @@ queries, and persisted event shapes, not just whether added columns are nullable
 Raise the minimum version when old application behavior is no longer supported.
 Never lower it merely to force a rollback through startup validation.
 
+The upstream integration introduces PostgreSQL migration 3 and SQLite migrations
+46–54. PostgreSQL schema 3 requires application schema 3: its new persisted event
+shapes are not a safe rollback target for schema-2 applications. This is the
+integration's compatibility declaration, not a statement that production has
+already migrated. The central table manifest now includes
+`projection_thread_pull_requests` (17 tables). Populated upgrades backfill model
+defaults and settlement state alongside the new context, ordering, and PR fields.
+
+Read and write SQL clients must share the primary client's transaction service
+and transaction wrapper. The read wrapper chooses a read-only repeatable-read
+transaction only at the outer boundary; nested reads reuse the active transaction.
+This preserves atomic read-after-write behavior with Effect's scoped SQL services.
+
 This permits application rollback while retaining newer data. Binaries that
 predate this compatibility check still require exact schema equality and are
 not valid rollback targets after a schema upgrade. Deploy and verify a rollback

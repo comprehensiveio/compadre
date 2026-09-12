@@ -55,6 +55,7 @@ describe.runIf(postgresUrl)("PostgreSQL persistence", () => {
         [
           { migrationId: 1, name: "compadre_initial" },
           { migrationId: 2, name: "native_thread_streams" },
+          { migrationId: 3, name: "upstream_schema" },
         ],
       );
     }).pipe(Effect.provide(PersistenceLive())),
@@ -280,7 +281,7 @@ describe.runIf(postgresUrl)("PostgreSQL persistence", () => {
               ]) {
                 yield* sql`DROP TABLE ${sql(table)} CASCADE`;
               }
-              assert.strictEqual((yield* runPostgresMigrations).length, 2);
+              assert.strictEqual((yield* runPostgresMigrations).length, 3);
               assert.strictEqual((yield* runPostgresMigrations).length, 0);
               const namespace = yield* sql<{ name: string }>`SELECT current_schema() AS name`;
               assert.strictEqual(namespace[0]?.name, "compadre_t3");

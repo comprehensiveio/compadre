@@ -1,0 +1,55 @@
+# Every launcher gets a separate Compose project, database volumes, and loopback ports.
+services:
+  postgres:
+    image: postgres:17
+    environment:
+      POSTGRES_USER: e2e
+      POSTGRES_PASSWORD: ${E2E_POSTGRES_PASSWORD:?}
+      POSTGRES_DB: compadre_e2e_test
+    ports:
+      - "127.0.0.1:${E2E_POSTGRES_PORT:?}:5432"
+    volumes:
+      - postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: [CMD-SHELL, "pg_isready -U e2e -d compadre_e2e_test"]
+      interval: 1s
+      timeout: 5s
+      retries: 60
+  s3:
+    image: localstack/localstack:4.7.0
+    environment:
+      SERVICES: s3
+      PERSISTENCE: "1"
+    ports:
+      - "127.0.0.1:${E2E_S3_PORT:?}:4566"
+    volumes:
+      - s3:/var/lib/localstack
+  temporal-db:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: temporal
+      POSTGRES_PASSWORD: ${E2E_POSTGRES_PASSWORD:?}
+    volumes:
+      - temporal:/var/lib/postgresql/data
+    healthcheck:
+      test: [CMD-SHELL, "pg_isready -U temporal"]
+      interval: 1s
+      timeout: 5s
+      retries: 60
+  temporal:
+    image: temporalio/auto-setup:1.28.4
+    environment:
+      DB: postgres12
+      DB_PORT: 5432
+      POSTGRES_USER: temporal
+      POSTGRES_PWD: ${E2E_POSTGRES_PASSWORD:?}
+      POSTGRES_SEEDS: temporal-db
+    ports:
+      - "127.0.0.1:${E2E_TEMPORAL_PORT:?}:7233"
+    depends_on:
+      temporal-db:
+        condition: service_healthy
+volumes:
+  s3:
+  postgres:
+  temporal:

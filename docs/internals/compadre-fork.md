@@ -184,3 +184,28 @@ contract, `terminal/DirectTerminal.ts` to the worker HTTP routes and RPC handler
 and `state/directTerminal.ts` to client-runtime terminal atoms. The controller
 terminal service brokers terminal-bound grants through the existing worker
 lifecycle interface. See [Hosted worker terminals](hosted-worker-terminals.md).
+
+## Upstream capabilities in hosted environments
+
+When `COMPADRE_NATIVE_T3_URL` is configured, conversation and checkpoint rewind
+commands are rejected. Active-thread reordering and question attachments are
+unavailable: ordering needs canonical per-user persistence, and question files
+need delivery through the controller to Modal. Capability descriptors and command
+normalization enforce these boundaries for web, mobile, and direct API clients.
+
+PR associations remain shared conversation data. Stacked PR operations are
+unavailable until they execute in the owning Modal checkout. Automatic project
+pulls are disabled both at startup and in background VCS refreshes on the central
+server. Project execution defaults remain shared, with explicit overrides.
+
+Manual compaction stays on the durable native provider-action path in hosted
+mode. Local providers use upstream's in-process compaction implementation. The
+controller continues to own remote replay and confirmation.
+
+Usage page display preferences are stored per canonical signed-in user in browser
+storage. They do not synchronize between browsers. Anonymous local environments
+retain the upstream storage key.
+
+The hosted sidebar omits project scope and project creation controls for the
+single configured project. Search and new-thread creation remain available;
+the identity filter has spacing above the search row.

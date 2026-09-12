@@ -116,7 +116,9 @@ export const makeS3AttachmentObjects = Effect.gen(function* () {
       ),
     );
   const client = yield* Effect.acquireRelease(
-    Effect.sync(() => new S3Client({ region })),
+    Effect.sync(
+      () => new S3Client({ region, forcePathStyle: Boolean(process.env.AWS_ENDPOINT_URL_S3) }),
+    ),
     (s3) => Effect.sync(() => s3.destroy()),
   );
   return {

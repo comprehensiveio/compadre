@@ -2,7 +2,7 @@ import * as Context from "effect/Context";
 import * as Schema from "effect/Schema";
 import * as Effect from "effect/Effect";
 
-export class AttachmentObjectError extends Schema.TaggedErrorClass<AttachmentObjectError>()(
+export class AttachmentObjectError extends Schema.TaggedError<AttachmentObjectError>()(
   "AttachmentObjectError",
   {
     message: Schema.String,

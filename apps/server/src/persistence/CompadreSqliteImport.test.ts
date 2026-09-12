@@ -34,7 +34,7 @@ const snapshot = Effect.gen(function* () {
     const names = columns.map((column) => String(column.name));
     const values = columns.map((column) => {
       const name = String(column.name);
-      if (column.type === "INTEGER")
+      if (column.type === "INTEGER" || column.type === "BIGINT")
         return name === "sequence" ||
           name === "row_id" ||
           name === "last_applied_sequence" ||
@@ -83,7 +83,7 @@ describe.runIf(url)("Compadre schema parity and import", () => {
           id: string;
         }>`SELECT id FROM public.compadre_controller_import_fixture`;
         expect([...controller]).toEqual([{ id: "preserved" }]);
-        expect(report.tables).toHaveLength(15);
+        expect(report.tables).toHaveLength(CENTRAL_SQLITE_TABLES.length);
         expect(report.tables.every((table) => table.rows === 1)).toBe(true);
         expect(report.eventRange).toEqual([
           { count: "1", minimum: 3_000_000_001, maximum: 3_000_000_001 },

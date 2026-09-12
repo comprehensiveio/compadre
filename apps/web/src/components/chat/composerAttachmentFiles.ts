@@ -1,4 +1,5 @@
 import {
+  type EnvironmentId,
   isProviderSendTurnSupportedImageMimeType,
   PROVIDER_SEND_TURN_MAX_FILE_BYTES,
 } from "@t3tools/contracts";
@@ -9,8 +10,9 @@ import {
 
 import type { ComposerFileAttachment, ComposerImageAttachment } from "../../composerDraftStore";
 import { isHeicImageFile } from "../../lib/imageCompression";
+import { isVideoAttachment } from "../../types";
 
-type ComposerAttachmentFileKind = "image" | "file";
+type ComposerAttachmentFileKind = "image" | "file" | "unsupported-image";
 
 interface FileAttachmentCapabilityState {
   readonly attachmentUploadsCapabilityKnown: boolean;
@@ -73,6 +75,28 @@ export function classifyComposerAttachmentFile(
     return "file";
   }
   return isProviderSendTurnSupportedImageMimeType(file.type) ? "image" : "file";
+}
+
+export function isPreviewableComposerVideo(
+  file: ComposerFileAttachment,
+  environmentId: EnvironmentId,
+): boolean {
+  return (
+    isVideoAttachment(file) &&
+    (file.file !== null ||
+      (file.uploadedAttachmentId !== undefined && file.uploadEnvironmentId === environmentId))
+  );
+}
+
+/** Non-media files without an inline reference still need the legacy attachment row. */
+export function composerOtherFilesForPresentation(
+  files: ReadonlyArray<ComposerFileAttachment>,
+  environmentId: EnvironmentId,
+  inlineFileIds: ReadonlySet<string>,
+): ComposerFileAttachment[] {
+  return files.filter(
+    (file) => !isPreviewableComposerVideo(file, environmentId) && !inlineFileIds.has(file.id),
+  );
 }
 
 /** Byte limit for adding a generic file to the local composer draft. */
@@ -139,7 +163,11 @@ export function shouldHandleComposerAttachmentPaste(input: {
   if (
     input.files.some((file) => {
       const classification = classifyComposerAttachmentFile(file);
-      return classification === "image" || file.type.toLowerCase().startsWith("image/");
+      return (
+        classification === "image" ||
+        classification === "unsupported-image" ||
+        file.type.toLowerCase().startsWith("image/")
+      );
     })
   ) {
     return true;
