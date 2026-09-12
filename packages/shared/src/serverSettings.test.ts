@@ -142,6 +142,7 @@ describe("serverSettings helpers", () => {
     const projectId = ProjectId.make("project-browser");
     const otherProjectId = ProjectId.make("other-project");
     const overridden = applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, {
+      enableAgentBrowserAccess: true,
       projectAgentBrowserAccessOverrides: { [projectId]: false },
     });
     expect(resolveProjectAgentBrowserAccess(overridden, projectId)).toBe(false);
@@ -162,6 +163,7 @@ describe("serverSettings helpers", () => {
     const firstProjectId = ProjectId.make("first-project");
     const secondProjectId = ProjectId.make("second-project");
     const firstUpdate = applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, {
+      enableAgentBrowserAccess: true,
       defaultAutoPull: true,
       projectAutoPullOverrides: { [firstProjectId]: false },
       projectAgentBrowserAccessOverrides: { [firstProjectId]: false },
