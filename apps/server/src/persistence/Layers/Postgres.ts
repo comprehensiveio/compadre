@@ -4,12 +4,14 @@ import { PgClient } from "@effect/sql-pg";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
 import * as Reactivity from "effect/unstable/reactivity/Reactivity";
 import * as Migrator from "effect/unstable/sql/Migrator";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 
 import migration002NativeThreadStreams from "../Migrations/045_NativeThreadStreams.ts";
+import { migration003Upstream } from "../CompadrePostgresUpstream.ts";
 import { migration001Initial } from "../CompadrePostgresSchema.ts";
 import {
   POSTGRES_MIGRATION_LOCK_KEY,
@@ -17,12 +19,17 @@ import {
 } from "../PostgresSchemaCompatibility.ts";
 import { PersistenceBackend, PersistenceReadClient } from "../Services/PersistenceBackend.ts";
 
-export const POSTGRES_SCHEMA_VERSION = 2;
-export const SQLITE_SCHEMA_VERSION = 45;
+class ReadTransaction extends Context.Reference<boolean>("t3/persistence/ReadTransaction", {
+  defaultValue: () => false,
+}) {}
+
+export const POSTGRES_SCHEMA_VERSION = 3;
+export const SQLITE_SCHEMA_VERSION = 54;
 
 const migrate = Migrator.make({})({
   loader: Migrator.fromRecord({
     "1_compadre_initial": migration001Initial,
+    "3_upstream_schema": migration003Upstream,
     "2_native_thread_streams": Effect.gen(function* () {
       yield* migration002NativeThreadStreams;
       const sql = yield* SqlClient.SqlClient;
@@ -108,7 +115,9 @@ export const makePostgresClientLive = (url: string) =>
       });
       const sql = yield* SqlClient.make({
         acquirer: reads.reserve,
-        transactionAcquirer: writes.reserve,
+        transactionAcquirer: Effect.flatMap(ReadTransaction, (read) =>
+          read ? reads.reserve : writes.reserve,
+        ),
         compiler: PgClient.makeCompiler(),
         spanAttributes: [["service.name", "compadre-web"]],
       });
@@ -116,9 +125,23 @@ export const makePostgresClientLive = (url: string) =>
         acquirer: reads.reserve,
         compiler: PgClient.makeCompiler(),
         transactionService: sql.transactionService,
-        beginTransaction: "BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY",
         spanAttributes: [["service.name", "compadre-web"]],
       });
+      // Both clients must enter transactions through the same wrapper: Effect's
+      // nested-savepoint semaphore belongs to that wrapper, not the connection tag.
+      const withReadTransaction: SqlClient.SqlClient["withTransaction"] = (effect) =>
+        Effect.flatMap(Effect.serviceOption(sql.transactionService), (current) =>
+          Option.isSome(current)
+            ? sql.withTransaction(effect)
+            : sql
+                .withTransaction(
+                  sql`SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY`.pipe(
+                    Effect.andThen(effect),
+                  ),
+                )
+                .pipe(Effect.provideService(ReadTransaction, true)),
+        );
+      Object.assign(readSql, { withTransaction: withReadTransaction });
       yield* sql`SELECT 1`;
       return Context.make(SqlClient.SqlClient, sql).pipe(
         Context.add(PgClient.PgClient, reads),

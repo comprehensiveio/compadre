@@ -10,6 +10,7 @@ import * as SqlClient from "effect/unstable/sql/SqlClient";
 import * as SqlSchema from "effect/unstable/sql/SqlSchema";
 
 import {
+  AgentSessionImportSource,
   IsoDateTime,
   ProviderInstanceId,
   ProviderSessionRuntimeStatus,
@@ -58,6 +59,16 @@ export type GetProviderSessionRuntimeInput = typeof GetProviderSessionRuntimeInp
 export const DeleteProviderSessionRuntimeInput = Schema.Struct({ threadId: ThreadId });
 export type DeleteProviderSessionRuntimeInput = typeof DeleteProviderSessionRuntimeInput.Type;
 
+export const RecordImportedTranscriptInput = Schema.Struct({
+  threadId: ThreadId,
+  source: AgentSessionImportSource,
+});
+export type RecordImportedTranscriptInput = typeof RecordImportedTranscriptInput.Type;
+
+export interface ProviderSessionRuntimeUpsertOptions {
+  readonly onConflict?: "update" | "ignore";
+}
+
 /**
  * ProviderSessionRuntimeRepository - Service tag for provider runtime persistence.
  */
@@ -67,10 +78,17 @@ export class ProviderSessionRuntimeRepository extends Context.Service<
     /**
      * Insert or replace a provider runtime row.
      *
-     * Upserts by canonical `threadId`, including JSON payload/cursor fields.
+     * Upserts by canonical `threadId`, retaining imported transcript records
+     * from the current database row.
      */
     readonly upsert: (
       runtime: ProviderSessionRuntime,
+      options?: ProviderSessionRuntimeUpsertOptions,
+    ) => Effect.Effect<void, ProviderSessionRuntimeRepositoryError>;
+
+    /** Record one source file without replacing the current session state. */
+    readonly recordImportedTranscript: (
+      input: RecordImportedTranscriptInput,
     ) => Effect.Effect<void, ProviderSessionRuntimeRepositoryError>;
 
     /**
@@ -129,6 +147,10 @@ const GetRuntimeRequestSchema = Schema.Struct({
 
 const DeleteRuntimeRequestSchema = GetRuntimeRequestSchema;
 
+const RecordImportedTranscriptRequestSchema = RecordImportedTranscriptInput.mapFields(
+  Struct.assign({ source: Schema.fromJsonString(AgentSessionImportSource) }),
+);
+
 function toPersistenceSqlOrDecodeError(
   sqlOperation: string,
   decodeOperation: string,
@@ -144,13 +166,38 @@ function toPersistenceSqlOrDecodeError(
         });
 }
 
+/** @public Service construction is part of the canonical Effect module API. */
 export const make = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
 
+  // Runtime writes can carry stale payloads. Only recordImportedTranscript may
+  // change source records, so restore that field from the row being updated.
   const upsertRuntimeRow = SqlSchema.void({
     Request: ProviderSessionRuntimeDbRowSchema,
     execute: (runtime) =>
-      sql`
+      sql.onDialectOrElse({
+        pg: () => sql`
+        INSERT INTO provider_session_runtime (thread_id, provider_name, provider_instance_id, adapter_key, runtime_mode, status, last_seen_at, resume_cursor_json, runtime_payload_json)
+        VALUES (${runtime.threadId}, ${runtime.providerName}, ${runtime.providerInstanceId},
+            ${runtime.adapterKey}, ${runtime.runtimeMode}, ${runtime.status}, ${runtime.lastSeenAt},
+            ${runtime.resumeCursor}, CASE WHEN jsonb_typeof(${runtime.runtimePayload}::jsonb) = 'object'
+              THEN (${runtime.runtimePayload}::jsonb - 'importedTranscripts')::text
+              ELSE ${runtime.runtimePayload} END)
+        ON CONFLICT (thread_id) DO UPDATE SET
+            provider_name = excluded.provider_name, provider_instance_id = excluded.provider_instance_id,
+            adapter_key = excluded.adapter_key, runtime_mode = excluded.runtime_mode,
+            status = excluded.status, last_seen_at = excluded.last_seen_at,
+            resume_cursor_json = excluded.resume_cursor_json,
+            runtime_payload_json = CASE
+              WHEN (CASE WHEN provider_session_runtime.runtime_payload_json IS JSON OBJECT
+                THEN provider_session_runtime.runtime_payload_json::jsonb ELSE '{}'::jsonb END) ? 'importedTranscripts'
+              THEN jsonb_set(
+                CASE WHEN excluded.runtime_payload_json IS JSON OBJECT
+                  THEN excluded.runtime_payload_json::jsonb ELSE '{}'::jsonb END,
+                '{importedTranscripts}', provider_session_runtime.runtime_payload_json::jsonb -> 'importedTranscripts'
+              )::text ELSE excluded.runtime_payload_json END
+      `,
+        orElse: () => sql`
         INSERT INTO provider_session_runtime (
           thread_id,
           provider_name,
@@ -171,7 +218,11 @@ export const make = Effect.gen(function* () {
           ${runtime.status},
           ${runtime.lastSeenAt},
           ${runtime.resumeCursor},
-          ${runtime.runtimePayload}
+          CASE
+            WHEN json_type(${runtime.runtimePayload}) = 'object'
+            THEN json_remove(${runtime.runtimePayload}, '$.importedTranscripts')
+            ELSE ${runtime.runtimePayload}
+          END
         )
         ON CONFLICT (thread_id)
         DO UPDATE SET
@@ -182,8 +233,141 @@ export const make = Effect.gen(function* () {
           status = excluded.status,
           last_seen_at = excluded.last_seen_at,
           resume_cursor_json = excluded.resume_cursor_json,
-          runtime_payload_json = excluded.runtime_payload_json
+          runtime_payload_json = CASE
+            WHEN json_type(
+              CASE
+                WHEN json_valid(provider_session_runtime.runtime_payload_json)
+                THEN provider_session_runtime.runtime_payload_json
+                ELSE '{}'
+              END,
+              '$.importedTranscripts'
+            ) IS NOT NULL
+            THEN json_set(
+              CASE
+                WHEN json_type(excluded.runtime_payload_json) = 'object'
+                THEN excluded.runtime_payload_json
+                ELSE '{}'
+              END,
+              '$.importedTranscripts',
+              json_extract(provider_session_runtime.runtime_payload_json, '$.importedTranscripts')
+            )
+            ELSE excluded.runtime_payload_json
+          END
       `,
+      }),
+  });
+
+  const insertRuntimeRow = SqlSchema.void({
+    Request: ProviderSessionRuntimeDbRowSchema,
+    execute: (runtime) =>
+      sql.onDialectOrElse({
+        pg: () => sql`
+        INSERT INTO provider_session_runtime (thread_id, provider_name, provider_instance_id, adapter_key, runtime_mode, status, last_seen_at, resume_cursor_json, runtime_payload_json)
+        VALUES (${runtime.threadId}, ${runtime.providerName}, ${runtime.providerInstanceId},
+            ${runtime.adapterKey}, ${runtime.runtimeMode}, ${runtime.status}, ${runtime.lastSeenAt},
+            ${runtime.resumeCursor}, CASE WHEN jsonb_typeof(${runtime.runtimePayload}::jsonb) = 'object'
+              THEN (${runtime.runtimePayload}::jsonb - 'importedTranscripts')::text
+              ELSE ${runtime.runtimePayload} END)
+        ON CONFLICT (thread_id) DO NOTHING
+      `,
+        orElse: () => sql`
+        INSERT INTO provider_session_runtime (
+          thread_id,
+          provider_name,
+          provider_instance_id,
+          adapter_key,
+          runtime_mode,
+          status,
+          last_seen_at,
+          resume_cursor_json,
+          runtime_payload_json
+        )
+        VALUES (
+          ${runtime.threadId},
+          ${runtime.providerName},
+          ${runtime.providerInstanceId},
+          ${runtime.adapterKey},
+          ${runtime.runtimeMode},
+          ${runtime.status},
+          ${runtime.lastSeenAt},
+          ${runtime.resumeCursor},
+          CASE
+            WHEN json_type(${runtime.runtimePayload}) = 'object'
+            THEN json_remove(${runtime.runtimePayload}, '$.importedTranscripts')
+            ELSE ${runtime.runtimePayload}
+          END
+        )
+        ON CONFLICT (thread_id) DO NOTHING
+      `,
+      }),
+  });
+
+  const recordImportedTranscriptRow = SqlSchema.void({
+    Request: RecordImportedTranscriptRequestSchema,
+    execute: ({ threadId, source }) =>
+      sql.onDialectOrElse({
+        pg: () => sql`
+        WITH current_runtime AS (
+          SELECT CASE WHEN runtime_payload_json IS JSON OBJECT
+            THEN runtime_payload_json::jsonb ELSE '{}'::jsonb END AS payload
+          FROM provider_session_runtime WHERE thread_id = ${threadId}
+        )
+        UPDATE provider_session_runtime SET runtime_payload_json = (
+          SELECT jsonb_set(payload, '{importedTranscripts}',
+            COALESCE((SELECT jsonb_agg(value) FROM jsonb_array_elements(
+              CASE WHEN jsonb_typeof(payload -> 'importedTranscripts') = 'array'
+                THEN payload -> 'importedTranscripts' ELSE '[]'::jsonb END
+            ) AS entries(value)
+            WHERE jsonb_typeof(value) = 'object' AND (
+              value ->> 'providerInstanceId' IS DISTINCT FROM ${source}::jsonb ->> 'providerInstanceId'
+              OR value ->> 'filePath' IS DISTINCT FROM ${source}::jsonb ->> 'filePath'
+            )), '[]'::jsonb) || jsonb_build_array(${source}::jsonb)
+          )::text FROM current_runtime
+        ) WHERE thread_id = ${threadId}
+      `,
+        orElse: () => sql`
+        WITH current_runtime AS (
+          SELECT CASE
+            WHEN json_valid(runtime_payload_json) THEN CASE
+              WHEN json_type(runtime_payload_json) = 'object' THEN runtime_payload_json
+              ELSE '{}'
+            END
+            ELSE '{}'
+          END AS payload
+          FROM provider_session_runtime
+          WHERE thread_id = ${threadId}
+        )
+        UPDATE provider_session_runtime
+        SET runtime_payload_json = (
+          SELECT json_set(
+            payload,
+            '$.importedTranscripts',
+            json((
+              SELECT json_group_array(json(value))
+              FROM (
+                SELECT value
+                FROM json_each(CASE
+                  WHEN json_type(payload, '$.importedTranscripts') = 'array'
+                  THEN json_extract(payload, '$.importedTranscripts')
+                  ELSE '[]'
+                END)
+                WHERE CASE
+                  WHEN type = 'object' THEN
+                    json_extract(value, '$.providerInstanceId')
+                      IS NOT json_extract(${source}, '$.providerInstanceId')
+                    OR json_extract(value, '$.filePath') IS NOT json_extract(${source}, '$.filePath')
+                  ELSE 0
+                END
+                UNION ALL
+                SELECT ${source} AS value
+              )
+            ))
+          )
+          FROM current_runtime
+        )
+        WHERE thread_id = ${threadId}
+      `,
+      }),
   });
 
   const getRuntimeRowByThreadId = SqlSchema.findOneOption({
@@ -235,8 +419,8 @@ export const make = Effect.gen(function* () {
       `,
   });
 
-  const upsert: ProviderSessionRuntimeRepository["Service"]["upsert"] = (runtime) =>
-    upsertRuntimeRow(runtime).pipe(
+  const upsert: ProviderSessionRuntimeRepository["Service"]["upsert"] = (runtime, options) =>
+    (options?.onConflict === "ignore" ? insertRuntimeRow(runtime) : upsertRuntimeRow(runtime)).pipe(
       Effect.mapError(
         toPersistenceSqlOrDecodeError(
           "ProviderSessionRuntimeRepository.upsert:query",
@@ -245,6 +429,18 @@ export const make = Effect.gen(function* () {
         ),
       ),
     );
+
+  const recordImportedTranscript: ProviderSessionRuntimeRepository["Service"]["recordImportedTranscript"] =
+    (input) =>
+      recordImportedTranscriptRow(input).pipe(
+        Effect.mapError(
+          toPersistenceSqlOrDecodeError(
+            "ProviderSessionRuntimeRepository.recordImportedTranscript:query",
+            "ProviderSessionRuntimeRepository.recordImportedTranscript:encodeRequest",
+            { threadId: input.threadId },
+          ),
+        ),
+      );
 
   const getByThreadId: ProviderSessionRuntimeRepository["Service"]["getByThreadId"] = (input) =>
     getRuntimeRowByThreadId(input).pipe(
@@ -324,6 +520,7 @@ export const make = Effect.gen(function* () {
 
   return {
     upsert,
+    recordImportedTranscript,
     getByThreadId,
     list,
     deleteByThreadId,

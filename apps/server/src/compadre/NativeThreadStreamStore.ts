@@ -5,7 +5,7 @@ import * as Option from "effect/Option";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 import { PersistenceBackend } from "../persistence/Services/PersistenceBackend.ts";
 
-export class NativeThreadStreamConflict extends Data.TaggedError("NativeThreadStreamConflict")<{
+class NativeThreadStreamConflict extends Data.TaggedError("NativeThreadStreamConflict")<{
   readonly detail: string;
 }> {}
 

@@ -100,6 +100,16 @@ stale result.
 
 ## Verification by change type
 
+### Local assembled-product verification
+
+For ordinary changes or upstream integrations, use
+[`local-compadre-e2e.md`](../../../../docs/operations/local-compadre-e2e.md) and
+`scripts/compadre-e2e.mjs`. The isolated Compose dependencies, host applications,
+synthetic login grants, and local worker archive exercise the real hosted routing
+without production data. Record actual completed flows; starting the services is
+not end-to-end proof. Local fixtures do not replace production identity, IAM,
+mixed-version worker, or deployed-instance verification when those are affected.
+
 ### UI or central T3
 
 - Open an authenticated existing thread and confirm it renders from central

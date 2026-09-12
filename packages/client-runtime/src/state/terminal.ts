@@ -15,7 +15,7 @@ import { type EnvironmentRpcInput } from "../rpc/client.ts";
 import {
   applyTerminalAttachStreamEvent,
   applyTerminalMetadataStreamEvent,
-  EMPTY_TERMINAL_BUFFER_STATE,
+  nextTerminalAttachSeedState,
 } from "./terminalSession.ts";
 
 export function createTerminalEnvironmentAtoms<R, E>(
@@ -43,9 +43,11 @@ export function createTerminalEnvironmentAtoms<R, E>(
     attach: createEnvironmentSubscriptionAtomFamily(runtime, {
       label: "environment-data:terminal:attach",
       subscribe: (input: EnvironmentRpcInput<typeof WS_METHODS.terminalAttach>) =>
-        direct
-          .attach(input)
-          .pipe(Stream.scan(EMPTY_TERMINAL_BUFFER_STATE, applyTerminalAttachStreamEvent)),
+        Stream.suspend(() =>
+          direct
+            .attach(input)
+            .pipe(Stream.scan(nextTerminalAttachSeedState(), applyTerminalAttachStreamEvent)),
+        ),
     }),
     events: createEnvironmentRpcSubscriptionAtomFamily(runtime, {
       label: "environment-data:terminal:events",

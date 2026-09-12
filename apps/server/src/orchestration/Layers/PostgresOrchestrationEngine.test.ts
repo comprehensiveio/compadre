@@ -411,6 +411,20 @@ describe.runIf(postgresUrl)("PostgreSQL orchestration engine", () => {
       const persistence = makeTestPostgresPersistence(postgresUrl!);
       yield* resetDatabase.pipe(Effect.provide(persistence), Effect.scoped);
       const system = yield* makeSystem();
+      const readDurableState = Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient;
+        return yield* Effect.forEach(
+          [
+            "orchestration_events",
+            "orchestration_command_receipts",
+            "projection_projects",
+            "projection_state",
+          ],
+          (table) => sql`SELECT * FROM ${sql(table)}`,
+        );
+      });
+      // Bootstrap can seed cleanup cursors before the command begins.
+      const before = yield* readDurableState.pipe(Effect.provide(persistence), Effect.scoped);
       yield* Effect.gen(function* () {
         const sql = yield* SqlClient.SqlClient;
         yield* sql`CREATE OR REPLACE FUNCTION test_reject_receipt() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'injected receipt failure'; END $$`;
@@ -431,17 +445,7 @@ describe.runIf(postgresUrl)("PostgreSQL orchestration engine", () => {
         const sql = yield* SqlClient.SqlClient;
         yield* sql`DROP TRIGGER test_reject_receipt ON orchestration_command_receipts`;
         yield* sql`DROP FUNCTION test_reject_receipt()`;
-        for (const table of [
-          "orchestration_events",
-          "orchestration_command_receipts",
-          "projection_projects",
-          "projection_state",
-        ]) {
-          const rows = yield* sql<{
-            count: string;
-          }>`SELECT COUNT(*)::text AS count FROM ${sql(table)}`;
-          expect(rows[0]?.count).toBe("0");
-        }
+        expect(yield* readDurableState).toEqual(before);
       }).pipe(Effect.provide(persistence), Effect.scoped);
       expect(Exit.isFailure(result)).toBe(true);
       yield* system.close;

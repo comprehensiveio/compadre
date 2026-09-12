@@ -105,7 +105,7 @@ const errorMessage = (error: unknown) => (error instanceof Error ? error.message
 const MAX_CONTENT_CHARS = 32_000;
 const SENSITIVE_KEY = /(?:authorization|cookie|credential|password|secret|token|api[-_]?key)/i;
 
-export function redactTelemetryText(value: string): string {
+function redactTelemetryText(value: string): string {
   return value
     .replace(/\bBearer\s+[A-Za-z0-9._~+/-]+/gi, "Bearer [REDACTED]")
     .replace(/\b(?:sk|xox[baprs]|gh[opsu])[-_][A-Za-z0-9_-]{8,}\b/g, "[REDACTED]")
@@ -133,7 +133,7 @@ function redactTelemetryValue(value: unknown, depth = 0): unknown {
   );
 }
 
-export function serializeTelemetryValue(value: unknown): string {
+function serializeTelemetryValue(value: unknown): string {
   if (typeof value === "string") return redactTelemetryText(value);
   try {
     return JSON.stringify(redactTelemetryValue(value)).slice(0, MAX_CONTENT_CHARS);

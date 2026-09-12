@@ -87,7 +87,7 @@ export class S3T3ArtifactObjectStore implements T3ArtifactObjectStore {
     private readonly bucket: string,
     options: { region: string; client?: S3Client },
   ) {
-    this.client = options.client ?? new S3Client({ region: options.region });
+    this.client = options.client ?? new S3Client({ region: options.region, forcePathStyle: Boolean(process.env.AWS_ENDPOINT_URL_S3) });
   }
 
   async put(input: {

@@ -15,7 +15,9 @@ Compadre product. It contains two layers with separate toolchains:
 **You are not working on T3 Code.** Upstream (`pingdotgg/t3code`, the `upstream`
 remote) is a merge source only. Our divergence from upstream is deliberate
 product surface — never "fix" it back toward upstream, and never treat upstream
-conventions as requirements here. Upstream syncing is a plain
+conventions as requirements here. When an upstream implementation meets our hosted and multi-user requirements,
+prefer it over equivalent custom code. Preserve product behavior and data ownership
+at the adapter boundary. Upstream syncing is a plain
 `git merge upstream/main`; compadre lives under `hosted/`, a path upstream
 never touches.
 
@@ -78,6 +80,15 @@ The most common defect in the root stack is a change that works on the path you 
 
 The controller has its own dev setup: see `hosted/compadre/AGENTS.md` and
 `hosted/compadre/docs/`.
+
+## Full hosted end-to-end development
+
+Use `docs/operations/local-compadre-e2e.md` and `scripts/compadre-e2e.mjs` for
+ordinary changes or upstream integrations requiring the assembled hosted product.
+Compose owns disposable dependencies; host processes and a packaged real Modal
+worker exercise the actual routing. A ready launcher is not a passed browser-to-
+Modal turn. Record the exact flows verified and keep production identity/storage
+and mixed-version rollout checks distinct.
 
 ## Test data
 

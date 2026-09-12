@@ -38,6 +38,7 @@ export default mergeConfig(
     pack: {
       entry: {
         bin: "src/bin.ts",
+        claudeHistoryWorker: "src/claudeHistoryWorker.ts",
         "import-sqlite-to-postgres": "scripts/import-sqlite-to-postgres.ts",
         "import-central-attachments": "scripts/import-central-attachments.ts",
       },
@@ -82,6 +83,8 @@ export default mergeConfig(
       // The server suite exercises sqlite, git, temp worktrees, and orchestration
       // runtimes heavily. Running files in parallel introduces load-sensitive flakes.
       fileParallelism: false,
+      // Appended to the root setup, which mergeConfig concatenates.
+      setupFiles: ["./src/testUtils/gitConfig.setup.ts"],
       // Server integration tests exercise sqlite, git, and orchestration together.
       // Under package-wide runs they can exceed the default budget on loaded CI hosts.
       hookTimeout: 120_000,

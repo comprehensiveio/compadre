@@ -6,7 +6,7 @@ it("expires ready links and rejects invalid or unsafe readiness data", () => {
   const ready = {
     threadId: "thread",
     url: "https://thread.dev.example",
-    checkedAt: new Date(now).toISOString(),
+    checkedAt: "2026-09-07T12:00:00.000Z",
   };
   expect(freshCompadrePreviewUrl(ready, now)).toBe("https://thread.dev.example/");
   expect(freshCompadrePreviewUrl(ready, now + 89_999)).not.toBeNull();

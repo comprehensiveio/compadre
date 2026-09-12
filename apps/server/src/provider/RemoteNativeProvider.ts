@@ -134,7 +134,7 @@ export const makeRemoteNativeProvider = Effect.fn("makeRemoteNativeProvider")(fu
     packageName: null,
   });
   const snapshot = yield* makeManagedServerProvider({
-    maintenanceCapabilities,
+    resolveMaintenance: () => Effect.succeed(maintenanceCapabilities),
     getSettings: Effect.succeed(options.enabled),
     streamSettings: Stream.empty,
     haveSettingsChanged: (previous, next) => previous !== next,

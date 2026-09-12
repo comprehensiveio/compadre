@@ -12,6 +12,7 @@ export const CENTRAL_SQLITE_TABLES = [
   "projection_thread_proposed_plans",
   "projection_thread_sessions",
   "projection_threads",
+  "projection_thread_pull_requests",
   "projection_turns",
   "projection_projects",
   "projection_state",
