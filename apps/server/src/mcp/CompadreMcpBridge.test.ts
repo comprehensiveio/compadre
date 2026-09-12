@@ -1,4 +1,4 @@
-import assert from "node:assert/strict";
+import * as NodeAssert from "node:assert/strict";
 import { describe, it } from "@effect/vitest";
 
 import {
@@ -18,12 +18,12 @@ const compadreBridge = {
 
 describe("CompadreMcpBridge", () => {
   it("requires its URL and token together", () => {
-    assert.equal(readCompadreMcpBridge({}), undefined);
-    assert.throws(
+    NodeAssert.equal(readCompadreMcpBridge({}), undefined);
+    NodeAssert.throws(
       () => readCompadreMcpBridge({ COMPADRE_MCP_URL: compadreBridge.endpoint }),
       /must be configured together/,
     );
-    assert.throws(
+    NodeAssert.throws(
       () =>
         readCompadreMcpBridge({
           COMPADRE_MCP_URL: "file:///tmp/mcp",
@@ -34,7 +34,7 @@ describe("CompadreMcpBridge", () => {
   });
 
   it("injects the same authenticated bridge into Claude and Codex", () => {
-    assert.deepEqual(buildClaudeMcpServers(nativeSession, compadreBridge), {
+    NodeAssert.deepEqual(buildClaudeMcpServers(nativeSession, compadreBridge), {
       "t3-code": {
         type: "http",
         url: nativeSession.endpoint,
@@ -46,7 +46,7 @@ describe("CompadreMcpBridge", () => {
         headers: { Authorization: "Bearer compadre-token" },
       },
     });
-    assert.deepEqual(buildCodexMcpLaunchConfig(nativeSession, compadreBridge), {
+    NodeAssert.deepEqual(buildCodexMcpLaunchConfig(nativeSession, compadreBridge), {
       environment: {
         T3_MCP_BEARER_TOKEN: "native-token",
         COMPADRE_MCP_BEARER_TOKEN: "compadre-token",
@@ -65,7 +65,7 @@ describe("CompadreMcpBridge", () => {
   });
 
   it("omits adapter MCP options when neither server is configured", () => {
-    assert.equal(buildClaudeMcpServers(undefined, undefined), undefined);
-    assert.equal(buildCodexMcpLaunchConfig(undefined, undefined), undefined);
+    NodeAssert.equal(buildClaudeMcpServers(undefined, undefined), undefined);
+    NodeAssert.equal(buildCodexMcpLaunchConfig(undefined, undefined), undefined);
   });
 });
