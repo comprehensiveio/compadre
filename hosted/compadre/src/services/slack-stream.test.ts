@@ -227,6 +227,26 @@ test("refreshes a quiet processing session before Slack's expiry", async () => {
   );
 });
 
+test("a superseded observer stops refreshing without clearing shared status", async () => {
+  const { calls, fetchImpl } = createSlackFetch({
+    "agents.sessions.setStatus": [{ ok: true }],
+  });
+  const stream = new SlackStream({
+    channel: "C123",
+    threadTs: "100.001",
+    botToken: "xoxb-test",
+    fetchImpl,
+    statusRefreshIntervalMs: 20,
+    logger: silentLogger,
+  });
+
+  await stream.setStatus("is thinking...");
+  stream.relinquishStatus();
+  await new Promise((resolve) => setTimeout(resolve, 40));
+
+  assert.deepEqual(calls.map(({ body }) => body.status), ["processing"]);
+});
+
 test("logs Slack agent session warnings", async () => {
   const warnings: unknown[][] = [];
   const { fetchImpl } = createSlackFetch({

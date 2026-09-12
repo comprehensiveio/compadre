@@ -193,6 +193,9 @@ the run starts publishes the newest final response and clears processing. If a
 racing Slack follow-up does reserve another outbox row before the running state
 is visible centrally, older outbox or browser-mirror owners yield to that durable
 replacement so exactly one response and one status clear are delivered.
+Every observer that yields also cancels its local processing-status refresh
+timer. It does not write `active` during handoff; the final owner performs the
+single shared terminal transition after posting the answer.
 
 The HTTP run transport negotiates `X-Compadre-T3-Protocol-Version: 2` and
 `x-compadre-native-delivery: 1`, carrying lifecycle receipts only. Native delivery

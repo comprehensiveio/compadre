@@ -118,6 +118,15 @@ export class SlackStream {
     await this.statusUpdating;
   }
 
+  /** Stop this observer from refreshing processing after ownership transfers. */
+  relinquishStatus(): void {
+    if (this.statusRefreshTimer) {
+      clearTimeout(this.statusRefreshTimer);
+      this.statusRefreshTimer = null;
+    }
+    this.lastStatus = "";
+  }
+
   private scheduleStatusRefresh(): void {
     if (this.statusRefreshTimer) clearTimeout(this.statusRefreshTimer);
     if (

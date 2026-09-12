@@ -107,6 +107,9 @@ delivery owner when a browser steer creates no replacement. A racing Slack steer
 can reserve another durable outbox row before central running state is visible;
 only then do older owners yield, leaving that replacement to post the final
 answer and clear the shared processing status exactly once.
+Yielding observers must cancel their local Slack processing refresh timers
+without writing a terminal status; otherwise a stale timer can resurrect the
+working indicator after the final owner has cleared it.
 
 For a protocol change:
 

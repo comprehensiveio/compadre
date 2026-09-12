@@ -146,6 +146,11 @@ status`. Missing projected credentials together with `loggedIn: false` is an
   pre-text tool run look abandoned even though no native `chat.startStream`
   exists yet. Compadre refreshes the current thread status inside that window;
   diagnose status expiry separately from native response-stream expiry.
+- When Slack's working indicator reappears long after a successful final
+  response, correlate its timing with the processing-status refresh interval.
+  A superseded delivery observer must cancel its local refresh timer without
+  clearing the shared status during handoff; otherwise it can overwrite the
+  final owner's later `active` transition.
 - A `compadre-thinking` reaction's age does not prove its run was interrupted.
   Slack reaction recovery must correlate the message to the durable run ID and
   reconcile from its lifecycle status. For a false `compadre-failure` marker,
