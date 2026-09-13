@@ -187,3 +187,35 @@ record is written before provisioning, so cleanup also works for failed launches
 When a launch fails, inspect the named failing log. Fix the cause and launch a
 fresh isolated environment. Do not point the test at production to work around
 missing local configuration.
+
+## Rejected delivery and checkpoint recovery
+
+For delivery changes, create an API verification thread with the `delivery-rejected`
+scenario (see the controller's API reliability runbook). Require the durable
+controller run to complete while central retains a blocked cursor. Include a tool
+that prints at least 25 KB of synthetic shell/SQL/HTML diagnostics and writes a
+file under `/tmp/agent-outputs`; a short text-only turn misses this failure class.
+The launcher sets `COMPADRE_T3_NATIVE_EVENT_HOST` to the local central address so
+native writes exercise the same separate transport setting as Render.
+
+After the run's filesystem checkpoint completes, terminate that exact test
+sandbox. Run the recovery command from `hosted/compadre` with the saved local
+controller environment from `private.json`:
+
+```sh
+node --import tsx scripts/recover-native-delivery.ts CANONICAL_THREAD_ID
+```
+
+The command uses the existing dispatch lock, worker binding, saved request, and
+normal checkpoint restore/journal adoption path. It does not create a provider
+turn or send a Slack message. A live worker resumes its acknowledged cursor; a
+restored journal replays its retained prefix under a newer epoch, with central
+receipts deduplicating already accepted events. Missing bindings or requests
+fail instead of provisioning an empty conversation. The command reports that
+recovery started, not that replay completed.
+
+Require a completed central turn, exactly one final answer and original user
+message, readable output attachment, unchanged native thread ID and run ID, and a
+new sandbox/epoch after restore. Reload the authenticated browser and verify the
+answer/file. Repeat recovery once to check idempotence. Keep production data out
+of this disposable setup.

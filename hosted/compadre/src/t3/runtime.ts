@@ -258,7 +258,7 @@ export async function getConfiguredNativeThreadDelivery(): Promise<NativeThreadD
   const apiKey = process.env.COMPADRE_API_KEY?.trim();
   if (!persistence || !central || !apiKey) return null;
   return new NativeThreadDelivery(persistence.persistence.stores.metadata, persistence.locks,
-    nativeDeliverySink({ baseUrl: central.baseUrl, apiKey,
+    nativeDeliverySink({ baseUrl: central.baseUrl, internalHost: process.env.COMPADRE_T3_NATIVE_EVENT_HOST, apiKey,
       verificationFault: (threadId) => new T3VerificationStore(persistence.persistence.stores.metadata, persistence.locks).consume(threadId, "delivery"),
     }));
 }

@@ -138,11 +138,15 @@ export class NativeThreadDelivery {
   }
 }
 
-export function nativeDeliverySink(input: { baseUrl: string; apiKey: string; fetch?: typeof fetch;
+export function nativeDeliverySink(input: { baseUrl: string; internalHost?: string; apiKey: string; fetch?: typeof fetch;
   verificationFault?(threadId: string): Promise<string | null>;
 }) {
   const request = async (state: NativeDeliveryState, method: "PUT" | "POST" | "DELETE", body: unknown, signal?: AbortSignal) => {
-    const url = new URL(NATIVE_EVENTS_PATH, input.baseUrl);
+    // Render web services accept authenticated private HTTP traffic on port 10000.
+    // Keep the public central URL for browser links and login redirects.
+    const origin = new URL(input.internalHost?.trim() ? `http://${input.internalHost.trim()}` : input.baseUrl);
+    if (input.internalHost?.trim() && !origin.port) origin.port = "10000";
+    const url = new URL(NATIVE_EVENTS_PATH, origin);
     url.searchParams.set("threadId", state.canonicalThreadId);
     const fault = method === "POST" ? await input.verificationFault?.(state.canonicalThreadId) : null;
     if (fault === "delivery-rejected") throw new NativeDeliveryRejectedError("Verification: Central native event POST returned HTTP 403");
@@ -153,7 +157,13 @@ export function nativeDeliverySink(input: { baseUrl: string; apiKey: string; fet
     });
     if (!response.ok) {
       await response.body?.cancel();
-      const message = `Central native event ${method} returned HTTP ${response.status}`;
+      // Never include response bodies: a proxy can echo tool output or credentials.
+      const diagnostics = ["content-type", "server", "cf-ray", "rndr-id", "x-compadre-native-event-version"]
+        .flatMap((key) => {
+          const value = response.headers.get(key)?.replace(/[^a-zA-Z0-9 .:;=_/-]/g, "").slice(0, 120);
+          return value ? [`${key}=${value}`] : [];
+        }).join("; ");
+      const message = `Central native event ${method} returned HTTP ${response.status}${diagnostics ? ` (${diagnostics})` : ""}`;
       if (response.status >= 400 && response.status < 500 && ![408, 425, 429].includes(response.status)) {
         throw new NativeDeliveryRejectedError(message);
       }

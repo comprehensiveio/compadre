@@ -422,6 +422,16 @@ export class T3Gateway {
     return { binding, environment: await this.environments.reconnect(binding) };
   }
 
+  /** Replay an existing journal under the dispatch lock, without requesting provider work. */
+  async recoverNativeDelivery(canonicalThreadId: string, prepare: T3BeforeTurnDispatch): Promise<void> {
+    await this.locks.withLock(this.lockKey(canonicalThreadId), async (signal) => {
+      signal.throwIfAborted();
+      const binding = await this.bindings.get(canonicalThreadId);
+      if (!binding) throw new Error("Cannot recover delivery without an existing worker binding");
+      await prepare(await this.ensureWorkerRunningUnlocked(binding));
+    });
+  }
+
   /** Explicit actions share the same lock and restore implementation as agent turns. */
   async ensureWorkerRunning(
     canonicalThreadId: string,
