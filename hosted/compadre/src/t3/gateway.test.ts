@@ -2145,3 +2145,54 @@ test(`adopts an old worker only after an idle checkpoint and validated replaceme
   assert.equal(turn.binding.workerGeneration, 2);
 });
 }
+
+test("delivery recovery restores only the existing worker without dispatching a provider", async () => {
+  const bindings = new T3ThreadBindingStore(memoryPersistence().stores.metadata);
+  let restores = 0;
+  let provisions = 0;
+  const client = { baseUrl: "https://worker.example" } as T3CommandClient;
+  const connection = { sandboxId: "restored", projectId: "project-1", client };
+  const gateway = new T3Gateway(bindings, {
+    async provision() {
+      provisions++;
+      throw new Error("unexpected provision");
+    },
+    async reconnect(binding) {
+      assert.equal(binding.sandboxId, "restored");
+      return connection;
+    },
+    async restore() {
+      restores++;
+      return connection;
+    },
+  });
+  await bindings.bindRecord({
+    canonicalThreadId: "canonical",
+    providerInstanceId: "codex",
+    sandboxId: "old",
+    projectId: "project-1",
+    t3ThreadId: "native",
+    baseUrl: "https://old.example",
+    modelSelection: { instanceId: "codex", model: "gpt-5.6-sol" },
+    status: "ready",
+    workerState: "suspended",
+    workerSnapshotId: "snapshot",
+    workerGeneration: 1,
+    createdAt: "2026-09-05T12:00:00Z",
+    updatedAt: "2026-09-05T12:00:00Z",
+  });
+  await assert.rejects(gateway.attachWorker("canonical"), T3EnvironmentUnavailableError);
+  assert.equal(restores, 0);
+  const prepared: string[] = [];
+  await assert.rejects(gateway.recoverNativeDelivery("missing", async () => {}), /existing worker binding/);
+  await Promise.all([1, 2].map(() => gateway.recoverNativeDelivery("canonical", async ({ binding }) => {
+    assert.equal(binding.t3ThreadId, "native");
+    assert.equal(binding.workerGeneration, 2);
+    prepared.push(binding.sandboxId);
+  })));
+  assert.equal(restores, 1);
+  assert.equal(provisions, 0);
+  assert.deepEqual(prepared, ["restored", "restored"]);
+  assert.equal((await gateway.attachWorker("canonical"))?.binding.workerGeneration, 2);
+  assert.equal(restores, 1);
+});

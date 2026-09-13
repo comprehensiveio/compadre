@@ -424,6 +424,7 @@ try {
   const webUrl = `http://localhost:${webPort}`;
   Object.assign(controllerEnv, {
     COMPADRE_T3_CENTRAL_URL: `http://127.0.0.1:${serverPort}`,
+    COMPADRE_T3_NATIVE_EVENT_HOST: `127.0.0.1:${serverPort}`,
     COMPADRE_T3_HOSTED_APP_URL: webUrl,
   });
   await NodeFSP.writeFile(

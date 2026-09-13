@@ -199,3 +199,21 @@ logs and Modal audit metadata.
 ## Keep this skill current
 
 Treat this as a living developer runbook. If an investigation teaches you a reusable query, identifier mapping, failure mode, misleading symptom, observability gap, or correction, update this skill in the same change when doing so is in scope. Remove or revise stale guidance rather than accumulating contradictory notes. Do not add incident-specific user content, secrets, volatile instance IDs, or conclusions that are not supported by repeatable evidence.
+
+## Native delivery rejected before reaching central
+
+A native event POST can receive a public WAF 403 because tool output contains
+literal scripts, SQL, or HTML. Compare response content-type/server/request IDs
+and central request logs before diagnosing expired authentication. The native
+write route returns 401 for an invalid controller credential; an HTML 403 with
+no matching central request can originate before that route. Preserve the event
+payload and acknowledged cursor. Production native writes use
+`COMPADRE_T3_NATIVE_EVENT_HOST` over Render's private network with the same bearer
+credential; public browser/auth URLs remain separate.
+
+After fixing the cause, use the controller's
+`scripts/recover-native-delivery.ts` for authorized recovery. It restores only an
+existing worker/checkpoint under the normal dispatch lock and starts delivery
+without a provider turn. Confirm central completion, exactly-once message replay,
+and attachment downloads. Use the blocked-delivery/checkpoint recovery flow in
+`docs/operations/local-compadre-e2e.md` before shipping changes to this path.

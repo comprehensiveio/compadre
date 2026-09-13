@@ -556,3 +556,28 @@ Harness operations such as compaction follow the
 They retain typed metadata in the durable run request and use capability-checked
 worker dispatch. They bypass trusted requester prompt decoration, artifact
 instructions, and Slack mirroring; native provider events establish completion.
+
+## Private native-event transport
+
+`COMPADRE_T3_NATIVE_EVENT_HOST` routes the controller's native-event PUT/POST/DELETE
+requests over Render's private network. The Blueprint resolves the central web
+service's private hostname; its HTTP port defaults to 10000. Local verification
+can supply `host:port`. The existing controller credential remains required.
+`COMPADRE_T3_CENTRAL_URL` and `COMPADRE_T3_HOSTED_APP_URL` retain their public
+values for other APIs, browser links, and Slack login redirects.
+
+Native event payloads include literal shell scripts, SQL, and HTML from tool
+output. Public WAFs can reject legitimate payloads before central T3 sees them.
+Do not strip that output, weaken browser protections, or blindly retry permanent
+rejections. Error messages retain bounded content-type, server, Cloudflare/Render
+request IDs, and protocol-version headers, without response bodies or arbitrary
+headers. A 403 HTML edge response differs from the application's authentication
+response.
+
+After correcting the transport, an authorized operator can run
+`node --import tsx scripts/recover-native-delivery.ts CANONICAL_THREAD_ID` from
+the deployed controller directory. It uses the deployed environment, restores an
+existing checkpoint if necessary, and starts journal delivery without a new agent
+turn. Verify the central transcript and attachment bytes afterward; process exit
+only means recovery was scheduled. It does not resend an already completed Slack
+outbox delivery. See the local E2E runbook for the pre-deploy recovery proof.

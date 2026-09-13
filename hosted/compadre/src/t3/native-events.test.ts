@@ -9,6 +9,43 @@ const initial: NativeDeliveryState = {
   offset: offset(7), startOffset: offset(7), checkpointOffset: 0,
 };
 
+test("private delivery preserves authentication and the complete event payload", async () => {
+  const events = [{ output: "<script>diagnostic</script> SELECT * FROM example;".repeat(600) }];
+  const requests: string[] = [];
+  const sink = nativeDeliverySink({ baseUrl: "https://public.example", internalHost: "central.internal", apiKey: "controller-secret",
+    fetch: async (url, init) => {
+      requests.push(String(url));
+      assert.equal(new Headers(init?.headers).get("authorization"), "Bearer controller-secret");
+      if (init?.method === "POST") assert.deepEqual(JSON.parse(String(init.body)).events, events);
+      return new Response("{}", { headers: { "x-compadre-native-event-version": "1" } });
+    },
+  });
+  await sink.bind(initial); await sink.append(initial, events); await sink.close(initial);
+  assert.deepEqual(requests, Array(3).fill("http://central.internal:10000/api/compadre/native-events?threadId=central"));
+});
+
+test("local private delivery accepts an explicit central port", async () => {
+  const sink = nativeDeliverySink({ baseUrl: "https://unused.example", internalHost: "127.0.0.1:34567", apiKey: "test",
+    fetch: async (url) => {
+      assert.equal(new URL(String(url)).origin, "http://127.0.0.1:34567");
+      return new Response("{}", { headers: { "x-compadre-native-event-version": "1" } });
+    },
+  });
+  await sink.append(initial, []);
+});
+
+test("rejection diagnostics identify the edge without exposing response bodies or arbitrary headers", async () => {
+  const sink = nativeDeliverySink({ baseUrl: "https://central.example", apiKey: "secret", fetch: async () => new Response("private tool output", {
+    status: 403, headers: { "content-type": "text/html", server: "cloudflare", "cf-ray": "abc-EWR", "set-cookie": "credential=secret" },
+  }) });
+  await assert.rejects(sink.append(initial, []), (error: unknown) => {
+    assert.ok(error instanceof NativeDeliveryRejectedError);
+    assert.match(error.message, /server=cloudflare; cf-ray=abc-EWR/);
+    assert.ok(!error.message.includes("private tool output") && !error.message.includes("secret"));
+    return true;
+  });
+});
+
 test("permanent HTTP rejections stop retries while overload and server errors remain retryable", async () => {
   for (const status of [400, 401, 403, 409, 413, 429, 503]) {
     const sink = nativeDeliverySink({ baseUrl: "https://central.example", apiKey: "secret", fetch: async () => new Response("private response", { status }) });
