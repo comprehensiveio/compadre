@@ -14,6 +14,16 @@ import type { LegendListRef, MaintainScrollAtEndOptions } from "@legendapp/list/
 import { shouldUseRestingComposerLayout } from "../composerFooterLayout";
 import { useComposerFocusState } from "./useComposerFocusState";
 
+const assetUrlsMock = vi.hoisted(() => vi.fn());
+vi.mock("../../assets/assetUrls", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../assets/assetUrls")>();
+  return {
+    ...actual,
+    useAssetUrls: (...args: Parameters<typeof actual.useAssetUrls>) =>
+      assetUrlsMock(...args) ?? actual.useAssetUrls(...args),
+  };
+});
+
 vi.mock("@legendapp/list/react", async () => {
   const legendListTestId = "legend-list";
 
@@ -653,6 +663,38 @@ describe("MessagesTimeline", () => {
     expect(markup).toContain('href="https://example.com/report.csv"');
     expect(markup).toContain('download="report.csv"');
     expect(markup).toContain("2.0 KB");
+  });
+
+  it("resolves persisted assistant images without preview URLs", () => {
+    const entry = buildAssistantTimelineEntry("Screenshots are ready.");
+    assetUrlsMock.mockReturnValueOnce(["https://environment.test/api/assets/proof"]);
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        timelineEntries={[
+          {
+            ...entry,
+            message: {
+              ...entry.message,
+              attachments: [
+                {
+                  type: "image",
+                  id: "pending-stored-image",
+                  name: "proof.png",
+                  mimeType: "image/png",
+                  sizeBytes: 40782,
+                },
+              ],
+            },
+          },
+        ]}
+      />,
+    );
+    expect(assetUrlsMock).toHaveBeenLastCalledWith(buildProps().activeThreadEnvironmentId, [
+      { _tag: "attachment", attachmentId: "pending-stored-image" },
+    ]);
+    expect(markup).toContain('src="https://environment.test/api/assets/proof"');
+    expect(markup).toContain('aria-label="Preview proof.png"');
   });
 
   it("keeps hosted assistant files clickable while their download URL is minted lazily", () => {

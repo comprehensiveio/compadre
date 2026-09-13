@@ -1866,7 +1866,16 @@ function TurnFoldTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "turn-
 function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" }> }) {
   const ctx = use(TimelineRowCtx);
   const attachments = row.message.attachments ?? [];
-  const images = attachments.filter(isImageAttachment);
+  const resources = useMemo(
+    () => selectMessageImageResources(row.message.attachments),
+    [row.message.attachments],
+  );
+  const previewUrls = useAssetUrls(ctx.activeThreadEnvironmentId, resources);
+  const images = attachments.filter(isImageAttachment).map((image) => {
+    const previewUrl =
+      previewUrls[resources.findIndex((resource) => resource.attachmentId === image.id)];
+    return previewUrl && !image.previewUrl ? { ...image, previewUrl } : image;
+  });
   const files = attachments.filter(isFileAttachment);
   const messageText =
     row.message.text || (row.message.streaming || attachments.length > 0 ? "" : "(empty response)");
