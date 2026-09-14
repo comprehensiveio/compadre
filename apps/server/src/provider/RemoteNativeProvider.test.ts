@@ -45,6 +45,30 @@ it.effect(
         version: "1.0.0",
         data: [nativeModel("future-first")],
         nextCursor: null,
+        account: {
+          account: {
+            type: "chatgpt",
+            email: "codex@example.com",
+            planType: "pro",
+          },
+          requiresOpenaiAuth: false,
+        },
+        rateLimits: {
+          rateLimits: {
+            limitId: "codex",
+            planType: "pro",
+            primary: {
+              usedPercent: 31,
+              windowDurationMins: 300,
+              resetsAt: 1_800_000_000,
+            },
+            secondary: {
+              usedPercent: 12,
+              windowDurationMins: 10_080,
+              resetsAt: 1_800_500_000,
+            },
+          },
+        },
       };
       let status = 200;
       const requests: string[] = [];
@@ -66,16 +90,27 @@ it.effect(
       assert.equal(first.models[0]?.slug, "future-first");
       assert.equal(first.models[0]?.isDefault, true);
       assert.equal(first.models[0]?.capabilities?.optionDescriptors?.[1]?.id, "serviceTier");
+      assert.equal(first.auth.label, "ChatGPT Pro 20x Subscription");
+      assert.equal(first.auth.email, "codex@example.com");
+      assert.deepEqual(
+        first.usageLimits?.windows.map((window) => [window.kind, window.usedPercent]),
+        [
+          ["session", 31],
+          ["weekly", 12],
+        ],
+      );
       status = 503;
       const unavailable = yield* check.checkProvider;
       assert.equal(unavailable.status, "warning");
       assert.deepEqual(unavailable.models, first.models);
+      assert.deepEqual(unavailable.usageLimits, first.usageLimits);
       status = 200;
       body = { version: "1.1.0", data: [nativeModel("future-second")], nextCursor: null };
       const refreshed = yield* check.checkProvider;
       assert.equal(refreshed.status, "ready");
       assert.equal(refreshed.models[0]?.slug, "future-second");
       assert.equal(refreshed.version, "1.1.0");
+      assert.deepEqual(refreshed.usageLimits, first.usageLimits);
       assert.ok(
         requests.every((url) => url === "https://controller.test/hosted/t3/providers/codex/models"),
       );

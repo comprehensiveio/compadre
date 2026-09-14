@@ -39,6 +39,12 @@ Compadre Postgres, and changes the idle worker back to API auth. Auth bytes are
 written through the Modal filesystem API and never placed in command arguments
 or the T3 server environment.
 
+The authenticated hosted-provider directory also reads the subscription's
+account and rate-limit snapshot for central T3's Usage → Limits view. It runs
+only while the lane is idle, under the same lane lock, and persists any refreshed
+auth chain before a worker may claim it. A busy lane leaves the last limits
+snapshot visible; the read never provisions or wakes a Modal worker.
+
 Set `COMPADRE_CODEX_SUBSCRIPTION_EXPERIMENT_ENABLED=false` for an immediate
 API-only kill switch. The metadata is namespaced under
 `compadre.codex-subscription-lane.v1` and requires no schema migration; leaving

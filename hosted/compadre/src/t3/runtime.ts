@@ -40,6 +40,7 @@ let configuredRunService: Promise<NativeT3RunService | null> | undefined;
 let configuredPreviewActivationService:
   | Promise<PreviewActivationService | null>
   | undefined;
+let configuredCodexSubscriptionLane: Promise<CodexSubscriptionLane | null> | undefined;
 
 const DEFAULT_MODAL_TIMEOUT_MS = 24 * 60 * 60 * 1000;
 
@@ -52,6 +53,22 @@ export function nativeT3GatewayEnabled(
     "COMPADRE_T3_API_ENABLED",
     "COMPADRE_HOSTED_T3_ENABLED",
   ].some((name) => environment[name] === "true");
+}
+
+/** Shared lane instance for worker routing and controller-side account reads. */
+export async function getConfiguredCodexSubscriptionLane(): Promise<CodexSubscriptionLane | null> {
+  if (!configuredCodexSubscriptionLane) {
+    const initialization = getConfiguredThreadPersistence()
+      .then((runtime) => runtime
+        ? new CodexSubscriptionLane(runtime.persistence.stores.metadata, runtime.locks, process.env)
+        : null)
+      .catch((error) => {
+        if (configuredCodexSubscriptionLane === initialization) configuredCodexSubscriptionLane = undefined;
+        throw error;
+      });
+    configuredCodexSubscriptionLane = initialization;
+  }
+  return configuredCodexSubscriptionLane;
 }
 
 function positiveDurationSetting(
@@ -102,18 +119,14 @@ export async function getConfiguredWorkspaceReviewStore() {
 /** Shared native-T3 coordinator used by HTTP, Slack, and simulations. */
 export async function getConfiguredT3Gateway(): Promise<T3Gateway | null> {
   if (!configuredGateway) {
-    const initialization = getConfiguredThreadPersistence()
-      .then((runtime) => {
+    const initialization = Promise.all([getConfiguredThreadPersistence(), getConfiguredCodexSubscriptionLane()])
+      .then(([runtime, codexSubscriptionLane]) => {
         if (!runtime) return null;
         const bindings = new T3ThreadBindingStore(
           runtime.persistence.stores.metadata,
           runtime.locks,
         );
-        const codexSubscriptionLane = new CodexSubscriptionLane(
-          runtime.persistence.stores.metadata,
-          runtime.locks,
-          process.env,
-        );
+        if (!codexSubscriptionLane) return null;
         log.info(
           {
             codexAuthMode: codexSubscriptionLane.enabled

@@ -50,6 +50,10 @@ export interface CodexSubscriptionClaim {
   requiresConfiguration: boolean;
 }
 
+export type CodexIdleSubscriptionResult<T> =
+  | { readonly status: "disabled" | "busy" }
+  | { readonly status: "available"; readonly value: T };
+
 function decodeBase64(name: string, value: string): Buffer {
   const normalized = value.trim();
   if (
@@ -341,6 +345,37 @@ export class CodexSubscriptionLane {
     if (!isLaneState(value)) return undefined;
     const route = value.routes?.[input.canonicalThreadId];
     return route?.runId === input.runId ? route.route : undefined;
+  }
+
+  /**
+   * Run a short account-level read while no worker owns the subscription.
+   * The lane lock prevents a new turn from claiming the refresh chain until
+   * the reader has persisted any auth.json changes made by Codex.
+   */
+  async withIdleAuth<T>(
+    operation: (
+      authJson: string,
+      persistRefreshedAuth: (authJson: string) => Promise<void>,
+    ) => Promise<T>,
+  ): Promise<CodexIdleSubscriptionResult<T>> {
+    if (!this.enabled) return { status: "disabled" };
+    return this.locks.withLock(LOCK_KEY, async (signal) => {
+      if (signal.aborted) throw signal.reason;
+      let state = await this.readOrSeed();
+      if (state.owner) return { status: "busy" };
+      const persistRefreshedAuth = async (authJson: string) => {
+        assertSubscriptionAuthJson(authJson);
+        state = { ...state, auth: encrypt(authJson, this.key!) };
+        await this.write(state);
+      };
+      return {
+        status: "available",
+        value: await operation(
+          decrypt(state.auth, this.key!),
+          persistRefreshedAuth,
+        ),
+      };
+    });
   }
 
   private async readOrSeed(): Promise<LaneState> {

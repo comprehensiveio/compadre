@@ -12,17 +12,24 @@ import * as CodexSchema from "effect-codex-app-server/schema";
 import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/unstable/http";
 import * as ModelManifest from "./ModelManifest.ts";
 import { resolveClaudeModelCatalog, resolveClaudeModelsForVersion } from "./ClaudeModelCatalog.ts";
-import { parseCodexModelListResponse } from "./Layers/CodexProvider.ts";
+import {
+  codexAccountAuthLabel,
+  codexAccountEmail,
+  parseCodexModelListResponse,
+} from "./Layers/CodexProvider.ts";
+import { codexRateLimitsToLimits } from "./Layers/codexUsageLimits.ts";
 import { makeManagedServerProvider } from "./makeManagedServerProvider.ts";
 
 import { makeCompadreTextGeneration } from "../textGeneration/CompadreTextGeneration.ts";
 import { makeCompadreAdapter } from "./Layers/CompadreAdapter.ts";
 import { makeManualOnlyProviderMaintenanceCapabilities } from "./providerMaintenance.ts";
 
-const decodeProviderVersion = Schema.decodeUnknownEffect(
+const decodeProviderDirectory = Schema.decodeUnknownEffect(
   Schema.Struct({
     version: Schema.String,
     providerActions: Schema.optional(Schema.Array(Schema.String)),
+    account: Schema.optional(CodexSchema.V2GetAccountResponse),
+    rateLimits: Schema.optional(CodexSchema.V2GetAccountRateLimitsResponse),
   }),
 );
 const decodeCodexModels = Schema.decodeUnknownEffect(CodexSchema.V2ModelListResponse);
@@ -77,7 +84,8 @@ export function makeRemoteProviderModelCheck(
       Effect.flatMap((response) => response.json),
       Effect.timeout("25 seconds"),
     );
-    const { version, providerActions } = yield* decodeProviderVersion(response);
+    const { version, providerActions, account, rateLimits } =
+      yield* decodeProviderDirectory(response);
     const catalog = yield* manifest.refresh;
     const models =
       options.agentProvider === "codex"
@@ -87,6 +95,18 @@ export function makeRemoteProviderModelCheck(
             options.driverKind,
           )
         : resolveClaudeModelsForVersion(resolveClaudeModelCatalog(catalog), version);
+    const checkedAt = DateTime.formatIso(yield* DateTime.now);
+    const codexAccount = account?.account;
+    const authLabel = codexAccountAuthLabel(codexAccount ?? null);
+    const authEmail = codexAccountEmail(codexAccount ?? null);
+    const usageLimits = rateLimits
+      ? codexRateLimitsToLimits({
+          snapshot: rateLimits.rateLimits,
+          rateLimitsByLimitId: rateLimits.rateLimitsByLimitId,
+          resetCredits: rateLimits.rateLimitResetCredits,
+          checkedAt,
+        })
+      : snapshotValue.usageLimits;
     snapshotValue = {
       ...remoteNativeProviderSnapshot(options),
       models,
@@ -95,7 +115,18 @@ export function makeRemoteProviderModelCheck(
         options.agentProvider === "claude-code"
           ? (providerActions ?? []).filter((action) => action === "compact")
           : [],
-      checkedAt: DateTime.formatIso(yield* DateTime.now),
+      checkedAt,
+      ...(codexAccount
+        ? {
+            auth: {
+              status: "authenticated" as const,
+              type: codexAccount.type,
+              ...(authLabel ? { label: authLabel } : {}),
+              ...(authEmail ? { email: authEmail } : {}),
+            },
+          }
+        : {}),
+      ...(usageLimits ? { usageLimits } : {}),
     };
     return snapshotValue;
   }).pipe(
