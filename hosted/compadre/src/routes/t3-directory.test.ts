@@ -228,6 +228,7 @@ test("serves discovered models only after authentication and without waking work
     else process.env.COMPADRE_API_KEY = previousApiKey;
   });
   let discoveries = 0;
+  let usageFails = false;
   const app = createT3DirectoryRoutes({
     enabled: () => true,
     createId: () => { throw new Error("must not create a thread"); },
@@ -237,14 +238,26 @@ test("serves discovered models only after authentication and without waking work
       discoveries++;
       return { version: "1.0.0", data: [{ model: "future-model" }], nextCursor: null };
     },
+    discoverCodexUsage: async () => {
+      if (usageFails) throw new Error("usage unavailable");
+      return {
+        account: { account: { type: "chatgpt", email: "codex@example.com", planType: "pro" }, requiresOpenaiAuth: false },
+        rateLimits: { rateLimits: { limitId: "codex", primary: { usedPercent: 31, windowDurationMins: 300 } } },
+      };
+    },
   });
   const path = "/hosted/t3/providers/codex/models";
   assert.equal((await app.request(path)).status, 401);
   assert.equal(discoveries, 0);
   const response = await app.request(path, authorized());
   assert.equal(response.status, 200);
-  assert.deepEqual((await response.json()).data, [{ model: "future-model" }]);
+  const body = await response.json();
+  assert.deepEqual(body.data, [{ model: "future-model" }]);
+  assert.equal(body.account.account.planType, "pro");
+  assert.equal(body.rateLimits.rateLimits.primary.usedPercent, 31);
   assert.equal(discoveries, 1);
+  usageFails = true;
+  assert.equal((await app.request(path, authorized())).status, 200);
   assert.equal((await app.request("/hosted/t3/providers/claude-code/models", authorized())).status, 200);
   assert.equal((await app.request("/hosted/t3/providers/unknown/models", authorized())).status, 400);
 });

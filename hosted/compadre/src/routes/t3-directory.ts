@@ -6,6 +6,7 @@ import { getConfiguredNativeThreadDelivery } from "../t3/runtime.js";
 import { readWorkspaceReview, readWorkspaceReviewFile, type WorkspaceReviewStore } from "../t3/workspace-review.js";
 import { getConfiguredWorkspaceReviewStore } from "../t3/runtime.js";
 import { discoverProviderModels, claudeProviderVersion } from "../t3/provider-models.js";
+import { discoverCodexSubscriptionUsage } from "../t3/provider-usage.js";
 import crypto from "node:crypto";
 import {
   chatParamsFromRequestBody,
@@ -28,6 +29,7 @@ import {
   getConfiguredNativeT3RunService,
   getConfiguredT3ArtifactStore,
   getConfiguredT3Gateway,
+  getConfiguredCodexSubscriptionLane,
 } from "../t3/runtime.js";
 import type { NativeT3RunService } from "../t3/run-service.js";
 import type { NativeT3RunRequest } from "../t3/run-request-store.js";
@@ -117,6 +119,7 @@ interface T3DirectoryGateway {
 export interface T3DirectoryRoutesDependencies {
   getNativeDelivery?(): Promise<Pick<NativeThreadDelivery, "get"> | null>;
   discoverCodexModels?: typeof discoverProviderModels;
+  discoverCodexUsage?: () => Promise<Awaited<ReturnType<typeof discoverCodexSubscriptionUsage>>>;
   enabled(): boolean;
   getGateway(): Promise<T3DirectoryGateway | null>;
   getRunCoordinator?(): Promise<NativeT3RunCoordinator | null>;
@@ -136,6 +139,10 @@ const defaultDependencies: T3DirectoryRoutesDependencies = {
   getRunService: getConfiguredNativeT3RunService,
   getArtifactStore: getConfiguredT3ArtifactStore,
   getReviewStore: getConfiguredWorkspaceReviewStore,
+  async discoverCodexUsage() {
+    const lane = await getConfiguredCodexSubscriptionLane();
+    return lane ? discoverCodexSubscriptionUsage(lane) : undefined;
+  },
   createId: crypto.randomUUID,
   watchTurn(gateway, turn) {
     void gateway
@@ -434,7 +441,13 @@ export function createT3DirectoryRoutes(
   routes.get("/hosted/t3/providers/:provider/models", guarded(async (c) => {
     const provider = c.req.param("provider");
     if (provider === "claude-code") return c.json({ ...claudeProviderVersion, providerActions: ["compact"] });
-    if (provider === "codex") return c.json(await (dependencies.discoverCodexModels ?? discoverProviderModels)());
+    if (provider === "codex") {
+      const [models, usage] = await Promise.all([
+        (dependencies.discoverCodexModels ?? discoverProviderModels)(),
+        dependencies.discoverCodexUsage?.().catch(() => undefined),
+      ]);
+      return c.json({ ...models, ...(usage ?? {}) });
+    }
     return c.json({ error: "unsupported provider" }, 400);
   }));
 

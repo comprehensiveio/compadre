@@ -64,12 +64,18 @@ The hosted provider snapshot refreshes through the normal T3 managed-provider
 lifecycle. It has no model allowlist. The controller's authenticated
 `GET /hosted/t3/providers/:provider/models` endpoint runs its pinned Codex CLI's
 `model/list`, collects all pages, and returns native capability metadata.
-Central T3 reuses the local Codex parser. The probe uses an isolated temporary
-Codex home and the worker API credential; it never creates a thread or acquires
-a Modal worker. The controller caches successful results for five minutes,
-coalesces concurrent requests, and retains the last success during an outage.
-This discovers the shared API execution catalog, not a particular user's
-ChatGPT subscription entitlements.
+Central T3 reuses the local Codex parser. The model probe uses an isolated
+temporary Codex home and the worker API credential. When the managed ChatGPT
+subscription lane is enabled and idle, the same response is enriched with an
+account and `account/rateLimits/read` snapshot from a second temporary Codex
+home. That read holds the lane lock, persists any refreshed auth chain before
+releasing it, and never creates a thread or acquires a Modal worker. If a worker
+owns the lane, the controller omits the enrichment and central T3 retains its
+last successful limits snapshot. The controller caches successful model results
+for five minutes, coalesces concurrent model requests, and retains the last
+catalog during an outage. Model discovery still describes the shared API
+execution catalog; the optional limits enrichment describes the configured
+shared ChatGPT subscription.
 
 Claude uses upstream T3's `ModelManifest`, `ClaudeModelCatalog`, and validated
 adapter profiles (ported from upstream commit `035428368`). The manifest refreshes

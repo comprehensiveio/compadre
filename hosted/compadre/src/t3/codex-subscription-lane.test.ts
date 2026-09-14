@@ -152,6 +152,39 @@ test("persisted subscription auth is encrypted and refreshed before handoff", as
   assert.doesNotMatch(JSON.stringify([...values.values()]), /refreshed-token/);
 });
 
+test("idle account reads serialize with claims and persist refreshed auth", async () => {
+  const { store, values } = memoryMetadata();
+  const lane = new CodexSubscriptionLane(
+    store,
+    new InMemoryLockStore(),
+    environment(),
+  );
+  const read = await lane.withIdleAuth(async (authJson, persist) => {
+    assert.match(authJson, /seed-refresh-token/);
+    await persist(
+      JSON.stringify({
+        auth_mode: "chatgpt",
+        tokens: { refresh_token: "read-refreshed-token" },
+      }),
+    );
+    return "limits";
+  });
+
+  assert.deepEqual(read, { status: "available", value: "limits" });
+  assert.doesNotMatch(
+    JSON.stringify([...values.values()]),
+    /read-refreshed-token/,
+  );
+  const claim = await lane.claim({
+    canonicalThreadId: "thread-a",
+    runId: "run-a",
+  });
+  assert.equal(claim.authJson?.includes("read-refreshed-token"), true);
+  assert.deepEqual(await lane.withIdleAuth(async () => "unused"), {
+    status: "busy",
+  });
+});
+
 test("API-routed steers stay on API until their latest run finishes", async () => {
   const { store } = memoryMetadata();
   const lane = new CodexSubscriptionLane(
