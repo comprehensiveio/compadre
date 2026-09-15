@@ -1,7 +1,7 @@
 # Modal worker lifecycle testing
 
 The worker lifecycle is deliberately simple: one sandbox lives for the whole
-task (24-hour Modal lifetime by default), a live filesystem checkpoint is
+task (two-hour Modal lifetime by default), a live filesystem checkpoint is
 captured after every terminal turn without stopping the worker, and a dead
 sandbox is restored from its last checkpoint on the next turn. There is no
 warm lease, no hibernation, and no sweeper.
@@ -59,5 +59,5 @@ non-production Slack thread (`#slack-bot-test`) for that final canary.
 
 No local test can prove recovery if the worker is forcibly deleted before its
 first successful checkpoint. An active provider turn also cannot survive past
-`COMPADRE_MODAL_TIMEOUT_MS` (24 h default); the checkpoint protects the
+`COMPADRE_MODAL_TIMEOUT_MS` (2 h default); the checkpoint protects the
 thread's continuity across worker death, not arbitrarily long single turns.

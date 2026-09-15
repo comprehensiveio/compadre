@@ -27,6 +27,7 @@ import {
   trace,
 } from "@opentelemetry/api";
 import { devEnvironmentEnabled } from "../t3/dev-environment.js";
+import { DEFAULT_MODAL_TIMEOUT_MS } from "../modal-config.js";
 
 export const MODAL_CAPS: SandboxCapabilities = {
   fs: true,
@@ -83,7 +84,6 @@ export function parseModalProcessTable(output: string): ModalProcessSample {
 const DEFAULT_APP_NAME = "compadre";
 const DEFAULT_IMAGE = "node:22";
 const DEFAULT_WORKDIR = "/workspace";
-const DEFAULT_TIMEOUT_MS = 2 * 60 * 60 * 1_000;
 const DEFAULT_SNAPSHOT_TTL_MS = 7 * 24 * 60 * 60 * 1_000;
 const PNPM_VERSION = "10.34.2";
 export const T3_CODE_VERSION = "0.0.33";
@@ -691,7 +691,7 @@ export function modalResourceSettings(environment: NodeJS.ProcessEnv): {
     timeoutMs: positiveNumberSetting(
       "COMPADRE_MODAL_TIMEOUT_MS",
       environment.COMPADRE_MODAL_TIMEOUT_MS,
-      DEFAULT_TIMEOUT_MS,
+      DEFAULT_MODAL_TIMEOUT_MS,
     ),
     snapshotTtlMs: positiveNumberSetting(
       "COMPADRE_MODAL_SNAPSHOT_TTL_MS",

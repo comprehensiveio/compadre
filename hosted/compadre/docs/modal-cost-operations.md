@@ -11,11 +11,11 @@ remote execution, resource accounting, and lifecycle control plane.
   2 cores and 16 GiB). Modal charges the greater of requested and actual
   usage, so these requests define the idle floor; configured burst limits are
   not automatically billed at their maximum.
-- A worker sandbox lives for its whole configured lifetime (24 hours by
+- A worker sandbox lives for its whole configured lifetime (two hours by
   default) whether or not a turn is active — reliability is prioritized over
   idle compute cost. At Modal's published September 2026 Sandbox rates, the
-  production request is roughly $0.67 per worker-hour (about $16 for a full
-  24-hour lifetime) before network, snapshot storage, regional multipliers, or
+  production request is roughly $0.67 per worker-hour (about $1.34 for a full
+  two-hour lifetime) before network, snapshot storage, regional multipliers, or
   usage above the request.
 - After every terminal turn the worker's filesystem is checkpointed live (no
   quiesce, no termination). Checkpoint images expire after seven days by
@@ -23,6 +23,10 @@ remote execution, resource accounting, and lifecycle control plane.
 
 Pricing changes; verify current rates in Modal's pricing and Sandbox resource
 documentation before using these estimates for a budget.
+
+The `Codex auth routing initialized` startup log records the effective
+`modalTimeoutMs`. Check that field when production might override the shared
+two-hour code default; do not infer the deployed value from `.env.example`.
 
 ## Attribution and alerts
 

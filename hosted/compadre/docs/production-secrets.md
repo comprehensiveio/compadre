@@ -57,7 +57,8 @@ API key until an operator confirms the old provider process is stopped.
 Operational telemetry is emitted without credential contents:
 
 - `Codex auth routing initialized` identifies legacy, managed API-only, or
-  subscription-canary startup mode.
+  subscription-canary startup mode and records the effective `modalTimeoutMs`
+  used by the worker lifecycle.
 - `Codex auth route selected` includes `codexAuthRouteReason` so API fallback
   distinguishes a busy lane, the kill switch, an existing route, and a lane
   error.

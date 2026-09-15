@@ -83,7 +83,7 @@ Postgres:
 running -> (dies) -> suspended -> restoring -> running
 ```
 
-The worker sandbox lives for its whole Modal lifetime (24 hours by default) —
+The worker sandbox lives for its whole Modal lifetime (two hours by default) —
 there is no warm lease, hibernation, or sweeper. After every terminal turn
 the controller captures a live Modal filesystem checkpoint without stopping
 the worker and records the image ID on the binding. The checkpoint includes
@@ -433,7 +433,7 @@ COMPADRE_T3_PACKAGE_URL=<pinned fork release>
 COMPADRE_T3_PACKAGE_SHA256=<required digest>
 COMPADRE_T3_ARTIFACT_BUCKET=compadre
 COMPADRE_T3_ARTIFACT_REGION=us-west-2
-COMPADRE_MODAL_TIMEOUT_MS=86400000
+COMPADRE_MODAL_TIMEOUT_MS=7200000
 COMPADRE_MODAL_SNAPSHOT_TTL_MS=604800000
 ```
 

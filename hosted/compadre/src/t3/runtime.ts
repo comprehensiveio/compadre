@@ -30,6 +30,7 @@ import {
   PreviewActivationService,
   PreviewActivationStore,
 } from "../services/preview-activation.js";
+import { DEFAULT_MODAL_TIMEOUT_MS } from "../modal-config.js";
 
 let configuredGateway: Promise<T3Gateway | null> | undefined;
 let configuredRunCoordinator:
@@ -41,8 +42,6 @@ let configuredPreviewActivationService:
   | Promise<PreviewActivationService | null>
   | undefined;
 let configuredCodexSubscriptionLane: Promise<CodexSubscriptionLane | null> | undefined;
-
-const DEFAULT_MODAL_TIMEOUT_MS = 24 * 60 * 60 * 1000;
 
 export function nativeT3GatewayEnabled(
   environment: NodeJS.ProcessEnv = process.env,
@@ -127,6 +126,11 @@ export async function getConfiguredT3Gateway(): Promise<T3Gateway | null> {
           runtime.locks,
         );
         if (!codexSubscriptionLane) return null;
+        const modalTimeoutMs = positiveDurationSetting(
+          "COMPADRE_MODAL_TIMEOUT_MS",
+          process.env.COMPADRE_MODAL_TIMEOUT_MS,
+          DEFAULT_MODAL_TIMEOUT_MS,
+        );
         log.info(
           {
             codexAuthMode: codexSubscriptionLane.enabled
@@ -136,6 +140,7 @@ export async function getConfiguredT3Gateway(): Promise<T3Gateway | null> {
                 : "legacy_unmanaged",
             codexSubscriptionExperimentEnabled: codexSubscriptionLane.enabled,
             codexSubscriptionExperimentManaged: codexSubscriptionLane.managed,
+            modalTimeoutMs,
           },
           "Codex auth routing initialized",
         );
@@ -151,11 +156,7 @@ export async function getConfiguredT3Gateway(): Promise<T3Gateway | null> {
           undefined,
           configuredCentralT3Client() ?? undefined,
           {
-            maxLiveMs: positiveDurationSetting(
-              "COMPADRE_MODAL_TIMEOUT_MS",
-              process.env.COMPADRE_MODAL_TIMEOUT_MS,
-              DEFAULT_MODAL_TIMEOUT_MS,
-            ),
+            maxLiveMs: modalTimeoutMs,
           },
           codexSubscriptionLane,
           codexApiAuthJsonFromEnvironment(process.env),
