@@ -2,6 +2,10 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { requestRunCancel } from "@tanstack/ai";
 import { createAgentRunDurability } from "../durability/runtime.js";
+import {
+  MODAL_SPEND_LIMIT_ERROR_CODE,
+  MODAL_SPEND_LIMIT_ERROR_MESSAGE,
+} from "../modal-errors.js";
 import { EventType, type StreamChunk } from "./agui-protocol.js";
 import type { T3ThreadSnapshot, T3TurnDispatch } from "./client.js";
 import { T3EnvironmentUnavailableError } from "./gateway.js";
@@ -278,6 +282,44 @@ test("drives a native T3 run to completion against durable state", async (t) => 
   assert.equal(text, "", "conversation events belong to the native journal");
   const run = await durability.runs.get(runId);
   assert.equal(run?.status, "completed");
+});
+
+test("terminalizes a Modal spend-limit rejection with a safe actionable error", async (t) => {
+  const { durability, requests, gateway, calls, chunks, runId } = await harness(
+    "run-modal-spend-limit",
+    [],
+  );
+  t.after(() => durability.close());
+  gateway.send = async () => {
+    calls.sends += 1;
+    throw new Error(
+      "/modal.client.ModalClient/SandboxCreate RESOURCE_EXHAUSTED: Workspace ac-sensitive has exceeded its spend limit",
+    );
+  };
+
+  const outcome = await driveNativeT3Run(
+    { gateway, durability, requests, prepareNativeDelivery: async () => {} },
+    runId,
+  );
+
+  assert.equal(outcome.status, "failed");
+  assert.equal(calls.sends, 1);
+  const events = await chunks();
+  assert.deepEqual(events, [
+    {
+      type: EventType.RUN_ERROR,
+      runId,
+      message: MODAL_SPEND_LIMIT_ERROR_MESSAGE,
+      code: MODAL_SPEND_LIMIT_ERROR_CODE,
+      timestamp: events[0]?.timestamp,
+      protocolVersion: 2,
+    },
+  ]);
+  assert.equal(
+    (await durability.runs.get(runId))?.error?.message,
+    MODAL_SPEND_LIMIT_ERROR_MESSAGE,
+  );
+  assert.doesNotMatch(JSON.stringify(events), /ac-sensitive/);
 });
 
 test("a retried driver resumes observation without duplicating lifecycle receipts", async (t) => {

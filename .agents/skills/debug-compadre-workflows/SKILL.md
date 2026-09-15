@@ -77,6 +77,11 @@ routes are deployed before using them; GET inspection never wakes a worker.
 - For Modal, distinguish controller failure, sandbox lifecycle failure,
   harness command exit, and authenticated host-tool bridge failure. A tool
   bridge error does not prove that the sandbox or private service failed.
+- Modal `SandboxCreate RESOURCE_EXHAUSTED` with `has exceeded its spend limit`
+  is a workspace billing-limit rejection, not compute capacity or container
+  concurrency exhaustion. Confirm it with `modal billing summary`, then list
+  live containers for the resolved Compadre app before deciding whether there
+  is anything safe to terminate.
 - MCP clients connect and discover tools concurrently. Use the parent span or
   measure from the earliest child start to the latest child end; do not add
   child durations together.

@@ -1,10 +1,17 @@
 import type { ConversationResult } from "../conversation.js";
+import {
+  isModalSpendLimitError,
+  MODAL_SPEND_LIMIT_ERROR_MESSAGE,
+} from "../modal-errors.js";
 
 export const INCOMPLETE_RESPONSE_NOTICE =
   ":warning: I stopped without producing a complete final answer. Reply `@Compadre continue` and I'll pick the investigation back up.";
 
 export const AGENT_FAILURE_NOTICE =
   ":warning: This run stopped unexpectedly. Reply `@Compadre continue` and I'll resume from the saved investigation.";
+
+export const MODAL_SPEND_LIMIT_NOTICE =
+  `:warning: ${MODAL_SPEND_LIMIT_ERROR_MESSAGE} A Modal workspace admin needs to raise the limit or update billing. After that, reply \`@Compadre continue\` and I'll resume from the saved investigation.`;
 
 export const AGENT_STOPPED_NOTICE = "Stopped. Send another message to continue.";
 
@@ -54,7 +61,10 @@ export class IncompleteTerminalResponseError extends Error {
 }
 
 export function slackFailureNotice(error: unknown): string {
-  return error instanceof IncompleteTerminalResponseError
-    ? INCOMPLETE_RESPONSE_NOTICE
+  if (error instanceof IncompleteTerminalResponseError) {
+    return INCOMPLETE_RESPONSE_NOTICE;
+  }
+  return isModalSpendLimitError(error)
+    ? MODAL_SPEND_LIMIT_NOTICE
     : AGENT_FAILURE_NOTICE;
 }

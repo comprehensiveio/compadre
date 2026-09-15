@@ -4,6 +4,7 @@ import {
   AGENT_FAILURE_NOTICE,
   INCOMPLETE_RESPONSE_NOTICE,
   IncompleteTerminalResponseError,
+  MODAL_SPEND_LIMIT_NOTICE,
   TerminalResponseTracker,
   slackFailureNotice,
 } from "./terminal-response.js";
@@ -97,4 +98,21 @@ test("selects a sanitized Slack notice for incomplete and thrown failures", () =
     AGENT_FAILURE_NOTICE,
   );
   assert.doesNotMatch(AGENT_FAILURE_NOTICE, /secret provider detail/);
+});
+
+test("explains Modal spend-limit failures without exposing workspace details", () => {
+  const error = new Error("Activity task failed", {
+    cause: {
+      details:
+        "Workspace ac-sensitive has exceeded its spend limit",
+    },
+  });
+
+  assert.equal(slackFailureNotice(error), MODAL_SPEND_LIMIT_NOTICE);
+  assert.match(MODAL_SPEND_LIMIT_NOTICE, /Modal workspace.*spend limit/i);
+  assert.doesNotMatch(MODAL_SPEND_LIMIT_NOTICE, /ac-sensitive/);
+  assert.equal(
+    slackFailureNotice(new Error("RESOURCE_EXHAUSTED: concurrency limit")),
+    AGENT_FAILURE_NOTICE,
+  );
 });
