@@ -86,6 +86,11 @@ worker merely because its image is unavailable.
 Template builders set `CI=true` so pnpm can replace stale prebuilt dependencies
 without a terminal prompt. Without this, setup can continue after an aborted
 install with an old Prisma client that fails against the restored database.
+Builders bootstrap the environment and migrate its sandbox-local seed before
+the first dev-login readiness check. An updated client may require columns
+absent from the prebuilt seed; waiting for the later production-data restore
+to apply migrations would leave that first readiness check unable to succeed.
+The production-data restore still applies migrations again to its own database.
 
 Native T3 workers use a durable lifecycle recorded with the thread binding in
 Postgres:

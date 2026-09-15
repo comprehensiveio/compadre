@@ -90,7 +90,7 @@ interface BuildHandle {
 }
 
 async function exec(
-  handle: BuildHandle,
+  handle: Pick<BuildHandle, "id" | "process">,
   step: string,
   command: string,
 ): Promise<string> {
@@ -109,6 +109,27 @@ async function exec(
     "t3 worker template build step",
   );
   return result.stdout;
+}
+
+/** Reconcile both cached clients and seed schema before probing dev login. */
+export async function prepareT3WorkerTemplate(
+  handle: Pick<BuildHandle, "id" | "process">,
+): Promise<void> {
+  await exec(
+    handle,
+    "environment.bootstrap",
+    "set -o pipefail; CLOUD_ENV_SETUP_TRACE=false scripts/cloud-env-setup.sh 2>&1 | tail -20",
+  );
+  await exec(
+    handle,
+    "seed.migrate",
+    'set -o pipefail; export DATABASE_URL="$(bin/lib/hen_get_remote_db_url -e local)"; cd app && corepack pnpm migrate:cm:deploy 2>&1 | tail -20',
+  );
+  await exec(
+    handle,
+    "dev-up",
+    "set -o pipefail; scripts/compadre-dev-up.sh up 2>&1 | tail -20",
+  );
 }
 
 /**
@@ -163,11 +184,7 @@ export async function buildT3WorkerTemplate(input: {
     const repoSha = (
       await exec(handle, "repository.sha", "git rev-parse HEAD")
     ).trim();
-    await exec(
-      handle,
-      "dev-up",
-      "set -o pipefail; scripts/compadre-dev-up.sh up 2>&1 | tail -20",
-    );
+    await prepareT3WorkerTemplate(handle);
     const dataOutput = await exec(
       handle,
       "dev-data.production-latest",
