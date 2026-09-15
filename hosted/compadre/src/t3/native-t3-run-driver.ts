@@ -7,6 +7,11 @@ import {
 } from "@tanstack/ai";
 import type { AgentRunDurability } from "../durability/runtime.js";
 import { log, serializeError } from "../logging.js";
+import {
+  isModalSpendLimitError,
+  MODAL_SPEND_LIMIT_ERROR_CODE,
+  MODAL_SPEND_LIMIT_ERROR_MESSAGE,
+} from "../modal-errors.js";
 import { SlackRunMirror } from "../services/native-t3-slack-delivery.js";
 import { laterUserMessageIdsForDispatch } from "../services/t3-slack-conversation.js";
 import type { T3ThreadBinding } from "../services/t3-thread-bindings.js";
@@ -429,30 +434,45 @@ export async function driveNativeT3Run(
   } else {
     heartbeat("dispatching native T3 turn");
     let setupSteering: NativeT3SteeringEntry[] = [];
-    turn = await deps.gateway.send({
-      ...(request.providerAction ? { providerAction: request.providerAction } : {}),
-      beforeDispatch: (connection) => deps.prepareNativeDelivery(request, connection),
-      runId,
-      createdAt: request.createdAt,
-      runtimeMode: request.runtimeMode, interactionMode: request.interactionMode,
-      canonicalThreadId: request.canonicalThreadId,
-      title: request.title,
-      text: request.text,
-      modelSelection: request.modelSelection,
-      inputFiles: request.inputFiles,
-      ...(request.blockedSlackDestination
-        ? { blockedSlackDestination: request.blockedSlackDestination }
-        : {}),
-      ...(deps.controls && !request.providerAction
-        ? {
-            loadInitialSteering: async () => {
-              setupSteering = await deps.controls!.pending(runId);
-              return setupSteering.map((entry) => entry.text);
-            },
-          }
-        : {}),
-      ...(options.signal ? { signal: options.signal } : {}),
-    });
+    try {
+      turn = await deps.gateway.send({
+        ...(request.providerAction ? { providerAction: request.providerAction } : {}),
+        beforeDispatch: (connection) => deps.prepareNativeDelivery(request, connection),
+        runId,
+        createdAt: request.createdAt,
+        runtimeMode: request.runtimeMode, interactionMode: request.interactionMode,
+        canonicalThreadId: request.canonicalThreadId,
+        title: request.title,
+        text: request.text,
+        modelSelection: request.modelSelection,
+        inputFiles: request.inputFiles,
+        ...(request.blockedSlackDestination
+          ? { blockedSlackDestination: request.blockedSlackDestination }
+          : {}),
+        ...(deps.controls && !request.providerAction
+          ? {
+              loadInitialSteering: async () => {
+                setupSteering = await deps.controls!.pending(runId);
+                return setupSteering.map((entry) => entry.text);
+              },
+            }
+          : {}),
+        ...(options.signal ? { signal: options.signal } : {}),
+      });
+    } catch (error) {
+      if (!isModalSpendLimitError(error)) throw error;
+      await append({
+        type: EventType.RUN_ERROR,
+        runId,
+        message: MODAL_SPEND_LIMIT_ERROR_MESSAGE,
+        code: MODAL_SPEND_LIMIT_ERROR_CODE,
+        timestamp: now(),
+      });
+      return terminalize("failed", {
+        message: MODAL_SPEND_LIMIT_ERROR_MESSAGE,
+        code: MODAL_SPEND_LIMIT_ERROR_CODE,
+      });
+    }
     // Mark prompt-folded instructions before publishing the dispatch marker.
     // A concurrent Update only attempts live delivery after that marker exists,
     // so an instruction cannot be included and steered a second time.

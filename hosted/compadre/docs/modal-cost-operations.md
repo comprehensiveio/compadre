@@ -13,9 +13,10 @@ remote execution, resource accounting, and lifecycle control plane.
   not automatically billed at their maximum.
 - A worker sandbox lives for its whole configured lifetime (24 hours by
   default) whether or not a turn is active — reliability is prioritized over
-  idle compute cost. At Modal's published August 2026 rates, the production
-  request is roughly $0.98 per worker-hour before network, snapshot storage,
-  or usage above the request.
+  idle compute cost. At Modal's published September 2026 Sandbox rates, the
+  production request is roughly $0.67 per worker-hour (about $16 for a full
+  24-hour lifetime) before network, snapshot storage, regional multipliers, or
+  usage above the request.
 - After every terminal turn the worker's filesystem is checkpointed live (no
   quiesce, no termination). Checkpoint images expire after seven days by
   default.
@@ -44,6 +45,30 @@ If sandbox worker-hours become a cost problem, add a boring garbage-collection
 pass for long-idle workers — do not reintroduce per-run lifecycle management.
 Avoid increasing CPU or memory requests to address rare bursts: first inspect
 actual usage, then change the request only when the sustained workload needs it.
+
+## Investigating a spend-limit outage
+
+Modal rejects new sandbox creation with `RESOURCE_EXHAUSTED` and `has exceeded
+its spend limit` after the workspace budget is consumed. That phrase means a
+billing limit, not CPU, memory, or container concurrency exhaustion. A Modal
+workspace Owner or Manager must raise or reset the spend limit on Usage &
+Billing before new Compadre workers can start.
+
+Use Modal's read-only billing and inventory commands to establish the cause and
+the current blast radius:
+
+```bash
+modal billing summary --for "this month"
+modal billing report --for "this month" -r d --show-resources
+modal container list --app-id <resolved-compadre-app-id> --json
+```
+
+Resolve the `compadre` app in the Comprehensive workspace; never copy an app ID
+from another environment. If live sandboxes exist, correlate their Compadre
+tags and controller binding/run state before terminating anything. A sandbox
+that owns an active turn must not be treated as idle. If the inventory is
+already empty, there is nothing to terminate: use the billing report and
+creation/termination telemetry to diagnose accumulated worker-hours instead.
 
 Sources: [Modal pricing](https://modal.com/pricing), [Sandbox resource and
 billing behavior](https://modal.com/docs/guide/sandbox-resources), and
