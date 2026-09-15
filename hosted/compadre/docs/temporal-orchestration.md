@@ -47,7 +47,7 @@ record by a retried finalize step.
    any run whose drive could not finish: appends a terminal RUN_ERROR, marks
    the record `failed`/`aborted`, closes the log, and trims the persisted
    request's attachments. The worker itself is left running — it lives for
-   its whole 24-hour sandbox lifetime and is checkpointed after terminal
+   its whole two-hour sandbox lifetime and is checkpointed after terminal
    turns, not managed per-run.
 5. Cancellation: `POST /hosted/t3/runs/:id/cancel` records durable cancel
    intent and cancels the workflow; the drive activity's cancellation signal

@@ -16,10 +16,12 @@ import {
   type T3ThreadSnapshot,
   type T3TurnDispatch,
 } from "./client.js";
+import { DEFAULT_MODAL_TIMEOUT_MS } from "../modal-config.js";
 
 export const CENTRAL_T3_TIMEOUT_MS = 20 * 60 * 1_000;
-const CENTRAL_T3_ABSOLUTE_TIMEOUT_MS = 115 * 60 * 1_000;
 const MODAL_LIFETIME_SAFETY_MS = 5 * 60 * 1_000;
+const CENTRAL_T3_ABSOLUTE_TIMEOUT_MS =
+  DEFAULT_MODAL_TIMEOUT_MS - MODAL_LIFETIME_SAFETY_MS;
 const MAX_PROVIDER_PROMPT_CHARS = 95_000;
 const MAX_FAILED_ATTACHMENT_NAMES = 10;
 const TRUNCATED_CONTEXT_NOTICE =

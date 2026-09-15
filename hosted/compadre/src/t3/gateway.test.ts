@@ -542,8 +542,8 @@ test("durably records and conditionally clears the active provider run", async (
     },
     absoluteTimeoutMs: 99 * 60 * 60 * 1_000,
   });
-  // 24h default lifetime - 1min elapsed - 5min watch safety margin.
-  assert.equal(receivedAbsoluteTimeoutMs, (24 * 60 - 6) * 60 * 1_000);
+  // 2h default lifetime - 1min elapsed - 5min watch safety margin.
+  assert.equal(receivedAbsoluteTimeoutMs, (2 * 60 - 6) * 60 * 1_000);
   assert.equal((await bindings.get("thread-active-run"))?.activeRunId, "run-1");
   await gateway.clearActiveRun("thread-active-run", "older-run");
   assert.equal((await bindings.get("thread-active-run"))?.activeRunId, "run-1");

@@ -139,6 +139,7 @@ test("rejects malformed Modal resource settings before provisioning", () => {
 
 test("keeps the 2 GiB request while allowing a 16 GiB memory burst", () => {
   const resources = modalResourceSettings({});
+  assert.equal(resources.timeoutMs, 2 * 60 * 60 * 1_000);
   assert.equal(resources.memoryMiB, 2048);
   assert.equal(resources.memoryLimitMiB, 16384);
 });

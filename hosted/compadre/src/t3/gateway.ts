@@ -4,6 +4,7 @@ import { reviewCheckpointForMessage, type T3OrchestrationSnapshot } from "./clie
 import { randomUUID } from "node:crypto";
 import { metrics } from "@opentelemetry/api";
 import { log, serializeError } from "../logging.js";
+import { DEFAULT_MODAL_TIMEOUT_MS } from "../modal-config.js";
 import { InMemoryLockStore, type LockStore } from "./storage.js";
 import type {
   T3Client,
@@ -243,7 +244,6 @@ export interface T3PreviewTarget {
 }
 
 const DEFAULT_T3_HOSTED_APP_URL = "https://app.t3.codes";
-const DEFAULT_WORKER_MAX_LIVE_MS = 24 * 60 * 60 * 1000;
 /** Stop watching slightly before the sandbox's hard lifetime. */
 const WATCH_LIFETIME_SAFETY_MS = 5 * 60 * 1000;
 const workerLifecycleTransitions = metrics
@@ -314,7 +314,7 @@ export class T3Gateway {
     private readonly codexSubscriptionLane?: CodexSubscriptionLane,
     private readonly codexApiAuthJson?: string,
   ) {
-    this.maxLiveMs = workerLifecycle.maxLiveMs ?? DEFAULT_WORKER_MAX_LIVE_MS;
+    this.maxLiveMs = workerLifecycle.maxLiveMs ?? DEFAULT_MODAL_TIMEOUT_MS;
     if (!Number.isFinite(this.maxLiveMs) || this.maxLiveMs <= 0) {
       throw new Error("T3 worker maximum live time must be a positive number");
     }

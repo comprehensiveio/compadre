@@ -85,8 +85,8 @@ auto-deploying services require an atomic rollout.
 - One canonical thread maps to one isolated Modal worker/filesystem. Restoring
   a worker may change its sandbox ID or generation without changing the
   canonical or native T3 thread IDs.
-- A terminal worker remains alive within its sandbox lifetime (currently 24
-  hours). The controller takes a best-effort filesystem checkpoint after each
+- A terminal worker remains alive within its sandbox lifetime (two hours by
+  default). The controller takes a best-effort filesystem checkpoint after each
   terminal turn. A later write can restore an unavailable worker from its
   snapshot; a central read must not wake it. Saved workspace reviews are
   separately published immutable objects; see
