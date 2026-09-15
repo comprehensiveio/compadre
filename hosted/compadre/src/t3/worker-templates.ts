@@ -28,6 +28,18 @@ export interface T3WorkerTemplate {
 const NAMESPACE = "compadre.t3.worker-template.v1";
 const KEY = "current";
 
+// Builds run every six hours. Stop using an unmaintained cache well before
+// Modal's seven-day filesystem snapshot expiry, while retaining it for diagnosis.
+export const WORKER_TEMPLATE_MAX_AGE_MS = 24 * 60 * 60 * 1_000;
+
+export function workerTemplateIsFresh(
+  template: T3WorkerTemplate,
+  now = Date.now(),
+): boolean {
+  const age = now - Date.parse(template.builtAt);
+  return Number.isFinite(age) && age >= 0 && age < WORKER_TEMPLATE_MAX_AGE_MS;
+}
+
 export async function readWorkerTemplate(
   metadata: MetadataStore,
 ): Promise<T3WorkerTemplate | null> {

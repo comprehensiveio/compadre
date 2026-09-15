@@ -9,6 +9,7 @@ import {
   type ManagedT3ModalEnvironment,
 } from "./modal-worker.js";
 import { log, serializeError } from "../logging.js";
+import { isModalSnapshotUnavailableError } from "../modal-errors.js";
 import { modalSandboxProvider } from "../tanstack/modal-sandbox.js";
 import { T3Client } from "./client.js";
 import type { T3OrchestrationSnapshot } from "./client.js";
@@ -18,7 +19,10 @@ import type {
 } from "./gateway.js";
 import { T3EnvironmentUnavailableError } from "./gateway.js";
 import type { T3ThreadBinding } from "../services/t3-thread-bindings.js";
-import type { T3WorkerTemplate } from "./worker-templates.js";
+import {
+  workerTemplateIsFresh,
+  type T3WorkerTemplate,
+} from "./worker-templates.js";
 import { t3EncryptedPorts } from "./dev-environment.js";
 import type { SandboxHandle } from "@tanstack/ai-sandbox";
 
@@ -126,7 +130,21 @@ export class T3ModalEnvironmentManager implements T3EnvironmentConnectionManager
     };
   }): Promise<T3EnvironmentConnection> {
     assertProviderCredentialsConfigured(input.providerInstanceId, this.environment);
-    const template = (await this.dependencies.workerTemplate?.()) ?? null;
+    const publishedTemplate = (await this.dependencies.workerTemplate?.()) ?? null;
+    const template =
+      publishedTemplate && workerTemplateIsFresh(publishedTemplate)
+        ? publishedTemplate
+        : null;
+    if (publishedTemplate && !template) {
+      log.warn(
+        {
+          canonicalThreadId: input.canonicalThreadId,
+          snapshotId: publishedTemplate.snapshotId,
+          templateBuiltAt: publishedTemplate.builtAt,
+        },
+        "t3 worker template stale; provisioning cold",
+      );
+    }
     if (template) {
       log.info(
         {
@@ -151,14 +169,32 @@ export class T3ModalEnvironmentManager implements T3EnvironmentConnectionManager
           }
         : {}),
     };
-    const launched = template
-      ? await (
+    const launchCold = () =>
+      (this.dependencies.launch ?? launchManagedT3ModalEnvironment)(
+        workerEnvironment,
+      );
+    let launched: ManagedT3ModalEnvironment;
+    if (template) {
+      try {
+        launched = await (
           this.dependencies.launchFromTemplate ??
           launchManagedT3ModalEnvironmentFromTemplate
-        )(template.snapshotId, workerEnvironment)
-      : await (this.dependencies.launch ?? launchManagedT3ModalEnvironment)(
-          workerEnvironment,
+        )(template.snapshotId, workerEnvironment);
+      } catch (error) {
+        if (!isModalSnapshotUnavailableError(error, template.snapshotId))
+          throw error;
+        log.warn(
+          {
+            canonicalThreadId: input.canonicalThreadId,
+            snapshotId: template.snapshotId,
+          },
+          "t3 worker template unavailable; provisioning cold",
         );
+        launched = await launchCold();
+      }
+    } else {
+      launched = await launchCold();
+    }
     await this.onProvisioned?.({
       ...input,
       sandboxId: launched.sandboxId,

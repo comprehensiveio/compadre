@@ -205,6 +205,24 @@ logs and Modal audit metadata.
 
 Treat this as a living developer runbook. If an investigation teaches you a reusable query, identifier mapping, failure mode, misleading symptom, observability gap, or correction, update this skill in the same change when doing so is in scope. Remove or revise stale guidance rather than accumulating contradictory notes. Do not add incident-specific user content, secrets, volatile instance IDs, or conclusions that are not supported by repeatable evidence.
 
+## Golden worker template expiry
+
+If new workers fail at `SandboxCreate NOT_FOUND: Image ... has expired`, correlate
+the image with `t3 worker provisioning from golden template` and the authenticated
+`GET /internal/operations/worker-template`. Inspect the six-hourly Temporal
+`t3-worker-template-build` histories, including the activity failure cause; the
+outer `Activity task failed` hides the useful error. Repeated failed builds can
+leave a previously good snapshot published beyond its Modal lifetime. HTTP
+health checks do not prove worker provisioning.
+
+The authorized recovery switch is `DELETE /internal/operations/worker-template`.
+It clears only the shared template pointer and makes new workers cold-build;
+it does not delete thread checkpoints or worker files. Verify a fresh canary
+through central T3 to a persisted final response. Repair and verify the failed
+build step before republishing a template; increasing retry counts cannot
+revive an expired image. Keep build diagnostics in the isolated builder while
+investigating, without exposing raw backup data or credentials.
+
 ## Native delivery rejected before reaching central
 
 A native event POST can receive a public WAF 403 because tool output contains
