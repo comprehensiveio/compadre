@@ -12,27 +12,32 @@ import {
 
 test("template preparation migrates the local seed before checking app readiness", async () => {
   const commands: string[] = [];
+  let databaseRunning = false;
   await prepareT3WorkerTemplate({
     id: "builder-test",
     process: {
       async exec(command) {
         commands.push(command);
+        if (command.includes("cloud-env-setup.sh")) databaseRunning = false;
+        if (command.includes("scripts/cloud-dev-up.sh")) databaseRunning = true;
+        if (command.includes("migrate:cm:deploy")) assert.equal(databaseRunning, true);
         return { exitCode: 0, stdout: "", stderr: "" };
       },
     },
   });
-  assert.equal(commands.length, 3);
+  assert.equal(commands.length, 4);
   assert.match(commands[0]!, /cloud-env-setup\.sh/);
+  assert.match(commands[1]!, /scripts\/cloud-dev-up\.sh/);
   assert.match(
-    commands[1]!,
+    commands[2]!,
     /DATABASE_URL="\$\(bin\/lib\/hen_get_remote_db_url -e local\)"/,
   );
-  assert.match(commands[1]!, /migrate:cm:deploy/);
-  assert.match(commands[2]!, /compadre-dev-up\.sh up/);
+  assert.match(commands[2]!, /migrate:cm:deploy/);
+  assert.match(commands[3]!, /compadre-dev-up\.sh up/);
 });
 
-for (const failingStep of [0, 1]) {
-  test(`template preparation stops on ${failingStep === 0 ? "bootstrap" : "migration"} failure`, async () => {
+for (const [failingStep, stepName] of ["bootstrap", "services", "migration"].entries()) {
+  test(`template preparation stops on ${stepName} failure`, async () => {
     const commands: string[] = [];
     await assert.rejects(
       prepareT3WorkerTemplate({

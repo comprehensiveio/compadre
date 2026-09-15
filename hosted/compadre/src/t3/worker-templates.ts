@@ -122,6 +122,11 @@ export async function prepareT3WorkerTemplate(
   );
   await exec(
     handle,
+    "environment.services",
+    "set -o pipefail; scripts/cloud-dev-up.sh 2>&1 | tail -20",
+  );
+  await exec(
+    handle,
     "seed.migrate",
     'set -o pipefail; export DATABASE_URL="$(bin/lib/hen_get_remote_db_url -e local)"; cd app && corepack pnpm migrate:cm:deploy 2>&1 | tail -20',
   );
