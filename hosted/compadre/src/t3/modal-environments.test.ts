@@ -177,7 +177,7 @@ test("provisions from the golden template when one is published", async () => {
         snapshotId: "im-template-1",
         repoSha: "abc123",
         backupKey: "hourly/backup.sql.gz",
-        builtAt: "2026-09-01T00:00:00.000Z",
+        builtAt: new Date().toISOString(),
       };
     },
     launchFromTemplate: async (snapshotId) => {
@@ -222,4 +222,139 @@ test("provisions cold when no template is published", async () => {
 
   assert.deepEqual(calls, ["cold"]);
   assert.equal(connection.sandboxId, "sandbox-cold");
+});
+
+for (const providerInstanceId of ["codex", "claudeAgent"]) {
+  test(`${providerInstanceId} cold provisions after a fresh template expires in Modal`, async () => {
+    const calls: string[] = [];
+    const manager = new T3ModalEnvironmentManager(
+      { ANTHROPIC_API_KEY: "test" },
+      undefined,
+      {
+        workerTemplate: async () => ({
+          snapshotId: "im-expired",
+          repoSha: "sha",
+          backupKey: "backup",
+          builtAt: new Date().toISOString(),
+        }),
+        launchFromTemplate: async () => {
+          calls.push("template");
+          throw Object.assign(
+            new Error(
+              "/modal.client.ModalClient/SandboxCreate NOT_FOUND: Image 'im-expired' has expired",
+            ),
+            {
+              code: 5,
+              path: "/modal.client.ModalClient/SandboxCreate",
+              details: "Image 'im-expired' has expired",
+            },
+          );
+        },
+        launch: async (environment) => {
+          assert.equal(
+            environment?.COMPADRE_CANONICAL_THREAD_ID,
+            "thread-fallback",
+          );
+          assert.equal(
+            environment?.COMPADRE_PROVIDER_INSTANCE_ID,
+            providerInstanceId,
+          );
+          calls.push("cold");
+          return managedEnvironment("sandbox-cold");
+        },
+      },
+    );
+    assert.equal(
+      (
+        await manager.provision({
+          canonicalThreadId: "thread-fallback",
+          providerInstanceId,
+        })
+      ).sandboxId,
+      "sandbox-cold",
+    );
+    assert.deepEqual(calls, ["template", "cold"]);
+  });
+}
+
+for (const builtAt of [
+  "2026-01-01T00:00:00Z",
+  "invalid",
+  "2999-01-01T00:00:00Z",
+]) {
+  test(`cold provisions without restoring an unusable template timestamp: ${builtAt}`, async () => {
+    const manager = new T3ModalEnvironmentManager({}, undefined, {
+      workerTemplate: async () => ({
+        snapshotId: "im-stale",
+        repoSha: "sha",
+        backupKey: "backup",
+        builtAt,
+      }),
+      launchFromTemplate: async () => {
+        throw new Error("Must not restore stale template");
+      },
+      launch: async () => managedEnvironment("sandbox-cold"),
+    });
+    assert.equal(
+      (
+        await manager.provision({
+          canonicalThreadId: "thread-stale",
+          providerInstanceId: "codex",
+        })
+      ).sandboxId,
+      "sandbox-cold",
+    );
+  });
+}
+
+test("does not hide non-image failures", async () => {
+  const failure = new Error("template checkout refresh failed");
+  const manager = new T3ModalEnvironmentManager({}, undefined, {
+    workerTemplate: async () => ({
+      snapshotId: "im-current",
+      repoSha: "sha",
+      backupKey: "backup",
+      builtAt: new Date().toISOString(),
+    }),
+    launchFromTemplate: async () => {
+      throw failure;
+    },
+    launch: async () => {
+      assert.fail("Must not cold provision after a checkout failure");
+    },
+  });
+  await assert.rejects(
+    manager.provision({
+      canonicalThreadId: "thread-error",
+      providerInstanceId: "codex",
+    }),
+    failure,
+  );
+});
+
+test("propagates cold provisioning failure after an expired image", async () => {
+  const failure = new Error("Modal spend limit exceeded");
+  const manager = new T3ModalEnvironmentManager({}, undefined, {
+    workerTemplate: async () => ({
+      snapshotId: "im-old",
+      repoSha: "sha",
+      backupKey: "backup",
+      builtAt: new Date().toISOString(),
+    }),
+    launchFromTemplate: async () => {
+      throw new Error(
+        "/modal.client.ModalClient/SandboxCreate NOT_FOUND: Image 'im-old' has expired",
+      );
+    },
+    launch: async () => {
+      throw failure;
+    },
+  });
+  await assert.rejects(
+    manager.provision({
+      canonicalThreadId: "thread-error",
+      providerInstanceId: "codex",
+    }),
+    failure,
+  );
 });

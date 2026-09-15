@@ -5,6 +5,8 @@ import {
   clearWorkerTemplate,
   publishWorkerTemplate,
   readWorkerTemplate,
+  workerTemplateIsFresh,
+  WORKER_TEMPLATE_MAX_AGE_MS,
 } from "./worker-templates.js";
 
 function memoryMetadata(): MetadataStore {
@@ -46,4 +48,26 @@ test("a malformed pointer reads as no template (cold build)", async () => {
     snapshotId: "   ",
   });
   assert.equal(await readWorkerTemplate(metadata), null);
+});
+
+test("template cache expires after one day without deleting its diagnostic pointer", async () => {
+  const metadata = memoryMetadata();
+  const template = {
+    snapshotId: "im-old",
+    repoSha: "sha",
+    backupKey: "backup",
+    builtAt: "2026-09-01T00:00:00Z",
+  };
+  await publishWorkerTemplate(metadata, template);
+  const built = Date.parse(template.builtAt);
+  assert.equal(
+    workerTemplateIsFresh(template, built + WORKER_TEMPLATE_MAX_AGE_MS - 1),
+    true,
+  );
+  assert.equal(
+    workerTemplateIsFresh(template, built + WORKER_TEMPLATE_MAX_AGE_MS),
+    false,
+  );
+  assert.equal(workerTemplateIsFresh(template, built - 1), false);
+  assert.deepEqual(await readWorkerTemplate(metadata), template);
 });
