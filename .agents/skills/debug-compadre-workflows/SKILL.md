@@ -223,6 +223,13 @@ build step before republishing a template; increasing retry counts cannot
 revive an expired image. Keep build diagnostics in the isolated builder while
 investigating, without exposing raw backup data or credentials.
 
+For readiness timeouts after production-data restore, inspect the dev-login HTTP
+status and database error, not just the root page. `P2022` querying a removed
+column can mean stale generated Prisma clients. Check the initial setup log for
+`ERR_PNPM_ABORTED_REMOVE_MODULES_DIR_NO_TTY` and `deps=install-failed`: a
+`phase=complete` marker with current hashes is not proof dependencies reconciled.
+The builder sets `CI=true` to permit pnpm's unattended cache replacement.
+
 ## Native delivery rejected before reaching central
 
 A native event POST can receive a public WAF 403 because tool output contains

@@ -83,6 +83,10 @@ retry behavior. This fallback only applies to the shared golden template:
 an existing thread's filesystem checkpoint must never be replaced by an empty
 worker merely because its image is unavailable.
 
+Template builders set `CI=true` so pnpm can replace stale prebuilt dependencies
+without a terminal prompt. Without this, setup can continue after an aborted
+install with an old Prisma client that fails against the restored database.
+
 Native T3 workers use a durable lifecycle recorded with the thread binding in
 Postgres:
 

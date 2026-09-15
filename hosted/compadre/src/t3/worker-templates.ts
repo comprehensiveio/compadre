@@ -156,6 +156,8 @@ export async function buildT3WorkerTemplate(input: {
       COMPADRE_DEV_PREVIEW_URL: preview.url.replace(/\/$/, ""),
       COMPADRE_DEV_PORT: "3000",
       HOME: "/home/node",
+      // pnpm must reconcile prebuilt dependencies without prompting for a TTY.
+      CI: "true",
     });
     await exec(handle, "repository.clone", repositoryCloneCommand(environment));
     const repoSha = (
