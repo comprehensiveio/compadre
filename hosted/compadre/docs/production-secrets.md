@@ -100,6 +100,31 @@ the same environment-variable contract, make Doppler the sole writer, validate
 the rendered key inventory, and only then remove values from Render. Do not run
 both systems as independent writable authorities.
 
+### TODO: consolidate the GitHub credential during the Doppler migration
+
+The web service reads `GH_TOKEN`; the controller reads
+`GITHUB_PERSONAL_ACCESS_TOKEN` and projects it to worker `GH_TOKEN` and
+`GITHUB_TOKEN`. These currently contain the same classic bot PAT but are
+independently managed in Render, so rotation can leave consumers out of sync.
+Until consolidation, rotate both service values together. The classic token
+was verified to read PR details and CI checks; replacing it must preserve both
+capabilities, not only repository access.
+
+Consolidation is deferred to the Doppler migration, not an interim Render
+configuration change. Complete this TODO when:
+
+- One authoritative Doppler secret supplies both service variable names;
+  neither value is independently maintained.
+- Obsolete Render overrides are removed after validating the new bindings,
+  with Doppler as the sole writable authority.
+- The existing controller-to-worker projection is preserved, and rotation
+  accounts for credentials retained by already-running workers before revoking
+  the previous token.
+- Deployed web and a new/restored worker can read PR details and CI checks,
+  and central persisted PR status refreshes correctly, without logging secrets.
+- This runbook records the final source, consumer mappings, and rotation
+  procedure, replacing this TODO with the implemented behavior.
+
 ## Central PostgreSQL production bindings
 
 `compadre-web` receives `COMPADRE_T3_POSTGRES_URL` by referencing the existing
