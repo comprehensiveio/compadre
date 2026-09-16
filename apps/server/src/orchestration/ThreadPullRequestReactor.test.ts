@@ -16,6 +16,7 @@ import {
   type ThreadLinkedPullRequest,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
+import { vi } from "vite-plus/test";
 import * as Crypto from "effect/Crypto";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -134,6 +135,7 @@ const makeHarness = Effect.fn("makeThreadPullRequestHarness")(function* (options
   readonly existingWorktrees?: ReadonlyArray<string>;
   readonly project?: OrchestrationProjectShell;
   readonly resolveRepositoryIdentity?: RepositoryIdentityResolver["Service"]["resolve"];
+  readonly localStatus?: GitManager["Service"]["localStatus"];
 }) {
   const activation = yield* Deferred.make<void>();
   const snapshots = yield* Ref.make<OrchestrationShellSnapshot>({
@@ -156,6 +158,8 @@ const makeHarness = Effect.fn("makeThreadPullRequestHarness")(function* (options
         Ref.get(snapshots).pipe(Effect.tap(() => Queue.offer(reads, undefined))),
     }),
     Layer.mock(GitManager)({
+      invalidateLocalStatus: () => Effect.void,
+      localStatus: options.localStatus ?? (() => Effect.die("Unexpected local checkout read")),
       branchPullRequest: (input, readOptions) =>
         Ref.update(branchCalls, (calls) => [
           ...calls,
@@ -182,6 +186,17 @@ const makeHarness = Effect.fn("makeThreadPullRequestHarness")(function* (options
         Effect.map((subscription) => Stream.fromSubscription(subscription)),
       ),
       dispatch: (command) => {
+        if (command.type === "thread.meta.update") {
+          return Ref.updateAndGet(snapshots, (snapshot) => ({
+            ...snapshot,
+            snapshotSequence: snapshot.snapshotSequence + 1,
+            threads: snapshot.threads.map((current) =>
+              current.id === command.threadId
+                ? { ...current, branch: command.branch ?? null }
+                : current,
+            ),
+          })).pipe(Effect.map((snapshot) => ({ sequence: snapshot.snapshotSequence })));
+        }
         if (command.type !== "thread.pull-request.sync") {
           return Effect.die(`Unexpected command: ${command.type}`);
         }
@@ -242,6 +257,115 @@ const makeHarness = Effect.fn("makeThreadPullRequestHarness")(function* (options
 });
 
 describe("ThreadPullRequestReactor", () => {
+  it.effect(
+    "follows an isolated worker from main onto new branches and republishes on restore",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          vi.stubEnv("COMPADRE_CANONICAL_THREAD_ID", "canonical");
+          let branch: string | null = "main";
+          let pr: GitBranchPullRequest | null = null;
+          const fixture = yield* makeHarness({
+            threads: [
+              thread("worker", {
+                branch: null,
+                session: {
+                  threadId: ThreadId.make("worker"),
+                  status: "running",
+                  providerName: "codex",
+                  runtimeMode: "full-access",
+                  activeTurnId: TurnId.make("in-progress"),
+                  lastError: null,
+                  updatedAt: NOW,
+                },
+              }),
+            ],
+            localStatus: () =>
+              Effect.succeed({
+                isRepo: true,
+                hasPrimaryRemote: true,
+                isDefaultRef: branch === "main",
+                refName: branch,
+                hasWorkingTreeChanges: false,
+                workingTree: { files: [], insertions: 0, deletions: 0 },
+              }),
+            branchPullRequest: () => Effect.succeed(pr),
+          });
+          yield* Effect.gen(function* () {
+            const reactor = yield* fixture.start();
+            expect((yield* Ref.get(fixture.snapshots)).threads[0]?.branch).toBe("main");
+            const refresh = () =>
+              Effect.gen(function* () {
+                // The existing sweep is also active while a provider turn is running.
+                yield* TestClock.adjust("1 minute");
+                yield* Queue.take(fixture.reads);
+                yield* reactor.drain;
+              });
+            branch = "feature/created-during-turn";
+            pr = branchPullRequest();
+            yield* refresh();
+            expect((yield* Ref.get(fixture.snapshots)).threads[0]).toMatchObject({
+              branch,
+              branchPullRequest: reference(42),
+              worktreePath: null,
+            });
+            branch = "feature/second";
+            pr = branchPullRequest(43);
+            yield* refresh();
+            expect((yield* Ref.get(fixture.snapshots)).threads[0]).toMatchObject({
+              branch,
+              branchPullRequest: reference(43),
+            });
+            branch = null;
+            pr = null;
+            yield* refresh();
+            expect((yield* Ref.get(fixture.snapshots)).threads[0]).toMatchObject({
+              branch: null,
+              branchPullRequest: null,
+            });
+          }).pipe(Effect.provide(fixture.layer));
+
+          // A restored worker must publish even when its saved discovery has not changed.
+          const restored = yield* makeHarness({
+            threads: [thread("restored", { branchPullRequest: reference(42) })],
+            localStatus: () =>
+              Effect.succeed({
+                isRepo: true,
+                hasPrimaryRemote: true,
+                isDefaultRef: false,
+                refName: "feature",
+                hasWorkingTreeChanges: false,
+                workingTree: { files: [], insertions: 0, deletions: 0 },
+              }),
+            branchPullRequest: () => Effect.succeed(branchPullRequest()),
+          });
+          yield* Effect.gen(function* () {
+            yield* restored.start();
+            expect(yield* Ref.get(restored.commands)).toHaveLength(1);
+          }).pipe(Effect.provide(restored.layer));
+        }),
+      ).pipe(Effect.ensuring(Effect.sync(() => vi.unstubAllEnvs()))),
+  );
+
+  it.effect("does not let Render rediscover or clear the worker's branch PR", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        vi.stubEnv("COMPADRE_NATIVE_T3_URL", "https://controller.test/hosted/t3/chat");
+        const fixture = yield* makeHarness({
+          threads: [thread("central", { branchPullRequest: reference(42) })],
+        });
+        yield* Effect.gen(function* () {
+          yield* fixture.start();
+          expect(yield* Ref.get(fixture.commands)).toEqual([]);
+          expect(yield* Ref.get(fixture.branchCalls)).toEqual([]);
+          expect((yield* Ref.get(fixture.snapshots)).threads[0]?.branchPullRequest).toEqual(
+            reference(42),
+          );
+        }).pipe(Effect.provide(fixture.layer));
+      }),
+    ).pipe(Effect.ensuring(Effect.sync(() => vi.unstubAllEnvs()))),
+  );
+
   it.effect("discovers saved branch PRs without a client and shares branch lookups", () =>
     Effect.scoped(
       Effect.gen(function* () {

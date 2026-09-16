@@ -99,6 +99,15 @@ Use **Link pull request** in the command palette or **Linked pull requests** pan
 pull request link in the conversation. Creating a pull request from Git actions links it automatically.
 Agents can link their pull requests with the `link_pull_request` tool.
 
+In hosted Compadre, agent links and browser links belong to the same shared thread.
+Linking, unlinking, and listing use central storage, so links remain available
+after the agent's worker expires. Branch tracking follows the worker's current
+checkout, including branches created after a thread starts. A PR published for
+that branch can appear as a branch-detected badge after turn completion or the
+roughly once-a-minute discovery sweep. Use `link_pull_request` or **Link this PR**
+to keep an explicit association independently of later branch changes. Detaching
+HEAD clears branch discovery; explicit links remain.
+
 Use **Link this PR** in a branch-detected badge's tooltip to keep it with the thread. From a review
 on the Pull Requests page, **Link to thread** lets you search for an active thread. The review header
 also lists the threads that link to it, including archived threads, so you can return to their context.

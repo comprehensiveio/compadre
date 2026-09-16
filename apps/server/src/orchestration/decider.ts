@@ -1774,6 +1774,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         "thread.proposed-plan-upserted",
         "thread.turn-diff-completed",
         "thread.activity-appended",
+        "thread.meta-updated",
       ];
       if (
         event.aggregateKind !== "thread" ||
@@ -1782,7 +1783,12 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         event.payload.threadId !== command.threadId ||
         !allowed.includes(event.type) ||
         (event.type === "thread.message-sent" && event.payload.role !== "assistant") ||
-        (event.type === "thread.session-set" && event.payload.session.threadId !== command.threadId)
+        (event.type === "thread.session-set" &&
+          event.payload.session.threadId !== command.threadId) ||
+        (event.type === "thread.meta-updated" &&
+          Object.keys(event.payload).some(
+            (key) => !["threadId", "branch", "branchPullRequest", "updatedAt"].includes(key),
+          ))
       ) {
         return yield* new OrchestrationCommandInvariantError({
           commandType: command.type,
@@ -1791,6 +1797,24 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
       }
       const { sequence: _sequence, ...nativeEvent } = event;
       const imported = { ...nativeEvent, commandId: command.commandId };
+      if (imported.type === "thread.meta-updated") {
+        return {
+          ...imported,
+          payload: {
+            ...imported.payload,
+            ...(imported.payload.branchPullRequest != null
+              ? {
+                  branchPullRequest: {
+                    ...imported.payload.branchPullRequest,
+                    projectId: thread.projectId,
+                  },
+                }
+              : {}),
+            // Old worker metadata must not move the canonical conversation's timestamp back.
+            updatedAt: thread.updatedAt,
+          },
+        };
+      }
       if (
         event.type === "thread.session-set" &&
         thread.settledOverride !== null &&

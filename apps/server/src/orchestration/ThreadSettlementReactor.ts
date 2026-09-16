@@ -157,7 +157,12 @@ export const make = Effect.gen(function* () {
       (thread) =>
         Effect.gen(function* () {
           const project = projects.get(thread.projectId);
-          if (project === undefined || thread.branch === null) return;
+          if (
+            project === undefined ||
+            thread.branch === null ||
+            process.env.COMPADRE_NATIVE_T3_URL?.trim()
+          )
+            return;
           const worktreeExists =
             thread.worktreePath !== null &&
             (yield* fileSystem.exists(thread.worktreePath).pipe(Effect.orElseSucceed(() => false)));
@@ -250,6 +255,8 @@ export const make = Effect.gen(function* () {
         } satisfies SettlementPullRequest;
       }
       if (thread.branch === null) return null;
+      // Hosted branch discovery comes from Modal, never Render's bootstrap repository.
+      if (process.env.COMPADRE_NATIVE_T3_URL?.trim()) return null;
       const cwd = lookupCwdByThreadId.get(thread.id);
       if (cwd === undefined) {
         return yield* Effect.die(new Error("thread project not found"));

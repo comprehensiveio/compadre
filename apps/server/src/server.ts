@@ -1,4 +1,5 @@
 import { providerActionRoutes } from "./compadre/ProviderActionRoutes.ts";
+import { hostedPullRequestRoutes } from "./compadre/HostedPullRequestRoutes.ts";
 import { NativeThreadControlsLive } from "./compadre/NativeThreadControls.ts";
 import { nativeThreadEventRoutes } from "./compadre/NativeThreadEventRoutes.ts";
 import { EnvironmentHttpApi, ProviderDriverKind } from "@t3tools/contracts";
@@ -583,6 +584,7 @@ export const makeRoutesLayer = Layer.mergeAll(
     compadreOperationsRouteLayer,
     nativeThreadEventRoutes.pipe(Layer.provide(PersistenceLayerConfigLive)),
     providerActionRoutes,
+    hostedPullRequestRoutes,
     compadrePreviewsRouteLayer,
     compadreTriggeredPromptsRouteLayer,
     deviceHubProxyRouteLayer,

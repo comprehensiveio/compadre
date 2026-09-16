@@ -24,6 +24,7 @@ import * as GitManager from "../git/GitManager.ts";
 import * as PullRequestService from "../pullRequest/PullRequestService.ts";
 import * as RepositoryIdentityResolver from "../project/RepositoryIdentityResolver.ts";
 import { forkParked } from "../serverActivation.ts";
+import { refreshHostedWorkerBranch } from "../compadre/HostedBranchTracking.ts";
 import * as OrchestrationEngine from "./Services/OrchestrationEngine.ts";
 import * as ProjectionSnapshotQuery from "./Services/ProjectionSnapshotQuery.ts";
 
@@ -97,7 +98,12 @@ export const make = Effect.gen(function* () {
   const synchronize = Effect.fn("ThreadPullRequestReactor.synchronize")(function* (
     request: RefreshRequest,
   ) {
-    const snapshot = yield* snapshots.getShellSnapshot();
+    const initialSnapshot = yield* snapshots.getShellSnapshot();
+    // Render has only a bootstrap checkout. Native worker observations own discovery.
+    if (process.env.COMPADRE_NATIVE_T3_URL?.trim()) return;
+    const snapshot = yield* refreshHostedWorkerBranch(initialSnapshot, request.backfill === true);
+    const republishWorkerDiscovery =
+      request.backfill === true && Boolean(process.env.COMPADRE_CANONICAL_THREAD_ID?.trim());
     const projects = new Map(snapshot.projects.map((project) => [project.id, project]));
     if (request.backfill) {
       for (const thread of snapshot.threads) {
@@ -200,7 +206,8 @@ export const make = Effect.gen(function* () {
 
               if (
                 samePullRequest(thread.branchPullRequest, branchPullRequest) &&
-                replacement === undefined
+                replacement === undefined &&
+                !republishWorkerDiscovery
               ) {
                 pendingBackfill.delete(thread.id);
                 return null;
