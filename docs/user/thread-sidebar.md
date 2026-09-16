@@ -109,6 +109,10 @@ The linked pull request participates in automatic settlement.
 
 ## Find and reference work
 
+In hosted Compadre, Slack-linked threads show a Slack icon beside the sidebar's
+other status icons. Hover it to see **Slack thread**, and select it to open the
+original conversation in a new tab. The link is also keyboard-accessible.
+
 On web and desktop, open the command palette with `Cmd/Ctrl+K` to search threads
 across connected environments. Message search starts after two characters and
 includes your messages and final agent responses.

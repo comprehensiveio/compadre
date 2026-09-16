@@ -51,6 +51,7 @@ import {
   PinOffIcon,
   PlusIcon,
   SettingsIcon,
+  SlackIcon,
   SquarePenIcon,
   TerminalIcon,
   Undo2Icon,
@@ -1698,6 +1699,8 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
             </span>
             {draftIndicator}
             {title}
+            {/* PR links stay visible outside the hover-fading action slot. */}
+            {prBadge}
             <CompadrePreviewIndicator threadId={thread.id} environmentId={thread.environmentId} />
             {pinIndicator}
             {terminalStatusIcon}
@@ -1706,10 +1709,6 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
                 Regenerating title
               </span>
             ) : null}
-            {/* The PR badge stays outside the hover-fading slot: it must
-              remain visible AND clickable while the row is hovered. Only
-              the time/jump label yields to the settle affordance. */}
-            {prBadge}
             {sortable?.isDragging ? (
               dragDestination
             ) : (
@@ -1996,7 +1995,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
                 </span>
               ) : null}
             </div>
-            <div className="mt-0.5 flex min-w-0 items-center gap-1.5 text-secondary-label text-xs">
+            <div className="mt-0.5 flex min-w-0 items-center gap-1 text-secondary-label text-xs leading-none">
               {/* Always the branch. The plan step used to take this slot while
                   working, but it truncated to a half-sentence and dropped the
                   branch, so the row lost its most stable identifier. */}
@@ -2010,7 +2009,6 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
               ) : (
                 <span className="flex-1" />
               )}
-              <CompadrePreviewIndicator threadId={thread.id} environmentId={thread.environmentId} />
               {terminalStatusIcon}
               {prBadge}
               {diff ? (
@@ -2054,17 +2052,28 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
                   </span>
                 ) : null}
               </span>
+              <CompadrePreviewIndicator threadId={thread.id} environmentId={thread.environmentId} />
               {COMPADRE_AUTH_ENABLED && thread.externalThread ? (
-                <a
-                  href={thread.externalThread.url}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  onPointerDown={(event) => event.stopPropagation()}
-                  onClick={(event) => event.stopPropagation()}
-                  className="ml-auto shrink-0 hover:text-foreground hover:underline"
-                >
-                  Slack thread
-                </a>
+                <Tooltip>
+                  <TooltipTrigger
+                    render={
+                      <a
+                        href={thread.externalThread.url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        aria-label="Open Slack thread"
+                        onPointerDown={(event) => event.stopPropagation()}
+                        onClick={(event) => event.stopPropagation()}
+                        onDoubleClick={(event) => event.stopPropagation()}
+                        onKeyDown={(event) => event.stopPropagation()}
+                        className="inline-flex size-5 shrink-0 items-center justify-center rounded-sm outline-none transition-colors hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
+                      />
+                    }
+                  >
+                    <SlackIcon aria-hidden className="size-3.5" />
+                  </TooltipTrigger>
+                  <TooltipPopup>Slack thread</TooltipPopup>
+                </Tooltip>
               ) : null}
             </div>
           </div>

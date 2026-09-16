@@ -122,6 +122,38 @@ in-process recovery is not proof of distributed recovery. Preserve immutable
 native replay payloads and mixed-version operation across independently
 deployed services and already-running/restored workers.
 
+## Audit native events and agent tools
+
+Compare added, removed, and changed orchestration events and payloads in
+`packages/contracts/src/orchestration.ts` across the reviewed upstream range,
+including clean merges. For each affected feature, trace the producer (provider,
+MCP tool, reactor, or client command), its environment and thread identity,
+`apps/server/src/compadre/NativeThreadEvents.ts`, the native-apply guard in the decider, persisted
+projections, and client readers. A tool success or activity entry is not proof
+that its state reached the canonical thread.
+
+Classify each event as forwarded with identity translation, specially transformed,
+or intentionally excluded with its authoritative owner and alternate path stated.
+Preserve the mapper's exhaustive type check; never restore a catch-all discard to
+make an integration compile. Reassess existing classifications when upstream changes
+a payload or producer, even if its event name stays the same. Do not default new
+shared conversation state to worker-local metadata.
+
+Agent tools that read or mutate shared state must agree with browser commands in
+both directions. PR associations, for example, are central-owned: verify hosted
+link, unlink, and list tools all reach canonical central storage. Worker-local success or
+a copied PR activity cannot establish that association. Follow the inverse action,
+reads after browser edits, stacked/cross-repository links, and behavior after the
+worker expires.
+
+For each adapted flow, prove the durable central result with a focused worker/
+central integration test, including applicable replay, fencing, and reverse-action
+cases. Check PostgreSQL as well as worker SQLite where persistence is involved.
+Review already-running workers, restored snapshots, and independently deployed
+central/controller versions; unsupported combinations must fail explicitly, never
+silently acknowledge lost state. List a feature as deferred if its hosted path is
+not implemented, and gate its advertised capability accordingly.
+
 ## Choose integration and release boundaries
 
 Default to one isolated integration branch targeting one fixed upstream commit
