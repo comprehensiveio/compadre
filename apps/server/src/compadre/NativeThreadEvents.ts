@@ -139,9 +139,57 @@ export function mapNativeThreadEvent(
         },
       };
       break;
-    default:
-      // Worker commands and workspace metadata are owned by the central ingress.
+    // Central ingress owns projects, thread lifecycle, user preferences, and execution intent.
+    case "project.created":
+    case "project.meta-updated":
+    case "project.deleted":
+    case "thread.created":
+    case "thread.deleted":
+    case "thread.archived":
+    case "thread.unarchived":
+    case "thread.settled":
+    case "thread.unsettled":
+    case "thread.snoozed":
+    case "thread.unsnoozed":
+    case "thread.pinned":
+    case "thread.unpinned":
+    case "thread.pin-reordered":
+    case "thread.runtime-mode-set":
+    case "thread.interaction-mode-set":
+    case "thread.turn-start-requested":
+    case "thread.turn-interrupt-requested":
+    case "thread.approval-response-requested":
+    case "thread.user-input-response-requested":
+    case "thread.checkpoint-revert-requested":
+    case "thread.reverted":
+    case "thread.session-stop-requested":
       return null;
+    case "thread.meta-updated": {
+      const { branch, branchPullRequest, updatedAt } = event.payload;
+      if (branch === undefined && branchPullRequest === undefined) return null;
+      // Checkout observations travel upstream; paths, titles and explicit links do not.
+      // The decider replaces the discovered PR's worker project ID with its central owner.
+      mapped = {
+        ...base,
+        type: event.type,
+        payload: {
+          threadId,
+          ...(branch !== undefined ? { branch } : {}),
+          ...(branchPullRequest !== undefined ? { branchPullRequest } : {}),
+          updatedAt,
+        },
+      };
+      break;
+    }
+    // Hosted PR tools write directly to central storage so browser and agent edits agree.
+    // Worker sync reactors (including old/restored journals) cannot overwrite that state.
+    case "thread.pull-request-linked":
+    case "thread.pull-request-unlinked":
+    case "thread.pull-request-synced":
+      return null;
+    default:
+      event satisfies never;
+      throw new Error("Unclassified native T3 event; review hosted ownership before importing it.");
   }
   // Changed data for an existing source event gets a different command ID but
   // collides on the immutable event ID, so storage rejects conflicting replay.

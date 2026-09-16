@@ -74,7 +74,26 @@ per-thread skills, T3 fork, and credentials — measured ~10 s to a live T3
 worker versus 6+ minutes for a cold clone-and-build. With no published
 template (or after `DELETE /internal/operations/worker-template`, the
 operational kill switch), provisioning cold-builds exactly as before. A failed
-template build never publishes, leaving the previous template serving.
+template build never publishes. Templates older than 24 hours (four missed
+refreshes), or with invalid/future build timestamps, are bypassed for a cold
+build; the metadata remains available for diagnosis. A fresh template that
+Modal rejects as a missing/expired image also falls back to a cold build in
+the same attempt. Other provisioning failures retain their normal error and
+retry behavior. This fallback only applies to the shared golden template:
+an existing thread's filesystem checkpoint must never be replaced by an empty
+worker merely because its image is unavailable.
+
+Template builders set `CI=true` so pnpm can replace stale prebuilt dependencies
+without a terminal prompt. Without this, setup can continue after an aborted
+install with an old Prisma client that fails against the restored database.
+Builders bootstrap the environment, start Postgres/Redis with `cloud-dev-up.sh`,
+and migrate the sandbox-local seed before
+the first dev-login readiness check. An updated client may require columns
+absent from the prebuilt seed; waiting for the later production-data restore
+to apply migrations would leave that first readiness check unable to succeed.
+The production-data restore still applies migrations again to its own database.
+Bootstrap intentionally stops database services for snapshot safety, so service
+startup must happen before migration, not only inside the later app startup.
 
 Native T3 workers use a durable lifecycle recorded with the thread binding in
 Postgres:

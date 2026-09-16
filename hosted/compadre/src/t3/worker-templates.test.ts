@@ -4,8 +4,64 @@ import type { MetadataStore } from "./storage.js";
 import {
   clearWorkerTemplate,
   publishWorkerTemplate,
+  prepareT3WorkerTemplate,
   readWorkerTemplate,
+  workerTemplateIsFresh,
+  WORKER_TEMPLATE_MAX_AGE_MS,
 } from "./worker-templates.js";
+
+test("template preparation migrates the local seed before checking app readiness", async () => {
+  const commands: string[] = [];
+  let databaseRunning = false;
+  await prepareT3WorkerTemplate({
+    id: "builder-test",
+    process: {
+      async exec(command) {
+        commands.push(command);
+        if (command.includes("cloud-env-setup.sh")) databaseRunning = false;
+        if (command.includes("scripts/cloud-dev-up.sh")) databaseRunning = true;
+        if (command.includes("migrate:cm:deploy")) assert.equal(databaseRunning, true);
+        return { exitCode: 0, stdout: "", stderr: "" };
+      },
+    },
+  });
+  assert.equal(commands.length, 4);
+  assert.match(commands[0]!, /cloud-env-setup\.sh/);
+  assert.match(commands[1]!, /scripts\/cloud-dev-up\.sh/);
+  assert.match(
+    commands[2]!,
+    /DATABASE_URL="\$\(bin\/lib\/hen_get_remote_db_url -e local\)"/,
+  );
+  assert.match(commands[2]!, /migrate:cm:deploy/);
+  assert.match(commands[3]!, /compadre-dev-up\.sh up/);
+});
+
+for (const [failingStep, stepName] of ["bootstrap", "services", "migration"].entries()) {
+  test(`template preparation stops on ${stepName} failure`, async () => {
+    const commands: string[] = [];
+    await assert.rejects(
+      prepareT3WorkerTemplate({
+        id: "builder-test",
+        process: {
+          async exec(command) {
+            commands.push(command);
+            return {
+              exitCode: commands.length - 1 === failingStep ? 1 : 0,
+              stdout: "",
+              stderr: "preparation failed",
+            };
+          },
+        },
+      }),
+      /preparation failed/,
+    );
+    assert.equal(commands.length, failingStep + 1);
+    assert.equal(
+      commands.some((command) => command.includes("compadre-dev-up.sh up")),
+      false,
+    );
+  });
+}
 
 function memoryMetadata(): MetadataStore {
   const data = new Map<string, unknown>();
@@ -46,4 +102,26 @@ test("a malformed pointer reads as no template (cold build)", async () => {
     snapshotId: "   ",
   });
   assert.equal(await readWorkerTemplate(metadata), null);
+});
+
+test("template cache expires after one day without deleting its diagnostic pointer", async () => {
+  const metadata = memoryMetadata();
+  const template = {
+    snapshotId: "im-old",
+    repoSha: "sha",
+    backupKey: "backup",
+    builtAt: "2026-09-01T00:00:00Z",
+  };
+  await publishWorkerTemplate(metadata, template);
+  const built = Date.parse(template.builtAt);
+  assert.equal(
+    workerTemplateIsFresh(template, built + WORKER_TEMPLATE_MAX_AGE_MS - 1),
+    true,
+  );
+  assert.equal(
+    workerTemplateIsFresh(template, built + WORKER_TEMPLATE_MAX_AGE_MS),
+    false,
+  );
+  assert.equal(workerTemplateIsFresh(template, built - 1), false);
+  assert.deepEqual(await readWorkerTemplate(metadata), template);
 });

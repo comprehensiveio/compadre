@@ -49,6 +49,17 @@ It is “concentrate each product difference behind a narrow seam.”
 Codex and Claude Code remain the provider identities shown to users. Compadre is
 transport and orchestration, not a provider choice.
 
+Hosted PR tool calls use `compadre/HostedPullRequestClient.ts` and
+`HostedPullRequestRoutes.ts`, with controller relay/credential projection in
+`hosted/compadre/src/t3/pull-request-access.ts`. The upstream MCP handlers retain
+local behavior and delegate hosted calls to the canonical central thread. The
+native event mapper explicitly excludes worker explicit-link state and exhaustively classifies
+all event types. `HostedBranchTracking.ts` lets the existing PR discovery reactor
+follow a single-thread Modal root checkout. Only branch/discovered-PR metadata
+crosses the journal boundary, with project identity remapped centrally; hosted
+central discovery/settlement must not consult Render's checkout for that branch.
+See [native delivery ownership and rollout](native-event-rollout.md#pull-request-associations).
+
 ### Model discovery
 
 Harness operations use the [hosted provider action contract](hosted-provider-actions.md).

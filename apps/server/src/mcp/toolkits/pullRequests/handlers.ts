@@ -17,12 +17,15 @@ import * as Cause from "effect/Cause";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
+import { callHostedPullRequest } from "../../../compadre/HostedPullRequestClient.ts";
 
 import * as OrchestrationEngine from "../../../orchestration/Services/OrchestrationEngine.ts";
 import * as ProjectionSnapshotQuery from "../../../orchestration/Services/ProjectionSnapshotQuery.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import {
-  type ListThreadPullRequestsResult,
+  ListThreadPullRequestsResult,
+  LinkPullRequestResult,
+  UnlinkPullRequestResult,
   PullRequestLinkFailedError,
   PullRequestUrlInvalidError,
   PullRequestTargetIncompleteError,
@@ -138,7 +141,7 @@ export function listThreadPullRequests(
   };
 }
 
-const make = Effect.gen(function* () {
+const make = Effect.fn("PullRequestsToolkit.make")(function* (allowHosted = true) {
   const engine = yield* OrchestrationEngine.OrchestrationEngineService;
   const snapshots = yield* ProjectionSnapshotQuery.ProjectionSnapshotQuery;
   const crypto = yield* Crypto.Crypto;
@@ -186,6 +189,13 @@ const make = Effect.gen(function* () {
   return PullRequestsToolkit.of({
     link_pull_request: (input) =>
       Effect.gen(function* () {
+        yield* McpInvocationContext.requireMcpCapability("pull-requests");
+        if (allowHosted) {
+          const remote = yield* callHostedPullRequest("link", LinkPullRequestResult, input).pipe(
+            Effect.mapError((cause) => new PullRequestLinkFailedError({ cause })),
+          );
+          if (remote !== undefined) return remote;
+        }
         const thread = yield* requireThread(PullRequestLinkFailedError);
         const project = yield* projectOf(thread, PullRequestLinkFailedError);
         const target = yield* resolveTarget(input, project);
@@ -211,6 +221,15 @@ const make = Effect.gen(function* () {
       }),
     unlink_pull_request: (input) =>
       Effect.gen(function* () {
+        yield* McpInvocationContext.requireMcpCapability("pull-requests");
+        if (allowHosted) {
+          const remote = yield* callHostedPullRequest(
+            "unlink",
+            UnlinkPullRequestResult,
+            input,
+          ).pipe(Effect.mapError((cause) => new PullRequestUnlinkFailedError({ cause })));
+          if (remote !== undefined) return remote;
+        }
         const thread = yield* requireThread(PullRequestUnlinkFailedError);
         const project = yield* projectOf(thread, PullRequestUnlinkFailedError);
         const target = yield* resolveTarget(input, project);
@@ -236,8 +255,18 @@ const make = Effect.gen(function* () {
         };
       }),
     list_thread_pull_requests: () =>
-      requireThread(PullRequestListFailedError).pipe(Effect.map(listThreadPullRequests)),
+      Effect.gen(function* () {
+        yield* McpInvocationContext.requireMcpCapability("pull-requests");
+        if (allowHosted) {
+          const remote = yield* callHostedPullRequest("list", ListThreadPullRequestsResult).pipe(
+            Effect.mapError((cause) => new PullRequestListFailedError({ cause })),
+          );
+          if (remote !== undefined) return remote;
+        }
+        return listThreadPullRequests(yield* requireThread(PullRequestListFailedError));
+      }),
   });
 });
 
-export const PullRequestsToolkitHandlersLive = PullRequestsToolkit.toLayer(make);
+export const PullRequestsToolkitHandlersLive = PullRequestsToolkit.toLayer(make());
+export const PullRequestsToolkitLocalHandlersLive = PullRequestsToolkit.toLayer(make(false));

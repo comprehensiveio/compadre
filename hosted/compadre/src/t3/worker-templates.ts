@@ -28,6 +28,18 @@ export interface T3WorkerTemplate {
 const NAMESPACE = "compadre.t3.worker-template.v1";
 const KEY = "current";
 
+// Builds run every six hours. Stop using an unmaintained cache well before
+// Modal's seven-day filesystem snapshot expiry, while retaining it for diagnosis.
+export const WORKER_TEMPLATE_MAX_AGE_MS = 24 * 60 * 60 * 1_000;
+
+export function workerTemplateIsFresh(
+  template: T3WorkerTemplate,
+  now = Date.now(),
+): boolean {
+  const age = now - Date.parse(template.builtAt);
+  return Number.isFinite(age) && age >= 0 && age < WORKER_TEMPLATE_MAX_AGE_MS;
+}
+
 export async function readWorkerTemplate(
   metadata: MetadataStore,
 ): Promise<T3WorkerTemplate | null> {
@@ -78,7 +90,7 @@ interface BuildHandle {
 }
 
 async function exec(
-  handle: BuildHandle,
+  handle: Pick<BuildHandle, "id" | "process">,
   step: string,
   command: string,
 ): Promise<string> {
@@ -97,6 +109,32 @@ async function exec(
     "t3 worker template build step",
   );
   return result.stdout;
+}
+
+/** Reconcile both cached clients and seed schema before probing dev login. */
+export async function prepareT3WorkerTemplate(
+  handle: Pick<BuildHandle, "id" | "process">,
+): Promise<void> {
+  await exec(
+    handle,
+    "environment.bootstrap",
+    "set -o pipefail; CLOUD_ENV_SETUP_TRACE=false scripts/cloud-env-setup.sh 2>&1 | tail -20",
+  );
+  await exec(
+    handle,
+    "environment.services",
+    "set -o pipefail; scripts/cloud-dev-up.sh 2>&1 | tail -20",
+  );
+  await exec(
+    handle,
+    "seed.migrate",
+    'set -o pipefail; export DATABASE_URL="$(bin/lib/hen_get_remote_db_url -e local)"; cd app && corepack pnpm migrate:cm:deploy 2>&1 | tail -20',
+  );
+  await exec(
+    handle,
+    "dev-up",
+    "set -o pipefail; scripts/compadre-dev-up.sh up 2>&1 | tail -20",
+  );
 }
 
 /**
@@ -144,16 +182,14 @@ export async function buildT3WorkerTemplate(input: {
       COMPADRE_DEV_PREVIEW_URL: preview.url.replace(/\/$/, ""),
       COMPADRE_DEV_PORT: "3000",
       HOME: "/home/node",
+      // pnpm must reconcile prebuilt dependencies without prompting for a TTY.
+      CI: "true",
     });
     await exec(handle, "repository.clone", repositoryCloneCommand(environment));
     const repoSha = (
       await exec(handle, "repository.sha", "git rev-parse HEAD")
     ).trim();
-    await exec(
-      handle,
-      "dev-up",
-      "set -o pipefail; scripts/compadre-dev-up.sh up 2>&1 | tail -20",
-    );
+    await prepareT3WorkerTemplate(handle);
     const dataOutput = await exec(
       handle,
       "dev-data.production-latest",

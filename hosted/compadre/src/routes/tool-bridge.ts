@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import { forwardPullRequestRequest } from "../t3/pull-request-access.js";
 import {
   dispatchEnvironmentToolBridgeRequest,
   dispatchRelayToolBridgeRequest,
@@ -6,6 +7,16 @@ import {
 } from "../tanstack/relay-tool-bridge.js";
 
 export const toolBridgeRoutes = new Hono();
+
+toolBridgeRoutes.post("/internal/t3-pull-requests", async (c) => {
+  const authorization = c.req.header("Authorization");
+  if (!authorization?.startsWith("Bearer ") || authorization.length > 4096) {
+    return c.body(null, 401);
+  }
+  const parsed = await readLimitedJson(c.req.raw);
+  if (parsed.status !== 200) return c.body(null, parsed.status);
+  return forwardPullRequestRequest({ authorization, body: parsed.body });
+});
 
 async function readLimitedJson(
   request: Request,
