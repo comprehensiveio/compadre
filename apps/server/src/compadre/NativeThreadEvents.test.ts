@@ -6,6 +6,7 @@ import {
   AuthOrchestrationReadScope,
   AuthOrchestrationOperateScope,
   AuthSessionId,
+  EnvironmentId,
   EventId,
   CommandId,
   DEFAULT_PROVIDER_INTERACTION_MODE,
@@ -21,7 +22,19 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Layer from "effect/Layer";
 import * as ManagedRuntime from "effect/ManagedRuntime";
-import { describe, expect, it } from "vite-plus/test";
+import { describe, expect, it, vi } from "vite-plus/test";
+import * as Stream from "effect/Stream";
+import { hostedPullRequestRoutes } from "./HostedPullRequestRoutes.ts";
+import { PullRequestsToolkitHandlersLive } from "../mcp/toolkits/pullRequests/handlers.ts";
+import {
+  PullRequestsToolkit,
+  type PullRequestTargetInput,
+} from "../mcp/toolkits/pullRequests/tools.ts";
+import { McpInvocationContext } from "../mcp/McpInvocationContext.ts";
+import {
+  pullRequestAccessProjection,
+  forwardPullRequestRequest,
+} from "../../../../hosted/compadre/src/t3/pull-request-access.ts";
 
 import { OrchestrationCommandReceiptRepositoryLive } from "../persistence/Layers/OrchestrationCommandReceipts.ts";
 import { OrchestrationEventStoreLive } from "../persistence/Layers/OrchestrationEventStore.ts";
@@ -119,6 +132,374 @@ async function seed(system: Awaited<ReturnType<typeof createOrchestrationSystem>
 }
 
 describe("native thread replication", () => {
+  it("persists worker branch discovery without importing paths or overwriting explicit PR links", async () => {
+    const threadId = ThreadId.make(NodeCrypto.randomUUID());
+    const sourceThreadId = ThreadId.make(NodeCrypto.randomUUID());
+    const source = await createOrchestrationSystem();
+    const central = await createOrchestrationSystem(true);
+    let serial = 0;
+    const commandId = () => CommandId.make(`branch-test:${threadId}:${++serial}`);
+    const current = async () => (await central.readModel()).threads.find((t) => t.id === threadId)!;
+    const updateBranch = async (branch: string | null) =>
+      source.run(
+        source.engine.dispatch({
+          type: "thread.meta.update",
+          commandId: commandId(),
+          threadId: sourceThreadId,
+          branch,
+          title: "Worker-only title",
+          worktreePath: "/workspace/worker-only-path",
+        }),
+      );
+    const discover = async (number: number | null) => {
+      const snapshot = await source.readModel();
+      const thread = snapshot.threads[0]!;
+      await source.run(
+        source.engine.dispatch({
+          type: "thread.pull-request.sync",
+          commandId: commandId(),
+          threadId: sourceThreadId,
+          projectId: thread.projectId,
+          snapshotSequence: snapshot.snapshotSequence,
+          expected: {
+            workspaceRoot: snapshot.projects[0]!.workspaceRoot,
+            branch: thread.branch,
+            worktreePath: thread.worktreePath,
+            linkedPullRequest: thread.linkedPullRequest ?? null,
+            branchPullRequest: thread.branchPullRequest ?? null,
+          },
+          branchPullRequest:
+            number === null
+              ? null
+              : {
+                  projectId: thread.projectId,
+                  repository: "owner/repo",
+                  number,
+                  url: `https://github.com/owner/repo/pull/${number}`,
+                },
+        }),
+      );
+    };
+    const replay = async (epoch = 1) => {
+      const page = await source.run(readNativeEventPage(source.engine, sourceThreadId, 0));
+      for (const event of page.events) {
+        const command = mapNativeThreadEvent(sourceThreadId, threadId, event, epoch);
+        if (command) await central.run(central.engine.dispatch(command));
+      }
+    };
+    try {
+      await seed(source, sourceThreadId);
+      await seed(central, threadId);
+      await central.run(
+        bindNativeThreadStream({
+          threadId,
+          sourceThreadId,
+          epoch: 1,
+          sourceSequence: 0,
+          checkpointOffset: 0,
+        }),
+      );
+      await central.run(
+        central.engine.dispatch({
+          type: "thread.pull-request.link",
+          commandId: commandId(),
+          threadId,
+          host: "github.com",
+          repository: "owner/other",
+          number: 99,
+          url: "https://github.com/owner/other/pull/99",
+          source: "manual",
+        }),
+      );
+      const canonicalUpdatedAt = (await current()).updatedAt;
+      await updateBranch("main");
+      await replay();
+      expect(await current()).toMatchObject({
+        branch: "main",
+        title: "Thread",
+        worktreePath: null,
+        updatedAt: canonicalUpdatedAt,
+      });
+      await updateBranch("feature/new-during-run");
+      await discover(42);
+      await replay();
+      const recorded = await current();
+      expect(recorded.branchPullRequest).toEqual({
+        projectId: ProjectId.make(`project:${threadId}`),
+        repository: "owner/repo",
+        number: 42,
+        url: "https://github.com/owner/repo/pull/42",
+      });
+      expect(recorded.pullRequests.map((link) => link.number)).toEqual([99]);
+      const sequence = (await central.readModel()).snapshotSequence;
+      await replay();
+      expect((await central.readModel()).snapshotSequence).toBe(sequence);
+
+      // Enforce the metadata boundary even when an importer bypasses the mapper.
+      const page = await source.run(readNativeEventPage(source.engine, sourceThreadId, 0));
+      const metadata = page.events.find((event) => event.type === "thread.meta-updated")!;
+      const mapped = mapNativeThreadEvent(sourceThreadId, threadId, metadata, 1)!;
+      expect(mapped.event.type).toBe("thread.meta-updated");
+      if (mapped.event.type !== "thread.meta-updated") throw new Error("Expected metadata");
+      await expect(
+        central.run(
+          central.engine.dispatch({
+            ...mapped,
+            commandId: commandId(),
+            event: {
+              ...mapped.event,
+              eventId: EventId.make(NodeCrypto.randomUUID()),
+              payload: { ...mapped.event.payload, title: "Must not import" },
+            },
+          }),
+        ),
+      ).rejects.toThrow("Native replication may only apply");
+
+      await central.run(
+        bindNativeThreadStream({
+          threadId,
+          sourceThreadId,
+          epoch: 2,
+          sourceSequence: page.next,
+          checkpointOffset: 0,
+        }),
+      );
+      await updateBranch("feature/second");
+      await discover(43);
+      await expect(replay(1)).rejects.toThrow("superseded");
+      await replay(2);
+      expect(await current()).toMatchObject({
+        branch: "feature/second",
+        branchPullRequest: { number: 43 },
+      });
+      await updateBranch(null);
+      await discover(null);
+      await replay(2);
+      expect(await current()).toMatchObject({ branch: null, branchPullRequest: null });
+      expect((await current()).pullRequests.map((link) => link.number)).toEqual([99]);
+      await updateBranch("feature/saved");
+      await discover(44);
+      await replay(2);
+      await source.dispose();
+      expect(await current()).toMatchObject({
+        branch: "feature/saved",
+        branchPullRequest: { number: 44 },
+      });
+    } finally {
+      await source.dispose();
+      await central.dispose();
+    }
+  });
+
+  it("keeps hosted PR tools and browser edits on the canonical thread, across retries and worker loss", async () => {
+    const threadId = ThreadId.make(NodeCrypto.randomUUID());
+    const sourceThreadId = ThreadId.make(NodeCrypto.randomUUID());
+    const otherThreadId = ThreadId.make(NodeCrypto.randomUUID());
+    const source = await createOrchestrationSystem();
+    const central = await createOrchestrationSystem(true);
+    const receiver = HttpRouter.toWebHandler(
+      hostedPullRequestRoutes.pipe(
+        Layer.provideMerge(Layer.succeed(OrchestrationEngineService, central.engine)),
+        Layer.provideMerge(Layer.succeed(ProjectionSnapshotQuery, central.snapshotQuery)),
+        Layer.provideMerge(NodeServices.layer),
+      ),
+      { disableLogger: true },
+    );
+    const workerEnvironment = pullRequestAccessProjection({
+      COMPADRE_CANONICAL_THREAD_ID: threadId,
+      COMPADRE_API_KEY: "test-pr-key",
+      COMPADRE_PUBLIC_URL: "https://controller.test",
+    });
+    const request = (body: unknown, token = workerEnvironment.COMPADRE_PULL_REQUESTS_TOKEN!) =>
+      receiver.handler(
+        new Request("https://central.test/api/compadre/pull-requests", {
+          method: "POST",
+          headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+          body: JSON.stringify(body),
+        }),
+      );
+    const target = { host: "github.com", repository: "example/repo", number: 42 };
+    const url = "https://github.com/example/repo/pull/42";
+    try {
+      await seed(source, sourceThreadId);
+      await seed(central, threadId);
+      await seed(central, otherThreadId);
+      vi.stubEnv("COMPADRE_API_KEY", "test-pr-key");
+      vi.stubEnv("COMPADRE_CANONICAL_THREAD_ID", threadId);
+      for (const [key, value] of Object.entries(workerEnvironment)) vi.stubEnv(key, value);
+      const dependencies = Layer.mergeAll(
+        Layer.succeed(OrchestrationEngineService, source.engine),
+        Layer.succeed(ProjectionSnapshotQuery, source.snapshotQuery),
+        NodeServices.layer,
+      );
+      const toolkit = await source.run(
+        PullRequestsToolkit.pipe(
+          Effect.provide(PullRequestsToolkitHandlersLive.pipe(Layer.provide(dependencies))),
+        ),
+      );
+      const call = (name: keyof typeof PullRequestsToolkit.tools, params: PullRequestTargetInput) =>
+        source.run(
+          toolkit.handle(name, params).pipe(
+            Stream.unwrap,
+            Stream.runCollect,
+            Effect.map((results) => results.at(-1)!.result),
+            Effect.provideService(McpInvocationContext, {
+              environmentId: EnvironmentId.make("worker"),
+              threadId: sourceThreadId,
+              providerSessionId: "worker-session",
+              providerInstanceId: ProviderInstanceId.make("codex"),
+              issuedAt: 1,
+              capabilities: new Set(["pull-requests"] as const),
+            }),
+            Effect.provide(dependencies),
+          ),
+        );
+      let centralAvailable = true;
+      vi.stubGlobal("fetch", async (input: string | URL, init?: RequestInit) => {
+        if (!centralAvailable) return new Response(null, { status: 503 });
+        const forwarded = new Request(input.toString(), init);
+        expect(forwarded.url).toBe(workerEnvironment.COMPADRE_PULL_REQUESTS_URL);
+        return forwardPullRequestRequest({
+          authorization: forwarded.headers.get("authorization")!,
+          body: await forwarded.json(),
+          environment: { COMPADRE_T3_CENTRAL_URL: "https://central.test" },
+          fetch: (url, init) => receiver.handler(new Request(url.toString(), init)),
+        });
+      });
+      expect(await call("link_pull_request", { url })).toMatchObject({
+        ...target,
+        alreadyLinked: false,
+      });
+      expect(await call("link_pull_request", { url })).toMatchObject({ alreadyLinked: true });
+      expect((await source.readModel()).threads[0]?.pullRequests).toEqual([]);
+      expect(
+        (await central.readModel()).threads.find((thread) => thread.id === threadId)?.pullRequests,
+      ).toMatchObject([{ ...target, source: "agent" }]);
+      expect(
+        (await central.readModel()).threads.find((thread) => thread.id === otherThreadId)
+          ?.pullRequests,
+      ).toEqual([]);
+
+      // Additional repositories and server-maintained review state use the same collection.
+      const otherUrl = "https://github.com/example/other/pull/7";
+      await call("link_pull_request", { url: otherUrl });
+      await central.run(
+        central.engine.dispatch({
+          type: "thread.pull-request-link.sync",
+          commandId: CommandId.make("pr-state-sync"),
+          threadId,
+          ...target,
+          stack: null,
+          snapshot: {
+            state: "open",
+            title: "Shared review",
+            headBranch: "feature",
+            baseBranch: "main",
+            isDraft: false,
+            updatedAt: createdAt,
+            syncedAt: createdAt,
+          },
+        }),
+      );
+      expect(await call("list_thread_pull_requests", {})).toMatchObject({
+        pullRequests: expect.arrayContaining([
+          {
+            ...target,
+            url,
+            source: "agent",
+            state: "open",
+            title: "Shared review",
+            headBranch: "feature",
+            baseBranch: "main",
+            isDraft: false,
+            stack: null,
+          },
+          expect.objectContaining({ repository: "example/other", number: 7 }),
+        ]),
+      });
+      await call("unlink_pull_request", { url: otherUrl });
+
+      // This is the command issued by the browser; the next agent read must see it immediately.
+      await central.run(
+        central.engine.dispatch({
+          type: "thread.pull-request.unlink",
+          commandId: CommandId.make("browser-unlink"),
+          threadId,
+          ...target,
+        }),
+      );
+      expect(await call("list_thread_pull_requests", {})).toEqual({ pullRequests: [], chains: [] });
+      expect(await call("unlink_pull_request", { url })).toMatchObject({ wasLinked: false });
+      await central.run(
+        central.engine.dispatch({
+          type: "thread.pull-request.link",
+          commandId: CommandId.make("browser-link"),
+          threadId,
+          ...target,
+          url,
+          source: "manual",
+        }),
+      );
+      expect(await call("list_thread_pull_requests", {})).toMatchObject({
+        pullRequests: [{ ...target, source: "manual" }],
+      });
+      expect(await call("unlink_pull_request", { url })).toMatchObject({ wasLinked: true });
+      expect(await call("list_thread_pull_requests", {})).toEqual({ pullRequests: [], chains: [] });
+
+      centralAvailable = false;
+      await expect(call("link_pull_request", { url })).rejects.toThrow("Could not link");
+      expect((await source.readModel()).threads[0]?.pullRequests).toEqual([]);
+      vi.stubEnv("COMPADRE_PULL_REQUESTS_TOKEN", "");
+      await expect(call("link_pull_request", { url })).rejects.toThrow("Could not link");
+
+      // The credential, not a caller-supplied thread ID, selects the canonical record.
+      expect(
+        (await request({ operation: "link", input: { url }, threadId: otherThreadId })).status,
+      ).toBe(200);
+      expect((await request({ operation: "list" }, "wrong-token")).status).toBe(401);
+      const token = workerEnvironment.COMPADRE_PULL_REQUESTS_TOKEN!;
+      const [payload, signature] = token.split(".");
+      const changedThread = Buffer.from(
+        JSON.stringify({
+          ...JSON.parse(Buffer.from(payload!, "base64url").toString()),
+          threadId: otherThreadId,
+        }),
+      ).toString("base64url");
+      expect((await request({ operation: "list" }, `${changedThread}.${signature}`)).status).toBe(
+        401,
+      );
+      const expired = pullRequestAccessProjection(
+        {
+          COMPADRE_CANONICAL_THREAD_ID: threadId,
+          COMPADRE_API_KEY: "test-pr-key",
+          COMPADRE_PUBLIC_URL: "https://controller.test",
+        },
+        () => 0,
+      );
+      expect(
+        (await request({ operation: "list" }, expired.COMPADRE_PULL_REQUESTS_TOKEN)).status,
+      ).toBe(401);
+      expect((await request({ operation: "delete-thread" })).status).toBe(400);
+      expect(
+        await (await request({ operation: "link", input: { url: "not-a-pr" } })).json(),
+      ).toMatchObject({ error: expect.stringContaining("not a recognised") });
+      await source.dispose();
+      expect(await (await request({ operation: "list" })).json()).toMatchObject({
+        result: { pullRequests: [{ ...target }] },
+      });
+      expect(
+        (await central.readModel()).threads.find((thread) => thread.id === otherThreadId)
+          ?.pullRequests,
+      ).toEqual([]);
+    } finally {
+      vi.unstubAllGlobals();
+      vi.unstubAllEnvs();
+      await receiver.dispose();
+      await source.dispose();
+      await central.dispose();
+    }
+  });
+
   it("preserves upstream compaction counts and summary through central storage and replay", async () => {
     const threadId = ThreadId.make(NodeCrypto.randomUUID());
     const sourceThreadId = ThreadId.make(NodeCrypto.randomUUID());

@@ -26,6 +26,7 @@ import {
   t3EncryptedPorts,
 } from "./dev-environment.js";
 import { devBackupAccessProjection } from "./dev-backups.js";
+import { pullRequestAccessProjection } from "./pull-request-access.js";
 
 const DEFAULT_T3_PORT = 3773;
 const DEFAULT_T3_BASE_DIR = "/var/lib/t3";
@@ -609,6 +610,7 @@ async function projectWorkerRuntimeEnvironment(
     : {};
   await handle.env.set({
     ...projectedProviderEnvironment(workerEnvironment),
+    ...pullRequestAccessProjection(workerEnvironment),
     ...devArtifactEnvironment,
     ...devBackupEnvironment,
     ...devPreviewEnvironment,

@@ -126,7 +126,7 @@ export function CompadrePreviewIndicator(props: {
             target="_blank"
             rel="noopener noreferrer"
             aria-label="Preview ready"
-            className="-m-0.5 ml-0.5 inline-flex shrink-0 items-center rounded-sm p-0.5 text-blue-600 outline-none transition-colors hover:bg-blue-500/10 hover:text-blue-800 focus-visible:ring-2 focus-visible:ring-ring dark:text-blue-400 dark:hover:text-blue-200"
+            className="inline-flex size-5 shrink-0 items-center justify-center rounded-sm text-blue-600 outline-none transition-colors hover:bg-blue-500/10 hover:text-blue-800 focus-visible:ring-2 focus-visible:ring-ring dark:text-blue-400 dark:hover:text-blue-200"
             onPointerDown={(event) => event.stopPropagation()}
             onClick={(event) => event.stopPropagation()}
             onDoubleClick={(event) => event.stopPropagation()}

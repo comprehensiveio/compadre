@@ -8,6 +8,16 @@ import {
 } from "../tanstack/relay-tool-bridge.js";
 import { toolBridgeRoutes } from "./tool-bridge.js";
 
+test("requires a bearer and valid bounded JSON on the PR relay", async () => {
+  assert.equal((await toolBridgeRoutes.request("/internal/t3-pull-requests", { method: "POST", body: "{}" })).status, 401);
+  assert.equal((await toolBridgeRoutes.request("/internal/t3-pull-requests", {
+    method: "POST", body: "bad-json", headers: { authorization: "Bearer scoped-token" },
+  })).status, 400);
+  assert.equal((await toolBridgeRoutes.request("/internal/t3-pull-requests", {
+    method: "POST", body: "{}", headers: { authorization: "Bearer scoped-token", "content-length": String(MAX_BRIDGE_REQUEST_BYTES + 1) },
+  })).status, 413);
+});
+
 test("rejects an oversized declared bridge request before parsing", async () => {
   const response = await toolBridgeRoutes.request(
     "/internal/tanstack-tool-bridge/missing",

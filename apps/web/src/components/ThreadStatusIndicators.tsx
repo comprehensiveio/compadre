@@ -166,7 +166,7 @@ export function ThreadPullRequestBadgeControl({
   const className = cn(
     variant === "ghost"
       ? buttonVariants({ variant: "ghost", size: "xs" })
-      : "inline-flex shrink-0 cursor-pointer items-center gap-0.5 whitespace-nowrap border-b border-transparent hover:border-current focus-visible:outline-2 focus-visible:outline-ring",
+      : "inline-flex h-5 shrink-0 cursor-pointer items-center justify-center gap-1 whitespace-nowrap rounded-sm px-0.5 leading-none underline-offset-4 hover:underline focus-visible:outline-2 focus-visible:outline-ring",
     "text-xs tabular-nums",
     variant === "ghost" &&
       "font-normal text-xs! active:scale-100 [--control-icon-color:currentColor]",
@@ -176,7 +176,10 @@ export function ThreadPullRequestBadgeControl({
   );
   const content = (
     <>
-      <ThreadPullRequestBadgeIcon icon={badge?.kind ?? "pull-request"} />
+      <ThreadPullRequestBadgeIcon
+        icon={badge?.kind ?? "pull-request"}
+        className={variant === "underline" ? "size-3.5" : undefined}
+      />
       {isStack ? badge.layers : linkedCount !== null ? `+${linkedCount}` : number}
     </>
   );

@@ -14,6 +14,7 @@ import {
 } from "@t3tools/contracts";
 import { applyServerSettingsPatch } from "@t3tools/shared/serverSettings";
 import { assert, describe, it } from "@effect/vitest";
+import { vi } from "vite-plus/test";
 import * as Crypto from "effect/Crypto";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -302,6 +303,45 @@ const startHarness = Effect.fn("startThreadSettlementHarness")(function* (
 });
 
 describe("ThreadSettlementReactor", () => {
+  it.effect("uses a hosted worker's discovered PR without looking at the Render checkout", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        vi.stubEnv("COMPADRE_NATIVE_T3_URL", "https://controller.test/hosted/t3/chat");
+        const fixture = yield* makeHarness({
+          snapshot: makeSnapshot([
+            makeThread("discovered", {
+              branch: "feature",
+              branchPullRequest: {
+                projectId: PROJECT_ID,
+                repository: "owner/repository",
+                number: 42,
+                url: "https://github.com/owner/repository/pull/42",
+              },
+            }),
+            makeThread("not-discovered", { branch: "another-feature" }),
+          ]),
+          settings: {
+            ...DEFAULT_SERVER_SETTINGS,
+            sidebarAutoSettleAfterDays: null,
+            sidebarAutoSettleOnMerge: true,
+          },
+          pullRequestSummary: (input) =>
+            Effect.succeed(makePullRequestSummary({ ...input, state: "merged" })),
+        });
+        yield* Effect.gen(function* () {
+          const reactor = yield* ThreadSettlementReactor.ThreadSettlementReactor;
+          yield* startHarness(reactor, fixture.activation, fixture.snapshotReads);
+          assert.deepEqual(yield* Ref.get(fixture.branchCalls), []);
+          assert.deepEqual(
+            (yield* Ref.get(fixture.commands)).map((command) => command.threadId),
+            ["discovered"],
+          );
+          assert.strictEqual((yield* Ref.get(fixture.summaryCalls)).length, 1);
+        }).pipe(Effect.provide(fixture.layer));
+      }),
+    ).pipe(Effect.ensuring(Effect.sync(() => vi.unstubAllEnvs()))),
+  );
+
   it("distinguishes a project that inherits the threshold from one that disables it", () => {
     const inherits = ThreadSettlementReactor.autoSettlementSettingsKey({
       ...DEFAULT_SERVER_SETTINGS,

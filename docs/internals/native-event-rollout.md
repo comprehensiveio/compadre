@@ -12,12 +12,19 @@ That journal is the source outbox. The controller reads it using the Durable
 Streams catch-up/long-poll protocol and forwards bounded batches to central T3.
 There is no second copy of the conversation payload in controller Postgres.
 
-Central T3 imports assistant messages, sessions, activities, plans and checkpoint
-summaries through its ordinary command engine. It preserves native payloads and
+Central T3 imports assistant messages, sessions, activities, plans, checkpoint
+summaries and selected branch observations through its ordinary command engine. It preserves native payloads and
 maps environment-local identifiers. Event append, projection, delivery ownership
 validation, and the command receipt commit in one transaction. Replayed commands
 reuse their receipts; conflicting event identities fail rather than duplicating
 text. Existing central messages and canonical thread IDs remain unchanged.
+
+`compadre/NativeThreadEvents.ts` explicitly classifies every orchestration event.
+Its exhaustive check makes a newly added event a compile error until its ownership
+is assessed. Changed payloads and producers still require review even when the event
+name is unchanged. Excluded events include central ingress commands, user input,
+thread organization, and worker filesystem paths; these are not generic output
+that can be copied back into central T3.
 
 `native_thread_streams` stores one central delivery binding per thread: source
 thread, worker epoch, last applied source sequence, and checkpoint numbering
@@ -35,6 +42,69 @@ claim. Central PUT claims a binding; central POST applies a versioned batch.
 Those write operations require the controller credential. Clients continue
 reading their existing central T3 projections and never wake a worker to open
 history.
+
+### Pull request associations
+
+PR links are shared central conversation state. In hosted workers, the existing
+`t3-code` link/unlink/list tools call the controller's `/internal/t3-pull-requests`
+relay, which forwards to central `/api/compadre/pull-requests`. Central invokes the
+upstream tool handlers and commits through the normal command engine. The browser
+and agent therefore read and edit one authoritative collection, including stacks
+and cross-repository links. Tool activity still arrives through the native journal;
+worker-local PR link/sync events are explicitly excluded so an old snapshot or
+worker sync reactor cannot resurrect a centrally unlinked PR.
+
+The controller projects `COMPADRE_PULL_REQUESTS_URL` and a signed
+`COMPADRE_PULL_REQUESTS_TOKEN` on provisioning and restore. The token grants only
+PR association operations for its canonical thread, expires after the configured
+worker lifetime plus five minutes, and is signed with `COMPADRE_API_KEY`, which
+stays outside Modal. Central derives the thread from the signed token; request
+bodies cannot select another thread. The relay reaches private central addresses
+without projecting controller credentials or internal URLs into the worker.
+Standalone T3 retains local PR tools. A hosted worker with absent credentials,
+expired access, an unavailable central server, or an unsupported endpoint fails
+the call without writing a worker-only association.
+
+Roll out the central endpoint first, then the controller relay/projection and the
+packaged worker. The relay requires the central protocol-version response header
+so an older server's SPA fallback cannot be mistaken for success. Existing workers
+keep their existing tools until replaced by a fresh worker or snapshot restore
+using the updated package; PR support does not itself trigger the journal/action
+capability upgrader. They are not patched during an active turn. Links created only
+in older worker databases are not automatically imported: relink their URLs through the
+upgraded tools or central UI. No database migration is required.
+
+### Worker branch discovery
+
+`HostedBranchTracking.ts` extends the existing `ThreadPullRequestReactor` only
+inside a single-thread hosted worker. Unlike shared local project roots, that
+worker's root checkout belongs to its thread, so its current Git branch is
+authoritative even when the thread started with no recorded branch. Startup,
+turn completion and the existing one-minute sweep observe the current branch
+before PR discovery. No checkout is changed. Detached HEAD records a null branch.
+Restored workers republish their observations at startup even when saved state
+already matches, so upgrades can populate previously missing central metadata.
+
+Native `thread.meta-updated` events import only `branch` and `branchPullRequest`;
+the decider enforces that allowlist and replaces the worker PR's project ID with
+the canonical thread's project ID. Paths, titles, model selections and explicit
+links remain central-owned. Delivery uses the same transactional receipts,
+replay deduplication and generation fencing as other native output. The observed
+branch PR is a discovery hint, not an explicit `pullRequests` collection entry.
+Branch switches can replace/clear it without changing manual or agent links;
+upstream retains a terminal PR when a shared checkout returns to its default branch.
+
+Central branch discovery is disabled in hosted mode; Render must not overwrite
+Modal observations using its bootstrap checkout. Central settlement can still
+read a discovered PR's status from its host, but never falls back to Render's
+local branch lookup. Existing explicit-link snapshot/stack refresh is unchanged.
+
+Deploy the central mapper/decider before the packaged worker. Old consumers
+ignore these metadata events, and old workers lack root-checkout following.
+Already-running workers acquire this behavior only after replacement/restore
+with the updated package. New/restored worker observations must reach the
+central journal before claiming hosted behavior verified. There is no migration,
+no worker wakeup for reads, and no change to plan mode.
 
 ## Activation and recovery
 
