@@ -4,6 +4,7 @@
  * HTTP-based MCPs use pre-obtained tokens via environment variables.
  * Datadog uses a service access token for headless server authentication.
  * Jam uses its hosted HTTP MCP server with a PAT for headless server auth.
+ * PostHog uses its hosted HTTP MCP server with a project-scoped personal API key.
  * Google Workspace uses a bot-user OAuth refresh token cached for workspace-mcp.
  * Slack uses a bot token via our stdio MCP server so writes use standard Markdown.
  * Postgres MCP runs as a stdio subprocess.
@@ -19,6 +20,9 @@ import { fileURLToPath } from "url";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DEFAULT_DATADOG_MCP_URL =
   "https://mcp.datadoghq.com/v1/mcp?toolsets=core,apm,llmobs";
+const DEFAULT_POSTHOG_MCP_URL = "https://mcp.posthog.com/mcp";
+const POSTHOG_MCP_ORGANIZATION_ID = "01a0b018-1eb1-0000-7a15-6e0020552cdd";
+const POSTHOG_MCP_PROJECT_ID = "614600";
 
 /** Provider-neutral subset used by both the Agent SDK and TanStack harnesses. */
 export type CompadreMcpServerConfig =
@@ -155,6 +159,29 @@ export function buildPostgresMcpServer(
   };
 }
 
+export function buildPostHogMcpServer(
+  personalApiKey: string,
+  options: {
+    url?: string;
+    mode?: "cli" | "tools";
+    readOnly?: boolean;
+  } = {},
+): CompadreMcpServerConfig {
+  return {
+    type: "http",
+    url: options.url ?? DEFAULT_POSTHOG_MCP_URL,
+    headers: {
+      Authorization: `Bearer ${personalApiKey}`,
+      "x-posthog-mcp-mode": options.mode ?? "cli",
+      ...(options.readOnly !== false
+        ? { "x-posthog-read-only": "true" }
+        : {}),
+      "x-posthog-organization-id": POSTHOG_MCP_ORGANIZATION_ID,
+      "x-posthog-project-id": POSTHOG_MCP_PROJECT_ID,
+    },
+  };
+}
+
 export async function buildMcpServers() {
   const datadogServer = buildDatadogMcpServer();
   const googleWorkspaceCredentialsDir =
@@ -229,6 +256,29 @@ export async function buildMcpServers() {
         Authorization: `Bearer ${env("JAM_MCP_PAT")}`,
       },
     };
+  }
+
+  if (configured("PostHog", ["POSTHOG_PERSONAL_API_KEY"])) {
+    const configuredMode = process.env.POSTHOG_MCP_MODE;
+    if (
+      configuredMode &&
+      configuredMode !== "cli" &&
+      configuredMode !== "tools"
+    ) {
+      throw new Error("POSTHOG_MCP_MODE must be either cli or tools");
+    }
+    const mode =
+      configuredMode === "cli" || configuredMode === "tools"
+        ? configuredMode
+        : undefined;
+    servers.posthog = buildPostHogMcpServer(
+      env("POSTHOG_PERSONAL_API_KEY"),
+      {
+        url: process.env.POSTHOG_MCP_URL,
+        mode,
+        readOnly: process.env.POSTHOG_MCP_READ_ONLY !== "false",
+      },
+    );
   }
 
   const compAppServer = buildCompMcpServer();

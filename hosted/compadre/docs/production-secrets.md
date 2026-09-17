@@ -22,6 +22,26 @@ both services must receive exactly the same value. Worker processes receive
 only the allowlisted subset projected by the controller; Modal is not a second
 secret store.
 
+## PostHog MCP credential
+
+`POSTHOG_PERSONAL_API_KEY` lives only in `compadre-production-api` and is
+consumed by `compadre-api`. Compadre maintainers own it. Create it in PostHog
+with the `MCP Server` preset for the intended Comprehensive project. The
+non-secret Comprehensive organization and project IDs are source-controlled in
+`src/mcp.ts`, which pins that destination and removes context-switching tools.
+The controller keeps the key on Render and exposes only the discovered PostHog
+tools through the authenticated per-worker bridge.
+
+The source-controlled defaults use PostHog's token-efficient CLI mode and
+read-only tools. Changing `POSTHOG_MCP_READ_ONLY` to `false` expands the agent's
+authority to PostHog writes and requires an explicit review of the key scopes
+and destination pins.
+
+Rotate the credential by creating a replacement with the same preset and
+project, updating the environment-group value, verifying a fresh Codex and
+Claude turn can run a named PostHog read, and then revoking the old key. Never
+place either key in worker environment, prompts, logs, or Modal secrets.
+
 The optional Codex subscription experiment uses three values in
 `compadre-production-api`:
 

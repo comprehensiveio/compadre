@@ -32,6 +32,12 @@ services:
         value: "true"
       - key: COMPADRE_PUBLIC_URL
         value: https://compadre-api.comprehensive.io
+      - key: POSTHOG_MCP_URL
+        value: https://mcp.posthog.com/mcp
+      - key: POSTHOG_MCP_MODE
+        value: cli
+      - key: POSTHOG_MCP_READ_ONLY
+        value: "true"
       - key: COMPADRE_T3_CENTRAL_URL
         value: https://compadre.comprehensive.io
       # Native tool output must not traverse the public web application firewall.

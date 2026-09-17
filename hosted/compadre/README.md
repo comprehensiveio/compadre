@@ -14,6 +14,7 @@ MCP access to our infrastructure.
 | **GitHub**           | HTTP (Copilot MCP)                              | Repos, PRs, issues                                                                             |
 | **Render**           | HTTP (`mcp.render.com`)                         | Service management, deploys, logs                                                              |
 | **Jam**              | HTTP                                            | Jam recordings, diagnostics, and debugging context                                             |
+| **PostHog**          | HTTP (hosted MCP)                               | Product analytics, dashboards, flags, experiments, replay, and error tracking                  |
 | **Postgres**         | stdio (`@modelcontextprotocol/server-postgres`) | Read-only database access                                                                      |
 | **S3**               | stdio (built in)                                | Read and inspect configured object storage                                                     |
 | **Google Workspace** | stdio (`workspace-mcp`)                         | Google Docs, Drive, Sheets, Slides, Forms, Tasks, and Calendar access as the Compadre bot user |
@@ -67,6 +68,8 @@ See `.env.example` for the full list. Key notes:
 
 - **DATADOG_MCP_ACCESS_TOKEN**: A Datadog Service Access Token (recommended for the deployed service) or Personal Access Token. It is sent as a bearer token to Datadog's stable MCP endpoint; no API key or OAuth refresh token is required.
 - **DATADOG_MCP_URL**: Optional endpoint override for another Datadog site or toolset selection. Defaults to US1 with the `core`, `apm`, and `llmobs` toolsets.
+- **POSTHOG_PERSONAL_API_KEY**: A project-scoped PostHog personal API key created with the `MCP Server` preset. The controller sends it only as an HTTP bearer header to PostHog's hosted MCP and never projects it into Modal.
+- **POSTHOG_MCP_URL / POSTHOG_MCP_MODE / POSTHOG_MCP_READ_ONLY**: The endpoint defaults to `https://mcp.posthog.com/mcp`, mode defaults to token-efficient `cli`, and access defaults to read-only. Set `POSTHOG_MCP_READ_ONLY=false` only when the agent should be able to mutate the pinned PostHog project. The Comprehensive organization and project IDs are non-secret constants in `src/mcp.ts`; their headers remove context-switching tools.
 - **DD_SERVICE / DD_LLMOBS_ENABLED / DD_LLMOBS_ML_APP / DD_TRACE_OTEL_ENABLED**: Attribute TanStack's provider-neutral OpenTelemetry agent/model/tool spans to Compadre in Datadog. Compadre defaults these on at startup unless explicitly overridden.
 - **DD_METRICS_OTEL_ENABLED**: Export TanStack's GenAI token and duration histograms through `dd-trace`.
 - **COMPADRE_DURABILITY_BACKEND / COMPADRE_DURABILITY_DATABASE_URL**: Persist TanStack run lifecycle records and ordered AG-UI delivery events. The default is off, `memory` enables database-free local replay, and deployed Workflows use `postgres` with a dedicated URL.
