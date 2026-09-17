@@ -13,6 +13,7 @@ export interface CompadreUser {
   realName?: string;
   avatarUrl?: string;
   email?: string;
+  githubLogin?: string;
 }
 
 export interface SlackUserIdentityInput extends SlackIdentityProfile {
@@ -138,6 +139,7 @@ function toCompadreUser(row: typeof users.$inferSelect): CompadreUser {
     ...(row.realName ? { realName: row.realName } : {}),
     ...(row.avatarUrl ? { avatarUrl: row.avatarUrl } : {}),
     ...(row.email ? { email: row.email } : {}),
+    ...(row.githubLogin ? { githubLogin: row.githubLogin } : {}),
   };
 }
 
@@ -275,6 +277,17 @@ export class UserDirectory {
       .where(and(eq(users.id, userId), eq(users.status, "active")))
       .limit(1);
     return rows[0] ? toCompadreUser(rows[0]) : null;
+  }
+
+  /** Stores a validated GitHub username (null clears it) and returns the active user, or null if none. */
+  async setGithubLogin(userId: string, githubLogin: string | null): Promise<CompadreUser | null> {
+    const rows = await this.db
+      .update(users)
+      .set({ githubLogin, updatedAt: new Date() })
+      .where(and(eq(users.id, userId), eq(users.status, "active")))
+      .returning();
+    const row = rows[0];
+    return row ? toCompadreUser(row) : null;
   }
 }
 

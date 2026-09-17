@@ -167,6 +167,35 @@ Postgres. This is a transitional recovery record and duplicates conversation
 text. Replace it with a narrow execution record after durable worker-event
 delivery can reconstruct central T3 without the full snapshot.
 
+### Requester commit credit
+
+Worker commits are authored by the shared Compadre git identity, so the human
+who asked for the change would otherwise be invisible in git history. Before
+each turn the controller (`src/services/co-author.ts`, called from the
+`prepareNativeDelivery` hook in `src/t3/runtime.ts`) writes the requester's
+`Co-authored-by: Name <address>` line to `/home/node/.compadre/co-author` and
+installs a `prepare-commit-msg` hook into the checkout's `.git/hooks`. The hook
+appends that trailer to each commit once (`git interpret-trailers --if-exists
+addIfDifferent`), and GitHub carries it into the squash-merge commit.
+
+The address decides whether GitHub links the credit to an account:
+
+- When the user has a GitHub username stored (`compadre_users.github_login`,
+  editable under Settings → General → Account in the hosted web UI), the
+  trailer uses `<login>@users.noreply.github.com`, which GitHub resolves by
+  username regardless of which emails the person verified.
+- Otherwise the trailer uses the Slack email from the user record. GitHub links
+  that only if the same address is verified on the person's GitHub account; an
+  unmatched email still shows the name, unlinked.
+
+A requester with neither, or an API or trigger turn, clears the file so no
+trailer is added. The requester travels on the native run request as
+`requesterUserId`, taken from the turn's browser or Slack attribution. The web
+UI reaches the username through the T3 server's `/api/account/profile` proxy,
+which forwards to the controller's `/internal/users/:id/profile` with the
+service token and the id from the browser session, so a user can only edit
+their own record. Projection failures log a warning and never block the turn.
+
 ## Durable Slack ingress
 
 A verified, AI-routable Slack event is persisted to Postgres

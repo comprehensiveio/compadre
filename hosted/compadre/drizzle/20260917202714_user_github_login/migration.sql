@@ -1,0 +1,1 @@
+ALTER TABLE "compadre_users" ADD COLUMN "github_login" text;

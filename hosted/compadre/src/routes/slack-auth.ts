@@ -10,6 +10,7 @@ import {
   verifySlackOpenIdToken,
   type SlackOpenIdConfig,
 } from "../services/slack-openid.js";
+import { normalizeGithubLogin } from "../services/github-login.js";
 import {
   slackIdentityFromOpenIdClaims,
   type UserDirectory,
@@ -24,7 +25,7 @@ export interface SlackAuthDependencies {
     > | null
   >;
   getUserDirectory: () => Promise<
-    Pick<UserDirectory, "upsertSlackIdentity" | "findActiveById"> | null
+    Pick<UserDirectory, "upsertSlackIdentity" | "findActiveById" | "setGithubLogin"> | null
   >;
   fetch: typeof globalThis.fetch;
   verifyIdToken: typeof verifySlackOpenIdToken;
@@ -173,6 +174,46 @@ export function createSlackAuthRoutes(
     }
     c.header("cache-control", "no-store");
     return c.json({ ok: true, user, returnTo: grant.returnTo });
+  });
+
+  // Service-token routes the web server proxies so a signed-in user can read
+  // and edit their own profile.
+  routes.get("/internal/users/:id/profile", async (c) => {
+    const config = authConfiguration(deps.environment, c.req.url);
+    if (!config || !bearerMatches(c.req.header("authorization"), config.serviceToken)) {
+      return c.json({ ok: false, error: "Unauthorized" }, 401);
+    }
+    const directory = await deps.getUserDirectory();
+    if (!directory) {
+      return c.json({ ok: false, error: "Authentication persistence unavailable" }, 503);
+    }
+    const user = await directory.findActiveById(c.req.param("id"));
+    if (!user) return c.json({ ok: false, error: "User not found" }, 404);
+    c.header("cache-control", "no-store");
+    return c.json({ ok: true, user });
+  });
+
+  routes.post("/internal/users/:id/profile", async (c) => {
+    const config = authConfiguration(deps.environment, c.req.url);
+    if (!config || !bearerMatches(c.req.header("authorization"), config.serviceToken)) {
+      return c.json({ ok: false, error: "Unauthorized" }, 401);
+    }
+    const directory = await deps.getUserDirectory();
+    if (!directory) {
+      return c.json({ ok: false, error: "Authentication persistence unavailable" }, 503);
+    }
+    const body: { githubLogin?: unknown } = await c.req
+      .json<{ githubLogin?: unknown }>()
+      .catch(() => ({}));
+    const raw = typeof body.githubLogin === "string" ? body.githubLogin.trim() : "";
+    const githubLogin = raw ? normalizeGithubLogin(raw) : null;
+    if (raw && !githubLogin) {
+      return c.json({ ok: false, error: "Enter a valid GitHub username" }, 400);
+    }
+    const user = await directory.setGithubLogin(c.req.param("id"), githubLogin);
+    if (!user) return c.json({ ok: false, error: "User not found" }, 404);
+    c.header("cache-control", "no-store");
+    return c.json({ ok: true, user });
   });
 
   return routes;

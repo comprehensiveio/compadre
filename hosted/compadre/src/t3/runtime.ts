@@ -4,13 +4,15 @@ import { prepareNativeDelivery } from "./native-delivery.js";
 import { ensureNativeThreadDeliveryWorkflow } from "../temporal/client.js";
 import { WorkspaceReviewStore } from "./workspace-review.js";
 import crypto from "node:crypto";
-import { log } from "../logging.js";
+import { log, serializeError } from "../logging.js";
+import { coAuthorTrailer, projectCoAuthor } from "../services/co-author.js";
+import { getConfiguredUserDirectory } from "../services/user-directory-runtime.js";
 import { getConfiguredAgentRunDurability } from "../durability/runtime.js";
 import { getConfiguredThreadPersistence } from "../persistence/runtime.js";
 import { recoverCentralT3DurableRuns } from "../services/central-t3-run.js";
 import { T3ThreadBindingStore } from "../services/t3-thread-bindings.js";
 import { SlackTurnDeliveryStore } from "../services/slack-turn-delivery-store.js";
-import { T3Gateway } from "./gateway.js";
+import { T3Gateway, type T3EnvironmentConnection } from "./gateway.js";
 import { CodexSubscriptionLane } from "./codex-subscription-lane.js";
 import { configuredCentralT3Client } from "./central-conversation.js";
 import { T3ModalEnvironmentManager } from "./modal-environments.js";
@@ -18,7 +20,7 @@ import { codexApiAuthJsonFromEnvironment } from "./modal-worker.js";
 import { readWorkerTemplate } from "./worker-templates.js";
 import type { NativeT3RunDriverDependencies } from "./native-t3-run-driver.js";
 import { NativeT3RunCoordinator } from "./run-coordinator.js";
-import { NativeT3RunRequestStore } from "./run-request-store.js";
+import { NativeT3RunRequestStore, type NativeT3RunRequest } from "./run-request-store.js";
 import { NativeT3RunControlStore } from "./run-control.js";
 import {
   createTemporalNativeT3WorkflowLauncher,
@@ -305,9 +307,29 @@ export async function getConfiguredNativeT3RunDriverDependencies(): Promise<Nati
       if (!delivery || !central) throw new Error("Native event delivery is not configured");
       const attached = connection ?? await gateway.attachWorker(request.canonicalThreadId);
       if (!attached) throw new Error("Native event worker is unavailable");
+      await projectRequesterCoAuthor(request, attached.environment.sandbox);
       await prepareNativeDelivery({ delivery, central, request, connection: attached, start: ensureNativeThreadDeliveryWorkflow });
     },
   };
+}
+
+/**
+ * Refreshed every turn: the requester can change within a thread, and API or
+ * trigger turns have no human to credit. Attribution is best-effort; a missing
+ * trailer must never block a turn.
+ */
+async function projectRequesterCoAuthor(
+  request: NativeT3RunRequest,
+  sandbox: T3EnvironmentConnection["sandbox"],
+): Promise<void> {
+  if (!sandbox || request.providerAction) return;
+  try {
+    const directory = request.requesterUserId ? await getConfiguredUserDirectory() : null;
+    const requester = directory && request.requesterUserId ? await directory.findActiveById(request.requesterUserId) : null;
+    await projectCoAuthor(sandbox, sandbox.workspaceRoot ?? "/workspace", coAuthorTrailer(requester));
+  } catch (error) {
+    log.warn({ err: serializeError(error), canonicalThreadId: request.canonicalThreadId, runId: request.runId }, "Requester co-author trailer was not projected into the worker");
+  }
 }
 
 /** Durable lifecycle producer for /hosted/t3/chat. */

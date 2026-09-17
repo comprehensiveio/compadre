@@ -337,6 +337,17 @@ export function attributionOrigin(
 }
 
 /**
+ * The canonical user behind a browser or Slack turn. API and trigger turns
+ * have no human to credit and yield undefined.
+ */
+export function requesterUserIdFromAttribution(attribution: unknown): string | undefined {
+  const origin = attributionOrigin(attribution);
+  if (origin !== "web" && origin !== "slack") return undefined;
+  const userId = (attribution as { userId?: unknown }).userId;
+  return typeof userId === "string" && userId.trim() ? userId.trim() : undefined;
+}
+
+/**
  * The controller outbox owns final delivery for Slack-originated turns. API
  * turns retain explicit Slack mirroring for compatibility, while browser turns
  * stay private to the UI even when the thread began in Slack. Attribution is the
@@ -644,6 +655,7 @@ export function createT3DirectoryRoutes(
       text,
       forwardedProps.attribution,
     );
+    const requesterUserId = requesterUserIdFromAttribution(forwardedProps.attribution);
     const linkedSlackBinding = dependencies.getSlackBinding
       ? await dependencies.getSlackBinding(canonicalThreadId)
       : null;
@@ -728,6 +740,7 @@ export function createT3DirectoryRoutes(
           }
         : {}),
       collectArtifacts: Boolean(artifactStore) && !providerAction,
+      ...(requesterUserId ? { requesterUserId } : {}),
       createdAt: new Date().toISOString(),
     };
     await runService.startTurn(runRequest);

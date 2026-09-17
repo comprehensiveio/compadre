@@ -142,6 +142,7 @@ export const users = pgTable(
     realName: text("real_name"),
     avatarUrl: text("avatar_url"),
     email: text("email"),
+    githubLogin: text("github_login"),
     status: text("status")
       .$type<CompadreUserStatus>()
       .notNull()

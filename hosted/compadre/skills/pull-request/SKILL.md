@@ -17,6 +17,8 @@ git -C $REPO_PATH config user.email "compadre@comprehensive.io"
 git -C $REPO_PATH config user.name "Compadre"
 ```
 
+Every commit you create automatically receives a `Co-authored-by` trailer crediting the person who asked for the change (a `prepare-commit-msg` hook adds it). Leave it in place when you amend or squash.
+
 ## Branch & PR workflow
 
 **Create the branch BEFORE making any edits.** Do not commit directly to main.

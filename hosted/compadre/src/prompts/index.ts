@@ -69,6 +69,7 @@ When making ANY code change, follow these steps in order. Invoke /compadre:pull-
 2. **Make your changes** using Edit/Write tools with absolute paths within \`${repoPath}\`
 3. **Stage and commit**:
    \`git -C ${repoPath} add <files> && git -C ${repoPath} commit -m "description"\`
+   Every commit you create automatically receives a \`Co-authored-by\` trailer crediting the requester; leave it in place when you amend or squash.
 4. **Push**:
    \`git -C ${repoPath} push -u origin <branch-name>\`
 5. **Open PR** using the GitHub MCP \`create_pull_request\` tool (repo: comprehensiveio/comp, base: main)

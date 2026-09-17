@@ -113,6 +113,7 @@ import * as EnvironmentAuth from "./auth/EnvironmentAuth.ts";
 import { compadreAuthRouteLayer } from "./auth/CompadreAuth.ts";
 import { compadreBackupRouteLayer } from "./auth/CompadreBackup.ts";
 import { compadrePreviewGatewayLayer } from "./auth/CompadrePreviewGateway.ts";
+import { compadreAccountRouteLayer } from "./auth/CompadreAccount.ts";
 import { compadreOperationsRouteLayer } from "./auth/CompadreOperations.ts";
 import { compadrePreviewsRouteLayer } from "./auth/CompadrePreviews.ts";
 import { compadreTriggeredPromptsRouteLayer } from "./auth/CompadreTriggeredPrompts.ts";
@@ -587,6 +588,7 @@ export const makeRoutesLayer = Layer.mergeAll(
     hostedPullRequestRoutes,
     compadrePreviewsRouteLayer,
     compadreTriggeredPromptsRouteLayer,
+    compadreAccountRouteLayer,
     deviceHubProxyRouteLayer,
     staticAndDevRouteLayer,
     websocketRpcRouteLayer,
