@@ -112,6 +112,19 @@ it.effect(
       assert.equal(refreshed.models[0]?.slug, "future-second");
       assert.equal(refreshed.version, "1.1.0");
       assert.deepEqual(refreshed.usageLimits, first.usageLimits);
+      body = {
+        version: "1.1.0",
+        data: [nativeModel("future-second")],
+        nextCursor: null,
+        subscription: { status: "busy" },
+      };
+      const busy = yield* check.checkProvider;
+      assert.deepEqual(busy.usageLimits?.windows, first.usageLimits?.windows);
+      assert.equal(busy.usageLimits?.checkedAt, first.usageLimits?.checkedAt);
+      assert.match(busy.usageLimits?.unavailable?.message ?? "", /assigned to a Codex run/);
+      body = { ...(body as object), subscription: { status: "disabled" } };
+      const disabled = yield* check.checkProvider;
+      assert.deepEqual(disabled.usageLimits?.windows, []);
       assert.ok(
         requests.every((url) => url === "https://controller.test/hosted/t3/providers/codex/models"),
       );
@@ -144,7 +157,7 @@ it.effect(
 
       const busy = yield* check.checkProvider;
       assert.equal(busy.auth.label, "Shared ChatGPT subscription");
-      assert.equal(busy.usageLimits?.unavailable?.reason, "busy");
+      assert.equal(busy.usageLimits?.unavailable?.reason, "probeFailed");
       assert.match(busy.usageLimits?.unavailable?.message ?? "", /assigned to a Codex run/);
 
       subscription = "error";
@@ -155,7 +168,7 @@ it.effect(
       subscription = "disabled";
       const disabled = yield* check.checkProvider;
       assert.equal(disabled.auth.label, "Isolated Modal worker");
-      assert.equal(disabled.usageLimits?.unavailable?.reason, "disabled");
+      assert.equal(disabled.usageLimits?.unavailable?.reason, "probeFailed");
       assert.match(disabled.usageLimits?.unavailable?.message ?? "", /use API billing/);
     }),
 );

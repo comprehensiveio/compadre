@@ -496,12 +496,6 @@ export function limitsNotice(limits: ServerProviderUsageLimits): string | null {
   if (limits.unavailable?.reason === "probeFailed") {
     return limits.unavailable.message ?? "Could not read limits.";
   }
-  if (limits.unavailable?.reason === "busy") {
-    return limits.unavailable.message ?? "Subscription limits are in use and cannot be read yet.";
-  }
-  if (limits.unavailable?.reason === "disabled") {
-    return limits.unavailable.message ?? "Subscription routing is disabled.";
-  }
   return limits.windows.length === 0 ? "No limits reported." : null;
 }
 

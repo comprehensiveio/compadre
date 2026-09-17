@@ -85,6 +85,9 @@ releasing it, and never creates a thread or acquires a Modal worker. The
 controller always reports whether the managed lane is idle, owned by a run,
 disabled, or failed to check. Central T3 turns those states into explicit Limits
 notices, so a process restart cannot make the configured subscription disappear.
+Busy or failed refreshes retain any previously observed balance with its original
+timestamp. Routing notices use the existing `probeFailed` wire shape and message,
+so older web, desktop, and mobile clients can still decode the server config.
 The controller caches successful model results
 for five minutes, coalesces concurrent model requests, and retains the last
 catalog during an outage. Model discovery still describes the shared API

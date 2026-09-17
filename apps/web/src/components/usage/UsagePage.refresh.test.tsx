@@ -197,7 +197,7 @@ it("explains when the shared Codex subscription is assigned to a run", async () 
                 checkedAt: "2026-09-11T12:00:00Z",
                 windows: [],
                 unavailable: {
-                  reason: "busy",
+                  reason: "probeFailed",
                   message:
                     "The shared ChatGPT subscription is assigned to a Codex run. Limits can be checked when it finishes; concurrent Codex runs use API billing.",
                 },

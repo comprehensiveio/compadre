@@ -54,7 +54,7 @@ export const ServerProviderUsageLimits = Schema.Struct({
   resetCredits: Schema.optional(ServerProviderResetCredits),
   unavailable: Schema.optional(
     Schema.Struct({
-      reason: Schema.Literals(["unsupported", "probeFailed", "busy", "disabled"]),
+      reason: Schema.Literals(["unsupported", "probeFailed"]),
       message: Schema.optional(TrimmedNonEmptyString),
     }),
   ),

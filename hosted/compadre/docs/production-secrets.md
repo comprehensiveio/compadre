@@ -76,6 +76,17 @@ and the encryption key like passwords. Never auto-clear an apparently stale
 subscription owner: an uncertain owner intentionally sends all new work to the
 API key until an operator confirms the old provider process is stopped.
 
+`lane_busy` proves an assignment exists, not that its run is still active. When
+the assigned run is terminal, correlate its binding with Modal's sandbox exit
+status. A lost worker can retain the lane because the normal release cannot read
+its refreshed credentials. For operator recovery, hold the thread and subscription
+lane locks, recheck the exact owner/run/binding and absence of live runs, and confirm
+the sandbox has exited. Validate the persisted encrypted auth through an isolated
+account/rate-limits read before removing the assignment; preserve any refreshed
+auth. Commit the released state only after validation succeeds, with an exact-state
+comparison. If validation fails, keep ownership and obtain a fresh operator login.
+Never infer that the subscription is healthy from `lane_busy` alone.
+
 Operational telemetry is emitted without credential contents:
 
 - `Codex auth routing initialized` identifies legacy, managed API-only, or

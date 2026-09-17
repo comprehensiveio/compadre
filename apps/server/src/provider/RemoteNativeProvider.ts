@@ -105,7 +105,7 @@ export function makeRemoteProviderModelCheck(
     const codexAccount = account?.account;
     const authLabel = codexAccountAuthLabel(codexAccount ?? null);
     const authEmail = codexAccountEmail(codexAccount ?? null);
-    const usageLimits = rateLimits
+    const reportedUsageLimits = rateLimits
       ? codexRateLimitsToLimits({
           snapshot: rateLimits.rateLimits,
           rateLimitsByLimitId: rateLimits.rateLimitsByLimitId,
@@ -115,14 +115,14 @@ export function makeRemoteProviderModelCheck(
       : subscription?.status === "busy"
         ? makeUnavailableUsageLimits({
             checkedAt,
-            reason: "busy",
+            reason: "probeFailed",
             message:
               "The shared ChatGPT subscription is assigned to a Codex run. Limits can be checked when it finishes; concurrent Codex runs use API billing.",
           })
         : subscription?.status === "disabled"
           ? makeUnavailableUsageLimits({
               checkedAt,
-              reason: "disabled",
+              reason: "probeFailed",
               message:
                 "Shared ChatGPT subscription routing is disabled. Codex turns use API billing.",
             })
@@ -134,6 +134,16 @@ export function makeRemoteProviderModelCheck(
                   "The shared ChatGPT subscription is configured, but its limits could not be checked.",
               })
             : snapshotValue.usageLimits;
+    // A busy lane or failed refresh must not erase the last observed balance
+    // or advance its timestamp. Keep its bars alongside the current notice.
+    const usageLimits =
+      !rateLimits &&
+      subscription !== undefined &&
+      subscription.status !== "disabled" &&
+      snapshotValue.usageLimits &&
+      snapshotValue.usageLimits.windows.length > 0
+        ? { ...snapshotValue.usageLimits, unavailable: reportedUsageLimits?.unavailable }
+        : reportedUsageLimits;
     const managedSubscription =
       options.agentProvider === "codex" &&
       subscription !== undefined &&

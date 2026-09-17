@@ -95,12 +95,6 @@ describe("limitsNotice", () => {
         unavailable: { reason: "probeFailed", message: "Codex timed out." },
       }),
     ).toBe("Codex timed out.");
-    expect(limitsNotice({ checkedAt, windows: [], unavailable: { reason: "busy" } })).toBe(
-      "Subscription limits are in use and cannot be read yet.",
-    );
-    expect(limitsNotice({ checkedAt, windows: [], unavailable: { reason: "disabled" } })).toBe(
-      "Subscription routing is disabled.",
-    );
   });
 });
 
@@ -911,7 +905,7 @@ describe("collectLimitNotices", () => {
       usageLimits: {
         checkedAt,
         windows: [],
-        unavailable: { reason: "busy", message: "Subscription is serving a run." },
+        unavailable: { reason: "probeFailed", message: "Subscription is assigned to a run." },
       },
     });
     const one = new Map([
@@ -932,7 +926,7 @@ describe("collectLimitNotices", () => {
     expect(collectLimitNotices(one)).toEqual([
       "Claude Max: Could not read limits.",
       "codex: No limits reported.",
-      "codex: Subscription is serving a run.",
+      "codex: Subscription is assigned to a run.",
       "hub: No accounts reported.",
       "down: ECONNREFUSED",
     ]);

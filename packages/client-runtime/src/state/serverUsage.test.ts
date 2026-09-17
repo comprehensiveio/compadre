@@ -11,6 +11,7 @@ import {
   type UsageSummaryInput,
 } from "@t3tools/contracts";
 import { expect, it } from "@effect/vitest";
+import * as Clock from "effect/Clock";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -18,6 +19,7 @@ import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
+import * as TestClock from "effect/testing/TestClock";
 import { AsyncResult, Atom, AtomRegistry } from "effect/unstable/reactivity";
 
 import {
@@ -138,8 +140,10 @@ const makeHarness = Effect.fn("ServerUsageTest.makeHarness")(function* (
     clearVcsRefs: () => Effect.void,
     clear: () => Effect.void,
   });
+  const clock = yield* Clock.Clock;
   const runtime = Atom.runtime(
-    Layer.merge(
+    Layer.mergeAll(
+      Layer.succeed(Clock.Clock, clock),
       Layer.succeed(EnvironmentRegistry, environments),
       Layer.succeed(EnvironmentCacheStore, cache),
     ),
@@ -260,4 +264,35 @@ it.effect("restarts a pending usage read after a price change", () =>
       unmount();
     }),
   ),
+);
+
+it.effect("times out a stalled usage read and recovers on refresh", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const started = yield* Deferred.make<void>();
+      const interrupted = yield* Deferred.make<void>();
+      const harness = yield* makeHarness((request) =>
+        request === 1
+          ? Deferred.succeed(started, undefined).pipe(
+              Effect.andThen(Effect.never),
+              Effect.onInterrupt(() => Deferred.succeed(interrupted, undefined)),
+            )
+          : Effect.void,
+      );
+      const summary = harness.summary();
+      const unmount = harness.registry.mount(summary);
+      yield* Deferred.await(started);
+      yield* TestClock.adjust("30 seconds");
+      yield* Deferred.await(interrupted);
+      const failed = yield* AtomRegistry.toStream(harness.registry, summary).pipe(
+        Stream.filter((result) => AsyncResult.isFailure(result) && !result.waiting),
+        Stream.runHead,
+      );
+      expect(Option.isSome(failed)).toBe(true);
+      harness.registry.refresh(summary);
+      yield* waitForCost(harness.registry, summary, 0);
+      expect(harness.requests()).toBe(2);
+      unmount();
+    }),
+  ).pipe(Effect.provide(TestClock.layer())),
 );

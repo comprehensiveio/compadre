@@ -34,7 +34,7 @@ export function makeUsageLimits(input: {
 
 export function makeUnavailableUsageLimits(input: {
   readonly checkedAt: string;
-  readonly reason: "unsupported" | "probeFailed" | "busy" | "disabled";
+  readonly reason: "unsupported" | "probeFailed";
   readonly message?: string;
 }): ServerProviderUsageLimits {
   return {
