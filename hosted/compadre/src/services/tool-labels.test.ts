@@ -8,3 +8,7 @@ test("normalizes T3 lifecycle summaries into active Slack status labels", () => 
   assert.equal(humanizeToolName("Changed files"), "Changing files");
   assert.equal(humanizeToolName("Searched files"), "Searching files");
 });
+
+test("shows a specific status label for PostHog MCP tools", () => {
+  assert.equal(humanizeToolName("mcp__posthog__exec"), "Checking PostHog");
+});
