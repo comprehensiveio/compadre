@@ -266,7 +266,7 @@ test("does not post when a newer worker owns the delivery claim", async () => {
   assert.deepEqual(calls, []);
 });
 
-test("keeps Slack delivery ownership when a browser message steers the same run", async () => {
+test("suppresses Slack delivery when a browser message steers the same run", async () => {
   const job = delivery();
   const steered = snapshot();
   steered.thread.messages = [
@@ -325,10 +325,6 @@ test("keeps Slack delivery ownership when a browser message steers the same run"
   assert.equal(completed, true);
   assert.deepEqual(delivered, [job.id]);
   assert.deepEqual(calls, [
-    ["message", "Durable answer", job.id, {
-      label: "open session in Compadre web",
-      url: job.detailsUrl,
-    }],
     ["clear"],
     ["succeeded", job.triggerMessageTs],
   ]);

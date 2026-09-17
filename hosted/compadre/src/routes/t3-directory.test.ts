@@ -43,7 +43,7 @@ test("adds trusted requester identity to provider context without changing unkno
   assert.equal(withTrustedRequesterContext("Fix the issue", null), "Fix the issue");
 });
 
-test("leaves Slack-originated final delivery to the controller outbox", () => {
+test("keeps browser turns private while preserving explicit API mirroring", () => {
   assert.equal(
     shouldMirrorNativeT3RunToSlack({
       attribution: {
@@ -71,8 +71,24 @@ test("leaves Slack-originated final delivery to the controller outbox", () => {
         origin: "web",
       },
     }),
+    false,
+    "trusted web attribution keeps the turn in the UI despite a stale legacy message prefix",
+  );
+  assert.equal(
+    shouldMirrorNativeT3RunToSlack({
+      attribution: {
+        userId: "api-user-1",
+        displayName: "API caller",
+        origin: "api",
+      },
+    }),
     true,
-    "trusted web attribution takes precedence over a stale legacy message prefix",
+    "API callers retain the existing linked-Slack delivery behavior",
+  );
+  assert.equal(
+    shouldMirrorNativeT3RunToSlack({ messageId: "unattributed-message" }),
+    false,
+    "missing attribution defaults to private delivery",
   );
 });
 
@@ -824,6 +840,47 @@ test("streams a native Modal T3 turn through the central provider endpoint", asy
     undefined,
     { channelId: "C1", threadTs: "1.0" },
   ]);
+
+  const linkedWebResponse = await app.request(
+    "/hosted/t3/chat",
+    authorized({
+      threadId: "central-thread",
+      runId: "run-from-linked-web",
+      messages: [
+        {
+          id: "web-message-1",
+          role: "user",
+          content: "continue privately from the UI",
+        },
+      ],
+      tools: [],
+      context: [],
+      state: {},
+      forwardedProps: {
+        provider: "claude-code",
+        model: "claude-sonnet-5",
+        attribution: {
+          userId: "user-1",
+          displayName: "Isaac",
+          origin: "web",
+        },
+      },
+    }),
+  );
+  assert.equal(
+    linkedWebResponse.status,
+    200,
+    await linkedWebResponse.clone().text(),
+  );
+  await linkedWebResponse.text();
+  const linkedWebRequest = await requests.getRequest("run-from-linked-web");
+  assert.ok(linkedWebRequest);
+  assert.deepEqual(linkedWebRequest.blockedSlackDestination, {
+    channelId: "C1",
+    threadTs: "1.0",
+  });
+  assert.equal(linkedWebRequest.slackMirror, undefined);
+  assert.equal(linkedWebRequest.slackArtifactDestination, undefined);
 });
 
 test("provider actions survive durable dispatch without prompt decorations or delivery side effects", async (t) => {

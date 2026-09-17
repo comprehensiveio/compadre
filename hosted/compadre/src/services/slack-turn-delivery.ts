@@ -8,6 +8,7 @@ import type { T3TurnDispatch } from "../t3/client.js";
 import { incompleteProviderStopReason } from "../t3/client.js";
 import {
   finalAssistantTextForDispatch,
+  hasLaterWebMessageForDispatch,
   laterUserMessageIdsForDispatch,
   t3SlackSessionLink,
 } from "./t3-slack-conversation.js";
@@ -150,14 +151,30 @@ export async function deliverClaimedSlackTurn(input: {
       snapshot,
       dispatch,
     );
+    if (hasLaterWebMessageForDispatch(snapshot, dispatch)) {
+      // A browser steer makes the combined answer private to the UI. There is
+      // no replacement Slack owner, so this row clears the old working status
+      // before settling without posting the response.
+      await slack.clearStatus();
+      await slack.markRunSucceeded(delivery.triggerMessageTs);
+      if (!(await store.markDelivered(delivery))) {
+        throw new SlackDeliveryClaimLostError(delivery);
+      }
+      span.setAttribute("compadre.delivery.suppressed_by_web", true);
+      logger.info("[slack-delivery] suppressed completion after browser steer", {
+        deliveryId: delivery.id,
+        messageId: delivery.messageId,
+        threadId: delivery.t3ThreadId,
+      });
+      return true;
+    }
     const replacementOwnsFinal =
       laterMessageIds.length > 0 &&
       Boolean(await store.hasAnyMessageId?.(laterMessageIds));
     if (replacementOwnsFinal) {
       // Slack can race the central running-state projection and reserve a
-      // second outbox row for a message that becomes a steer. Only yield when
-      // that durable replacement really exists; browser steers create no row,
-      // so this original delivery must remain responsible for the final.
+      // second outbox row for a message that becomes a steer. Yield only when
+      // that durable replacement really exists.
       slack.relinquishStatus?.();
       await slack.markRunSucceeded(delivery.triggerMessageTs);
       if (!(await store.markDelivered(delivery))) {
@@ -173,9 +190,7 @@ export async function deliverClaimedSlackTurn(input: {
     }
 
     // The session link rides inside the answer message as a context footer
-    // rather than a second message. Browser steers do not create replacement
-    // outbox rows, so the original row posts the newest answer and settles the
-    // shared status.
+    // rather than a second message.
     await slack.postThreadMessage(
       response,
       delivery.id,

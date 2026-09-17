@@ -12,7 +12,7 @@ delivery layer (`src/triggers/deliver.ts`):
    cronExpression, timezone? }`. The Compadre web UI renders this in place of
    a user (alarm icon + trigger name, schedule on hover). The prompt itself is
    **never posted to Slack** — only the agent's answer is. Trigger turns are
-   deliberately excluded from the native "From Compadre web" Slack mirror and
+   deliberately excluded from native Slack mirroring and
    from the trusted-requester prompt context
    (`src/routes/t3-directory.ts`), so the agent sees the prompt verbatim and
    the mirror cannot leak it.

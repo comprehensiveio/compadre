@@ -206,15 +206,16 @@ prompt. After dispatch, the update uses the worker T3 server's native
 Steering therefore stays inside one durable controller run and one terminal
 observer.
 
-Slack delivery ownership follows durable outbox rows, not user-message recency
-alone. A browser steer creates no replacement row, so the owner attached when
-the run starts publishes the newest final response and clears processing. If a
-racing Slack follow-up does reserve another outbox row before the running state
-is visible centrally, older outbox or browser-mirror owners yield to that durable
-replacement so exactly one response and one status clear are delivered.
-Every observer that yields also cancels its local processing-status refresh
-timer. It does not write `active` during handoff; the final owner performs the
-single shared terminal transition after posting the answer.
+Browser-originated turns on a Slack-linked thread stay UI-only: their prompt,
+answer, and generated artifacts are not mirrored into Slack. A browser steer
+also creates no replacement outbox row, so the existing Slack owner settles
+without posting the combined answer and clears the old processing status. If a
+racing Slack follow-up reserves another outbox row before the running state is
+visible centrally, the older owner yields to that durable replacement so exactly
+one response and one status clear are delivered. Every observer that yields
+cancels its local processing-status refresh timer. It does not write `active`
+during handoff; the final owner performs the single shared terminal transition
+after posting the answer.
 
 The HTTP run transport negotiates `X-Compadre-T3-Protocol-Version: 2` and
 `x-compadre-native-delivery: 1`, carrying lifecycle receipts only. Native delivery
@@ -467,7 +468,8 @@ run requests store input object references in Postgres; bytes live in the privat
 artifact bucket, with sequential upload and integrity-checked hydration. Generated files
 written under `/tmp/agent-outputs` are content-addressed into the private S3
 bucket; Postgres retains their metadata, while authenticated controller reads
-serve the central UI and the same bytes are uploaded to a linked Slack thread.
+serve the central UI. Automatic Slack artifact upload applies only to turns
+whose entrypoint delivers to Slack; browser-originated turns remain UI-only.
 
 The Compadre T3 fork defaults `enableAgentBrowserAccess` to `false`. This is a
 server-side provider boundary: workers do not mint the `t3-code` MCP credential,
