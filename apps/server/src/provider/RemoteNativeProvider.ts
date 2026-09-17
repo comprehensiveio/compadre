@@ -19,6 +19,7 @@ import {
 } from "./Layers/CodexProvider.ts";
 import { codexRateLimitsToLimits } from "./Layers/codexUsageLimits.ts";
 import { makeManagedServerProvider } from "./makeManagedServerProvider.ts";
+import { makeUnavailableUsageLimits } from "./providerUsageLimits.ts";
 
 import { makeCompadreTextGeneration } from "../textGeneration/CompadreTextGeneration.ts";
 import { makeCompadreAdapter } from "./Layers/CompadreAdapter.ts";
@@ -28,6 +29,11 @@ const decodeProviderDirectory = Schema.decodeUnknownEffect(
   Schema.Struct({
     version: Schema.String,
     providerActions: Schema.optional(Schema.Array(Schema.String)),
+    subscription: Schema.optional(
+      Schema.Struct({
+        status: Schema.Literals(["idle", "busy", "disabled", "error"]),
+      }),
+    ),
     account: Schema.optional(CodexSchema.V2GetAccountResponse),
     rateLimits: Schema.optional(CodexSchema.V2GetAccountRateLimitsResponse),
   }),
@@ -84,7 +90,7 @@ export function makeRemoteProviderModelCheck(
       Effect.flatMap((response) => response.json),
       Effect.timeout("25 seconds"),
     );
-    const { version, providerActions, account, rateLimits } =
+    const { version, providerActions, subscription, account, rateLimits } =
       yield* decodeProviderDirectory(response);
     const catalog = yield* manifest.refresh;
     const models =
@@ -99,14 +105,49 @@ export function makeRemoteProviderModelCheck(
     const codexAccount = account?.account;
     const authLabel = codexAccountAuthLabel(codexAccount ?? null);
     const authEmail = codexAccountEmail(codexAccount ?? null);
-    const usageLimits = rateLimits
+    const reportedUsageLimits = rateLimits
       ? codexRateLimitsToLimits({
           snapshot: rateLimits.rateLimits,
           rateLimitsByLimitId: rateLimits.rateLimitsByLimitId,
           resetCredits: rateLimits.rateLimitResetCredits,
           checkedAt,
         })
-      : snapshotValue.usageLimits;
+      : subscription?.status === "busy"
+        ? makeUnavailableUsageLimits({
+            checkedAt,
+            reason: "probeFailed",
+            message:
+              "The shared ChatGPT subscription is assigned to a Codex run. Limits can be checked when it finishes; concurrent Codex runs use API billing.",
+          })
+        : subscription?.status === "disabled"
+          ? makeUnavailableUsageLimits({
+              checkedAt,
+              reason: "probeFailed",
+              message:
+                "Shared ChatGPT subscription routing is disabled. Codex turns use API billing.",
+            })
+          : subscription?.status === "error" || subscription?.status === "idle"
+            ? makeUnavailableUsageLimits({
+                checkedAt,
+                reason: "probeFailed",
+                message:
+                  "The shared ChatGPT subscription is configured, but its limits could not be checked.",
+              })
+            : snapshotValue.usageLimits;
+    // A busy lane or failed refresh must not erase the last observed balance
+    // or advance its timestamp. Keep its bars alongside the current notice.
+    const usageLimits =
+      !rateLimits &&
+      subscription !== undefined &&
+      subscription.status !== "disabled" &&
+      snapshotValue.usageLimits &&
+      snapshotValue.usageLimits.windows.length > 0
+        ? { ...snapshotValue.usageLimits, unavailable: reportedUsageLimits?.unavailable }
+        : reportedUsageLimits;
+    const managedSubscription =
+      options.agentProvider === "codex" &&
+      subscription !== undefined &&
+      subscription.status !== "disabled";
     snapshotValue = {
       ...remoteNativeProviderSnapshot(options),
       models,
@@ -124,6 +165,20 @@ export function makeRemoteProviderModelCheck(
               ...(authLabel ? { label: authLabel } : {}),
               ...(authEmail ? { email: authEmail } : {}),
             },
+          }
+        : managedSubscription
+          ? {
+              auth: {
+                status: "authenticated" as const,
+                type: "compadre-modal",
+                label: "Shared ChatGPT subscription",
+              },
+            }
+          : {}),
+      ...(managedSubscription
+        ? {
+            message:
+              "Codex uses the shared ChatGPT subscription when its lane is available; concurrent runs use API billing.",
           }
         : {}),
       ...(usageLimits ? { usageLimits } : {}),

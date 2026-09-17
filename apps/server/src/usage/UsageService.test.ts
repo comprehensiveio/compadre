@@ -17,8 +17,10 @@ import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Scheduler from "effect/Scheduler";
+import * as Schema from "effect/Schema";
 import * as TestClock from "effect/testing/TestClock";
 import { HttpClient, HttpClientResponse } from "effect/unstable/http";
+import * as SqlClient from "effect/unstable/sql/SqlClient";
 
 import * as ServerConfig from "../config.ts";
 import * as ServerSettings from "../serverSettings.ts";
@@ -43,6 +45,8 @@ const WINDOW: UsageSummaryInput = {
   sinceDay: UsageDay.make("2026-07-31"),
   untilDay: UsageDay.make("2026-08-02"),
 };
+
+const encodeFixture = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 
 const setup = Effect.gen(function* () {
   const home = yield* Effect.promise(() =>
@@ -100,6 +104,102 @@ function totalOutputTokens(summary: { buckets: readonly { totals: { outputTokens
 }
 
 describe("UsageService", () => {
+  it.live(
+    "recovers native usage from the historical turn model without counting local activity twice",
+    () =>
+      Effect.gen(function* () {
+        const { settings, home } = yield* setup;
+        yield* Effect.gen(function* () {
+          const sql = yield* SqlClient.SqlClient;
+          const service = yield* UsageService.make;
+          for (const [index, model, at] of [
+            [1, "first-model", "2026-08-01T09:00:00Z"],
+            [2, "second-model", "2026-08-01T11:00:00Z"],
+          ] as const) {
+            const payload = encodeFixture({ modelSelection: { instanceId: "codex", model } });
+            yield* sql`INSERT INTO orchestration_events
+            (event_id, aggregate_kind, stream_id, stream_version, event_type, occurred_at, actor_kind, payload_json, metadata_json)
+            VALUES (${`start-${index}`}, 'thread', 'hosted-thread', ${index}, 'thread.turn-start-requested', ${at}, 'user', ${payload}, '{}')`;
+          }
+          for (const [id, thread, at, payload] of [
+            [
+              "compadre-native:first",
+              "hosted-thread",
+              "2026-08-01T10:00:00Z",
+              { usedTokens: 105, inputTokens: 100, cachedInputTokens: 20, outputTokens: 5 },
+            ],
+            [
+              "compadre-native:second",
+              "hosted-thread",
+              "2026-08-01T12:00:00Z",
+              { usedTokens: 210, inputTokens: 200, cachedInputTokens: 40, outputTokens: 10 },
+            ],
+            [
+              "compadre-native:legacy",
+              "hosted-thread",
+              "2026-08-01T12:01:00Z",
+              {
+                usedTokens: 21,
+                inputTokens: 20,
+                outputTokens: 1,
+                usageProvider: "claude",
+                model: "legacy-model",
+              },
+            ],
+            [
+              "local-activity",
+              "hosted-thread",
+              "2026-08-01T12:02:00Z",
+              { usedTokens: 999, inputTokens: 999 },
+            ],
+            [
+              "compadre-native:unknown",
+              "unknown-thread",
+              "2026-08-01T12:03:00Z",
+              { usedTokens: 999, inputTokens: 999 },
+            ],
+          ] as const) {
+            yield* sql`INSERT INTO projection_thread_activities
+            (activity_id, thread_id, turn_id, tone, kind, summary, payload_json, created_at)
+            VALUES (${id}, ${thread}, ${id}, 'info', 'context-window.updated', 'Usage', ${encodeFixture(payload)}, ${at})`;
+          }
+          const summary = yield* service.readSummary(WINDOW);
+          assert.deepStrictEqual(
+            summary.buckets.map((bucket) => [
+              bucket.provider,
+              bucket.model,
+              bucket.totals.uncachedInputTokens,
+              bucket.totals.outputTokens,
+            ]),
+            [
+              ["claude", "legacy-model", 20, 1],
+              ["codex", "first-model", 80, 5],
+              ["codex", "second-model", 160, 10],
+            ],
+          );
+          assert.strictEqual(summary.sources.filter((source) => source.status === "ok").length, 3);
+          assert.closeTo(summary.buckets[1]!.costUsd, 0.00021, 1e-12);
+        }).pipe(
+          Effect.provide(
+            serviceLayers({
+              prefix: "usage-native-models",
+              home,
+              settings: {
+                ...settings,
+                usagePriceOverrides: {
+                  "first-model": {
+                    inputCostPerMillionTokens: 2,
+                    outputCostPerMillionTokens: 8,
+                    cacheReadCostPerMillionTokens: 0.5,
+                  },
+                },
+              },
+            }),
+          ),
+        );
+      }).pipe(Effect.scoped),
+  );
+
   it.live("reprices unchanged transcripts when custom prices are added, edited, or removed", () =>
     Effect.gen(function* () {
       const { transcript, settings, home } = yield* setup;

@@ -131,5 +131,7 @@ export async function discoverCodexSubscriptionUsage(
       }
     },
   );
-  return result.status === "available" ? result.value : undefined;
+  return result.status === "available"
+    ? { subscription: { status: "idle" as const }, ...result.value }
+    : { subscription: { status: result.status } };
 }

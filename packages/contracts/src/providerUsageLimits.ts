@@ -44,8 +44,9 @@ export type ServerProviderResetCredits = typeof ServerProviderResetCredits.Type;
  * Subscription usage the provider knows about the signed-in account.
  *
  * `unavailable` distinguishes an account that can never report windows (API
- * key, Bedrock) from a probe that failed this time, so clients can keep the
- * last good bars for the latter and clear them for the former.
+ * key, Bedrock), a transient probe failure, and managed subscription routing
+ * states that prevent a live read. This keeps a missing bar from being
+ * mistaken for an absent subscription.
  */
 export const ServerProviderUsageLimits = Schema.Struct({
   checkedAt: IsoDateTime,

@@ -160,6 +160,7 @@ export function UsagePage() {
     [merged.users, metric],
   );
   const activeProviders = useMemo(() => providersWithUsage(merged.providers), [merged.providers]);
+  const hasUsageSummary = selectedEnvironments.some((environment) => environment.summary !== null);
   const timeValueColumnWidth = `${60 / (activeProviders.length + 2)}%`;
 
   const selectWindow = (days: number) => {
@@ -369,6 +370,13 @@ export function UsagePage() {
               <UsageLimitsSection selectedEnvironmentIds={selectedEnvironmentIds} now={limitsNow} />
             ) : isPending ? (
               <UsageSkeleton />
+            ) : !hasUsageSummary ? (
+              <div className="flex flex-col gap-2 text-sm text-muted-foreground">
+                <p>Usage is unavailable for the selected environments.</p>
+                <p className="text-xs">
+                  Reconnect the environment or refresh after the server is available.
+                </p>
+              </div>
             ) : (
               <>
                 <section className="grid gap-6 lg:grid-cols-[minmax(0,18rem)_minmax(0,1fr)]">

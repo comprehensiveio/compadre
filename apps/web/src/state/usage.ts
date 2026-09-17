@@ -27,6 +27,7 @@ export interface EnvironmentUsageStatus {
   readonly environmentId: EnvironmentId;
   readonly label: string;
   readonly isPending: boolean;
+  readonly isConnected: boolean;
   readonly error: string | null;
   readonly summary: UsageSummary | null;
 }
@@ -46,11 +47,18 @@ const usageByWindowAtom = Atom.family((windowKey: string) =>
     const statuses: EnvironmentUsageStatus[] = [];
     for (const [environmentId, presentation] of presentations) {
       const result = get(serverEnvironment.usageSummary({ environmentId, input }));
+      const isConnected = presentation.connection.phase === "connected";
       statuses.push({
         environmentId,
         label: presentation.entry.target.label,
-        isPending: result.waiting,
-        error: result._tag === "Failure" ? "This environment could not report usage." : null,
+        isPending: isConnected && result.waiting,
+        isConnected,
+        error:
+          result._tag === "Failure"
+            ? "This environment could not report usage."
+            : isConnected
+              ? null
+              : "This environment is not connected.",
         summary: Option.getOrNull(AsyncResult.value(result)),
       });
     }

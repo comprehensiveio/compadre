@@ -24,6 +24,7 @@ vi.mock("../../state/usage", () => ({
         environmentId: EnvironmentId.make("test"),
         label: "Test",
         isPending: false,
+        isConnected: true,
         error: null,
         summary: null,
       },
@@ -33,6 +34,7 @@ vi.mock("../../state/usage", () => ({
         environmentId: EnvironmentId.make("test"),
         label: "Test",
         isPending: false,
+        isConnected: true,
         error: null,
         summary: null,
       },
@@ -176,4 +178,44 @@ it("uses the current time when returning to limits from tokens", async () => {
     JSON.stringify(renderer.toJSON(), (key, value) => (key === "props" ? undefined : value)),
   ).toContain("in 1h 0m");
   expect(state.refreshProviders).not.toHaveBeenCalled();
+});
+
+it("explains when the shared Codex subscription is assigned to a run", async () => {
+  const presentation = state.presentations.get(EnvironmentId.make("test"));
+  const provider = presentation.serverConfig.providers[0];
+  state.presentations = new Map([
+    [
+      EnvironmentId.make("test"),
+      {
+        ...presentation,
+        serverConfig: {
+          ...presentation.serverConfig,
+          providers: [
+            {
+              ...provider,
+              usageLimits: {
+                checkedAt: "2026-09-11T12:00:00Z",
+                windows: [],
+                unavailable: {
+                  reason: "probeFailed",
+                  message:
+                    "The shared ChatGPT subscription is assigned to a Codex run. Limits can be checked when it finishes; concurrent Codex runs use API billing.",
+                },
+              },
+            },
+          ],
+        },
+      },
+    ],
+  ]);
+
+  await act(() => {
+    renderer = create(<UsagePage />);
+  });
+  const rendered = JSON.stringify(renderer.toJSON(), (key, value) =>
+    key === "props" ? undefined : value,
+  );
+  expect(rendered).toContain("Subscription limits are temporarily unavailable.");
+  expect(rendered).toContain("shared ChatGPT subscription is assigned to a Codex run");
+  expect(rendered).toContain("concurrent Codex runs use API billing");
 });

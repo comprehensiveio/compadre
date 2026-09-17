@@ -62,8 +62,10 @@ or the T3 server environment.
 The authenticated hosted-provider directory also reads the subscription's
 account and rate-limit snapshot for central T3's Usage → Limits view. It runs
 only while the lane is idle, under the same lane lock, and persists any refreshed
-auth chain before a worker may claim it. A busy lane leaves the last limits
-snapshot visible; the read never provisions or wakes a Modal worker.
+auth chain before a worker may claim it. A busy lane cannot refresh the limits
+snapshot and reports that the subscription is assigned to a run; central
+T3 renders that state instead of making the configured subscription disappear.
+The read never provisions or wakes a Modal worker.
 
 Set `COMPADRE_CODEX_SUBSCRIPTION_EXPERIMENT_ENABLED=false` for an immediate
 API-only kill switch. The metadata is namespaced under
@@ -73,6 +75,17 @@ behavior when the flag is absent. Treat the source auth file, its encoded value,
 and the encryption key like passwords. Never auto-clear an apparently stale
 subscription owner: an uncertain owner intentionally sends all new work to the
 API key until an operator confirms the old provider process is stopped.
+
+`lane_busy` proves an assignment exists, not that its run is still active. When
+the assigned run is terminal, correlate its binding with Modal's sandbox exit
+status. A lost worker can retain the lane because the normal release cannot read
+its refreshed credentials. For operator recovery, hold the thread and subscription
+lane locks, recheck the exact owner/run/binding and absence of live runs, and confirm
+the sandbox has exited. Validate the persisted encrypted auth through an isolated
+account/rate-limits read before removing the assignment; preserve any refreshed
+auth. Commit the released state only after validation succeeds, with an exact-state
+comparison. If validation fails, keep ownership and obtain a fresh operator login.
+Never infer that the subscription is healthy from `lane_busy` alone.
 
 Operational telemetry is emitted without credential contents:
 
