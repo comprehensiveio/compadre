@@ -41,9 +41,8 @@ export interface NativeT3RunRequest {
   };
   slackMirror?: NativeT3RunSlackMirror;
   /**
-   * Slack thread that receives generated artifact uploads. Present for any
-   * thread with a linked Slack binding, including Slack-originated turns
-   * whose final text delivery belongs to the controller outbox.
+   * Slack thread that receives generated artifact uploads. Present only when
+   * this turn is Slack-delivered; browser turns remain private to the UI.
    */
   slackArtifactDestination?: {
     channelId: string;

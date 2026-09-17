@@ -6,6 +6,7 @@ import {
   assistantTextForDispatch,
   canonicalSlackThreadId,
   finalAssistantTextForDispatch,
+  hasLaterWebMessageForDispatch,
   laterUserMessageIdsForDispatch,
   runT3SlackConversation,
   t3ModelSelectionForProfile,
@@ -147,6 +148,11 @@ test("selects the final answer produced after a later steering message", () => {
       streaming: false,
       createdAt: "2026-08-26T15:00:00.500Z",
       updatedAt: "2026-08-26T15:00:00.500Z",
+      attribution: {
+        userId: "user-1",
+        displayName: "Isaac",
+        origin: "web",
+      },
     },
     {
       id: "assistant-steered",
@@ -175,9 +181,14 @@ test("selects the final answer produced after a later steering message", () => {
   assert.deepEqual(laterUserMessageIdsForDispatch(steered, turn.dispatch), [
     "user-steer",
   ]);
+  assert.equal(hasLaterWebMessageForDispatch(steered, turn.dispatch), true);
   assert.deepEqual(
     laterUserMessageIdsForDispatch(steered, steeringDispatch),
     [],
+  );
+  assert.equal(
+    hasLaterWebMessageForDispatch(steered, steeringDispatch),
+    false,
   );
 });
 

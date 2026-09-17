@@ -74,6 +74,24 @@ export function t3ModelSelectionForProfile(
   };
 }
 
+function userMessagesAfterDispatch(
+  snapshot: T3ThreadSnapshot,
+  dispatch: T3TurnDispatch,
+): T3ThreadSnapshot["thread"]["messages"] {
+  const requestedIndex = snapshot.thread.messages.findIndex(
+    (message) => message.id === dispatch.messageId && message.role === "user",
+  );
+  if (requestedIndex < 0) return [];
+  const requested = snapshot.thread.messages[requestedIndex];
+  return snapshot.thread.messages.slice(requestedIndex + 1).filter(
+    (message) =>
+      message.role === "user" &&
+      (requested?.turnId == null ||
+        message.turnId == null ||
+        message.turnId === requested.turnId),
+  );
+}
+
 function assistantMessagesForDispatch(
   snapshot: T3ThreadSnapshot,
   dispatch: T3TurnDispatch,
@@ -115,21 +133,24 @@ export function laterUserMessageIdsForDispatch(
   snapshot: T3ThreadSnapshot,
   dispatch: T3TurnDispatch,
 ): string[] {
-  const requestedIndex = snapshot.thread.messages.findIndex(
-    (message) => message.id === dispatch.messageId && message.role === "user",
+  return userMessagesAfterDispatch(snapshot, dispatch).map(
+    (message) => message.id,
   );
-  if (requestedIndex < 0) return [];
-  const requested = snapshot.thread.messages[requestedIndex];
-  return snapshot.thread.messages
-    .slice(requestedIndex + 1)
-    .filter(
-      (message) =>
-        message.role === "user" &&
-        (requested?.turnId == null ||
-          message.turnId == null ||
-          message.turnId === requested.turnId),
-    )
-    .map((message) => message.id);
+}
+
+/** Whether a browser message took over the visible turn after Slack dispatched it. */
+export function hasLaterWebMessageForDispatch(
+  snapshot: T3ThreadSnapshot,
+  dispatch: T3TurnDispatch,
+): boolean {
+  return userMessagesAfterDispatch(snapshot, dispatch).some((message) => {
+    const attribution = message.attribution;
+    return (
+      attribution !== null &&
+      typeof attribution === "object" &&
+      (attribution as { origin?: unknown }).origin === "web"
+    );
+  });
 }
 
 /** Complete provider narration for durable streams and compatibility clients. */

@@ -337,22 +337,20 @@ export function attributionOrigin(
 }
 
 /**
- * The controller outbox owns final delivery for Slack-originated turns. The
- * central provider mirror is only for turns that originate elsewhere and need
- * to be reflected into an already-linked Slack thread. Attribution is the
+ * The controller outbox owns final delivery for Slack-originated turns. API
+ * turns retain explicit Slack mirroring for compatibility, while browser turns
+ * stay private to the UI even when the thread began in Slack. Attribution is the
  * authoritative signal because provider adapters may omit message IDs while
- * converting chat history; the prefixed ID remains a compatibility fallback.
- * Triggered prompts are excluded from both: the mirror would post the prompt
- * to Slack, so the trigger delivery layer owns their Slack answer instead.
+ * converting chat history. Missing attribution defaults to no mirroring so an
+ * older caller cannot accidentally disclose a browser message. Triggered prompts
+ * are excluded too; their delivery layer owns any configured Slack answer.
  */
 export function shouldMirrorNativeT3RunToSlack(input: {
   messageId?: string;
   attribution?: unknown;
 }): boolean {
   const origin = attributionOrigin(input.attribution);
-  if (origin === "trigger") return false;
-  if (origin) return origin !== "slack";
-  return !isSlackEntrypointMessageId(input.messageId);
+  return origin === "api";
 }
 
 /** Slack-originated turns whose final answer the controller outbox owns. */
@@ -667,6 +665,8 @@ export function createT3DirectoryRoutes(
       })
         ? linkedSlackBinding
         : null;
+    const shouldDeliverArtifactsToSlack =
+      slackOwnedDelivery || slackBinding !== null;
     const botToken = process.env.SLACK_BOT_TOKEN?.trim();
     const hostedAppUrl = process.env.COMPADRE_T3_HOSTED_APP_URL?.trim();
     const detailsUrl =
@@ -698,13 +698,17 @@ export function createT3DirectoryRoutes(
               channelId: linkedSlackBinding.channelId,
               threadTs: linkedSlackBinding.threadTs,
             },
-            slackArtifactDestination: {
-              channelId: linkedSlackBinding.channelId,
-              threadTs: linkedSlackBinding.threadTs,
-              ...(linkedSlackBinding.recipientTeamId
-                ? { recipientTeamId: linkedSlackBinding.recipientTeamId }
-                : {}),
-            },
+            ...(shouldDeliverArtifactsToSlack
+              ? {
+                  slackArtifactDestination: {
+                    channelId: linkedSlackBinding.channelId,
+                    threadTs: linkedSlackBinding.threadTs,
+                    ...(linkedSlackBinding.recipientTeamId
+                      ? { recipientTeamId: linkedSlackBinding.recipientTeamId }
+                      : {}),
+                  },
+                }
+              : {}),
           }
         : {}),
       ...(slackBinding && botToken
