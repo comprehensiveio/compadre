@@ -105,6 +105,86 @@ function totalOutputTokens(summary: { buckets: readonly { totals: { outputTokens
 
 describe("UsageService", () => {
   it.live(
+    "recovers turnless native usage from journal sessions without guessing the latest requester",
+    () =>
+      Effect.gen(function* () {
+        const { settings, home } = yield* setup;
+        yield* Effect.gen(function* () {
+          const sql = yield* SqlClient.SqlClient;
+          const service = yield* UsageService.make;
+          const at = "2026-08-01T10:00:00Z";
+          let version = 0;
+          const event = (source: string, type: string, payload: unknown) => {
+            const id = `compadre-native:${source}:event-${++version}`;
+            return sql`INSERT INTO orchestration_events
+            (event_id, aggregate_kind, stream_id, stream_version, event_type, occurred_at, actor_kind, payload_json, metadata_json)
+            VALUES (${id}, 'thread', 'shared-thread', ${version}, ${type}, ${at}, 'system', ${encodeFixture(payload)}, '{}')`;
+          };
+          for (const user of ["alice", "bob"]) {
+            yield* sql`INSERT INTO projection_thread_messages
+            (message_id, thread_id, role, text, is_streaming, created_at, updated_at, attribution_json)
+            VALUES (${user}, 'shared-thread', 'user', '', 0, ${at}, ${at}, ${encodeFixture({ userId: user, displayName: user, origin: "web" })})`;
+            yield* sql`INSERT INTO projection_turns
+            (thread_id, turn_id, pending_message_id, state, requested_at, checkpoint_files_json)
+            VALUES ('shared-thread', ${`turn-${user}`}, ${user}, 'completed', ${at}, '[]')`;
+          }
+          const usage = Effect.fn(function* (
+            name: string,
+            source = "worker-a",
+            turnId: string | null = null,
+          ) {
+            const id = `compadre-native:${source}:${name}`;
+            const payload = {
+              usageProvider: "codex",
+              model: "gpt-5",
+              usedTokens: 105,
+              inputTokens: 100,
+              outputTokens: version + 1,
+            };
+            yield* event(source, "thread.activity-appended", {
+              activity: { id, kind: "context-window.updated" },
+            });
+            yield* sql`INSERT INTO projection_thread_activities
+            (activity_id, thread_id, turn_id, tone, kind, summary, payload_json, created_at)
+            VALUES (${id}, 'shared-thread', ${turnId}, 'info', 'context-window.updated', 'Usage', ${encodeFixture(payload)}, ${at})`;
+          });
+          const session = (turn: string | null, source = "worker-a") =>
+            event(source, "thread.session-set", { session: { activeTurnId: turn } });
+
+          yield* usage("before-session");
+          yield* session("turn-alice");
+          yield* usage("alice-first");
+          // All timestamps are identical: durable order, not wall time or the
+          // latest request, owns attribution. Bob's steer cannot steal Alice's turn.
+          yield* event("worker-a", "thread.turn-start-requested", { messageId: "bob" });
+          yield* usage("alice-after-steer");
+          yield* usage("other-worker", "worker-b");
+          yield* usage("explicit-bob", "worker-a", "turn-bob");
+          yield* session(null);
+          yield* usage("after-stop");
+          yield* session("turn-bob");
+          yield* usage("bob-next-turn");
+          yield* session("unknown-turn");
+          yield* usage("missing-turn-attribution");
+
+          const summary = yield* service.readSummary(WINDOW);
+          assert.deepStrictEqual(
+            summary.buckets
+              .map((bucket) => [bucket.userId ?? "unattributed", bucket.records])
+              .sort(),
+            [
+              ["alice", 2],
+              ["bob", 2],
+              ["unattributed", 4],
+            ],
+          );
+        }).pipe(
+          Effect.provide(serviceLayers({ prefix: "usage-native-attribution", home, settings })),
+        );
+      }).pipe(Effect.scoped),
+  );
+
+  it.live(
     "recovers native usage from the historical turn model without counting local activity twice",
     () =>
       Effect.gen(function* () {

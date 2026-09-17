@@ -70,6 +70,14 @@ timestamp. Preserve explicit historical usage metadata when present. Restrict
 this fallback to `compadre-native:` activities so local transcript scans are not
 counted twice, and never reprice old turns using a thread's current model.
 
+Codex token notifications must retain their provider turn ID through runtime
+routing so usage joins the initiating message's attribution. Older hosted
+activities without a turn ID recover attribution at read time from the same
+native worker journal's active session in event-sequence order. Session clears
+and worker identities are boundaries; a later steering request or the thread's
+owner is not an attribution fallback. Missing links remain unattributed, and
+the recovery does not rewrite events or change token totals.
+
 Harness operations use the [hosted provider action contract](hosted-provider-actions.md).
 Keep its capability discovery, typed dispatch, and native completion receipts
 intact when merging upstream actions; never route them through prompt decoration.

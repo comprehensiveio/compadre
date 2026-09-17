@@ -138,6 +138,14 @@ const UsageModelSelection = Schema.Struct({
   ),
 });
 
+const NativeUsageHistoryRow = Schema.Struct({
+  eventId: Schema.String,
+  threadId: Schema.String,
+  eventType: Schema.Literals(["thread.session-set", "thread.activity-appended"]),
+  activityId: Schema.NullOr(Schema.String),
+  attribution: Schema.NullOr(Schema.fromJsonString(MessageAttribution)),
+});
+
 function decodeProjectedUsage(
   row: typeof ProjectedUsageRow.Type,
   selection?: typeof UsageModelSelection.Type,
@@ -258,10 +266,37 @@ export const make = Effect.gen(function* () {
     `,
   });
 
+  const listNativeUsageHistory = SqlSchema.findAll({
+    Request: Schema.Struct({ since: Schema.String }),
+    Result: NativeUsageHistoryRow,
+    execute: ({ since }) => sql`
+      SELECT event.event_id AS "eventId", event.stream_id AS "threadId",
+        event.event_type AS "eventType",
+        json_extract(event.payload_json, '$.activity.id') AS "activityId",
+        message.attribution_json AS "attribution"
+      FROM orchestration_events AS event
+      LEFT JOIN projection_turns AS turn
+        ON turn.thread_id = event.stream_id
+        AND turn.turn_id = json_extract(event.payload_json, '$.session.activeTurnId')
+      LEFT JOIN projection_thread_messages AS message
+        ON message.thread_id = turn.thread_id AND message.message_id = turn.pending_message_id
+      WHERE event.aggregate_kind = 'thread' AND event.event_id LIKE 'compadre-native:%'
+        AND event.stream_id IN (
+          SELECT thread_id FROM projection_thread_activities
+          WHERE kind = 'context-window.updated' AND turn_id IS NULL AND created_at >= ${since}
+        )
+        AND (event.event_type = 'thread.session-set' OR (
+          event.event_type = 'thread.activity-appended'
+          AND json_extract(event.payload_json, '$.activity.kind') = 'context-window.updated'
+        ))
+      ORDER BY event.sequence ASC
+    `,
+  });
+
   const readProjectedUsageRecords = Effect.fn("UsageService.readProjectedUsageRecords")(function* (
     sinceMs: number,
   ) {
-    const rows = yield* listProjectedUsageRows({
+    let rows = yield* listProjectedUsageRows({
       since: DateTime.formatIso(DateTime.makeUnsafe(sinceMs)),
     }).pipe(
       Effect.mapError(
@@ -273,6 +308,39 @@ export const make = Effect.gen(function* () {
           }),
       ),
     );
+    // Older Codex runtimes dropped usage turn IDs. Recover only from the same
+    // worker journal's active session, in durable delivery order. A later prompt
+    // (steering), another worker, or a stopped session must not claim the usage.
+    if (rows.some((row) => row.turnId === null && row.activityId.startsWith("compadre-native:"))) {
+      const history = yield* listNativeUsageHistory({
+        since: DateTime.formatIso(DateTime.makeUnsafe(sinceMs)),
+      }).pipe(
+        Effect.mapError(
+          (cause) =>
+            new UsageReadError({
+              reason: "scanFailed",
+              detail: "Historical hosted usage attribution could not be read.",
+              cause,
+            }),
+        ),
+      );
+      const active = new Map<string, MessageAttribution | null>();
+      const recovered = new Map<string, MessageAttribution>();
+      for (const event of history) {
+        const source = `${event.threadId}:${event.eventId.split(":")[1]}`;
+        if (event.eventType === "thread.session-set") {
+          active.set(source, event.attribution);
+        } else if (event.activityId !== null) {
+          const attribution = active.get(source);
+          if (attribution) recovered.set(event.activityId, attribution);
+        }
+      }
+      rows = rows.map((row) =>
+        row.turnId === null && row.attribution === null
+          ? { ...row, attribution: recovered.get(row.activityId) ?? null }
+          : row,
+      );
+    }
     // Native journals carry token counts without billing metadata. Resolve the
     // model from immutable turn requests, never the thread's current selection.
     const selections = yield* listUsageModelSelections(undefined).pipe(
