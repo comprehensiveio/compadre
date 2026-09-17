@@ -266,29 +266,34 @@ export const make = Effect.gen(function* () {
     `,
   });
 
+  // Materialize timestamp candidates before parsing JSON: unrelated tool events
+  // can contain large outputs. Attribution still matches the exact activity ID.
   const listNativeUsageHistory = SqlSchema.findAll({
     Request: Schema.Struct({ since: Schema.String }),
     Result: NativeUsageHistoryRow,
     execute: ({ since }) => sql`
+      WITH candidates AS MATERIALIZED (
+        SELECT event_id, stream_id, event_type, payload_json, sequence
+        FROM orchestration_events AS event
+        WHERE aggregate_kind = 'thread' AND event_id LIKE 'compadre-native:%'
+          AND (event_type = 'thread.session-set' OR (
+            event_type = 'thread.activity-appended' AND (stream_id, occurred_at) IN (
+              SELECT thread_id, created_at FROM projection_thread_activities
+              WHERE kind = 'context-window.updated'
+                AND turn_id IS NULL AND created_at >= ${since}
+            )
+          ))
+      )
       SELECT event.event_id AS "eventId", event.stream_id AS "threadId",
         event.event_type AS "eventType",
         json_extract(event.payload_json, '$.activity.id') AS "activityId",
         message.attribution_json AS "attribution"
-      FROM orchestration_events AS event
+      FROM candidates AS event
       LEFT JOIN projection_turns AS turn
         ON turn.thread_id = event.stream_id
         AND turn.turn_id = json_extract(event.payload_json, '$.session.activeTurnId')
       LEFT JOIN projection_thread_messages AS message
         ON message.thread_id = turn.thread_id AND message.message_id = turn.pending_message_id
-      WHERE event.aggregate_kind = 'thread' AND event.event_id LIKE 'compadre-native:%'
-        AND event.stream_id IN (
-          SELECT thread_id FROM projection_thread_activities
-          WHERE kind = 'context-window.updated' AND turn_id IS NULL AND created_at >= ${since}
-        )
-        AND (event.event_type = 'thread.session-set' OR (
-          event.event_type = 'thread.activity-appended'
-          AND json_extract(event.payload_json, '$.activity.kind') = 'context-window.updated'
-        ))
       ORDER BY event.sequence ASC
     `,
   });
