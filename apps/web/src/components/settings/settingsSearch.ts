@@ -687,6 +687,13 @@ export const SETTINGS_SEARCH_ITEMS = [
     ],
   },
   {
+    id: "github-username",
+    title: "GitHub username",
+    to: "/settings/general",
+    hostedOnly: true,
+    searchTerms: ["account co-author credit commits attribution github login"],
+  },
+  {
     id: "triggered-prompts",
     title: "Triggered prompts",
     to: "/settings/triggered-prompts",

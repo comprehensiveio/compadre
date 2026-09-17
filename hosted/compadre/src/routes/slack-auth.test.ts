@@ -56,15 +56,24 @@ function dependencies(): SlackAuthDependencies {
         avatarUrl: "https://example.com/isaac.png",
         email: "isaac@example.com",
       }),
-      findActiveById: async () => ({
-        id: "54fdda5d-6b65-518e-92fa-841b762342df",
-        displayName: "Isaac Sherrill",
-        avatarUrl: "https://example.com/isaac.png",
-        email: "isaac@example.com",
-      }),
+      findActiveById: async (id: string) =>
+        id === USER.id ? { ...USER, ...(githubLogin ? { githubLogin } : {}) } : null,
+      setGithubLogin: async (id: string, value: string | null) => {
+        if (id !== USER.id) return null;
+        githubLogin = value;
+        return { ...USER, ...(githubLogin ? { githubLogin } : {}) };
+      },
     }),
   };
 }
+
+const USER = {
+  id: "54fdda5d-6b65-518e-92fa-841b762342df",
+  displayName: "Isaac Sherrill",
+  avatarUrl: "https://example.com/isaac.png",
+  email: "isaac@example.com",
+};
+let githubLogin: string | null = null;
 
 test("starts a workspace-scoped Slack OpenID flow", async () => {
   const routes = createSlackAuthRoutes(dependencies());
@@ -144,4 +153,37 @@ test("exchanges a grant only for the authenticated T3 service", async () => {
     },
     returnTo: "/env/thread",
   });
+});
+
+test("lets the web server read and edit a user's GitHub username", async () => {
+  githubLogin = null;
+  const routes = createSlackAuthRoutes(dependencies());
+  const profileUrl = `https://controller.example/internal/users/${USER.id}/profile`;
+  const headers = {
+    authorization: "Bearer service-token",
+    "content-type": "application/json",
+  };
+
+  assert.equal((await routes.request(profileUrl)).status, 401);
+  assert.equal(
+    (await routes.request("https://controller.example/internal/users/missing/profile", { headers })).status,
+    404,
+  );
+  const read = await routes.request(profileUrl, { headers });
+  assert.equal(read.status, 200);
+  assert.deepEqual(await read.json(), { ok: true, user: USER });
+
+  const update = (value: unknown) =>
+    routes.request(profileUrl, { method: "POST", headers, body: JSON.stringify({ githubLogin: value }) });
+  assert.equal((await update("not a login")).status, 400);
+  assert.equal(githubLogin, null);
+
+  const saved = await update("https://github.com/imsherrill");
+  assert.equal(saved.status, 200);
+  assert.deepEqual(await saved.json(), { ok: true, user: { ...USER, githubLogin: "imsherrill" } });
+  assert.equal(githubLogin, "imsherrill");
+
+  const cleared = await update("");
+  assert.deepEqual(await cleared.json(), { ok: true, user: USER });
+  assert.equal(githubLogin, null);
 });

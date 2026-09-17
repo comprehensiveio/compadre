@@ -50,6 +50,8 @@ export interface NativeT3RunRequest {
     recipientTeamId?: string;
   };
   collectArtifacts: boolean;
+  /** Canonical user who sent the turn, when a human did; credits worker commits. */
+  requesterUserId?: string;
   createdAt: string;
 }
 
