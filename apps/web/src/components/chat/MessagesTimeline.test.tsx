@@ -284,7 +284,7 @@ function buildSnapShotTimelineEntry(previewUrl?: string) {
 }
 
 describe("MessagesTimeline", () => {
-  it("shows who sent an attributed Slack message", () => {
+  it("always shows who sent an attributed Slack message", () => {
     const entry = buildUserTimelineEntry("Please check the deploy.");
     const markup = renderToStaticMarkup(
       <MessagesTimeline
@@ -315,6 +315,9 @@ describe("MessagesTimeline", () => {
     expect(markup).toContain("Isaac Sherrill");
     expect(markup).toContain("via Slack");
     expect(markup).toContain("https://example.com/isaac.png");
+    expect(markup).toContain(
+      'class="relative flex max-w-[80%] items-center justify-end gap-2 pe-1 text-xs tabular-nums"',
+    );
   });
 
   it("shows trigger provenance in place of a user on machine-triggered messages", () => {

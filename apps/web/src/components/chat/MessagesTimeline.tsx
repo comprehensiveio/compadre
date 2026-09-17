@@ -1715,76 +1715,75 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
           />
         </div>
       </div>
-      <div className="flex w-full max-w-[80%] items-center justify-end pe-1 text-xs tabular-nums opacity-0 transition-opacity duration-200 pointer-coarse:opacity-100 focus-within:opacity-100 group-hover:opacity-100">
-        <div className="flex shrink-0 items-center gap-2">
-          {attribution ? (
-            attribution.origin === "trigger" ? (
-              <Tooltip>
-                <TooltipTrigger
-                  render={
-                    <div className="flex min-w-0 items-center justify-end gap-1.5 text-muted-foreground" />
+      <div className="relative flex max-w-[80%] items-center justify-end gap-2 pe-1 text-xs tabular-nums">
+        <div className="absolute end-full me-1 flex items-center gap-0.5 opacity-0 transition-opacity duration-200 pointer-coarse:opacity-100 focus-within:opacity-100 group-hover:opacity-100">
+          {typeof revertTurnCount === "number" && (
+            <RevertUserMessageButton turnCount={revertTurnCount} messageId={row.message.id} />
+          )}
+          {resolvedContext.text && (
+            <MessageCopyButton
+              // Structured paste needs the canonical links to retain their positions.
+              text={
+                contextClipboardFragment
+                  ? resolvedContext.text
+                  : replaceComposerContextReferences(
+                      resolvedContext.text,
+                      (reference) => reference.label,
+                    )
+              }
+              {...(contextClipboardFragment
+                ? {
+                    extraFlavors: { [COMPOSER_CONTEXT_CLIPBOARD_MIME]: contextClipboardFragment },
                   }
-                >
-                  <AlarmClockIcon className="size-3.5 shrink-0 text-secondary-label" />
-                  {/* The trigger's own attribution, not the canonical-participant
-                    rollup: triggers are per message, and a thread can mix human
-                    and triggered turns. */}
-                  <span className="truncate">{attribution.displayName}</span>
-                  <span className="shrink-0 text-secondary-label">triggered</span>
-                </TooltipTrigger>
-                <TooltipPopup side="top" className="max-w-80">
-                  {describeTriggerAttribution(attribution)}
-                </TooltipPopup>
-              </Tooltip>
-            ) : (
-              <div className="flex min-w-0 items-center justify-end gap-1.5 text-muted-foreground">
-                {attributionAvatarUrl ? (
-                  <img src={attributionAvatarUrl} alt="" className="size-4 shrink-0 rounded-full" />
-                ) : null}
-                <span className="truncate">{attributionDisplayName}</span>
-                {attribution.origin === "slack" ? (
-                  <span className="flex shrink-0 items-center gap-1 text-secondary-label">
-                    <MessageCircleIcon className="size-3" />
-                    via Slack
-                  </span>
-                ) : null}
-              </div>
-            )
-          ) : null}
-
-          <Tooltip>
-            <TooltipTrigger render={<p className="text-muted-foreground text-xs tabular-nums" />}>
-              {formatDayAwareTimestamp(row.message.createdAt, ctx.timestampFormat)}
-            </TooltipTrigger>
-            <TooltipPopup>
-              {formatChatTimestampTooltip(row.message.createdAt, ctx.timestampFormat)}
-            </TooltipPopup>
-          </Tooltip>
-          <div className="flex items-center gap-0.5">
-            {typeof revertTurnCount === "number" && (
-              <RevertUserMessageButton turnCount={revertTurnCount} messageId={row.message.id} />
-            )}
-            {resolvedContext.text && (
-              <MessageCopyButton
-                // Structured paste needs the canonical links to retain their positions.
-                text={
-                  contextClipboardFragment
-                    ? resolvedContext.text
-                    : replaceComposerContextReferences(
-                        resolvedContext.text,
-                        (reference) => reference.label,
-                      )
-                }
-                {...(contextClipboardFragment
-                  ? {
-                      extraFlavors: { [COMPOSER_CONTEXT_CLIPBOARD_MIME]: contextClipboardFragment },
-                    }
-                  : {})}
-                variant="ghost"
-              />
-            )}
-          </div>
+                : {})}
+              variant="ghost"
+            />
+          )}
         </div>
+        {attribution ? (
+          attribution.origin === "trigger" ? (
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <div className="flex min-w-0 items-center justify-end gap-1.5 text-muted-foreground" />
+                }
+              >
+                <AlarmClockIcon className="size-3.5 shrink-0 text-secondary-label" />
+                {/* The trigger's own attribution, not the canonical-participant
+                  rollup: triggers are per message, and a thread can mix human
+                  and triggered turns. */}
+                <span className="truncate">{attribution.displayName}</span>
+                <span className="shrink-0 text-secondary-label">triggered</span>
+              </TooltipTrigger>
+              <TooltipPopup side="top" className="max-w-80">
+                {describeTriggerAttribution(attribution)}
+              </TooltipPopup>
+            </Tooltip>
+          ) : (
+            <div className="flex min-w-0 items-center justify-end gap-1.5 text-muted-foreground">
+              {attributionAvatarUrl ? (
+                <img src={attributionAvatarUrl} alt="" className="size-4 shrink-0 rounded-full" />
+              ) : null}
+              <span className="truncate">{attributionDisplayName}</span>
+              {attribution.origin === "slack" ? (
+                <span className="flex shrink-0 items-center gap-1 text-secondary-label">
+                  <MessageCircleIcon className="size-3" />
+                  via Slack
+                </span>
+              ) : null}
+            </div>
+          )
+        ) : null}
+        <Tooltip>
+          <TooltipTrigger
+            render={<p className="shrink-0 text-muted-foreground text-xs tabular-nums" />}
+          >
+            {formatDayAwareTimestamp(row.message.createdAt, ctx.timestampFormat)}
+          </TooltipTrigger>
+          <TooltipPopup>
+            {formatChatTimestampTooltip(row.message.createdAt, ctx.timestampFormat)}
+          </TooltipPopup>
+        </Tooltip>
       </div>
     </div>
   );
