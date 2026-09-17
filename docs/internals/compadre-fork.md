@@ -63,6 +63,13 @@ See [native delivery ownership and rollout](native-event-rollout.md#pull-request
 
 ### Model discovery
 
+Hosted usage reads centrally replicated `context-window.updated` activities.
+Native token snapshots do not necessarily carry `usageProvider` or `model`;
+resolve those from the last persisted turn-start selection at the activity's
+timestamp. Preserve explicit historical usage metadata when present. Restrict
+this fallback to `compadre-native:` activities so local transcript scans are not
+counted twice, and never reprice old turns using a thread's current model.
+
 Harness operations use the [hosted provider action contract](hosted-provider-actions.md).
 Keep its capability discovery, typed dispatch, and native completion receipts
 intact when merging upstream actions; never route them through prompt decoration.

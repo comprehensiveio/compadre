@@ -121,10 +121,35 @@ const ProjectedUsageRow = Schema.Struct({
   activityId: Schema.String,
   threadId: Schema.String,
   turnId: Schema.NullOr(Schema.String),
-  payload: Schema.fromJsonString(Schema.Unknown),
+  payload: Schema.fromJsonString(Schema.Record(Schema.String, Schema.Unknown)),
   attribution: Schema.NullOr(Schema.fromJsonString(MessageAttribution)),
   createdAt: Schema.String,
 });
+
+const UsageModelSelection = Schema.Struct({
+  threadId: Schema.String,
+  createdAt: Schema.String,
+  modelSelection: Schema.fromJsonString(
+    Schema.Struct({
+      model: Schema.String,
+      instanceId: Schema.optional(Schema.String),
+      provider: Schema.optional(Schema.String),
+    }),
+  ),
+});
+
+function decodeProjectedUsage(
+  row: typeof ProjectedUsageRow.Type,
+  selection?: typeof UsageModelSelection.Type,
+) {
+  const instance = selection?.modelSelection.instanceId ?? selection?.modelSelection.provider;
+  return decodeHostedUsagePayload({
+    usageProvider:
+      instance === "codex" ? "codex" : instance === "claudeAgent" ? "claude" : undefined,
+    model: selection?.modelSelection.model,
+    ...row.payload,
+  });
+}
 
 export class UsageService extends Context.Service<
   UsageService,
@@ -210,10 +235,27 @@ export const make = Effect.gen(function* () {
         LEFT JOIN projection_thread_messages AS message
           ON message.message_id = turn.pending_message_id
         WHERE activity.kind = 'context-window.updated'
-          AND json_extract(activity.payload_json, '$.usageProvider') IN ('claude', 'codex')
+          AND (
+            json_extract(activity.payload_json, '$.usageProvider') IN ('claude', 'codex')
+            OR activity.activity_id LIKE 'compadre-native:%'
+          )
           AND activity.created_at >= ${since}
         ORDER BY activity.created_at ASC, activity.activity_id ASC
       `,
+  });
+
+  const listUsageModelSelections = SqlSchema.findAll({
+    Request: Schema.Void,
+    Result: UsageModelSelection,
+    execute: () => sql`
+      SELECT stream_id AS "threadId", occurred_at AS "createdAt",
+        json_extract(payload_json, '$.modelSelection') AS "modelSelection"
+      FROM orchestration_events
+      WHERE aggregate_kind = 'thread'
+        AND event_type = 'thread.turn-start-requested'
+        AND json_extract(payload_json, '$.modelSelection') IS NOT NULL
+      ORDER BY occurred_at ASC, sequence ASC
+    `,
   });
 
   const readProjectedUsageRecords = Effect.fn("UsageService.readProjectedUsageRecords")(function* (
@@ -231,11 +273,36 @@ export const make = Effect.gen(function* () {
           }),
       ),
     );
+    // Native journals carry token counts without billing metadata. Resolve the
+    // model from immutable turn requests, never the thread's current selection.
+    const selections = yield* listUsageModelSelections(undefined).pipe(
+      Effect.mapError(
+        (cause) =>
+          new UsageReadError({
+            reason: "scanFailed",
+            detail: "Historical hosted usage models could not be read.",
+            cause,
+          }),
+      ),
+    );
+    const selectionsByThread = new Map<string, Array<typeof UsageModelSelection.Type>>();
+    for (const selection of selections) {
+      const threadSelections = selectionsByThread.get(selection.threadId) ?? [];
+      threadSelections.push(selection);
+      selectionsByThread.set(selection.threadId, threadSelections);
+    }
+    const decodeUsage = (row: typeof ProjectedUsageRow.Type) =>
+      decodeProjectedUsage(
+        row,
+        selectionsByThread
+          .get(row.threadId)
+          ?.findLast((selection) => selection.createdAt <= row.createdAt),
+      );
     const codexSignatures = new Map<string, string>();
     const claudeLatest = new Map<string, (typeof rows)[number]>();
     const selected: Array<(typeof rows)[number]> = [];
     for (const row of rows) {
-      const decoded = decodeHostedUsagePayload(row.payload);
+      const decoded = decodeUsage(row);
       if (Option.isNone(decoded)) continue;
       const usage = decoded.value;
       const turnKey = `${row.threadId}:${row.turnId ?? row.activityId}`;
@@ -257,7 +324,7 @@ export const make = Effect.gen(function* () {
     selected.push(...claudeLatest.values());
 
     return selected.flatMap((row): UsageRecord[] => {
-      const decoded = decodeHostedUsagePayload(row.payload);
+      const decoded = decodeUsage(row);
       if (Option.isNone(decoded)) return [];
       const usage = decoded.value;
       const inputTokens = usage.lastInputTokens ?? usage.inputTokens;
