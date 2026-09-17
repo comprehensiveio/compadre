@@ -544,19 +544,34 @@ async function waitForT3Startup(
   );
 }
 
-function skillProjectionCommand(workspaceRoot: string): string {
-  const skillsRoots = [
+export function nativeProviderSkillInstallationCommand(
+  workspaceRoot: string,
+  homeDirectory = "/home/node",
+  skillsDirectory = "/opt/compadre-skills",
+): string {
+  const providerSkillRoots = [
+    `${homeDirectory}/.codex/skills`,
+    `${homeDirectory}/.claude/skills`,
+  ];
+  const legacyWorkspaceSkillRoots = [
     `${workspaceRoot}/.agents/skills`,
     `${workspaceRoot}/.claude/skills`,
   ];
   return [
-    ...skillsRoots.flatMap((skillsRoot) => [
+    ...providerSkillRoots.flatMap((skillsRoot) => [
       `mkdir -p ${quote(skillsRoot)}`,
       ...COMPADRE_SKILL_NAMES.map(
         (name) =>
-          `mkdir -p ${quote(`${skillsRoot}/${name}`)} && cp ${quote(`/opt/compadre-skills/${name}/SKILL.md`)} ${quote(`${skillsRoot}/${name}/SKILL.md`)}`,
+          `rm -rf ${quote(`${skillsRoot}/${name}`)} && ln -s ${quote(`${skillsDirectory}/${name}`)} ${quote(`${skillsRoot}/${name}`)}`,
       ),
     ]),
+    ...legacyWorkspaceSkillRoots.flatMap((skillsRoot) =>
+      COMPADRE_SKILL_NAMES.map((name) => {
+        const skillDirectory = `${skillsRoot}/${name}`;
+        const relativeSkillPath = skillDirectory.slice(workspaceRoot.length + 1);
+        return `if [ ! -L ${quote(skillsRoot)} ] && ! git -C ${quote(workspaceRoot)} ls-files --error-unmatch -- ${quote(`${relativeSkillPath}/SKILL.md`)} >/dev/null 2>&1; then rm -f ${quote(`${skillDirectory}/SKILL.md`)}; rmdir ${quote(skillDirectory)} 2>/dev/null || true; fi`;
+      }),
+    ),
   ].join(" && ");
 }
 
@@ -617,7 +632,7 @@ async function projectWorkerRuntimeEnvironment(
     HOME: "/home/node",
   });
   const projected = await handle.process.exec(
-    skillProjectionCommand(workspaceRoot),
+    nativeProviderSkillInstallationCommand(workspaceRoot),
   );
   if (projected.exitCode !== 0) {
     throw new Error(projected.stderr || projected.stdout);

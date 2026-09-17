@@ -54,7 +54,7 @@ try {
   const data = await handle.process.exec("scripts/compadre-dev-data.sh status");
   console.log(`[probe] data mode:\n${data.stdout}`);
   const skills = await handle.process.exec(
-    "ls /workspace/.agents/skills 2>/dev/null || true",
+    "find /home/node/.codex/skills /home/node/.claude/skills -maxdepth 1 -mindepth 1 -type l -printf '%p -> %l\\n' 2>/dev/null | sort",
   );
   console.log(`[probe] skills: ${skills.stdout.trim().split("\n").join(", ")}`);
   console.log(

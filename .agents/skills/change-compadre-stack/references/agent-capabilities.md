@@ -89,8 +89,10 @@ destination, or environment.
 1. Create `hosted/compadre/skills/<name>/SKILL.md` (runtime skills projected
    into workers live there, not in the repo-level `.agents/skills/`).
 2. Register it in `COMPADRE_SKILL_NAMES` in `hosted/compadre/src/compadre-skills.ts`.
-3. Ensure projection reaches both `.agents/skills` and `.claude/skills` in
-   new and restored workers.
+3. Install the controller-owned bundle outside the checkout and expose it
+   through both providers' user-global skill roots (`~/.codex/skills` and
+   `~/.claude/skills`) in new and restored workers. Do not copy generated
+   skills into the checked-out repository.
 4. Update prompt routing only when discoverable frontmatter is insufficient.
 5. Test registry uploads, both provider paths, and worker restore/reprojection.
 

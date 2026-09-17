@@ -1,5 +1,9 @@
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import test from "node:test";
 import {
   blockedSlackDestinationFromEnvironment,
@@ -8,11 +12,13 @@ import {
   configureNativeHarnessAuthentication,
   nativeHarnessAuthenticationCommand,
   nativeHarnessAuthenticationPreparationCommand,
+  nativeProviderSkillInstallationCommand,
   parseT3StartupToken,
   parseT3SlackDestinationMarker,
   projectedProviderEnvironment,
   t3ServerLaunchCommands,
 } from "./modal-worker.js";
+import { COMPADRE_SKILL_NAMES } from "../compadre-skills.js";
 import { scopedEnvironmentBridgeToken } from "../tanstack/relay-tool-bridge.js";
 
 test("extracts T3's one-time startup token without accepting lookalikes", () => {
@@ -245,6 +251,135 @@ test("cleans stale T3 launch artifacts before starting and recording the new pid
   assert.match(commands.launch, /^nohup /);
   assert.doesNotMatch(commands.launch, /rm -f/);
   assert.match(commands.launch, /& echo \$! > \/var\/run\/t3\.pid$/);
+});
+
+test(
+  "installs native provider skills outside the checkout and removes legacy untracked copies",
+  (t) => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "compadre-native-skills-"));
+    t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+    const workspace = path.join(root, "workspace");
+    const home = path.join(root, "home");
+    const skillSource = path.join(root, "controller-skills");
+    fs.mkdirSync(workspace, { recursive: true });
+    execFileSync("git", ["init", "--quiet", workspace]);
+    execFileSync("git", ["-C", workspace, "config", "user.name", "Test"]);
+    execFileSync("git", ["-C", workspace, "config", "user.email", "test@example.com"]);
+    fs.writeFileSync(path.join(workspace, "README.md"), "workspace\n");
+
+    for (const name of COMPADRE_SKILL_NAMES) {
+      const source = path.join(skillSource, name);
+      fs.mkdirSync(source, { recursive: true });
+      fs.writeFileSync(path.join(source, "SKILL.md"), `---\nname: ${name}\n---\n`);
+    }
+    const trackedCollision = path.join(
+      workspace,
+      ".agents/skills/dev-environment/SKILL.md",
+    );
+    fs.mkdirSync(path.dirname(trackedCollision), { recursive: true });
+    fs.writeFileSync(trackedCollision, "repository-owned skill\n");
+    execFileSync("git", ["-C", workspace, "add", "."]);
+    execFileSync("git", ["-C", workspace, "commit", "--quiet", "-m", "baseline"]);
+    for (const name of COMPADRE_SKILL_NAMES) {
+      for (const legacyRoot of [".agents/skills", ".claude/skills"]) {
+        const legacy = path.join(workspace, legacyRoot, name);
+        if (legacy === path.dirname(trackedCollision)) continue;
+        fs.mkdirSync(legacy, { recursive: true });
+        fs.writeFileSync(path.join(legacy, "SKILL.md"), "legacy generated copy\n");
+      }
+    }
+
+    execFileSync(
+      "/bin/sh",
+      [
+        "-c",
+        nativeProviderSkillInstallationCommand(workspace, home, skillSource),
+      ],
+      { stdio: "pipe" },
+    );
+    execFileSync(
+      "/bin/sh",
+      [
+        "-c",
+        nativeProviderSkillInstallationCommand(workspace, home, skillSource),
+      ],
+      { stdio: "pipe" },
+    );
+
+    for (const providerRoot of [".codex/skills", ".claude/skills"]) {
+      for (const name of COMPADRE_SKILL_NAMES) {
+        const installed = path.join(home, providerRoot, name);
+        assert.equal(fs.lstatSync(installed).isSymbolicLink(), true);
+        assert.equal(
+          fs.realpathSync(installed),
+          fs.realpathSync(path.join(skillSource, name)),
+        );
+      }
+    }
+    assert.equal(
+      fs.readFileSync(trackedCollision, "utf8"),
+      "repository-owned skill\n",
+    );
+    for (const name of COMPADRE_SKILL_NAMES.filter(
+      (candidate) => candidate !== "dev-environment",
+    )) {
+      assert.equal(
+        fs.existsSync(path.join(workspace, ".agents/skills", name, "SKILL.md")),
+        false,
+      );
+    }
+    for (const name of COMPADRE_SKILL_NAMES) {
+      assert.equal(
+        fs.existsSync(path.join(workspace, ".claude/skills", name, "SKILL.md")),
+        false,
+      );
+    }
+    assert.equal(
+      execFileSync("git", ["-C", workspace, "status", "--porcelain=v1"], {
+        encoding: "utf8",
+      }),
+      "",
+    );
+    assert.equal(
+      execFileSync(
+        "git",
+        ["-C", workspace, "ls-files", "--others", "--exclude-standard"],
+        { encoding: "utf8" },
+      ),
+      "",
+    );
+  },
+);
+
+test("does not remove repository skills through a tracked Claude skills symlink", (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "compadre-symlinked-skills-"));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const workspace = path.join(root, "workspace");
+  const trackedSkill = path.join(
+    workspace,
+    ".agents/skills/dev-environment/SKILL.md",
+  );
+  fs.mkdirSync(path.dirname(trackedSkill), { recursive: true });
+  fs.mkdirSync(path.join(workspace, ".claude"), { recursive: true });
+  fs.writeFileSync(trackedSkill, "repository-owned skill\n");
+  fs.symlinkSync("../.agents/skills", path.join(workspace, ".claude/skills"));
+  execFileSync("git", ["init", "--quiet", workspace]);
+  execFileSync("git", ["-C", workspace, "add", "."]);
+
+  execFileSync(
+    "/bin/sh",
+    [
+      "-c",
+      nativeProviderSkillInstallationCommand(
+        workspace,
+        path.join(root, "home"),
+        path.join(root, "controller-skills"),
+      ),
+    ],
+    { stdio: "pipe" },
+  );
+
+  assert.equal(fs.readFileSync(trackedSkill, "utf8"), "repository-owned skill\n");
 });
 
 test("projects one Compadre MCP bridge into T3's native provider environment", () => {
