@@ -43,6 +43,7 @@ it.effect(
     Effect.gen(function* () {
       let body: unknown = {
         version: "1.0.0",
+        subscription: { status: "idle" },
         data: [nativeModel("future-first")],
         nextCursor: null,
         account: {
@@ -114,6 +115,48 @@ it.effect(
       assert.ok(
         requests.every((url) => url === "https://controller.test/hosted/t3/providers/codex/models"),
       );
+    }),
+);
+
+it.effect(
+  "publishes managed Codex subscription routing when a live limits read is unavailable",
+  () =>
+    Effect.gen(function* () {
+      let subscription = "busy" as "busy" | "disabled" | "error";
+      const client = HttpClient.make((request) =>
+        Effect.succeed(
+          HttpClientResponse.fromWeb(
+            request,
+            Response.json({
+              version: "1.0.0",
+              data: [nativeModel("future-first")],
+              nextCursor: null,
+              subscription: { status: subscription },
+            }),
+          ),
+        ),
+      );
+      const check = makeRemoteProviderModelCheck(
+        options(),
+        client,
+        manifestService(() => ({ version: 1, currentModels: {} })),
+      );
+
+      const busy = yield* check.checkProvider;
+      assert.equal(busy.auth.label, "Shared ChatGPT subscription");
+      assert.equal(busy.usageLimits?.unavailable?.reason, "busy");
+      assert.match(busy.usageLimits?.unavailable?.message ?? "", /assigned to a Codex run/);
+
+      subscription = "error";
+      const failed = yield* check.checkProvider;
+      assert.equal(failed.auth.label, "Shared ChatGPT subscription");
+      assert.equal(failed.usageLimits?.unavailable?.reason, "probeFailed");
+
+      subscription = "disabled";
+      const disabled = yield* check.checkProvider;
+      assert.equal(disabled.auth.label, "Isolated Modal worker");
+      assert.equal(disabled.usageLimits?.unavailable?.reason, "disabled");
+      assert.match(disabled.usageLimits?.unavailable?.message ?? "", /use API billing/);
     }),
 );
 

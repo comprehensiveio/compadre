@@ -257,6 +257,7 @@ test("serves discovered models only after authentication and without waking work
     discoverCodexUsage: async () => {
       if (usageFails) throw new Error("usage unavailable");
       return {
+        subscription: { status: "idle" as const },
         account: { account: { type: "chatgpt", email: "codex@example.com", planType: "pro" }, requiresOpenaiAuth: false },
         rateLimits: { rateLimits: { limitId: "codex", primary: { usedPercent: 31, windowDurationMins: 300 } } },
       };
@@ -271,9 +272,12 @@ test("serves discovered models only after authentication and without waking work
   assert.deepEqual(body.data, [{ model: "future-model" }]);
   assert.equal(body.account.account.planType, "pro");
   assert.equal(body.rateLimits.rateLimits.primary.usedPercent, 31);
+  assert.equal(body.subscription.status, "idle");
   assert.equal(discoveries, 1);
   usageFails = true;
-  assert.equal((await app.request(path, authorized())).status, 200);
+  const unavailable = await app.request(path, authorized());
+  assert.equal(unavailable.status, 200);
+  assert.equal((await unavailable.json()).subscription.status, "error");
   assert.equal((await app.request("/hosted/t3/providers/claude-code/models", authorized())).status, 200);
   assert.equal((await app.request("/hosted/t3/providers/unknown/models", authorized())).status, 400);
 });

@@ -81,9 +81,11 @@ temporary Codex home and the worker API credential. When the managed ChatGPT
 subscription lane is enabled and idle, the same response is enriched with an
 account and `account/rateLimits/read` snapshot from a second temporary Codex
 home. That read holds the lane lock, persists any refreshed auth chain before
-releasing it, and never creates a thread or acquires a Modal worker. If a worker
-owns the lane, the controller omits the enrichment and central T3 retains its
-last successful limits snapshot. The controller caches successful model results
+releasing it, and never creates a thread or acquires a Modal worker. The
+controller always reports whether the managed lane is idle, owned by a run,
+disabled, or failed to check. Central T3 turns those states into explicit Limits
+notices, so a process restart cannot make the configured subscription disappear.
+The controller caches successful model results
 for five minutes, coalesces concurrent model requests, and retains the last
 catalog during an outage. Model discovery still describes the shared API
 execution catalog; the optional limits enrichment describes the configured

@@ -95,6 +95,12 @@ describe("limitsNotice", () => {
         unavailable: { reason: "probeFailed", message: "Codex timed out." },
       }),
     ).toBe("Codex timed out.");
+    expect(limitsNotice({ checkedAt, windows: [], unavailable: { reason: "busy" } })).toBe(
+      "Subscription limits are in use and cannot be read yet.",
+    );
+    expect(limitsNotice({ checkedAt, windows: [], unavailable: { reason: "disabled" } })).toBe(
+      "Subscription routing is disabled.",
+    );
   });
 });
 
@@ -887,7 +893,7 @@ describe("collectLimitNotices", () => {
     accounts: [],
   };
 
-  it("names failures and silence, skips unsupported accounts, and labels environments only when several", () => {
+  it("names failures, managed routing states, and silence, skips unsupported accounts, and labels environments only when several", () => {
     const failed = provider({
       instanceId: ProviderInstanceId.make("claude"),
       driver: claude,
@@ -900,13 +906,21 @@ describe("collectLimitNotices", () => {
       usageLimits: { checkedAt, windows: [], unavailable: { reason: "unsupported" } },
     });
     const silent = provider({ usageLimits: { checkedAt, windows: [] } });
+    const busy = provider({
+      instanceId: ProviderInstanceId.make("shared"),
+      usageLimits: {
+        checkedAt,
+        windows: [],
+        unavailable: { reason: "busy", message: "Subscription is serving a run." },
+      },
+    });
     const one = new Map([
       [
         EnvironmentId.make("env-a"),
         {
           ...laptop,
           serverConfig: {
-            providers: [failed, apiKey, silent],
+            providers: [failed, apiKey, silent, busy],
             usageLimitSources: [
               hub,
               { ...hub, id: UsageLimitSourceId.make("down"), label: "down", error: "ECONNREFUSED" },
@@ -918,6 +932,7 @@ describe("collectLimitNotices", () => {
     expect(collectLimitNotices(one)).toEqual([
       "Claude Max: Could not read limits.",
       "codex: No limits reported.",
+      "codex: Subscription is serving a run.",
       "hub: No accounts reported.",
       "down: ECONNREFUSED",
     ]);

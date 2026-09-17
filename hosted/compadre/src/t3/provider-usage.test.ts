@@ -49,13 +49,15 @@ test("subscription usage reads account limits and preserves refreshed auth", asy
     "-e",
     fixture,
   ]);
+  assert.equal(result.subscription.status, "idle");
+  if (!("account" in result)) assert.fail("expected an idle subscription lane");
   assert.equal(
-    (result?.account as { account?: { planType?: string } }).account?.planType,
+    (result.account as { account?: { planType?: string } }).account?.planType,
     "pro",
   );
   assert.equal(
     (
-      result?.rateLimits as {
+      result.rateLimits as {
         rateLimits?: { primary?: { usedPercent?: number } };
       }
     ).rateLimits?.primary?.usedPercent,
@@ -66,4 +68,39 @@ test("subscription usage reads account limits and preserves refreshed auth", asy
     runId: "run-a",
   });
   assert.match(claim.authJson ?? "", /refreshed/);
+});
+
+test("subscription usage reports lane availability without probing owned or disabled lanes", async () => {
+  const values = new Map<string, unknown>();
+  const metadata: MetadataStore = {
+    async get(namespace, key) {
+      return values.get(`${namespace}:${key}`) ?? null;
+    },
+    async set(namespace, key, value) {
+      values.set(`${namespace}:${key}`, value);
+    },
+    async delete(namespace, key) {
+      values.delete(`${namespace}:${key}`);
+    },
+  };
+  const enabled = new CodexSubscriptionLane(metadata, new InMemoryLockStore(), {
+    COMPADRE_CODEX_SUBSCRIPTION_EXPERIMENT_ENABLED: "true",
+    COMPADRE_CODEX_AUTH_ENCRYPTION_KEY: Buffer.alloc(32, 4).toString("base64"),
+    CODEX_AUTH_JSON_BASE64: Buffer.from(
+      JSON.stringify({ auth_mode: "chatgpt", tokens: { refresh_token: "seed" } }),
+    ).toString("base64"),
+  });
+  await enabled.claim({ canonicalThreadId: "thread-a", runId: "run-a" });
+  assert.deepEqual(
+    await discoverCodexSubscriptionUsage(enabled, "must-not-spawn"),
+    { subscription: { status: "busy" } },
+  );
+
+  const disabled = new CodexSubscriptionLane(metadata, new InMemoryLockStore(), {
+    COMPADRE_CODEX_SUBSCRIPTION_EXPERIMENT_ENABLED: "false",
+  });
+  assert.deepEqual(
+    await discoverCodexSubscriptionUsage(disabled, "must-not-spawn"),
+    { subscription: { status: "disabled" } },
+  );
 });

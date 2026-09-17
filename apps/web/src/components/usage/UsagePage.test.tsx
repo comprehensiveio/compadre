@@ -124,6 +124,7 @@ const environments = [
     environmentId: EnvironmentId.make("test-environment"),
     label: "Test environment",
     isPending: false,
+    isConnected: true,
     error: null,
     summary: {
       contractVersion: USAGE_CONTRACT_VERSION,
@@ -172,6 +173,21 @@ beforeEach(() => {
 });
 
 describe("UsagePage hourly breakdown", () => {
+  it("explains when selected environments returned no usage instead of rendering an empty report", () => {
+    testState.useUsage.mockReturnValue({
+      merged: mergeUsage([], USAGE_CONTRACT_VERSION),
+      environments: [{ ...environments[0]!, summary: null, error: "Offline" }],
+      selectedEnvironments: [{ ...environments[0]!, summary: null, error: "Offline" }],
+      isPending: false,
+      isPartial: false,
+      refresh: vi.fn(),
+    });
+
+    const markup = renderToStaticMarkup(<UsagePage />);
+    expect(markup).toContain("Usage is unavailable for the selected environments.");
+    expect(markup).toContain("Reconnect the environment or refresh");
+  });
+
   it("keeps recent activity visible first without empty hourly rows", () => {
     const markup = renderToStaticMarkup(<UsagePage />);
     const body = markup.match(/<tbody>(.*?)<\/tbody>/)?.[1] ?? "";

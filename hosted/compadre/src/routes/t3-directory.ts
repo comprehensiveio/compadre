@@ -141,7 +141,9 @@ const defaultDependencies: T3DirectoryRoutesDependencies = {
   getReviewStore: getConfiguredWorkspaceReviewStore,
   async discoverCodexUsage() {
     const lane = await getConfiguredCodexSubscriptionLane();
-    return lane ? discoverCodexSubscriptionUsage(lane) : undefined;
+    return lane
+      ? discoverCodexSubscriptionUsage(lane)
+      : { subscription: { status: "disabled" as const } };
   },
   createId: crypto.randomUUID,
   watchTurn(gateway, turn) {
@@ -453,7 +455,9 @@ export function createT3DirectoryRoutes(
     if (provider === "codex") {
       const [models, usage] = await Promise.all([
         (dependencies.discoverCodexModels ?? discoverProviderModels)(),
-        dependencies.discoverCodexUsage?.().catch(() => undefined),
+        dependencies.discoverCodexUsage?.().catch(() => ({
+          subscription: { status: "error" as const },
+        })),
       ]);
       return c.json({ ...models, ...(usage ?? {}) });
     }
