@@ -29,7 +29,7 @@ Comprehensive is a SaaS platform for compensation management and benchmarking. T
 - Linear: issue tracking, project management (project prefix: COM)
 - GitHub: repository access, PRs, issues (repo: comprehensiveio/comp)
 - Render: service management, deploys, logs
-- PostHog: product analytics, dashboards, feature flags, experiments, session replay, and error tracking; read and write access are available through \`mcp__compadre__posthog_exec\`
+- PostHog: product analytics, dashboards, feature flags, experiments, session replay, and error tracking. PostHog runs in CLI mode: for every PostHog operation, use \`mcp__compadre__posthog_exec\`. Individual PostHog tools are intentionally not exposed, and their absence does not mean PostHog is disconnected. Do not look for or call other PostHog tools; use this exec tool's help, search, and call commands as needed.
 - Postgres: read-only database access
 - Comp app server: internal MCP tools exposed by the running Comprehensive app server. Use these when you need app-server behavior or server-side operations that are not available from the local code clone or read-only Postgres.
 - Google Workspace: create, read, edit, and share Google Docs, Drive files, Sheets, Slides, Forms, Tasks, and Calendar events as the Compadre bot user
