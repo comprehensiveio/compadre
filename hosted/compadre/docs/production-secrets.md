@@ -1,36 +1,38 @@
 # Production secrets
 
-Render is the production configuration authority for Compadre today. Source
-control owns variable names and non-secret values in `render.yaml`; linked
-Render environment groups own secret values. Do not duplicate a shared secret
-as a service-level variable because a direct service value takes precedence and
-silently defeats group rotation.
+Doppler is the production configuration authority for Compadre. The `compadre`
+project has a `prd` config for values shared by both services and two deployable
+configs:
 
-The production project has three least-privilege groups:
+- `prd_api` continuously syncs to the Render `compadre-api` service.
+- `prd_web` continuously syncs to the Render `compadre-web` service.
 
-- `compadre-production-shared` is linked to `compadre-api` and `compadre-web`.
-  It owns only controller/web trust material and shared Datadog credentials.
-- `compadre-production-api` is linked only to `compadre-api`. It owns Postgres,
-  Modal, Slack, model-provider, MCP, AWS, GitHub, and integration credentials.
-- `compadre-production-web` is linked only to `compadre-web`. It owns the
-  repository-scoped GitHub credential and any web-only secret.
+Shared values are stored once in `prd`; the deployable configs use Doppler
+references when the service needs a different variable name. In particular,
+`GITHUB_PERSONAL_ACCESS_TOKEN` is canonical and `prd_web:GH_TOKEN` references
+it. Both Render syncs use Doppler-preferred conflict resolution and redeploy
+their service after a change.
 
-Public URLs, feature flags, service names, and telemetry labels stay in
-`render.yaml`. The central T3 bearer, backup credential, auth-exchange secret,
-and preview-gateway secret are each stored once in the shared group because
-both services must receive exactly the same value. Worker processes receive
-only the allowlisted subset projected by the controller; Modal is not a second
-secret store.
+`render.yaml` remains the reviewable environment-variable contract and owns
+Render-native topology such as service links. Do not edit a synced service
+variable or a legacy Render environment-group value as a second source of
+truth: Doppler will overwrite service variables on its next sync. The linked
+`compadre-production-*` groups retain frozen pre-cutover values only for the
+rollback window. Direct Doppler-synced service values take precedence; never
+edit or rotate the group copies. Remove the group values in a scheduled cleanup
+after the rollback window because each group edit can redeploy every linked
+service. Worker processes receive only the allowlisted subset projected by the
+controller; Modal is not a second secret store.
 
 ## PostHog MCP credential
 
-`POSTHOG_PERSONAL_API_KEY` lives only in `compadre-production-api` and is
-consumed by `compadre-api`. Compadre maintainers own it. Create it in PostHog
+`POSTHOG_PERSONAL_API_KEY` lives in `compadre/prd_api` and is continuously
+synced only to `compadre-api`. Compadre maintainers own it. Create it in PostHog
 with the `MCP Server` preset for the intended Comprehensive project. The
 non-secret Comprehensive organization and project IDs are source-controlled in
 `src/mcp.ts`, which pins that destination and removes context-switching tools.
-The controller keeps the key on Render and exposes only the discovered PostHog
-tools through the authenticated per-worker bridge.
+The controller receives the key through the Doppler-to-Render sync and exposes
+only the discovered PostHog tools through the authenticated per-worker bridge.
 
 The source-controlled production configuration uses PostHog's token-efficient
 CLI mode with write access so agents can create and update insights and
@@ -39,12 +41,12 @@ this connection. Any destination or key-scope change requires an explicit
 review of the key scopes and destination pins.
 
 Rotate the credential by creating a replacement with the same preset and
-project, updating the environment-group value, verifying a fresh Codex and
-Claude turn can run a named PostHog read, and then revoking the old key. Never
-place either key in worker environment, prompts, logs, or Modal secrets.
+project, updating `compadre/prd_api`, waiting for its Render sync and deployment,
+verifying a fresh Codex and Claude turn can run a named PostHog read, and then
+revoking the old key. Never place either key in worker environment, prompts,
+logs, or Modal secrets.
 
-The Codex subscription lane uses two credentials in
-`compadre-production-api`:
+The Codex subscription lane uses two credentials in `compadre/prd_api`:
 
 - `CODEX_AUTH_JSON_BASE64`, the base64 encoding of the dedicated
   ChatGPT-managed Codex `auth.json`
@@ -116,24 +118,22 @@ unambiguous control plane.
 
 ## Rotation
 
-1. Identify every consumer from the group links and the projection allowlist.
+1. Identify every consumer from the `prd`, `prd_api`, and `prd_web` references
+   and the controller projection allowlist.
 2. Create the replacement credential at the upstream provider.
-3. Update its single Render group value. Render redeploys linked services.
-4. Verify `/health`, Slack signature handling, browser login, and one provider
+3. Update its single canonical Doppler value. Confirm every reference resolves
+   to the replacement and each affected sync reports `synced`.
+4. Wait for the exact Render deployment caused by the sync to reach `live`.
+5. Verify `/health`, Slack signature handling, browser login, and one provider
    turn before revoking the previous credential.
-5. Record the owner, scope, provider, rotation date, and next review date in the
+6. Record the owner, scope, provider, rotation date, and next review date in the
    internal credential inventory. Never record the value in Git, tickets,
    Slack, logs, or Datadog.
 
-During the rollback window, the frozen legacy service keeps its original
-environment groups. That is intentional temporary duplication, not an active
-source of truth. Revoke and remove those groups only after the rollback window
-closes.
-
-Doppler can replace Render groups later without changing application code: keep
-the same environment-variable contract, make Doppler the sole writer, validate
-the rendered key inventory, and only then remove values from Render. Do not run
-both systems as independent writable authorities.
+During the rollback window, the frozen Render environment-group values are
+intentional temporary duplication, not an active source of truth. Remove the
+values only after the rollback window closes; keep the empty groups themselves
+while `render.yaml` references them.
 
 ### GitHub credential consolidation
 
@@ -145,27 +145,8 @@ The web service reads `GH_TOKEN`; the controller reads
 references to that value. The development equivalent lives in `compadre/dev`,
 and `dev_personal` references it for the local E2E launcher.
 
-This is staged configuration, not a completed production cutover. Render's two
-existing values remain the deployed authority until Doppler syncs are installed
-and validated, so production rotation must still update both Render values
-together. The classic token was verified to read PR details and CI checks;
-replacing it must preserve both capabilities, not only repository access.
-
-Complete the cutover when:
-
-- One authoritative Doppler secret supplies both service variable names;
-  neither value is independently maintained.
-- Obsolete Render overrides are removed after validating the new bindings,
-  with Doppler as the sole writable authority.
-- The existing controller-to-worker projection is preserved, and rotation
-  accounts for credentials retained by already-running workers before revoking
-  the previous token.
-- Deployed web and a new/restored worker can read PR details and CI checks,
-  and central persisted PR status refreshes correctly, without logging secrets.
-- This runbook records the final source, consumer mappings, and rotation
-  procedure.
-
-After cutover, rotate only `compadre/prd:GITHUB_PERSONAL_ACCESS_TOKEN`. Confirm
+The production cutover is complete. Rotate only
+`compadre/prd:GITHUB_PERSONAL_ACCESS_TOKEN`. Confirm
 both references resolve to the replacement, let the web and controller syncs
 redeploy, and validate PR details and CI checks in the deployed web service and
 a new or restored worker before revoking the old PAT. Already-running workers
@@ -173,21 +154,24 @@ can retain projected credentials until they are replaced or restored.
 
 ## Central PostgreSQL production bindings
 
-`compadre-web` receives `COMPADRE_T3_POSTGRES_URL` by referencing the existing
-`compadre-postgres` private connection string. The controller and central T3
-share its database and credential; controller tables stay in `public` and
-central tables use `compadre_t3`. No new database password or
-migration secret is required, and existing secret values are not rotated.
+`compadre-web` receives `COMPADRE_T3_POSTGRES_URL` from `compadre/prd_web`. The
+initial Doppler sync imported the existing Render `compadre-postgres` private
+connection string without rotating it. The controller and central T3 share its
+database and credential; controller tables stay in `public` and central tables
+use `compadre_t3`. If the Render database credential changes, update the
+Doppler value and verify the resulting web deployment before retiring the old
+credential.
 The approved cutover installed these web bindings on 2026-09-05. Temporal keeps its
 separate database and credentials. Set `COMPADRE_T3_PERSISTENCE=postgres` and
 `COMPADRE_T3_REACTOR_MODE=single-process` explicitly.
 
 Set `COMPADRE_T3_ATTACHMENT_BUCKET=compadre` and
 `COMPADRE_T3_ATTACHMENT_REGION=us-west-2`. Web S3 credentials need only
-GetObject/PutObject for `attachments/v1/central-t3/*`. The Blueprint
-references the controller’s existing AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY
-on the web service; it does not generate or rotate them. The live web service reuses the controller’s existing key values; no other
-service environment values or secret values were changed.
+GetObject/PutObject for `attachments/v1/central-t3/*`. The canonical
+`AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY` values live in `compadre/prd`;
+both deployable configs resolve those shared values and sync them to their
+service. The live web service therefore reuses the controller's existing IAM
+identity without an independently maintained copy.
 The central object prefix stays under the already-authorized `attachments/v1/`
 path, so no IAM policy expansion is needed. The web binding does not change
 worker credential configuration. Preserve the
