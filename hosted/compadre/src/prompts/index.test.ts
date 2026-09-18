@@ -96,10 +96,14 @@ test("points harnesses at projected provider-neutral skills", () => {
   assert.doesNotMatch(prompt, /\/opt\/render\/project/);
 });
 
-test("advertises PostHog write access through the projected exec tool", () => {
+test("routes every PostHog operation through the CLI exec tool", () => {
   const prompt = getBaseSystemPrompt("/tmp/test-repo");
 
-  assert.match(prompt, /PostHog:.*read and write access are available/);
+  assert.match(prompt, /PostHog runs in CLI mode/);
+  assert.match(prompt, /for every PostHog operation, use/);
   assert.match(prompt, /mcp__compadre__posthog_exec/);
+  assert.match(prompt, /Individual PostHog tools are intentionally not exposed/);
+  assert.match(prompt, /their absence does not mean PostHog is disconnected/);
+  assert.match(prompt, /Do not look for or call other PostHog tools/);
   assert.doesNotMatch(prompt, /PostHog:.*read-only/);
 });
