@@ -14,15 +14,18 @@ it. Both Render syncs use Doppler-preferred conflict resolution and redeploy
 their service after a change.
 
 `render.yaml` remains the reviewable environment-variable contract and owns
-Render-native topology such as service links. Do not edit a synced service
-variable or a legacy Render environment-group value as a second source of
-truth: Doppler will overwrite service variables on its next sync. The linked
-`compadre-production-*` groups retain frozen pre-cutover values only for the
-rollback window. Direct Doppler-synced service values take precedence; never
-edit or rotate the group copies. Remove the group values in a scheduled cleanup
-after the rollback window because each group edit can redeploy every linked
-service. Worker processes receive only the allowlisted subset projected by the
-controller; Modal is not a second secret store.
+Render-native topology such as service links. Each service's direct environment
+contains `DOPPLER_PROJECT`, `DOPPLER_CONFIG`, and `DOPPLER_ENVIRONMENT` as
+ownership evidence, but Render does not lock or label the other synced values.
+A manual Render edit can take effect until Doppler next syncs, so never edit,
+add, or rotate a service variable in Render. Make every configuration change in
+Doppler and wait for its API-triggered Render deployment.
+
+The linked `compadre-production-*` groups remain as empty Blueprint topology;
+all pre-cutover values were removed after the direct service inventories matched
+Doppler. Do not add values back to the groups. Worker processes receive only the
+allowlisted subset projected by the controller; Modal is not a second secret
+store.
 
 ## PostHog MCP credential
 
@@ -130,10 +133,9 @@ unambiguous control plane.
    internal credential inventory. Never record the value in Git, tickets,
    Slack, logs, or Datadog.
 
-During the rollback window, the frozen Render environment-group values are
-intentional temporary duplication, not an active source of truth. Remove the
-values only after the rollback window closes; keep the empty groups themselves
-while `render.yaml` references them.
+Keep the empty `compadre-production-*` Render groups themselves while
+`render.yaml` references them. They are topology placeholders, not secret
+stores.
 
 ### GitHub credential consolidation
 
