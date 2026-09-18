@@ -32,10 +32,11 @@ non-secret Comprehensive organization and project IDs are source-controlled in
 The controller keeps the key on Render and exposes only the discovered PostHog
 tools through the authenticated per-worker bridge.
 
-The source-controlled defaults use PostHog's token-efficient CLI mode and
-read-only tools. Changing `POSTHOG_MCP_READ_ONLY` to `false` expands the agent's
-authority to PostHog writes and requires an explicit review of the key scopes
-and destination pins.
+The source-controlled production configuration uses PostHog's token-efficient
+CLI mode with write access so agents can create and update insights and
+dashboards in the pinned project. Compadre does not expose a read-only mode for
+this connection. Any destination or key-scope change requires an explicit
+review of the key scopes and destination pins.
 
 Rotate the credential by creating a replacement with the same preset and
 project, updating the environment-group value, verifying a fresh Codex and
