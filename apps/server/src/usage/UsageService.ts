@@ -138,6 +138,14 @@ const UsageModelSelection = Schema.Struct({
   ),
 });
 
+const NativeUsageHistoryRow = Schema.Struct({
+  eventId: Schema.String,
+  threadId: Schema.String,
+  eventType: Schema.Literals(["thread.session-set", "thread.activity-appended"]),
+  activityId: Schema.NullOr(Schema.String),
+  attribution: Schema.NullOr(Schema.fromJsonString(MessageAttribution)),
+});
+
 function decodeProjectedUsage(
   row: typeof ProjectedUsageRow.Type,
   selection?: typeof UsageModelSelection.Type,
@@ -258,10 +266,42 @@ export const make = Effect.gen(function* () {
     `,
   });
 
+  // Materialize timestamp candidates before parsing JSON: unrelated tool events
+  // can contain large outputs. Attribution still matches the exact activity ID.
+  const listNativeUsageHistory = SqlSchema.findAll({
+    Request: Schema.Struct({ since: Schema.String }),
+    Result: NativeUsageHistoryRow,
+    execute: ({ since }) => sql`
+      WITH candidates AS MATERIALIZED (
+        SELECT event_id, stream_id, event_type, payload_json, sequence
+        FROM orchestration_events AS event
+        WHERE aggregate_kind = 'thread' AND event_id LIKE 'compadre-native:%'
+          AND (event_type = 'thread.session-set' OR (
+            event_type = 'thread.activity-appended' AND (stream_id, occurred_at) IN (
+              SELECT thread_id, created_at FROM projection_thread_activities
+              WHERE kind = 'context-window.updated'
+                AND turn_id IS NULL AND created_at >= ${since}
+            )
+          ))
+      )
+      SELECT event.event_id AS "eventId", event.stream_id AS "threadId",
+        event.event_type AS "eventType",
+        json_extract(event.payload_json, '$.activity.id') AS "activityId",
+        message.attribution_json AS "attribution"
+      FROM candidates AS event
+      LEFT JOIN projection_turns AS turn
+        ON turn.thread_id = event.stream_id
+        AND turn.turn_id = json_extract(event.payload_json, '$.session.activeTurnId')
+      LEFT JOIN projection_thread_messages AS message
+        ON message.thread_id = turn.thread_id AND message.message_id = turn.pending_message_id
+      ORDER BY event.sequence ASC
+    `,
+  });
+
   const readProjectedUsageRecords = Effect.fn("UsageService.readProjectedUsageRecords")(function* (
     sinceMs: number,
   ) {
-    const rows = yield* listProjectedUsageRows({
+    let rows = yield* listProjectedUsageRows({
       since: DateTime.formatIso(DateTime.makeUnsafe(sinceMs)),
     }).pipe(
       Effect.mapError(
@@ -273,6 +313,39 @@ export const make = Effect.gen(function* () {
           }),
       ),
     );
+    // Older Codex runtimes dropped usage turn IDs. Recover only from the same
+    // worker journal's active session, in durable delivery order. A later prompt
+    // (steering), another worker, or a stopped session must not claim the usage.
+    if (rows.some((row) => row.turnId === null && row.activityId.startsWith("compadre-native:"))) {
+      const history = yield* listNativeUsageHistory({
+        since: DateTime.formatIso(DateTime.makeUnsafe(sinceMs)),
+      }).pipe(
+        Effect.mapError(
+          (cause) =>
+            new UsageReadError({
+              reason: "scanFailed",
+              detail: "Historical hosted usage attribution could not be read.",
+              cause,
+            }),
+        ),
+      );
+      const active = new Map<string, MessageAttribution | null>();
+      const recovered = new Map<string, MessageAttribution>();
+      for (const event of history) {
+        const source = `${event.threadId}:${event.eventId.split(":")[1]}`;
+        if (event.eventType === "thread.session-set") {
+          active.set(source, event.attribution);
+        } else if (event.activityId !== null) {
+          const attribution = active.get(source);
+          if (attribution) recovered.set(event.activityId, attribution);
+        }
+      }
+      rows = rows.map((row) =>
+        row.turnId === null && row.attribution === null
+          ? { ...row, attribution: recovered.get(row.activityId) ?? null }
+          : row,
+      );
+    }
     // Native journals carry token counts without billing metadata. Resolve the
     // model from immutable turn requests, never the thread's current selection.
     const selections = yield* listUsageModelSelections(undefined).pipe(

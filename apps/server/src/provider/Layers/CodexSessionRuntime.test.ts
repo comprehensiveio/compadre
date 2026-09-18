@@ -19,10 +19,34 @@ import {
   makeMemoryConsolidationNotificationFilter,
   openCodexThread,
   readCodexThread,
+  readRouteFields,
   rollbackCodexThread,
   toMcpElicitationResponse,
 } from "./CodexSessionRuntime.ts";
 const isCodexAppServerRequestError = Schema.is(CodexErrors.CodexAppServerRequestError);
+
+describe("Codex usage routing", () => {
+  it("preserves the provider turn ID on token usage notifications", () => {
+    const totals = {
+      inputTokens: 100,
+      cachedInputTokens: 20,
+      outputTokens: 5,
+      reasoningOutputTokens: 0,
+      totalTokens: 105,
+    };
+    NodeAssert.deepStrictEqual(
+      readRouteFields({
+        method: "thread/tokenUsage/updated",
+        params: {
+          threadId: "provider-thread",
+          turnId: "provider-turn",
+          tokenUsage: { total: totals, last: totals, modelContextWindow: 258400 },
+        },
+      }),
+      { turnId: "provider-turn", itemId: undefined },
+    );
+  });
+});
 
 describe("Codex thread history", () => {
   for (const numTurns of [1, 2, 3, 5]) {
