@@ -234,4 +234,6 @@ The root `scripts/compadre-e2e.mjs` launcher provisions isolated Compose
 Postgres/Temporal/S3 dependencies, wires both services, builds the worker archive,
 and provides synthetic test-user login grants. This is the same flow for ordinary
 Compadre updates and upstream integrations; the fake-Modal Temporal probe remains
-a separate deterministic check.
+a separate deterministic check. Start it through the `compadre/dev_personal`
+Doppler config as documented in the runbook; the launcher maps its one canonical
+GitHub credential to the controller and central T3 variable names.

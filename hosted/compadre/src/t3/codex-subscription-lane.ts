@@ -12,8 +12,7 @@ const LOCK_KEY = "compadre:codex-subscription-lane:v1";
 
 export type CodexAuthRoute = "api" | "subscription";
 export type CodexAuthRouteReason =
-  | "legacy_unmanaged"
-  | "experiment_disabled"
+  | "subscription_unconfigured"
   | "existing_route"
   | "owner_recovered"
   | "lane_busy"
@@ -70,7 +69,7 @@ function encryptionKey(environment: NodeJS.ProcessEnv): Buffer {
   const encoded = environment.COMPADRE_CODEX_AUTH_ENCRYPTION_KEY?.trim();
   if (!encoded) {
     throw new Error(
-      "COMPADRE_CODEX_AUTH_ENCRYPTION_KEY is required when the Codex subscription experiment is enabled",
+      "COMPADRE_CODEX_AUTH_ENCRYPTION_KEY is required when CODEX_AUTH_JSON_BASE64 is configured",
     );
   }
   const key = decodeBase64("COMPADRE_CODEX_AUTH_ENCRYPTION_KEY", encoded);
@@ -102,7 +101,7 @@ function subscriptionAuth(environment: NodeJS.ProcessEnv): string {
   const encoded = environment.CODEX_AUTH_JSON_BASE64?.trim();
   if (!encoded) {
     throw new Error(
-      "CODEX_AUTH_JSON_BASE64 is required when the Codex subscription experiment is enabled",
+      "CODEX_AUTH_JSON_BASE64 is required when COMPADRE_CODEX_AUTH_ENCRYPTION_KEY is configured",
     );
   }
   const decoded = decodeBase64("CODEX_AUTH_JSON_BASE64", encoded);
@@ -160,8 +159,6 @@ function isLaneState(value: unknown): value is LaneState {
  */
 export class CodexSubscriptionLane {
   readonly enabled: boolean;
-  /** True when the flag is explicitly true or false; absence is legacy mode. */
-  readonly managed: boolean;
   private readonly key?: Buffer;
   private readonly seedAuth?: string;
   private readonly seedDigest?: string;
@@ -172,9 +169,11 @@ export class CodexSubscriptionLane {
     environment: NodeJS.ProcessEnv = process.env,
     private readonly now: () => Date = () => new Date(),
   ) {
-    const setting = environment.COMPADRE_CODEX_SUBSCRIPTION_EXPERIMENT_ENABLED;
-    this.enabled = setting === "true";
-    this.managed = setting === "true" || setting === "false";
+    const hasSeedAuth = Boolean(environment.CODEX_AUTH_JSON_BASE64?.trim());
+    const hasEncryptionKey = Boolean(
+      environment.COMPADRE_CODEX_AUTH_ENCRYPTION_KEY?.trim(),
+    );
+    this.enabled = hasSeedAuth || hasEncryptionKey;
     if (!this.enabled) return;
     this.key = encryptionKey(environment);
     this.seedAuth = subscriptionAuth(environment);
@@ -188,8 +187,8 @@ export class CodexSubscriptionLane {
     if (!this.enabled) {
       return {
         route: "api",
-        reason: this.managed ? "experiment_disabled" : "legacy_unmanaged",
-        requiresConfiguration: this.managed,
+        reason: "subscription_unconfigured",
+        requiresConfiguration: true,
       };
     }
     return this.locks.withLock(LOCK_KEY, async (signal) => {

@@ -21,7 +21,6 @@ function memoryMetadata() {
 
 function environment(refreshToken = "seed-refresh-token"): NodeJS.ProcessEnv {
   return {
-    COMPADRE_CODEX_SUBSCRIPTION_EXPERIMENT_ENABLED: "true",
     COMPADRE_CODEX_AUTH_ENCRYPTION_KEY: Buffer.alloc(32, 7).toString("base64"),
     CODEX_AUTH_JSON_BASE64: Buffer.from(
       JSON.stringify({
@@ -32,7 +31,7 @@ function environment(refreshToken = "seed-refresh-token"): NodeJS.ProcessEnv {
   };
 }
 
-test("absent experiment configuration needs no secrets and preserves legacy mode", async () => {
+test("missing subscription credentials uses managed API routing", async () => {
   const { store, values } = memoryMetadata();
   const lane = new CodexSubscriptionLane(store, new InMemoryLockStore(), {});
 
@@ -40,28 +39,11 @@ test("absent experiment configuration needs no secrets and preserves legacy mode
     await lane.claim({ canonicalThreadId: "thread-a", runId: "run-a" }),
     {
       route: "api",
-      reason: "legacy_unmanaged",
-      requiresConfiguration: false,
-    },
-  );
-  assert.equal(values.size, 0);
-});
-
-test("explicit kill switch routes warm workers back to API", async () => {
-  const { store } = memoryMetadata();
-  const lane = new CodexSubscriptionLane(store, new InMemoryLockStore(), {
-    COMPADRE_CODEX_SUBSCRIPTION_EXPERIMENT_ENABLED: "false",
-  });
-
-  assert.equal(lane.managed, true);
-  assert.deepEqual(
-    await lane.claim({ canonicalThreadId: "thread-a", runId: "run-a" }),
-    {
-      route: "api",
-      reason: "experiment_disabled",
+      reason: "subscription_unconfigured",
       requiresConfiguration: true,
     },
   );
+  assert.equal(values.size, 0);
 });
 
 test("parallel threads allocate exactly one subscription route", async () => {
@@ -211,14 +193,22 @@ test("API-routed steers stay on API until their latest run finishes", async () =
   );
 });
 
-test("enabled lane validates both bootstrap auth and encryption key", () => {
+test("subscription configuration requires both bootstrap auth and encryption key", () => {
   const { store } = memoryMetadata();
   assert.throws(
     () =>
       new CodexSubscriptionLane(store, new InMemoryLockStore(), {
-        COMPADRE_CODEX_SUBSCRIPTION_EXPERIMENT_ENABLED: "true",
+        CODEX_AUTH_JSON_BASE64: environment().CODEX_AUTH_JSON_BASE64,
       }),
     /ENCRYPTION_KEY is required/,
+  );
+  assert.throws(
+    () =>
+      new CodexSubscriptionLane(store, new InMemoryLockStore(), {
+        COMPADRE_CODEX_AUTH_ENCRYPTION_KEY:
+          environment().COMPADRE_CODEX_AUTH_ENCRYPTION_KEY,
+      }),
+    /CODEX_AUTH_JSON_BASE64 is required/,
   );
   assert.throws(
     () =>

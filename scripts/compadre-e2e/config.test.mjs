@@ -1,6 +1,12 @@
 import * as NodeTest from "vite-plus/test";
 import * as NodeAssert from "node:assert/strict";
-import { developmentCredentials, assertLocalStack, issuedToken } from "./config.mjs";
+import {
+  assertDevelopmentDopplerConfig,
+  assertLocalStack,
+  centralGitHubCredentials,
+  developmentCredentials,
+  issuedToken,
+} from "./config.mjs";
 const credentials = {
   MODAL_TOKEN_ID: "id",
   MODAL_TOKEN_SECRET: "secret",
@@ -24,6 +30,28 @@ NodeTest.test("reports missing keys without exposing values", () => {
   NodeAssert.throws(() => developmentCredentials({ MODAL_TOKEN_ID: "sensitive" }), {
     message: "Missing MODAL_TOKEN_SECRET",
   });
+});
+NodeTest.test("accepts only the Compadre development Doppler environment", () => {
+  assertDevelopmentDopplerConfig({
+    DOPPLER_PROJECT: "compadre",
+    DOPPLER_ENVIRONMENT: "dev",
+    DOPPLER_CONFIG: "dev_personal",
+  });
+  NodeAssert.throws(
+    () =>
+      assertDevelopmentDopplerConfig({
+        DOPPLER_PROJECT: "compadre",
+        DOPPLER_ENVIRONMENT: "prd",
+        DOPPLER_CONFIG: "prd",
+      }),
+    { message: /Compadre development Doppler config/ },
+  );
+});
+NodeTest.test("maps one canonical GitHub credential to central T3's required name", () => {
+  NodeAssert.deepEqual(centralGitHubCredentials({ GITHUB_PERSONAL_ACCESS_TOKEN: "github-token" }), {
+    GH_TOKEN: "github-token",
+  });
+  NodeAssert.deepEqual(centralGitHubCredentials({}), {});
 });
 NodeTest.test("refuses remote databases when loading a saved stack", () => {
   NodeAssert.throws(() =>

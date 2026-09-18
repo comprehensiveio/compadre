@@ -17,12 +17,19 @@ to prevent the application's dotenv loader from importing production settings.
 Run from the worktree root:
 
 ```sh
-node scripts/compadre-e2e.mjs up --credentials /absolute/path/to/development.env
+doppler run --project compadre --config dev_personal -- \
+  node scripts/compadre-e2e.mjs up
 ```
 
-The credential file must contain `MODAL_TOKEN_ID`, `MODAL_TOKEN_SECRET`, and
-`ANTHROPIC_API_KEY`. Optional Codex credentials are `CODEX_API_KEY`,
-`OPENAI_API_KEY`, or the existing `CODEX_AUTH_JSON_BASE64` subscription seed.
+Authenticate the Doppler CLI to the `Comprehensive.io` workplace first. The
+`compadre/dev_personal` config must contain `MODAL_TOKEN_ID`,
+`MODAL_TOKEN_SECRET`, and `ANTHROPIC_API_KEY`. It references the canonical
+`compadre/dev` `GITHUB_PERSONAL_ACCESS_TOKEN`; the launcher supplies that name
+to the controller and derives central T3's `GH_TOKEN` from the same value.
+Do not store a second GitHub token under `GH_TOKEN`.
+
+Optional Codex credentials are `CODEX_API_KEY`, `OPENAI_API_KEY`, or the
+existing `CODEX_AUTH_JSON_BASE64` subscription seed.
 For a local ChatGPT Codex sign-in, add `--codex-auth "$HOME/.codex/auth.json"`.
 This copies the sign-in into the disposable worker credential seed; it never
 writes refreshed credentials back to your local account file. Model discovery
@@ -32,6 +39,9 @@ The launcher selects only these keys. It does not inherit production databases,
 Slack tokens, cloud storage credentials, telemetry credentials, or controller
 URLs. Modal credentials must resolve to Comprehensive's `comprehensiveio`
 workspace. Real provider calls and Modal resources incur normal development cost.
+It also rejects a Doppler project or environment other than `compadre/dev`.
+For break-glass use without Doppler, `--credentials /absolute/path/to/development.env`
+remains supported and applies the same key allowlist.
 
 The launcher also seeds an **E2E fixture** project with a local clone of the same
 public repository and `master` branch used by Modal, defaulting to Claude Sonnet. It prints its
