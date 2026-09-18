@@ -5,6 +5,7 @@ const credentialKeys = [
   "CODEX_API_KEY",
   "OPENAI_API_KEY",
   "CODEX_AUTH_JSON_BASE64",
+  "GITHUB_PERSONAL_ACCESS_TOKEN",
 ];
 
 export function developmentCredentials(file, ambient = {}) {
@@ -18,6 +19,24 @@ export function developmentCredentials(file, ambient = {}) {
     if (!result[key]) throw new Error(`Missing ${key}`);
   }
   return result;
+}
+
+export function assertDevelopmentDopplerConfig(environment) {
+  if (
+    environment.DOPPLER_PROJECT !== "compadre" ||
+    environment.DOPPLER_ENVIRONMENT !== "dev" ||
+    !environment.DOPPLER_CONFIG?.startsWith("dev")
+  ) {
+    throw new Error(
+      "Run through the Compadre development Doppler config (project compadre, environment dev)",
+    );
+  }
+}
+
+export function centralGitHubCredentials(credentials) {
+  return credentials.GITHUB_PERSONAL_ACCESS_TOKEN
+    ? { GH_TOKEN: credentials.GITHUB_PERSONAL_ACCESS_TOKEN }
+    : {};
 }
 
 export function assertLocalStack(config) {

@@ -18,7 +18,6 @@ test("subscription usage reads account limits and preserves refreshed auth", asy
     },
   };
   const lane = new CodexSubscriptionLane(metadata, new InMemoryLockStore(), {
-    COMPADRE_CODEX_SUBSCRIPTION_EXPERIMENT_ENABLED: "true",
     COMPADRE_CODEX_AUTH_ENCRYPTION_KEY: Buffer.alloc(32, 4).toString("base64"),
     CODEX_AUTH_JSON_BASE64: Buffer.from(
       JSON.stringify({
@@ -84,7 +83,6 @@ test("subscription usage reports lane availability without probing owned or disa
     },
   };
   const enabled = new CodexSubscriptionLane(metadata, new InMemoryLockStore(), {
-    COMPADRE_CODEX_SUBSCRIPTION_EXPERIMENT_ENABLED: "true",
     COMPADRE_CODEX_AUTH_ENCRYPTION_KEY: Buffer.alloc(32, 4).toString("base64"),
     CODEX_AUTH_JSON_BASE64: Buffer.from(
       JSON.stringify({ auth_mode: "chatgpt", tokens: { refresh_token: "seed" } }),
@@ -96,9 +94,11 @@ test("subscription usage reports lane availability without probing owned or disa
     { subscription: { status: "busy" } },
   );
 
-  const disabled = new CodexSubscriptionLane(metadata, new InMemoryLockStore(), {
-    COMPADRE_CODEX_SUBSCRIPTION_EXPERIMENT_ENABLED: "false",
-  });
+  const disabled = new CodexSubscriptionLane(
+    metadata,
+    new InMemoryLockStore(),
+    {},
+  );
   assert.deepEqual(
     await discoverCodexSubscriptionUsage(disabled, "must-not-spawn"),
     { subscription: { status: "disabled" } },

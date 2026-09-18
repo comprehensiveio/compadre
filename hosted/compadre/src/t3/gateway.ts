@@ -1051,7 +1051,7 @@ export class T3Gateway {
     if (
       binding.providerInstanceId !== "codex" ||
       !runId ||
-      !this.codexSubscriptionLane?.managed
+      !this.codexSubscriptionLane
     ) {
       return;
     }

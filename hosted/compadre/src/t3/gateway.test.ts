@@ -120,7 +120,6 @@ test("hands one subscription lane between workers while concurrent work stays on
     tokens: { refresh_token: "refresh-token" },
   });
   const lane = new CodexSubscriptionLane(persistence.stores.metadata, locks, {
-    COMPADRE_CODEX_SUBSCRIPTION_EXPERIMENT_ENABLED: "true",
     COMPADRE_CODEX_AUTH_ENCRYPTION_KEY: Buffer.alloc(32, 3).toString("base64"),
     CODEX_AUTH_JSON_BASE64: Buffer.from(authJson).toString("base64"),
   });

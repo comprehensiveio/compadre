@@ -43,17 +43,22 @@ project, updating the environment-group value, verifying a fresh Codex and
 Claude turn can run a named PostHog read, and then revoking the old key. Never
 place either key in worker environment, prompts, logs, or Modal secrets.
 
-The optional Codex subscription experiment uses three values in
+The Codex subscription lane uses two credentials in
 `compadre-production-api`:
 
-- `COMPADRE_CODEX_SUBSCRIPTION_EXPERIMENT_ENABLED=true`
 - `CODEX_AUTH_JSON_BASE64`, the base64 encoding of the dedicated
   ChatGPT-managed Codex `auth.json`
 - `COMPADRE_CODEX_AUTH_ENCRYPTION_KEY`, the base64 encoding of 32 random bytes
 
+Both values must be configured together. Their presence enables the
+subscription lane; when both are absent, Codex uses API auth. A half-configured
+pair is rejected at startup so the controller cannot silently mishandle the
+refreshable credential.
+
 The controller serializes one subscription-backed Codex thread at a time.
-Concurrent Codex threads use `OPENAI_API_KEY`. A thread's route is fixed while
-its current run (including steers and retries) is active. Before handing the
+Concurrent Codex threads use the configured Codex API credential. A thread's
+route is fixed while its current run (including steers and retries) is active.
+Before handing the
 subscription lane to another thread, the controller stops the old Codex
 provider session, reads its refreshed auth file, encrypts that refresh chain in
 Compadre Postgres, and changes the idle worker back to API auth. Auth bytes are
@@ -68,11 +73,8 @@ snapshot and reports that the subscription is assigned to a run; central
 T3 renders that state instead of making the configured subscription disappear.
 The read never provisions or wakes a Modal worker.
 
-Set `COMPADRE_CODEX_SUBSCRIPTION_EXPERIMENT_ENABLED=false` for an immediate
-API-only kill switch. The metadata is namespaced under
-`compadre.codex-subscription-lane.v1` and requires no schema migration; leaving
-it in place is inert while disabled. Code rollback preserves the older startup
-behavior when the flag is absent. Treat the source auth file, its encoded value,
+The metadata is namespaced under `compadre.codex-subscription-lane.v1` and
+requires no schema migration. Treat the source auth file, its encoded value,
 and the encryption key like passwords. Never auto-clear an apparently stale
 subscription owner: an uncertain owner intentionally sends all new work to the
 API key until an operator confirms the old provider process is stopped.
@@ -90,11 +92,11 @@ Never infer that the subscription is healthy from `lane_busy` alone.
 
 Operational telemetry is emitted without credential contents:
 
-- `Codex auth routing initialized` identifies legacy, managed API-only, or
-  subscription-canary startup mode and records the effective `modalTimeoutMs`
-  used by the worker lifecycle.
+- `Codex auth routing initialized` identifies API-only or subscription-lane
+  startup mode and records the effective `modalTimeoutMs` used by the worker
+  lifecycle.
 - `Codex auth route selected` includes `codexAuthRouteReason` so API fallback
-  distinguishes a busy lane, the kill switch, an existing route, and a lane
+  distinguishes an unconfigured or busy lane, an existing route, and a lane
   error.
 - `Codex auth handoff phase completed|failed` identifies the exact stop, read,
   persist, configure, release, or reset phase and its duration. A failure with
@@ -108,10 +110,9 @@ Operational telemetry is emitted without credential contents:
   and latency in Datadog.
 
 The older Modal-side `compadre-t3-codex-auth-experiment` secret is not an auth
-source while the flag is explicitly `true` or `false`; managed workers select
-only the Render/Postgres subscription lane or the Render-projected API key.
-Keep that Modal secret only as a short rollback bridge until the experiment is
-accepted, then remove it so there is one unambiguous control plane.
+source. Managed workers select only the Render/Postgres subscription lane or
+the Render-projected API key. Remove the old Modal secret so there is one
+unambiguous control plane.
 
 ## Rotation
 
@@ -134,18 +135,23 @@ the same environment-variable contract, make Doppler the sole writer, validate
 the rendered key inventory, and only then remove values from Render. Do not run
 both systems as independent writable authorities.
 
-### TODO: consolidate the GitHub credential during the Doppler migration
+### GitHub credential consolidation
 
 The web service reads `GH_TOKEN`; the controller reads
 `GITHUB_PERSONAL_ACCESS_TOKEN` and projects it to worker `GH_TOKEN` and
-`GITHUB_TOKEN`. These currently contain the same classic bot PAT but are
-independently managed in Render, so rotation can leave consumers out of sync.
-Until consolidation, rotate both service values together. The classic token
-was verified to read PR details and CI checks; replacing it must preserve both
-capabilities, not only repository access.
+`GITHUB_TOKEN`. Doppler now stores the PAT once as
+`compadre/prd:GITHUB_PERSONAL_ACCESS_TOKEN`. The API config's
+`GITHUB_PERSONAL_ACCESS_TOKEN` and the web config's `GH_TOKEN` are cross-config
+references to that value. The development equivalent lives in `compadre/dev`,
+and `dev_personal` references it for the local E2E launcher.
 
-Consolidation is deferred to the Doppler migration, not an interim Render
-configuration change. Complete this TODO when:
+This is staged configuration, not a completed production cutover. Render's two
+existing values remain the deployed authority until Doppler syncs are installed
+and validated, so production rotation must still update both Render values
+together. The classic token was verified to read PR details and CI checks;
+replacing it must preserve both capabilities, not only repository access.
+
+Complete the cutover when:
 
 - One authoritative Doppler secret supplies both service variable names;
   neither value is independently maintained.
@@ -157,7 +163,13 @@ configuration change. Complete this TODO when:
 - Deployed web and a new/restored worker can read PR details and CI checks,
   and central persisted PR status refreshes correctly, without logging secrets.
 - This runbook records the final source, consumer mappings, and rotation
-  procedure, replacing this TODO with the implemented behavior.
+  procedure.
+
+After cutover, rotate only `compadre/prd:GITHUB_PERSONAL_ACCESS_TOKEN`. Confirm
+both references resolve to the replacement, let the web and controller syncs
+redeploy, and validate PR details and CI checks in the deployed web service and
+a new or restored worker before revoking the old PAT. Already-running workers
+can retain projected credentials until they are replaced or restored.
 
 ## Central PostgreSQL production bindings
 

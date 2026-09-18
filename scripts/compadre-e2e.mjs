@@ -1,4 +1,10 @@
-import { developmentCredentials, assertLocalStack, issuedToken } from "./compadre-e2e/config.mjs";
+import {
+  assertDevelopmentDopplerConfig,
+  assertLocalStack,
+  centralGitHubCredentials,
+  developmentCredentials,
+  issuedToken,
+} from "./compadre-e2e/config.mjs";
 import * as NodeChildProcess from "node:child_process";
 import * as NodeCrypto from "node:crypto";
 import * as NodeModule from "node:module";
@@ -73,9 +79,9 @@ if (command === "login") {
   );
   process.exit(result.status ?? 1);
 }
-if (command !== "up" || !option("--credentials")) {
+if (command !== "up") {
   console.log(
-    "node scripts/compadre-e2e.mjs up --credentials /path/to/.env.local\nnode scripts/compadre-e2e.mjs login --state /printed/state/path [--user alice|bob]",
+    "doppler run --project compadre --config dev_personal -- node scripts/compadre-e2e.mjs up\nnode scripts/compadre-e2e.mjs login --state /printed/state/path [--user alice|bob]",
   );
   process.exit(command ? 1 : 0);
 }
@@ -84,7 +90,9 @@ if (await NodeFSP.stat(NodePath.join(controller, ".env.local")).catch(() => null
     "Use an isolated worktree without controller .env.local; credentials are selected explicitly.",
   );
 }
-const selected = parse(await NodeFSP.readFile(option("--credentials")));
+const credentialFile = option("--credentials");
+if (!credentialFile) assertDevelopmentDopplerConfig(process.env);
+const selected = credentialFile ? parse(await NodeFSP.readFile(credentialFile)) : {};
 const credentials = developmentCredentials(selected, process.env);
 if (option("--codex-auth")) {
   credentials.CODEX_AUTH_JSON_BASE64 = (await NodeFSP.readFile(option("--codex-auth"))).toString(
@@ -362,6 +370,7 @@ try {
     ...base,
     ...awsEnv,
     ...tunnelDnsEnv,
+    ...centralGitHubCredentials(credentials),
     COMPADRE_T3_ATTACHMENT_BUCKET: "compadre-e2e",
     COMPADRE_T3_ATTACHMENT_REGION: "us-east-1",
     COMPADRE_T3_PERSISTENCE: "postgres",

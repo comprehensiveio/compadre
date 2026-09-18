@@ -522,6 +522,12 @@ GH_TOKEN=<repository-scoped token for T3 source-control UI>
 COMPADRE_PROVIDER_URL=
 ```
 
+`GH_TOKEN` and the controller's `GITHUB_PERSONAL_ACCESS_TOKEN` are consumer
+names for one credential. Doppler stores the canonical value as
+`GITHUB_PERSONAL_ACCESS_TOKEN`; the web config references it as `GH_TOKEN`, and
+the controller continues projecting it to worker `GH_TOKEN` and `GITHUB_TOKEN`.
+Do not rotate or store those aliases independently.
+
 Development previews use
 `https://<canonical-thread-id>.dev.compadre.comprehensive.io`. The central T3
 service validates its Slack-backed browser session before resolving the

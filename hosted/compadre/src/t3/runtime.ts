@@ -136,12 +136,9 @@ export async function getConfiguredT3Gateway(): Promise<T3Gateway | null> {
         log.info(
           {
             codexAuthMode: codexSubscriptionLane.enabled
-              ? "subscription_canary"
-              : codexSubscriptionLane.managed
-                ? "managed_api_only"
-                : "legacy_unmanaged",
-            codexSubscriptionExperimentEnabled: codexSubscriptionLane.enabled,
-            codexSubscriptionExperimentManaged: codexSubscriptionLane.managed,
+              ? "subscription_lane"
+              : "api_only",
+            codexSubscriptionConfigured: codexSubscriptionLane.enabled,
             modalTimeoutMs,
           },
           "Codex auth routing initialized",
