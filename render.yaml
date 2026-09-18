@@ -14,8 +14,6 @@ services:
     autoDeployTrigger: commit
     maxShutdownDelaySeconds: 300
     envVars:
-      - fromGroup: compadre-production-shared
-      - fromGroup: compadre-production-api
       - key: COMPADRE_PROCESS_ROLE
         value: relay
       - key: COMPADRE_DURABILITY_BACKEND
@@ -145,8 +143,6 @@ services:
       ignoredPaths:
         - hosted/compadre/**
     envVars:
-      - fromGroup: compadre-production-shared
-      - fromGroup: compadre-production-web
       # Production persistence since 2026-09-05; retain the disk and one instance.
       - key: COMPADRE_T3_PERSISTENCE
         value: postgres

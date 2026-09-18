@@ -21,11 +21,10 @@ A manual Render edit can take effect until Doppler next syncs, so never edit,
 add, or rotate a service variable in Render. Make every configuration change in
 Doppler and wait for its API-triggered Render deployment.
 
-The linked `compadre-production-*` groups remain as empty Blueprint topology;
-all pre-cutover values were removed after the direct service inventories matched
-Doppler. Do not add values back to the groups. Worker processes receive only the
-allowlisted subset projected by the controller; Modal is not a second secret
-store.
+The old `compadre-production-*` groups and their Blueprint references were
+removed after the direct service inventories matched Doppler. Worker processes
+receive only the allowlisted subset projected by the controller; Modal is not a
+second secret store.
 
 ## PostHog MCP credential
 
@@ -132,10 +131,6 @@ unambiguous control plane.
 6. Record the owner, scope, provider, rotation date, and next review date in the
    internal credential inventory. Never record the value in Git, tickets,
    Slack, logs, or Datadog.
-
-Keep the empty `compadre-production-*` Render groups themselves while
-`render.yaml` references them. They are topology placeholders, not secret
-stores.
 
 ### GitHub credential consolidation
 
