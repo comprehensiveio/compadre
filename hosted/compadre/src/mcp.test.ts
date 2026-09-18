@@ -17,7 +17,7 @@ test("Postgres MCP keeps the database URL out of process arguments", () => {
   assert.equal(server.env?.READONLY_DATABASE_URL, databaseUrl);
 });
 
-test("PostHog MCP defaults to the token-efficient read-only connection", () => {
+test("PostHog MCP defaults to the token-efficient write-capable connection", () => {
   const server = buildPostHogMcpServer("phx-secret");
 
   assert.ok("type" in server);
@@ -27,23 +27,6 @@ test("PostHog MCP defaults to the token-efficient read-only connection", () => {
   assert.deepEqual(server.headers, {
     Authorization: "Bearer phx-secret",
     "x-posthog-mcp-mode": "cli",
-    "x-posthog-read-only": "true",
-    "x-posthog-organization-id": "01a0b018-1eb1-0000-7a15-6e0020552cdd",
-    "x-posthog-project-id": "614600",
-  });
-});
-
-test("PostHog MCP can opt into writes while retaining its destination pin", () => {
-  const server = buildPostHogMcpServer("phx-secret", {
-    mode: "tools",
-    readOnly: false,
-  });
-
-  assert.ok("type" in server);
-  if (!("type" in server)) return;
-  assert.deepEqual(server.headers, {
-    Authorization: "Bearer phx-secret",
-    "x-posthog-mcp-mode": "tools",
     "x-posthog-organization-id": "01a0b018-1eb1-0000-7a15-6e0020552cdd",
     "x-posthog-project-id": "614600",
   });
@@ -54,7 +37,6 @@ test("PostHog MCP reads its controller configuration from the environment", asyn
     "POSTHOG_PERSONAL_API_KEY",
     "POSTHOG_MCP_URL",
     "POSTHOG_MCP_MODE",
-    "POSTHOG_MCP_READ_ONLY",
     "COMPADRE_MCP_ALLOW_PARTIAL",
   ] as const;
   const previous = new Map(keys.map((key) => [key, process.env[key]]));
@@ -63,8 +45,6 @@ test("PostHog MCP reads its controller configuration from the environment", asyn
     process.env.POSTHOG_PERSONAL_API_KEY = "phx-controller-secret";
     process.env.POSTHOG_MCP_URL = "https://posthog.example/mcp";
     process.env.POSTHOG_MCP_MODE = "tools";
-    process.env.POSTHOG_MCP_READ_ONLY = "false";
-
     const servers = await buildMcpServers();
     const server = servers.posthog;
     assert.ok(server && "type" in server);

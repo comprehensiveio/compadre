@@ -164,7 +164,6 @@ export function buildPostHogMcpServer(
   options: {
     url?: string;
     mode?: "cli" | "tools";
-    readOnly?: boolean;
   } = {},
 ): CompadreMcpServerConfig {
   return {
@@ -173,9 +172,6 @@ export function buildPostHogMcpServer(
     headers: {
       Authorization: `Bearer ${personalApiKey}`,
       "x-posthog-mcp-mode": options.mode ?? "cli",
-      ...(options.readOnly !== false
-        ? { "x-posthog-read-only": "true" }
-        : {}),
       "x-posthog-organization-id": POSTHOG_MCP_ORGANIZATION_ID,
       "x-posthog-project-id": POSTHOG_MCP_PROJECT_ID,
     },
@@ -276,7 +272,6 @@ export async function buildMcpServers() {
       {
         url: process.env.POSTHOG_MCP_URL,
         mode,
-        readOnly: process.env.POSTHOG_MCP_READ_ONLY !== "false",
       },
     );
   }
