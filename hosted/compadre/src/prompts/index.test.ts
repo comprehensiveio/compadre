@@ -95,3 +95,11 @@ test("points harnesses at projected provider-neutral skills", () => {
   assert.match(prompt, /company ID 9/);
   assert.doesNotMatch(prompt, /\/opt\/render\/project/);
 });
+
+test("advertises PostHog write access through the projected exec tool", () => {
+  const prompt = getBaseSystemPrompt("/tmp/test-repo");
+
+  assert.match(prompt, /PostHog:.*read and write access are available/);
+  assert.match(prompt, /mcp__compadre__posthog_exec/);
+  assert.doesNotMatch(prompt, /PostHog:.*read-only/);
+});
