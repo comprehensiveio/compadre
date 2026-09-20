@@ -213,6 +213,25 @@ delivery so Slack retries it. The selector is the code constant
 `SLACK_INGRESS_MODE` in `src/services/slack-inbox.ts`; `"direct"` restores the
 acknowledge-then-fire-and-forget behavior.
 
+### Untagged thread replies (experiment)
+
+Replies posted inside a Compadre-bound Slack thread without tagging the bot
+are judged by TypeSafe's Jev model (`src/services/slack-reply-gate.ts`) instead
+of being dropped. The gate applies only to `message` events that are threaded
+channel replies with text, in threads that already have a hosted Slack binding.
+Mentions, DMs, top-level channel messages, and attachment-only replies keep
+their existing paths. Ingress persists such a reply to the inbox only after
+the binding check; the inbox processor then loads the thread from Slack, asks
+Jev two yes/no questions in one request (is the reply directed at the agent,
+is it a human side conversation), and thresholds the probabilities in code.
+A "respond" outcome takes the ordinary mention path, so it becomes a new turn
+or, when the thread's turn is already running, a steer. Every judgement is
+logged as `slack untagged reply judged` with both probabilities, the outcome,
+and token usage, never the message text. Slack or Jev failures fail closed to
+"ignore" and never requeue the inbox row. The selector is the code constant
+`SLACK_UNTAGGED_REPLY_GATE`; the gate is also inert without `TYPESAFE_API_KEY`.
+Calibrate thresholds with `npm run slack:reply-gate-probe`.
+
 ## Worker event delivery
 
 Worker T3 persists native events in its SQLite journal. A per-thread Temporal

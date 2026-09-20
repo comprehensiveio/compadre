@@ -26,6 +26,14 @@ removed after the direct service inventories matched Doppler. Worker processes
 receive only the allowlisted subset projected by the controller; Modal is not a
 second secret store.
 
+## TypeSafe (Jev) credential
+
+`TYPESAFE_API_KEY` lives in `compadre/prd_api` and syncs only to
+`compadre-api`. The controller uses it for the untagged Slack reply gate
+(`src/services/slack-reply-gate.ts`), which sends thread text to
+`api.typesafe.ai` for a yes/no judgement. The key never reaches workers,
+prompts, or logs. Removing it disables the gate without affecting ingress.
+
 ## PostHog MCP credential
 
 `POSTHOG_PERSONAL_API_KEY` lives in `compadre/prd_api` and is continuously
