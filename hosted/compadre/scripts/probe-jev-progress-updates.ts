@@ -76,8 +76,8 @@ function probe(
 
 const builtInCases: ProbeCase[] = [
   probe(
-    "milestone with finding",
-    "post",
+    "specific finding",
+    "hold",
     "Found it: the 30s timeout is overridden per-test by a fixture that hardcodes 5s. Removing the override and bumping the shared default.",
   ),
   probe(
@@ -110,22 +110,51 @@ const builtInCases: ProbeCase[] = [
     { turnAgeS: 20, sinceLastS: null, tools: 1 },
   ),
   probe(
-    "early real finding",
-    "post",
+    "early specific finding",
+    "hold",
     "The flake reproduces on the first run: the login redirect races the session cookie write.",
     { turnAgeS: 45, sinceLastS: null, tools: 3 },
   ),
   probe(
-    "minor detail after long silence",
-    "post",
+    "test-count status after long silence",
+    "hold",
     "Suite is running; 41 of 60 tests passed so far, no failures yet.",
     { turnAgeS: 1_500, sinceLastS: 1_200, tools: 40 },
   ),
   probe(
-    "minor detail after short silence",
+    "test-count status after short silence",
     "hold",
     "Suite is running; 41 of 60 tests passed so far, no failures yet.",
     { turnAgeS: 400, sinceLastS: 330, tools: 6 },
+  ),
+  probe(
+    "too specific milestone",
+    "hold",
+    "Changed `timeout: 5000` to `timeout: 30000` in playwright.config.ts and removed the override in tests/fixtures/login.ts; rerunning tests/e2e/login.spec.ts next.",
+  ),
+  probe(
+    "high level milestone",
+    "post",
+    "The timeout change is in and the login suite passes again. Two tests depended on the old value, so I'm updating those before opening the PR.",
+  ),
+  probe(
+    "decision point",
+    "post",
+    "There are two ways to do this: a global default or a per-test override. I'm going with the global default since that's what the request asked for.",
+  ),
+  probe(
+    "stage complete after long silence",
+    "post",
+    "The reproduction and fix are done; what's left is verifying the two tests that depended on the old timeout.",
+    { turnAgeS: 1_500, sinceLastS: 1_200, tools: 40 },
+  ),
+  // Verbatim from the first production run (2026-09-20): a genuine milestone
+  // buried under verification detail. Isaac flagged it as too specific.
+  probe(
+    "production sample: over-specific milestone",
+    "hold",
+    "Live verification passes on the 409-row table: search reduces the footer to `Rows: 1 of 409`, Primary Email is still hidden but available in Columns, editable currency inputs are mounted and enabled, the outer page still scrolls, the table retains its own bounded row scroller (22 rendered virtual rows; 22,650px scroll range), and a clean reload reports no page errors. I'm at final regression checks and diff review now.",
+    { turnAgeS: 680, sinceLastS: null, tools: 30, request: "migrate 1 user facing tables from the ag grid implementation to the new datatable one", shown: [] },
   ),
   probe(
     "wrap-up before final",
@@ -167,6 +196,7 @@ for (const probeCase of cases) {
     decision: `${outcome}:${decision.reason}`,
     ok: agrees ? "✓" : "✗",
     new: judgement.addsNewInformation.toFixed(2),
+    high: judgement.highLevelUpdate.toFixed(2),
     asks: judgement.needsUserInput.toFixed(2),
     kind: `${judgement.kind}@${judgement.kindConfidence.toFixed(2)}`,
     worth: judgement.worth.toFixed(2),

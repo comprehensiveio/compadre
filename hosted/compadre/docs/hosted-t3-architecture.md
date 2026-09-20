@@ -241,14 +241,18 @@ Each new one is judged once by Jev (`src/services/slack-progress-updates.ts`)
 against structured state: the candidate text, everything already posted to
 Slack this turn, the previous turn's final answer, the user's request, and
 elapsed time since the turn started and since the last Slack post. One request
-asks whether the text adds new information, whether it needs the user's input,
-what kind of message it is, and how much a waiting user would want it now.
-Content decides: milestones post, narration, repeats, and wrap-up summaries
+asks whether the text adds new information, whether it is a high-level update
+rather than implementation detail, whether it needs the user's input, what
+kind of message it is, and how much a waiting user would want it now.
+Content decides: confidently classified, high-level milestones and decision
+points post; narration, repeats, implementation detail, and wrap-up summaries
 are held, and questions or blockers post immediately. The one timing rule is
 that fifteen silent minutes lower the bar so a minor update still gets
 through. Updates go to a single progress message per turn
 that is edited in place (`SlackStream.postProgressMessage`), so the thread
-shows one evolving line above the final answer. The outbox still owns the
+shows one evolving line above the final answer. The agent's text is relayed
+verbatim, never prefixed or reworded, and carries the same session-link
+footer as the final answer. The outbox still owns the
 final answer; a completed turn's last message is never treated as progress.
 A browser message taking over the turn silences further updates. Every
 judgement is logged as `slack progress update judged` without message text.

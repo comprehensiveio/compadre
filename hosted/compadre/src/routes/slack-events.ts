@@ -803,7 +803,9 @@ async function handleAIMessage(
         },
         async onDispatched(prepared, dispatch) {
           dispatchedMessageId = dispatch.messageId;
-          if (!prepared.steered) progressReporter?.attachDispatch(dispatch);
+          if (!prepared.steered) {
+            progressReporter?.attachDispatch(dispatch, prepared.detailsUrl);
+          }
           // The turn is committed centrally; from here the outbox and the
           // run orchestrator own recovery, so the durable inbox row (when
           // this event came through it) must not be retried.

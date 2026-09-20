@@ -241,8 +241,11 @@ export class SlackStream {
    * message, later calls edit it in place so a long run never fills the
    * thread with interim updates.
    */
-  async postProgressMessage(markdownText: string): Promise<void> {
-    const content = slackMarkdownMessageContent(markdownText);
+  async postProgressMessage(
+    markdownText: string,
+    sessionLink?: SlackSessionLink,
+  ): Promise<void> {
+    const content = slackMarkdownMessageContent(markdownText, sessionLink);
     if (this.progressMessageTs) {
       const update = await this.call("chat.update", {
         channel: this.channel,
