@@ -5,9 +5,11 @@ import type {
   T3ThreadSnapshot,
   T3TurnDispatch,
 } from "../t3/client.js";
+import type { SlackSessionLink } from "./slack-markdown.js";
 import {
   assistantMessagesForDispatch,
   hasLaterWebMessageForDispatch,
+  t3SlackSessionLink,
 } from "./t3-slack-conversation.js";
 import { configuredTypeSafeClient } from "./typesafe-client.js";
 
@@ -36,7 +38,19 @@ export const PROGRESS_FORCED_CHECKIN_MS = 15 * 60_000;
 export const PROGRESS_NEEDS_USER_THRESHOLD = 0.8;
 export const PROGRESS_NEW_INFORMATION_THRESHOLD = 0.6;
 export const PROGRESS_MILESTONE_SCORE = 1.5;
+/**
+ * A milestone posts only when Jev is confident it IS a milestone. In the
+ * first production run the one premature post was a message Jev classified
+ * as a milestone at 0.54 confidence (worth 1.70); the genuine one scored
+ * 0.99 (worth 1.83). Worth alone did not separate them; confidence did.
+ */
+export const PROGRESS_MILESTONE_CONFIDENCE = 0.75;
 export const PROGRESS_CHECKIN_SCORE = 1;
+/**
+ * Progress posts must read at task level. Implementation detail (file names,
+ * commands, code-level findings) stays in the web UI even when it is new.
+ */
+export const PROGRESS_HIGH_LEVEL_THRESHOLD = 0.7;
 
 const MAX_SHOWN_MESSAGES = 10;
 const MAX_TEXT_CHARS = 1_500;
@@ -58,8 +72,10 @@ export type SlackProgressState = {
 const PROGRESS_KINDS = {
   progress_milestone:
     "Reports something concrete that was found, decided, finished, or changed since the last update.",
+  decision_point:
+    "Reports a choice the agent made between real alternatives, or a change of direction, that shapes the rest of the work.",
   plan_or_intent:
-    "Announces what the agent is about to do next without reporting a result yet.",
+    "Announces what the agent is about to do next without reporting a result yet; no alternatives weighed, nothing finished.",
   narration:
     "Running commentary about routine steps (reading files, running a command) with no result the user needs.",
   question_for_user:
@@ -75,6 +91,17 @@ const PROGRESS_QUESTIONS = {
     type: "noul",
     instructions:
       "Does `candidate.text` tell the user something they have not already been told in `shown_in_slack_this_turn` or `previous_final_answer`? Rephrasing the same plan, restating the request, or repeating an earlier finding is not new.",
+  },
+  high_level_update: {
+    type: "noul",
+    instructions:
+      "Is `candidate.text` a high-level update about the overall task in `user_request`: a stage completed, a decision made or needed, or a change of direction, written so someone skimming Slack without the codebase open would follow it?",
+    criteria: {
+      true:
+        "Describes progress or a decision at the level of the task or its major parts, e.g. 'the fix is in and the suite passes, now checking the two tests that depended on the old value'.",
+      false:
+        "Implementation detail or narrow findings: specific files, functions, commands, config keys, line numbers, individual test names, or step-by-step mechanics of how something is being done.",
+    },
   },
   needs_user_input: {
     type: "noul",
@@ -104,6 +131,7 @@ export type SlackProgressKind = keyof typeof PROGRESS_KINDS;
 
 export interface SlackProgressJudgement {
   addsNewInformation: number;
+  highLevelUpdate: number;
   needsUserInput: number;
   kind: SlackProgressKind;
   kindConfidence: number;
@@ -117,11 +145,12 @@ export type SlackProgressJudge = (
 ) => Promise<SlackProgressJudgement>;
 
 export type SlackProgressDecision =
-  | { post: true; reason: "needs_user" | "milestone" | "check_in" }
+  | { post: true; reason: "needs_user" | "milestone" | "decision" | "check_in" }
   | {
       post: false;
       reason:
         | "repeats_shown"
+        | "too_specific"
         | "narration"
         | "wrap_up"
         | "low_value"
@@ -146,6 +175,7 @@ export function createJevSlackProgressJudge(
     });
     return {
       addsNewInformation: result.answers.adds_new_information.noul,
+      highLevelUpdate: result.answers.high_level_update.noul,
       needsUserInput: result.answers.needs_user_input.noul,
       kind: result.answers.kind.choice,
       kindConfidence: result.answers.kind.confidence,
@@ -174,6 +204,9 @@ export function decideSlackProgress(
   if (judgement.addsNewInformation < PROGRESS_NEW_INFORMATION_THRESHOLD) {
     return { post: false, reason: "repeats_shown" };
   }
+  if (judgement.highLevelUpdate < PROGRESS_HIGH_LEVEL_THRESHOLD) {
+    return { post: false, reason: "too_specific" };
+  }
   if (judgement.kind === "narration" && judgement.kindConfidence >= 0.5) {
     return { post: false, reason: "narration" };
   }
@@ -182,7 +215,18 @@ export function decideSlackProgress(
   if (judgement.kind === "wrap_up" && judgement.kindConfidence >= 0.5) {
     return { post: false, reason: "wrap_up" };
   }
-  if (judgement.worth >= PROGRESS_MILESTONE_SCORE) {
+  const confidentKind = judgement.kindConfidence >= PROGRESS_MILESTONE_CONFIDENCE;
+  // A high-level decision point is worth showing on its own; a milestone
+  // additionally needs the worth score, since "milestone" also catches
+  // small completed steps.
+  if (judgement.kind === "decision_point" && confidentKind) {
+    return { post: true, reason: "decision" };
+  }
+  if (
+    judgement.kind === "progress_milestone" &&
+    confidentKind &&
+    judgement.worth >= PROGRESS_MILESTONE_SCORE
+  ) {
     return { post: true, reason: "milestone" };
   }
   const silenceMs = timing.sinceLastPostMs ?? timing.turnAgeMs;
@@ -315,12 +359,16 @@ export function buildSlackProgressState(input: {
   };
 }
 
-export function formatSlackProgressMessage(text: string): string {
-  return `_Progress:_ ${text.trim()}`;
-}
-
+/**
+ * The agent's intermediate text is relayed verbatim, never decorated; the
+ * message is distinguished only by the session-link footer it shares with the
+ * final answer and its position above it.
+ */
 export interface SlackProgressSink {
-  postProgressMessage(markdownText: string): Promise<void>;
+  postProgressMessage(
+    markdownText: string,
+    sessionLink?: SlackSessionLink,
+  ): Promise<void>;
 }
 
 /**
@@ -331,6 +379,7 @@ export interface SlackProgressSink {
  */
 export class SlackProgressReporter {
   private dispatch: T3TurnDispatch | undefined;
+  private sessionLink: SlackSessionLink | undefined;
   private readonly judged = new Set<string>();
   private readonly shown: Array<{ postedAt: number; text: string }> = [];
   private lastPostAt: number | null = null;
@@ -347,8 +396,9 @@ export class SlackProgressReporter {
     },
   ) {}
 
-  attachDispatch(dispatch: T3TurnDispatch): void {
+  attachDispatch(dispatch: T3TurnDispatch, detailsUrl?: string | null): void {
     this.dispatch = dispatch;
+    this.sessionLink = detailsUrl ? t3SlackSessionLink(detailsUrl) : undefined;
   }
 
   /** Serialized so a slow judgement never interleaves with the next snapshot. */
@@ -408,6 +458,7 @@ export class SlackProgressReporter {
           post: decision.post,
           reason: decision.reason,
           addsNewInformation: judgement.addsNewInformation,
+          highLevelUpdate: judgement.highLevelUpdate,
           needsUserInput: judgement.needsUserInput,
           kind: judgement.kind,
           kindConfidence: judgement.kindConfidence,
@@ -424,7 +475,8 @@ export class SlackProgressReporter {
       if (!decision.post) continue;
       try {
         await this.input.slack.postProgressMessage(
-          formatSlackProgressMessage(candidate.text),
+          candidate.text.trim(),
+          this.sessionLink,
         );
         this.lastPostAt = now();
         this.shown.push({ postedAt: this.lastPostAt, text: candidate.text.trim() });

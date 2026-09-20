@@ -679,15 +679,18 @@ test("progress updates post once and then edit the same thread message", async (
     fetchImpl,
     logger: silentLogger,
   });
-  await stream.postProgressMessage("_Progress:_ Found the race; patching.");
-  await stream.postProgressMessage("_Progress:_ Patched; running the suite.");
+  const link = { label: "open session in Compadre web", url: "https://compadre.example/t/1" };
+  await stream.postProgressMessage("Found the race; patching.", link);
+  await stream.postProgressMessage("Patched; running the suite.", link);
   assert.deepEqual(
     calls.map((call) => call.method),
     ["chat.postMessage", "chat.update"],
   );
   assert.equal(calls[0]!.body.thread_ts, "1700000000.000100");
   assert.equal(calls[1]!.body.ts, "1700000001.000100");
-  assert.equal(calls[1]!.body.markdown_text, "_Progress:_ Patched; running the suite.");
+  const blocks = calls[1]!.body.blocks as Array<Record<string, unknown>>;
+  assert.equal((blocks[0] as { text: string }).text, "Patched; running the suite.");
+  assert.match(JSON.stringify(blocks[1]), /open session in Compadre web/);
 });
 
 test("a failed progress edit falls back to a fresh post", async () => {

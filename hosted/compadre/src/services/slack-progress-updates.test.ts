@@ -7,7 +7,6 @@ import {
   buildSlackProgressState,
   createJevSlackProgressJudge,
   decideSlackProgress,
-  formatSlackProgressMessage,
   previousFinalAnswer,
   progressCandidates,
   type SlackProgressJudgement,
@@ -86,6 +85,7 @@ function snapshot(input: {
 function judgement(overrides: Partial<SlackProgressJudgement> = {}): SlackProgressJudgement {
   return {
     addsNewInformation: 0.9,
+    highLevelUpdate: 0.9,
     needsUserInput: 0.05,
     kind: "progress_milestone",
     kindConfidence: 0.8,
@@ -138,6 +138,16 @@ test("content decides; a long silence only lowers the bar", () => {
   );
   assert.equal(decideSlackProgress(judgement({ addsNewInformation: 0.3 }), settled).reason, "repeats_shown");
   assert.equal(
+    decideSlackProgress(judgement({ highLevelUpdate: 0.2 }), settled).reason,
+    "too_specific",
+    "implementation detail stays in the web UI even when new and a milestone",
+  );
+  assert.equal(
+    decideSlackProgress(judgement({ highLevelUpdate: 0.2, worth: 1.2 }), { turnAgeMs: PROGRESS_FORCED_CHECKIN_MS, sinceLastPostMs: null }).reason,
+    "too_specific",
+    "a check-in must be high level too",
+  );
+  assert.equal(
     decideSlackProgress(judgement({ kind: "narration", kindConfidence: 0.7 }), settled).reason,
     "narration",
   );
@@ -146,6 +156,25 @@ test("content decides; a long silence only lowers the bar", () => {
     "wrap_up",
   );
   assert.equal(decideSlackProgress(judgement({ worth: 1.2 }), settled).reason, "low_value");
+  assert.equal(
+    decideSlackProgress(judgement({ kindConfidence: 0.54, worth: 1.7 }), settled).reason,
+    "low_value",
+    "an uncertain milestone classification does not post (first production run)",
+  );
+  assert.equal(
+    decideSlackProgress(judgement({ kind: "plan_or_intent", kindConfidence: 1, worth: 1.9 }), settled).reason,
+    "low_value",
+    "plans wait for a check-in",
+  );
+  assert.deepEqual(
+    decideSlackProgress(judgement({ kind: "decision_point", kindConfidence: 0.81, worth: 1.3 }), settled),
+    { post: true, reason: "decision" },
+    "a confident, high-level decision point posts regardless of worth",
+  );
+  assert.equal(
+    decideSlackProgress(judgement({ kind: "decision_point", kindConfidence: 0.5, worth: 1.3 }), settled).reason,
+    "low_value",
+  );
   assert.deepEqual(
     decideSlackProgress(judgement({ worth: 1.2 }), { turnAgeMs: PROGRESS_FORCED_CHECKIN_MS, sinceLastPostMs: null }),
     { post: true, reason: "check_in" },
@@ -159,8 +188,9 @@ test("questions and blockers post even when they repeat or score low", () => {
     reason: "needs_user",
   });
   assert.deepEqual(
-    decideSlackProgress(judgement({ kind: "blocked", kindConfidence: 0.6, worth: 0.5 }), early),
+    decideSlackProgress(judgement({ kind: "blocked", kindConfidence: 0.6, worth: 0.5, highLevelUpdate: 0.1 }), early),
     { post: true, reason: "needs_user" },
+    "a specific blocker still posts",
   );
 });
 
@@ -194,14 +224,16 @@ test("the reporter judges each candidate once and posts each milestone to one pr
   let clock = T0 + 30_000;
   const judged: string[] = [];
   const posted: string[] = [];
+  const links: Array<string | undefined> = [];
   const reporter = new SlackProgressReporter({
     judge: async (state) => {
       judged.push(state.candidate.text);
       return judgement();
     },
     slack: {
-      async postProgressMessage(text) {
+      async postProgressMessage(text, sessionLink) {
         posted.push(text);
+        links.push(sessionLink?.url);
       },
     },
     userRequest: "also bump the timeout to 30s",
@@ -214,16 +246,17 @@ test("the reporter judges each candidate once and posts each milestone to one pr
   await reporter.observe(snapshot({ messages: [first], toolStartsAt: [40] }));
   assert.equal(posted.length, 0, "no dispatch attached yet");
 
-  reporter.attachDispatch(dispatch);
+  reporter.attachDispatch(dispatch, "https://compadre.example/thread/1");
   await reporter.observe(snapshot({ messages: [first], toolStartsAt: [40] }));
   await reporter.observe(snapshot({ messages: [first], toolStartsAt: [40, 50] }));
   assert.deepEqual(judged, ["Found the race; patching."], "a candidate is judged once");
-  assert.deepEqual(posted, [formatSlackProgressMessage("Found the race; patching.")]);
+  assert.deepEqual(posted, ["Found the race; patching."], "agent text is relayed verbatim");
+  assert.deepEqual(links, ["https://compadre.example/thread/1"], "the session link rides along");
 
   clock += 60_000;
   await reporter.observe(snapshot({ messages: [first, second], toolStartsAt: [40, 50, 210] }));
   assert.equal(judged.length, 2);
-  assert.deepEqual(posted.at(-1), formatSlackProgressMessage("Patched; running the suite."));
+  assert.deepEqual(posted.at(-1), "Patched; running the suite.");
   assert.equal(posted.length, 2, "a second milestone updates the same line");
 });
 
@@ -278,6 +311,7 @@ test("the Jev judge maps all four answers from one request", async () => {
         model: "jev-1.13.0",
         answers: {
           adds_new_information: { type: "noul", noul: 0.91 },
+          high_level_update: { type: "noul", noul: 0.8 },
           needs_user_input: { type: "noul", noul: 0.04 },
           kind: {
             type: "choice",
@@ -303,7 +337,8 @@ test("the Jev judge maps all four answers from one request", async () => {
       now: T0 + 60_000,
     }),
   );
-  assert.deepEqual(keys, ["adds_new_information", "kind", "needs_user_input", "worth_interrupting_for"]);
+  assert.deepEqual(keys, ["adds_new_information", "high_level_update", "kind", "needs_user_input", "worth_interrupting_for"]);
+  assert.equal(result.highLevelUpdate, 0.8);
   assert.equal(result.kind, "progress_milestone");
   assert.equal(result.kindConfidence, 0.77);
   assert.equal(result.worth, 2.2);
