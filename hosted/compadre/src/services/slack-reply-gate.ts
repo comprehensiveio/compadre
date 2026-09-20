@@ -1,10 +1,11 @@
-import { TypeSafeClient, type Usage } from "@typesafe-ai/sdk";
+import type { TypeSafeClient, Usage } from "@typesafe-ai/sdk";
 import { log, serializeError } from "../logging.js";
 import type { SlackEvent } from "../routes/slack-events.js";
 import type { HostedThreadBindingStore } from "./hosted-thread-bindings.js";
 import { canonicalSlackThreadId } from "./t3-slack-conversation.js";
 import { centralT3ThreadId } from "../t3/central-conversation.js";
 import type { T3Client } from "../t3/client.js";
+import { configuredTypeSafeClient } from "./typesafe-client.js";
 
 /**
  * Untagged Slack thread reply experiment.
@@ -21,8 +22,6 @@ import type { T3Client } from "../t3/client.js";
  */
 export const SLACK_UNTAGGED_REPLY_GATE: "jev" | "off" = "jev";
 
-export const SLACK_REPLY_GATE_MODEL = "jev-latest";
-
 /**
  * Decision thresholds, evaluated on real thread samples via
  * `npm run slack:reply-gate-probe`. Acting on a false "respond" posts an
@@ -34,7 +33,6 @@ export const SLACK_REPLY_SIDE_CONVERSATION_THRESHOLD = 0.5;
 
 const MAX_THREAD_MESSAGES = 25;
 const MAX_MESSAGE_CHARS = 1_500;
-const JEV_TIMEOUT_MS = 8_000;
 
 export type SlackReplyGateMessage = {
   author: string;
@@ -114,23 +112,8 @@ export function configuredSlackReplyJudge(
 ): SlackReplyJudge | null {
   if (SLACK_UNTAGGED_REPLY_GATE !== "jev") return null;
   if (cachedJudge !== undefined) return cachedJudge;
-  const apiKey = environment.TYPESAFE_API_KEY?.trim();
-  if (!apiKey) {
-    log.warn(
-      {},
-      "slack untagged reply gate disabled; TYPESAFE_API_KEY is not configured",
-    );
-    cachedJudge = null;
-    return cachedJudge;
-  }
-  cachedJudge = createJevSlackReplyJudge(
-    new TypeSafeClient({
-      apiKey,
-      defaultModel: SLACK_REPLY_GATE_MODEL,
-      timeout: JEV_TIMEOUT_MS,
-      logLevel: "off",
-    }),
-  );
+  const client = configuredTypeSafeClient(environment);
+  cachedJudge = client ? createJevSlackReplyJudge(client) : null;
   return cachedJudge;
 }
 

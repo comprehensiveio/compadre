@@ -666,3 +666,51 @@ test("bounds Markdown during failed-stop recovery", async () => {
     String(recovery?.body.markdown_text).endsWith(SLACK_TRUNCATION_NOTICE),
   );
 });
+
+test("progress updates post once and then edit the same thread message", async () => {
+  const { calls, fetchImpl } = createSlackFetch({
+    "chat.postMessage": [{ ok: true, ts: "1700000001.000100" }],
+    "chat.update": [{ ok: true }],
+  });
+  const stream = new SlackStream({
+    channel: "C123",
+    threadTs: "1700000000.000100",
+    botToken: "xoxb-test",
+    fetchImpl,
+    logger: silentLogger,
+  });
+  await stream.postProgressMessage("_Progress:_ Found the race; patching.");
+  await stream.postProgressMessage("_Progress:_ Patched; running the suite.");
+  assert.deepEqual(
+    calls.map((call) => call.method),
+    ["chat.postMessage", "chat.update"],
+  );
+  assert.equal(calls[0]!.body.thread_ts, "1700000000.000100");
+  assert.equal(calls[1]!.body.ts, "1700000001.000100");
+  assert.equal(calls[1]!.body.markdown_text, "_Progress:_ Patched; running the suite.");
+});
+
+test("a failed progress edit falls back to a fresh post", async () => {
+  const { calls, fetchImpl } = createSlackFetch({
+    "chat.postMessage": [
+      { ok: true, ts: "1700000001.000100" },
+      { ok: true, ts: "1700000002.000100" },
+    ],
+    "chat.update": [{ ok: false, error: "message_not_found" }, { ok: true }],
+  });
+  const stream = new SlackStream({
+    channel: "C123",
+    threadTs: "1700000000.000100",
+    botToken: "xoxb-test",
+    fetchImpl,
+    logger: silentLogger,
+  });
+  await stream.postProgressMessage("one");
+  await stream.postProgressMessage("two");
+  await stream.postProgressMessage("three");
+  assert.deepEqual(
+    calls.map((call) => call.method),
+    ["chat.postMessage", "chat.update", "chat.postMessage", "chat.update"],
+  );
+  assert.equal(calls[3]!.body.ts, "1700000002.000100");
+});

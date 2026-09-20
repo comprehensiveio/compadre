@@ -1,3 +1,5 @@
+import { SLACK_PROGRESS_UPDATES } from "./slack-progress-updates.js";
+
 export interface SlackAgentInputOptions {
   messageText: string;
   threadContext: string | null;
@@ -44,8 +46,15 @@ export function buildSlackAgentInput({
     `Slack message from user ${userId || "unknown"}.`,
     "",
     "Slack response contract:",
-    "- Compadre automatically posts only your final assistant message to this Slack thread after the run completes.",
-    "- Working narration and tool-call text remain in the web UI and are not sent to Slack.",
+    ...(SLACK_PROGRESS_UPDATES === "jev"
+      ? [
+          "- Compadre automatically posts your final assistant message to this Slack thread after the run completes.",
+          "- During a long run Compadre may relay a brief intermediate message of yours as a progress update when it reports a real milestone, a blocker, or a question for the user; routine narration and tool-call text stay in the web UI.",
+        ]
+      : [
+          "- Compadre automatically posts only your final assistant message to this Slack thread after the run completes.",
+          "- Working narration and tool-call text remain in the web UI and are not sent to Slack.",
+        ]),
     "- End with one concise, self-contained final answer suitable for a Slack thread.",
     "- Do not use slack_post_message or slack_reply_to_thread to deliver or duplicate that final answer in this thread.",
     "- Slack read tools, file uploads, reactions, and durable deployment watches remain available when the task actually requires them.",

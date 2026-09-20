@@ -46,6 +46,7 @@ export class SlackStream {
   private lastStatus = "";
   private statusUpdating: Promise<void> = Promise.resolve();
   private activeStreamTs: string | null = null;
+  private progressMessageTs: string | null = null;
   private deliveryMode: DeliveryMode = "unstarted";
   private needsFinalRecovery = false;
   private nativeStreamExpired = false;
@@ -233,6 +234,36 @@ export class SlackStream {
 
   hasTruncatedContent(): boolean {
     return this.truncated;
+  }
+
+  /**
+   * One evolving progress line per turn: the first call posts a thread
+   * message, later calls edit it in place so a long run never fills the
+   * thread with interim updates.
+   */
+  async postProgressMessage(markdownText: string): Promise<void> {
+    const content = slackMarkdownMessageContent(markdownText);
+    if (this.progressMessageTs) {
+      const update = await this.call("chat.update", {
+        channel: this.channel,
+        ts: this.progressMessageTs,
+        ...content,
+      });
+      if (update.ok) return;
+      this.logger.warn("[slack-stream] progress update failed; reposting", {
+        ...this.logContext(),
+        error: update.error,
+      });
+    }
+    const post = await this.call("chat.postMessage", {
+      channel: this.channel,
+      thread_ts: this.threadTs,
+      ...content,
+    });
+    if (!post.ok) {
+      throw new Error(`chat.postMessage failed: ${String(post.error ?? "unknown")}`);
+    }
+    if (typeof post.ts === "string") this.progressMessageTs = post.ts;
   }
 
   /** Post a separate thread message that is not subject to this stream's cap. */

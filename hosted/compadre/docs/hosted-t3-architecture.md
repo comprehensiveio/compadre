@@ -232,6 +232,29 @@ and token usage, never the message text. Slack or Jev failures fail closed to
 `SLACK_UNTAGGED_REPLY_GATE`; the gate is also inert without `TYPESAFE_API_KEY`.
 Calibrate thresholds with `npm run slack:reply-gate-probe`.
 
+### Mid-turn progress updates (experiment)
+
+While a Slack-originated turn runs, the foreground observer in the Slack route
+watches central snapshots for finished intermediate assistant messages (text
+that stopped streaming and was followed by a tool start or another message).
+Each new one is judged once by Jev (`src/services/slack-progress-updates.ts`)
+against structured state: the candidate text, everything already posted to
+Slack this turn, the previous turn's final answer, the user's request, and
+elapsed time since the turn started and since the last Slack post. One request
+asks whether the text adds new information, whether it needs the user's input,
+what kind of message it is, and how much a waiting user would want it now.
+Content decides: milestones post, narration, repeats, and wrap-up summaries
+are held, and questions or blockers post immediately. The one timing rule is
+that fifteen silent minutes lower the bar so a minor update still gets
+through. Updates go to a single progress message per turn
+that is edited in place (`SlackStream.postProgressMessage`), so the thread
+shows one evolving line above the final answer. The outbox still owns the
+final answer; a completed turn's last message is never treated as progress.
+A browser message taking over the turn silences further updates. Every
+judgement is logged as `slack progress update judged` without message text.
+Selector: the code constant `SLACK_PROGRESS_UPDATES`; inert without
+`TYPESAFE_API_KEY`. Calibrate with `npm run slack:progress-probe`.
+
 ## Worker event delivery
 
 Worker T3 persists native events in its SQLite journal. A per-thread Temporal

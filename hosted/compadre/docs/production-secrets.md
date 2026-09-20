@@ -29,10 +29,12 @@ second secret store.
 ## TypeSafe (Jev) credential
 
 `TYPESAFE_API_KEY` lives in `compadre/prd_api` and syncs only to
-`compadre-api`. The controller uses it for the untagged Slack reply gate
-(`src/services/slack-reply-gate.ts`), which sends thread text to
-`api.typesafe.ai` for a yes/no judgement. The key never reaches workers,
-prompts, or logs. Removing it disables the gate without affecting ingress.
+`compadre-api`. The controller uses it through one shared client
+(`src/services/typesafe-client.ts`) for the untagged Slack reply gate and the
+mid-turn Slack progress updates, both of which send thread text to
+`api.typesafe.ai` for typed judgements. The key never reaches workers,
+prompts, or logs. Removing it disables both gates without affecting ingress
+or final delivery.
 
 ## PostHog MCP credential
 
