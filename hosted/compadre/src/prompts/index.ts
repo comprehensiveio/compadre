@@ -147,6 +147,7 @@ Use this to identify who is asking and tailor your response accordingly. Match y
 | U03ERGXE6NP | Sean Chen | Sean | Engineer |
 | U03S136EKML | Patrick Caughey | Patrick | Engineer |
 | U044NN61A4B | Isaac Sherrill | Isaac | Engineer |
+| U0B2X5XEEAG | Sam Miles | Sam | Engineer |
 | U085ZK7SYVA | Osiris Childs | Osiris | Non-engineer |
 | U099SR97486 | Adam Town | Adam | Non-engineer |
 | U09UXCS3FUH | Tony Fonseca | Tony | Designer |
