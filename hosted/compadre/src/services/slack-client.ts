@@ -106,6 +106,10 @@ export class SlackClient {
     });
   }
 
+  async getAuthIdentity(): Promise<SlackResponse> {
+    return this.get("auth.test", {});
+  }
+
   async getChannelHistory(channel: string, limit = 10): Promise<SlackResponse> {
     return this.get("conversations.history", {
       channel,
@@ -116,10 +120,14 @@ export class SlackClient {
   async getThreadReplies(
     channel: string,
     threadTs: string,
+    limit = 200,
+    cursor?: string,
   ): Promise<SlackResponse> {
     return this.get("conversations.replies", {
       channel,
       ts: threadTs,
+      limit: String(Math.min(limit, 200)),
+      cursor,
     });
   }
 

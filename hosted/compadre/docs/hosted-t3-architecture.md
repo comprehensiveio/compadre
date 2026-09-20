@@ -278,9 +278,13 @@ Steering therefore stays inside one durable controller run and one terminal
 observer.
 
 Browser-originated turns on a Slack-linked thread stay UI-only: their prompt,
-answer, and generated artifacts are not mirrored into Slack. A browser steer
-also creates no replacement outbox row, so the existing Slack owner settles
-without posting the combined answer and clears the old processing status. If a
+answer, and generated artifacts are not mirrored into Slack. After the browser
+turn is durably accepted, the controller marks the most recent Compadre-authored
+message that predates the browser request with the
+`compadre-new-message-sent-from-ui` reaction. This best-effort marker makes the
+hidden continuation visible without disclosing its content. A browser steer also
+creates no replacement outbox row, so the existing Slack owner settles without
+posting the combined answer and clears the old processing status. If a
 racing Slack follow-up reserves another outbox row before the running state is
 visible centrally, the older owner yields to that durable replacement so exactly
 one response and one status clear are delivered. Every observer that yields

@@ -56,6 +56,7 @@ import { inputFilesSchema, type InputFile } from "../services/input-files.js";
 import type { T3ArtifactStore } from "../t3/artifact-store.js";
 import type { T3OutputArtifact } from "../t3/output-artifacts.js";
 import { nativeT3SteeringInputSchema } from "../t3/run-control.js";
+import { markConfiguredSlackThreadContinuedInUi } from "../services/slack-ui-continuation.js";
 
 const MAX_TITLE_LENGTH = 200;
 const MAX_MESSAGE_LENGTH = 100_000;
@@ -129,6 +130,10 @@ export interface T3DirectoryRoutesDependencies {
   createId(): string;
   watchTurn(gateway: T3DirectoryGateway, turn: T3GatewayTurn): void;
   getSlackBinding?(threadId: string): Promise<HostedSlackBinding | null>;
+  markSlackUiContinuation?(input: {
+    binding: HostedSlackBinding;
+    beforeMs: number;
+  }): Promise<string | null>;
 }
 
 const defaultDependencies: T3DirectoryRoutesDependencies = {
@@ -162,6 +167,7 @@ const defaultDependencies: T3DirectoryRoutesDependencies = {
       runtime.persistence.stores.metadata,
     ).slack(threadId);
   },
+  markSlackUiContinuation: markConfiguredSlackThreadContinuedInUi,
 };
 
 function publicBinding(binding: T3ThreadBinding) {
@@ -584,6 +590,7 @@ export function createT3DirectoryRoutes(
   }));
 
   routes.on("POST", ["/hosted/t3/chat", "/hosted/t3/actions"], async (c) => {
+    const requestReceivedAtMs = Date.now();
     if (!dependencies.enabled()) return c.notFound();
     const authError = requireCompadreApiKey(c);
     if (authError) return authError;
@@ -748,6 +755,23 @@ export function createT3DirectoryRoutes(
       createdAt: new Date().toISOString(),
     };
     await runService.startTurn(runRequest);
+    if (
+      !providerAction &&
+      attributionOrigin(forwardedProps.attribution) === "web" &&
+      linkedSlackBinding &&
+      dependencies.markSlackUiContinuation
+    ) {
+      try {
+        await dependencies.markSlackUiContinuation({
+          binding: linkedSlackBinding,
+          beforeMs: requestReceivedAtMs,
+        });
+      } catch (error) {
+        console.warn(
+          `[t3-directory] Slack UI-continuation reaction failed thread=${canonicalThreadId} error=${error instanceof Error ? error.name : "UnknownError"}`,
+        );
+      }
+    }
     // This subscriber KNOWS the run is live (it just started it), so it may
     // wait out orchestrator scheduling before the first chunk. The Postgres
     // backend ignores the option; the memory backend would otherwise apply

@@ -689,6 +689,10 @@ test("streams a native Modal T3 turn through the central provider endpoint", asy
     },
   };
   const slackBindingLookups: string[] = [];
+  const slackUiContinuations: Array<{
+    binding: { channelId: string; threadTs: string };
+    beforeMs: number;
+  }> = [];
   const durability = await createAgentRunDurability({
     COMPADRE_DURABILITY_BACKEND: "memory",
   });
@@ -719,6 +723,10 @@ test("streams a native Modal T3 turn through the central provider endpoint", asy
     async getSlackBinding(threadId) {
       slackBindingLookups.push(threadId);
       return linkedSlackBinding;
+    },
+    async markSlackUiContinuation(input) {
+      slackUiContinuations.push(input);
+      return "0.9";
     },
   }));
   const response = await app.request("/hosted/t3/chat", authorized({
@@ -885,6 +893,15 @@ test("streams a native Modal T3 turn through the central provider endpoint", asy
   });
   assert.equal(linkedWebRequest.slackMirror, undefined);
   assert.equal(linkedWebRequest.slackArtifactDestination, undefined);
+  assert.equal(slackUiContinuations.length, 1);
+  assert.deepEqual(slackUiContinuations[0]?.binding, {
+    channelId: "C1",
+    threadTs: "1.0",
+  });
+  assert.ok(
+    typeof slackUiContinuations[0]?.beforeMs === "number" &&
+      slackUiContinuations[0].beforeMs <= Date.now(),
+  );
 });
 
 test("provider actions survive durable dispatch without prompt decorations or delivery side effects", async (t) => {
