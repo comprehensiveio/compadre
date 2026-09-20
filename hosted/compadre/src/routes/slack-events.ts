@@ -60,6 +60,13 @@ import {
   getConfiguredSlackInbox,
   type SlackInboxRouteHooks,
 } from "../services/slack-inbox.js";
+import {
+  configuredSlackReplyJudge,
+  gateUntaggedSlackReply,
+  isCompadreBoundSlackThread,
+  isUntaggedThreadReplyCandidate,
+  slackThreadLoader,
+} from "../services/slack-reply-gate.js";
 
 export const slackEventsRoutes = new Hono();
 
@@ -360,7 +367,11 @@ slackEventsRoutes.post("/slack/events", async (c) => {
       });
       const slackEvent = event as SlackEvent;
       const inbox = getConfiguredSlackInbox();
-      if (inbox && isAiRoutableSlackEvent(slackEvent, botUserId)) {
+      if (
+        inbox &&
+        (isAiRoutableSlackEvent(slackEvent, botUserId) ||
+          (await isGatedUntaggedReply(slackEvent, teamId, botUserId)))
+      ) {
         // Persist BEFORE acknowledging: after the 200, Slack never retries,
         // so the row is the only thing standing between a deploy and a lost
         // message. The key spans app_mention/message duplicates of the same
@@ -410,6 +421,45 @@ export function durableSlackEventKey(
   teamId?: string,
 ): string {
   return `${teamId ?? event.team ?? "unknown"}:${event.channel}:${event.ts}`;
+}
+
+/**
+ * An untagged thread reply is worth persisting only when the experiment is
+ * on and the thread already belongs to Compadre; the Jev judgement itself
+ * runs after the acknowledgment, in the inbox processor. A binding lookup
+ * failure drops the reply (it was never guaranteed a response) rather than
+ * failing Slack's delivery.
+ */
+async function isGatedUntaggedReply(
+  event: SlackEvent,
+  teamId?: string,
+  botUserId?: string,
+): Promise<boolean> {
+  if (!nativeT3SlackEnabled()) return false;
+  if (!configuredSlackReplyJudge()) return false;
+  if (!isUntaggedThreadReplyCandidate(event, botUserId)) return false;
+  try {
+    const runtime = await getRequiredThreadPersistence();
+    return await isCompadreBoundSlackThread({
+      bindings: new HostedThreadBindingStore(
+        runtime.persistence.stores.metadata,
+      ),
+      teamId: event.user_team || event.team || teamId,
+      channel: event.channel,
+      threadTs: event.thread_ts ?? event.ts,
+    });
+  } catch (error) {
+    log.warn(
+      {
+        slackChannelId: event.channel,
+        slackThreadTs: event.thread_ts,
+        slackTs: event.ts,
+        ...serializeError(error),
+      },
+      "slack untagged reply binding lookup failed; dropping reply",
+    );
+    return false;
+  }
 }
 
 /** The subset of events the AI conversation path would act on. */
@@ -463,7 +513,11 @@ export async function routeSlackEvent(
     void forwardProdSupportLinks(event);
   }
 
-  if (isDM || isMention) {
+  const respond =
+    isDM ||
+    isMention ||
+    (await shouldRespondToUntaggedReply(event, teamId, botUserId));
+  if (respond) {
     await handleAIMessage(event, isDM, teamId, botUserId, hooks).catch((err) =>
       log.error(
         {
@@ -476,6 +530,36 @@ export async function routeSlackEvent(
       ),
     );
   }
+}
+
+/**
+ * Experiment: let Jev decide whether an untagged reply in a Compadre thread
+ * is meant for the agent. A "respond" outcome takes the ordinary mention path,
+ * which already turns into a steer when the thread's turn is running.
+ */
+async function shouldRespondToUntaggedReply(
+  event: SlackEvent,
+  teamId?: string,
+  botUserId?: string,
+): Promise<boolean> {
+  if (!nativeT3SlackEnabled()) return false;
+  const judge = configuredSlackReplyJudge();
+  const botToken = process.env.SLACK_BOT_TOKEN;
+  if (!judge || !botToken) return false;
+  if (!isUntaggedThreadReplyCandidate(event, botUserId)) return false;
+  const runtime = await getRequiredThreadPersistence();
+  const decision = await gateUntaggedSlackReply({
+    event,
+    teamId,
+    botUserId,
+    bindings: new HostedThreadBindingStore(
+      runtime.persistence.stores.metadata,
+    ),
+    centralClient: configuredCentralT3Client(),
+    loadThread: slackThreadLoader(botToken),
+    judge,
+  });
+  return decision.outcome === "respond";
 }
 
 async function handleAIMessage(
