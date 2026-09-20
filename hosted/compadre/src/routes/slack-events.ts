@@ -67,6 +67,10 @@ import {
   isUntaggedThreadReplyCandidate,
   slackThreadLoader,
 } from "../services/slack-reply-gate.js";
+import {
+  configuredSlackProgressJudge,
+  SlackProgressReporter,
+} from "../services/slack-progress-updates.js";
 
 export const slackEventsRoutes = new Hono();
 
@@ -740,6 +744,21 @@ async function handleAIMessage(
       clearInterval(reservationHeartbeat);
       reservationHeartbeat = undefined;
     };
+    const progressJudge = slackStream ? configuredSlackProgressJudge() : null;
+    const progressReporter =
+      slackStream && progressJudge
+        ? new SlackProgressReporter({
+            judge: progressJudge,
+            slack: slackStream,
+            userRequest: transcriptUserMessage,
+            context: {
+              canonicalThreadId,
+              slackChannelId: event.channel,
+              slackThreadTs: threadTs,
+              slackTs: event.ts,
+            },
+          })
+        : undefined;
     const nativeConversation = Promise.resolve().then(async () => {
       const client = configuredCentralT3Client();
       if (!client) {
@@ -784,6 +803,7 @@ async function handleAIMessage(
         },
         async onDispatched(prepared, dispatch) {
           dispatchedMessageId = dispatch.messageId;
+          if (!prepared.steered) progressReporter?.attachDispatch(dispatch);
           // The turn is committed centrally; from here the outbox and the
           // run orchestrator own recovery, so the durable inbox row (when
           // this event came through it) must not be retried.
@@ -831,6 +851,9 @@ async function handleAIMessage(
             reservationHeartbeat.unref();
           }
         },
+        onSnapshot: progressReporter
+          ? (snapshot) => progressReporter.observe(snapshot)
+          : undefined,
         onToolStart: slackStream
           ? async (name) => {
               const status = `is ${humanizeToolName(name).toLowerCase()}...`;

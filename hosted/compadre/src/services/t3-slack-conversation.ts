@@ -92,7 +92,8 @@ function userMessagesAfterDispatch(
   );
 }
 
-function assistantMessagesForDispatch(
+/** Assistant messages produced for one dispatched Slack/API turn, in order. */
+export function assistantMessagesForDispatch(
   snapshot: T3ThreadSnapshot,
   dispatch: T3TurnDispatch,
 ): T3ThreadSnapshot["thread"]["messages"] {

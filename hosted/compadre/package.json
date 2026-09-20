@@ -14,6 +14,7 @@
     "workflow:relay-probe": "tsx scripts/probe-workflow-relay.ts",
     "slack:simulate": "tsx scripts/simulate-slack.ts",
     "slack:reply-gate-probe": "tsx scripts/probe-jev-reply-gate.ts",
+    "slack:progress-probe": "tsx scripts/probe-jev-progress-updates.ts",
     "benchmark:cold-start": "tsx scripts/benchmark-cold-start.ts",
     "modal:prepare-image": "tsx scripts/prepare-modal-image.ts",
     "t3:launch-worker": "tsx scripts/launch-t3-modal.ts",
