@@ -28,10 +28,20 @@ import { configuredTypeSafeClient } from "./typesafe-client.js";
 export const SLACK_PROGRESS_UPDATES: "jev" | "off" = "jev";
 
 /**
- * Jev decides on content; the one timing rule in code is that a long silence
- * lowers the bar so a minor update still reaches a waiting user. Updates edit
- * a single message, so frequency needs no throttle of its own.
+ * Time raises or lowers the bar; it never blocks something the user must
+ * see. The point of progress updates is feedback on long runs, and in the
+ * first two production runs nothing in the opening minutes was worth a
+ * notification. Measured from the turn start or the last Slack post:
+ *
+ *   < QUIET_WINDOW      only a question, or a blocker that needs the user
+ *   < FORCED_CHECKIN    a confident, high-level milestone or a decision the
+ *                       user might redirect
+ *   >= FORCED_CHECKIN   also a minor high-level update (check-in)
+ *
+ * There is no minimum interval between posts: updates edit one message in
+ * place, so two real milestones close together cost nothing.
  */
+export const PROGRESS_QUIET_WINDOW_MS = 5 * 60_000;
 export const PROGRESS_FORCED_CHECKIN_MS = 15 * 60_000;
 
 /** Decision thresholds; calibrate with `npm run slack:progress-probe`. */
@@ -46,6 +56,19 @@ export const PROGRESS_MILESTONE_SCORE = 1.5;
  */
 export const PROGRESS_MILESTONE_CONFIDENCE = 0.75;
 export const PROGRESS_CHECKIN_SCORE = 1;
+/**
+ * A blocker bypasses every other rule only when the user is actually needed.
+ * A workaround the agent already chose (production run 2: "no X display, so
+ * I'm using the headless fallback") is a blocker Jev scored 0.96 with
+ * needs-user 0.14; it must not interrupt anyone.
+ */
+export const PROGRESS_BLOCKER_NEEDS_USER = 0.5;
+/**
+ * A decision posts only when the user might plausibly redirect it. A choice
+ * that was foregone by the request itself (production run 2: which table to
+ * migrate, given "do a different one") is not worth a notification.
+ */
+export const PROGRESS_DECISION_REDIRECT = 0.3;
 /**
  * Progress posts must read at task level. Implementation detail (file names,
  * commands, code-level findings) stays in the web UI even when it is new.
@@ -149,7 +172,9 @@ export type SlackProgressDecision =
   | {
       post: false;
       reason:
+        | "quiet_window"
         | "repeats_shown"
+        | "foregone_decision"
         | "too_specific"
         | "narration"
         | "wrap_up"
@@ -196,11 +221,19 @@ export function decideSlackProgress(
   judgement: SlackProgressJudgement,
   timing: SlackProgressTiming,
 ): SlackProgressDecision {
+  const confidentKind = judgement.kindConfidence >= PROGRESS_MILESTONE_CONFIDENCE;
   const asksUser =
     judgement.needsUserInput >= PROGRESS_NEEDS_USER_THRESHOLD ||
-    ((judgement.kind === "question_for_user" || judgement.kind === "blocked") &&
-      judgement.kindConfidence >= 0.5);
+    (judgement.kind === "question_for_user" && judgement.kindConfidence >= 0.5) ||
+    (judgement.kind === "blocked" &&
+      judgement.kindConfidence >= 0.5 &&
+      judgement.needsUserInput >= PROGRESS_BLOCKER_NEEDS_USER);
   if (asksUser) return { post: true, reason: "needs_user" };
+
+  const silenceMs = timing.sinceLastPostMs ?? timing.turnAgeMs;
+  if (silenceMs < PROGRESS_QUIET_WINDOW_MS) {
+    return { post: false, reason: "quiet_window" };
+  }
   if (judgement.addsNewInformation < PROGRESS_NEW_INFORMATION_THRESHOLD) {
     return { post: false, reason: "repeats_shown" };
   }
@@ -215,12 +248,10 @@ export function decideSlackProgress(
   if (judgement.kind === "wrap_up" && judgement.kindConfidence >= 0.5) {
     return { post: false, reason: "wrap_up" };
   }
-  const confidentKind = judgement.kindConfidence >= PROGRESS_MILESTONE_CONFIDENCE;
-  // A high-level decision point is worth showing on its own; a milestone
-  // additionally needs the worth score, since "milestone" also catches
-  // small completed steps.
   if (judgement.kind === "decision_point" && confidentKind) {
-    return { post: true, reason: "decision" };
+    return judgement.needsUserInput >= PROGRESS_DECISION_REDIRECT
+      ? { post: true, reason: "decision" }
+      : { post: false, reason: "foregone_decision" };
   }
   if (
     judgement.kind === "progress_milestone" &&
@@ -229,7 +260,6 @@ export function decideSlackProgress(
   ) {
     return { post: true, reason: "milestone" };
   }
-  const silenceMs = timing.sinceLastPostMs ?? timing.turnAgeMs;
   if (
     silenceMs >= PROGRESS_FORCED_CHECKIN_MS &&
     judgement.worth >= PROGRESS_CHECKIN_SCORE

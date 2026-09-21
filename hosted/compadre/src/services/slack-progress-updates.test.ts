@@ -3,6 +3,7 @@ import test from "node:test";
 import type { T3Message, T3ThreadSnapshot, T3TurnDispatch } from "../t3/client.js";
 import {
   PROGRESS_FORCED_CHECKIN_MS,
+  PROGRESS_QUIET_WINDOW_MS,
   SlackProgressReporter,
   buildSlackProgressState,
   createJevSlackProgressJudge,
@@ -129,23 +130,23 @@ test("the previous turn's final answer is recovered from the thread", () => {
   assert.equal(previousFinalAnswer(snapshot({ messages: [] }), dispatch)?.id, "assistant-old");
 });
 
-test("content decides; a long silence only lowers the bar", () => {
+test("time sets the bar: quiet window, then milestones, then check-ins", () => {
   assert.deepEqual(decideSlackProgress(judgement(), settled), { post: true, reason: "milestone" });
   assert.deepEqual(
-    decideSlackProgress(judgement(), { turnAgeMs: 5_000, sinceLastPostMs: 1_000 }),
-    { post: true, reason: "milestone" },
-    "a real milestone posts however young the turn or recent the last post",
+    decideSlackProgress(judgement(), { turnAgeMs: PROGRESS_QUIET_WINDOW_MS - 1, sinceLastPostMs: null }),
+    { post: false, reason: "quiet_window" },
+    "even a confident milestone waits out the quiet window",
+  );
+  assert.deepEqual(
+    decideSlackProgress(judgement(), { turnAgeMs: 20 * 60_000, sinceLastPostMs: 60_000 }),
+    { post: false, reason: "quiet_window" },
+    "the window restarts after each post",
   );
   assert.equal(decideSlackProgress(judgement({ addsNewInformation: 0.3 }), settled).reason, "repeats_shown");
   assert.equal(
     decideSlackProgress(judgement({ highLevelUpdate: 0.2 }), settled).reason,
     "too_specific",
     "implementation detail stays in the web UI even when new and a milestone",
-  );
-  assert.equal(
-    decideSlackProgress(judgement({ highLevelUpdate: 0.2, worth: 1.2 }), { turnAgeMs: PROGRESS_FORCED_CHECKIN_MS, sinceLastPostMs: null }).reason,
-    "too_specific",
-    "a check-in must be high level too",
   );
   assert.equal(
     decideSlackProgress(judgement({ kind: "narration", kindConfidence: 0.7 }), settled).reason,
@@ -155,42 +156,58 @@ test("content decides; a long silence only lowers the bar", () => {
     decideSlackProgress(judgement({ kind: "wrap_up", kindConfidence: 0.65, worth: 2.5 }), settled).reason,
     "wrap_up",
   );
-  assert.equal(decideSlackProgress(judgement({ worth: 1.2 }), settled).reason, "low_value");
   assert.equal(
     decideSlackProgress(judgement({ kindConfidence: 0.54, worth: 1.7 }), settled).reason,
     "low_value",
-    "an uncertain milestone classification does not post (first production run)",
+    "an uncertain milestone classification does not post (production run 1)",
   );
-  assert.equal(
-    decideSlackProgress(judgement({ kind: "plan_or_intent", kindConfidence: 1, worth: 1.9 }), settled).reason,
-    "low_value",
-    "plans wait for a check-in",
-  );
-  assert.deepEqual(
-    decideSlackProgress(judgement({ kind: "decision_point", kindConfidence: 0.81, worth: 1.3 }), settled),
-    { post: true, reason: "decision" },
-    "a confident, high-level decision point posts regardless of worth",
-  );
-  assert.equal(
-    decideSlackProgress(judgement({ kind: "decision_point", kindConfidence: 0.5, worth: 1.3 }), settled).reason,
-    "low_value",
-  );
+  assert.equal(decideSlackProgress(judgement({ worth: 1.2 }), settled).reason, "low_value");
   assert.deepEqual(
     decideSlackProgress(judgement({ worth: 1.2 }), { turnAgeMs: PROGRESS_FORCED_CHECKIN_MS, sinceLastPostMs: null }),
     { post: true, reason: "check_in" },
   );
+  assert.equal(
+    decideSlackProgress(judgement({ highLevelUpdate: 0.2, worth: 1.2 }), { turnAgeMs: PROGRESS_FORCED_CHECKIN_MS, sinceLastPostMs: null }).reason,
+    "too_specific",
+    "a check-in must be high level too",
+  );
 });
 
-test("questions and blockers post even when they repeat or score low", () => {
+test("decisions post only when the user might redirect them", () => {
+  assert.deepEqual(
+    decideSlackProgress(judgement({ kind: "decision_point", kindConfidence: 0.9, needsUserInput: 0.35, worth: 1.3 }), settled),
+    { post: true, reason: "decision" },
+  );
+  assert.equal(
+    decideSlackProgress(judgement({ kind: "decision_point", kindConfidence: 0.85, needsUserInput: 0.1, worth: 1.8 }), settled).reason,
+    "foregone_decision",
+    "which table to migrate, constrained by the request (production run 2)",
+  );
+  assert.equal(
+    decideSlackProgress(judgement({ kind: "decision_point", kindConfidence: 0.5, needsUserInput: 0.5 }), settled).reason,
+    "low_value",
+  );
+});
+
+test("questions and user-blocking blockers bypass every window; solved blockers do not", () => {
   const early = { turnAgeMs: 5_000, sinceLastPostMs: 1_000 };
   assert.deepEqual(decideSlackProgress(judgement({ needsUserInput: 0.95, addsNewInformation: 0.1 }), early), {
     post: true,
     reason: "needs_user",
   });
   assert.deepEqual(
-    decideSlackProgress(judgement({ kind: "blocked", kindConfidence: 0.6, worth: 0.5, highLevelUpdate: 0.1 }), early),
+    decideSlackProgress(judgement({ kind: "question_for_user", kindConfidence: 0.6, needsUserInput: 0.4 }), early),
     { post: true, reason: "needs_user" },
-    "a specific blocker still posts",
+  );
+  assert.deepEqual(
+    decideSlackProgress(judgement({ kind: "blocked", kindConfidence: 0.9, needsUserInput: 0.6, highLevelUpdate: 0.1 }), early),
+    { post: true, reason: "needs_user" },
+    "a specific blocker that needs the user still posts at once",
+  );
+  assert.equal(
+    decideSlackProgress(judgement({ kind: "blocked", kindConfidence: 0.96, needsUserInput: 0.14, highLevelUpdate: 0.28, worth: 2.6 }), settled).reason,
+    "too_specific",
+    "a self-resolved workaround follows the normal rules (production run 2)",
   );
 });
 
@@ -221,7 +238,7 @@ test("the judged state carries what Slack has shown, timings, and the request", 
 });
 
 test("the reporter judges each candidate once and posts each milestone to one progress line", async () => {
-  let clock = T0 + 30_000;
+  let clock = T0 + PROGRESS_QUIET_WINDOW_MS + 30_000;
   const judged: string[] = [];
   const posted: string[] = [];
   const links: Array<string | undefined> = [];
@@ -253,7 +270,7 @@ test("the reporter judges each candidate once and posts each milestone to one pr
   assert.deepEqual(posted, ["Found the race; patching."], "agent text is relayed verbatim");
   assert.deepEqual(links, ["https://compadre.example/thread/1"], "the session link rides along");
 
-  clock += 60_000;
+  clock += PROGRESS_QUIET_WINDOW_MS + 60_000;
   await reporter.observe(snapshot({ messages: [first, second], toolStartsAt: [40, 50, 210] }));
   assert.equal(judged.length, 2);
   assert.deepEqual(posted.at(-1), "Patched; running the suite.");

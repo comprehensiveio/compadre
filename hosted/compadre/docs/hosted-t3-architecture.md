@@ -244,11 +244,13 @@ elapsed time since the turn started and since the last Slack post. One request
 asks whether the text adds new information, whether it is a high-level update
 rather than implementation detail, whether it needs the user's input, what
 kind of message it is, and how much a waiting user would want it now.
-Content decides: confidently classified, high-level milestones and decision
-points post; narration, repeats, implementation detail, and wrap-up summaries
-are held, and questions or blockers post immediately. The one timing rule is
-that fifteen silent minutes lower the bar so a minor update still gets
-through. Updates go to a single progress message per turn
+Time sets the bar and content clears it. Measured from the turn start or the
+last Slack post: in the first five minutes only a question, or a blocker that
+needs the user, posts; after that a confidently classified, high-level
+milestone or a decision the user might redirect posts; after fifteen silent
+minutes a minor high-level update posts as a check-in. Narration, repeats,
+implementation detail, foregone decisions, self-resolved blockers, and wrap-up
+summaries are held. There is no minimum interval between posts. Updates go to a single progress message per turn
 that is edited in place (`SlackStream.postProgressMessage`), so the thread
 shows one evolving line above the final answer. The agent's text is relayed
 verbatim, never prefixed or reworded, and carries the same session-link
