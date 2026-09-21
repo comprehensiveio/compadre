@@ -80,9 +80,11 @@ const builtInCases: ProbeCase[] = [
     "hold",
     "Found it: the 30s timeout is overridden per-test by a fixture that hardcodes 5s. Removing the override and bumping the shared default.",
   ),
+  // Reports a limitation and keeps going; it does not ask. The final answer
+  // will carry the caveat, so it does not earn an interruption in minute one.
   probe(
-    "blocker",
-    "post",
+    "early blocker reported, not asking",
+    "hold",
     "The e2e suite needs the STAGING_LOGIN_PASSWORD secret and it is not available in this environment, so I cannot verify the fix end to end.",
     { turnAgeS: 60, sinceLastS: null },
   ),
@@ -108,6 +110,18 @@ const builtInCases: ProbeCase[] = [
     "hold",
     "Starting by running the login test to see the failure.",
     { turnAgeS: 20, sinceLastS: null, tools: 1 },
+  ),
+  probe(
+    "early high-level milestone (quiet window)",
+    "hold",
+    "The flake reproduces reliably and the cause is clear; moving on to the fix.",
+    { turnAgeS: 90, sinceLastS: null, tools: 4, shown: [] },
+  ),
+  probe(
+    "early blocker that needs the user",
+    "post",
+    "I can't reach the staging database from this environment and the fix can't be verified without it. Can someone grant access, or should I ship it verified only by unit tests?",
+    { turnAgeS: 90, sinceLastS: null, tools: 4, shown: [] },
   ),
   probe(
     "early specific finding",
@@ -138,9 +152,29 @@ const builtInCases: ProbeCase[] = [
     "The timeout change is in and the login suite passes again. Two tests depended on the old value, so I'm updating those before opening the PR.",
   ),
   probe(
-    "decision point",
-    "post",
+    "foregone decision",
+    "hold",
     "There are two ways to do this: a global default or a per-test override. I'm going with the global default since that's what the request asked for.",
+  ),
+  probe(
+    "redirectable decision",
+    "post",
+    "This table's export uses AG Grid's Excel export, which DataTable doesn't have. I can keep CSV only, or build Excel export into DataTable first, which is a much bigger change. I'm going CSV-only unless you'd rather I build it.",
+  ),
+  // Verbatim from production run 2 (2026-09-20): a real decision, but one the
+  // request itself constrained ("do a different one"). Isaac did not want it.
+  probe(
+    "production sample: table choice",
+    "hold",
+    "The open migration PR targets custom-field values, so I'm taking a separate user-facing surface: the Benefits line-items table (leaving the Benefit assignments table on AG Grid). It's a bounded client-side table and reuses already-shipped DataTable capabilities: filtering, export, row click, and selection/bulk delete.",
+    { turnAgeS: 124, sinceLastS: null, tools: 6, shown: [], request: "migrate 1 user facing tables from the ag grid implementation to the new datatable one. there should be a skill to help you here. There's a pr open for a migration do a different one" },
+  ),
+  // Verbatim from production run 2: a blocker the agent already worked around.
+  probe(
+    "production sample: self-resolved blocker",
+    "hold",
+    "The app is ready, but this sandbox has no X display, so the required headed browser cannot launch. The smoke-test skill explicitly allows a headless fallback; I'm using the same persistent session and viewport for both screenshots and will report that limitation.",
+    { turnAgeS: 418, sinceLastS: 294, tools: 20, request: "migrate 1 user facing tables from the ag grid implementation to the new datatable one. there should be a skill to help you here. There's a pr open for a migration do a different one" },
   ),
   probe(
     "stage complete after long silence",
