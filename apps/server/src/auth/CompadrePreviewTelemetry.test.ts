@@ -50,7 +50,7 @@ describe("preview telemetry injection", () => {
 
 // Run the actual shipped script without a browser, app server, or network.
 function browserHarness(stored?: string) {
-  let wallTime = Date.now();
+  let wallTime = 1_000_000;
   const events = new Map<string, Array<(event?: unknown) => void>>();
   const reports: Blob[] = [];
   const timers: Array<() => void> = [];
