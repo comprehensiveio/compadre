@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { SandboxFilesystemNotFoundError, type Sandbox } from "modal";
+import { SandboxFilesystemNotFoundError, type ModalClient, type Sandbox } from "modal";
+import { log } from "../logging.js";
 import {
   cacheSuccessfulPromise,
   ModalHandle,
@@ -142,6 +143,43 @@ test("keeps the 2 GiB request while allowing a 16 GiB memory burst", () => {
   assert.equal(resources.timeoutMs, 2 * 60 * 60 * 1_000);
   assert.equal(resources.memoryMiB, 2048);
   assert.equal(resources.memoryLimitMiB, 16384);
+});
+
+test("records effective resources for both new and restored billed sandboxes", async (t) => {
+  const entries: Record<string, unknown>[] = [];
+  t.mock.method(log, "info", (entry: Record<string, unknown>) => entries.push(entry));
+  const image = {};
+  const client = {
+    apps: { fromName: async () => ({}) },
+    images: {
+      fromRegistry: () => ({ dockerfileCommands: () => ({ build: async () => image }) }),
+      fromId: async () => image,
+    },
+    sandboxes: { create: async () => sandboxStub() },
+  } as unknown as ModalClient;
+  const provider = modalSandboxProvider({
+    client,
+    environment: {
+      COMPADRE_MODAL_CPU: "2",
+      COMPADRE_MODAL_CPU_LIMIT: "4",
+      COMPADRE_MODAL_MEMORY_MIB: "16384",
+      COMPADRE_MODAL_MEMORY_LIMIT_MIB: "32768",
+      MODAL_TOKEN_SECRET: "must-not-be-logged",
+    },
+  });
+  await provider.create({});
+  await provider.restoreSnapshot!({ snapshotId: "im-existing" });
+  const allocations = entries.filter((entry) => entry.event === "modal.sandbox.created");
+  assert.equal(allocations.length, 2);
+  for (const allocation of allocations) {
+    assert.equal(allocation.sandboxId, "sb-test");
+    assert.equal(allocation.cpu, 2);
+    assert.equal(allocation.memoryMiB, 16384);
+    assert.equal(allocation.memoryLimitMiB, 32768);
+    assert.equal(allocation.timeoutMs, 7_200_000);
+  }
+  assert.equal(JSON.stringify(entries).includes("must-not-be-logged"), false);
+  assert.equal(entries.filter((entry) => entry.phase === "sandbox.create" && entry.outcome === "success").length, 2);
 });
 
 test("bakes pinned harness CLIs into the default Modal image", () => {

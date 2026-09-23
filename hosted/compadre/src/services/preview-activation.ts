@@ -1,4 +1,5 @@
 import crypto from "node:crypto";
+import { log } from "../logging.js";
 import { WorkflowExecutionAlreadyStartedError } from "@temporalio/client";
 import {
   InMemoryLockStore,
@@ -25,6 +26,8 @@ export interface PreviewActivationRecord {
   canonicalThreadId: string;
   activationId: string;
   phase: PreviewActivationPhase;
+  /** Optional for activations written before startup timing was introduced. */
+  requestedAt?: string;
   updatedAt: string;
   error?: string;
 }
@@ -44,6 +47,9 @@ function decodeRecord(
       String(record.phase),
     ) ||
     typeof record.updatedAt !== "string" ||
+    (record.requestedAt !== undefined &&
+      (typeof record.requestedAt !== "string" ||
+        !Number.isFinite(Date.parse(record.requestedAt)))) ||
     (record.error !== undefined && typeof record.error !== "string")
   ) {
     throw new Error(`Invalid preview activation for ${canonicalThreadId}`);
@@ -77,13 +83,17 @@ export class PreviewActivationStore {
       this.lockKey(canonicalThreadId),
       async (signal) => {
         if (signal.aborted) throw signal.reason;
+        const timestamp = this.now().toISOString();
         const record: PreviewActivationRecord = {
           canonicalThreadId,
           activationId,
           phase: "requested",
-          updatedAt: this.now().toISOString(),
+          requestedAt: timestamp,
+          updatedAt: timestamp,
         };
         await this.metadata.set(NAMESPACE, canonicalThreadId, record);
+        log.info({ event: "preview.activation.requested", canonicalThreadId, activationId },
+          "Preview activation requested");
         return record;
       },
     );
@@ -101,14 +111,30 @@ export class PreviewActivationStore {
         if (signal.aborted) throw signal.reason;
         const current = await this.get(canonicalThreadId);
         if (!current || current.activationId !== activationId) return null;
+        // Temporal can redeliver an activity. Do not reset a phase's clock or
+        // count the same terminal outcome twice.
+        if (current.phase === phase || current.phase === "ready" || current.phase === "failed") {
+          return current;
+        }
         const record: PreviewActivationRecord = {
           canonicalThreadId,
           activationId,
           phase,
+          ...(current.requestedAt ? { requestedAt: current.requestedAt } : {}),
           updatedAt: this.now().toISOString(),
           ...(error ? { error } : {}),
         };
         await this.metadata.set(NAMESPACE, canonicalThreadId, record);
+        const elapsed = (since: string) => Math.max(0, Date.parse(record.updatedAt) - Date.parse(since));
+        log.info({
+          event: "preview.activation.transition",
+          canonicalThreadId,
+          activationId,
+          phase,
+          previousPhase: current.phase,
+          phaseDurationMs: elapsed(current.updatedAt),
+          ...(record.requestedAt ? { elapsedMs: elapsed(record.requestedAt) } : {}),
+        }, "Preview activation phase completed");
         return record;
       },
     );

@@ -54,7 +54,7 @@ services:
         value: "2"
       - key: COMPADRE_MODAL_CPU_LIMIT
         value: "4"
-      # Worker lifetime is the code default (24 h, src/t3/runtime.ts): the
+      # Worker lifetime is the code default (2 h, src/modal-config.ts): the
       # sandbox lives for the whole task and its follow-ups, with a live
       # checkpoint after every terminal turn as the recovery point.
       # 16 GiB guaranteed memory: full-monorepo ci-checks wedged both the

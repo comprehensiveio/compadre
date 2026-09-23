@@ -1,4 +1,8 @@
 import * as Clock from "effect/Clock";
+import * as Console from "effect/Console";
+import * as FileSystem from "effect/FileSystem";
+import * as Schema from "effect/Schema";
+import * as Stream from "effect/Stream";
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
@@ -8,6 +12,7 @@ import {
   HttpBody,
   HttpClient,
   HttpClientRequest,
+  HttpIncomingMessage,
   HttpRouter,
   HttpServerRequest,
   HttpServerResponse,
@@ -21,6 +26,15 @@ import {
   previewActivationHtml,
   type PreviewActivationState,
 } from "./CompadrePreviewActivationPage.ts";
+import {
+  createPreviewHtmlInjector,
+  PreviewBrowserObservation,
+  PreviewBrowserLog,
+  PREVIEW_TELEMETRY_PATH,
+  PREVIEW_TELEMETRY_SCRIPT_PATH,
+  previewTelemetryScript,
+} from "./CompadrePreviewTelemetry.ts";
+const encodeBrowserLog = Schema.encodeEffect(PreviewBrowserLog);
 
 const TARGET_CACHE_MS = 30_000;
 const MAX_BUFFERED_REQUEST_BYTES = 25 * 1024 * 1024;
@@ -30,6 +44,7 @@ interface PreviewGatewayConfig {
   controllerUrl: URL;
   serviceToken: string;
   hostSuffix: string;
+  telemetryEnabled: boolean;
 }
 
 interface CachedTarget {
@@ -60,7 +75,12 @@ export function previewGatewayConfiguration(
     .toLowerCase();
   if (!rawControllerUrl || !serviceToken || !hostSuffix) return null;
   try {
-    return { controllerUrl: new URL(rawControllerUrl), serviceToken, hostSuffix };
+    return {
+      controllerUrl: new URL(rawControllerUrl),
+      serviceToken,
+      hostSuffix,
+      telemetryEnabled: environment.COMPADRE_PREVIEW_TELEMETRY_ENABLED !== "false",
+    };
   } catch {
     return null;
   }
@@ -267,6 +287,7 @@ function proxyHttpRequest(input: {
   previewOrigin: string;
   sessionCookieName: string;
   httpClient: HttpClient.HttpClient;
+  telemetryEnabled: boolean;
 }) {
   return Effect.gen(function* () {
     const body =
@@ -277,13 +298,18 @@ function proxyHttpRequest(input: {
       return HttpServerResponse.text("Preview request body is too large.", { status: 413 });
     }
     const targetUrl = new URL(input.request.originalUrl || input.request.url, input.targetOrigin);
+    const headers = proxyHeaders(
+      input.request,
+      input.sessionCookieName,
+      input.previewOrigin,
+      input.targetOrigin,
+    );
+    if (input.telemetryEnabled && input.request.headers["sec-fetch-dest"] === "document") {
+      headers.delete("if-none-match");
+      headers.delete("if-modified-since");
+    }
     const upstreamRequest = HttpClientRequest.make(input.request.method)(targetUrl, {
-      headers: proxyHeaders(
-        input.request,
-        input.sessionCookieName,
-        input.previewOrigin,
-        input.targetOrigin,
-      ),
+      headers,
       ...(body
         ? {
             body: HttpBody.uint8Array(
@@ -297,6 +323,26 @@ function proxyHttpRequest(input: {
       .execute(upstreamRequest)
       .pipe(Effect.provideService(FetchHttpClient.RequestInit, { redirect: "manual" }));
     let proxied = HttpServerResponse.fromClientResponse(response);
+    if (
+      input.telemetryEnabled &&
+      input.request.method === "GET" &&
+      input.request.headers["sec-fetch-dest"] === "document" &&
+      response.status === 200 &&
+      response.headers["content-type"]?.toLowerCase().includes("text/html")
+    ) {
+      const injector = createPreviewHtmlInjector();
+      const injected = response.stream.pipe(
+        Stream.flatMap((chunk) => Stream.fromIterable(injector.push(chunk))),
+        Stream.concat(Stream.suspend(() => Stream.fromIterable(injector.finish()))),
+      );
+      proxied = HttpServerResponse.setBody(
+        proxied,
+        HttpBody.stream(injected, "text/html; charset=utf-8"),
+      );
+      proxied = HttpServerResponse.removeHeader(proxied, "content-encoding");
+      proxied = HttpServerResponse.removeHeader(proxied, "etag");
+      proxied = HttpServerResponse.setHeader(proxied, "cache-control", "no-store");
+    }
     const location = response.headers.location;
     if (location) {
       const resolved = yield* Effect.try({
@@ -395,6 +441,39 @@ export const compadrePreviewGatewayLayer = Layer.unwrap(
             }
 
             const startedAt = yield* Clock.currentTimeMillis;
+            // These observations terminate centrally, before resolving a Modal
+            // target. A visible browser tab must never keep waking its worker.
+            if (previewUrl.pathname === PREVIEW_TELEMETRY_SCRIPT_PATH) {
+              return HttpServerResponse.text(
+                config.telemetryEnabled ? previewTelemetryScript : "",
+                {
+                  contentType: "text/javascript; charset=utf-8",
+                  headers: { "cache-control": "no-store" },
+                },
+              );
+            }
+            if (previewUrl.pathname === PREVIEW_TELEMETRY_PATH) {
+              if (!config.telemetryEnabled) return HttpServerResponse.empty({ status: 204 });
+              if (request.method !== "POST" || request.headers.origin !== previewUrl.origin) {
+                return HttpServerResponse.empty({ status: 403 });
+              }
+              const observation = yield* request.json.pipe(
+                Effect.provideService(HttpIncomingMessage.MaxBodySize, FileSystem.Size(8192)),
+                Effect.flatMap(Schema.decodeUnknownEffect(PreviewBrowserObservation)),
+                Effect.option,
+              );
+              if (Option.isNone(observation)) return HttpServerResponse.empty({ status: 400 });
+              // A single JSON line survives Render's line-based log drain.
+              const record = yield* encodeBrowserLog({
+                event: "compadre.preview.browser",
+                canonicalThreadId,
+                actorId: user.id,
+                receivedAt: startedAt,
+                ...observation.value,
+              }).pipe(Effect.orDie);
+              yield* Console.log(record);
+              return HttpServerResponse.empty({ status: 204 });
+            }
             if (previewUrl.pathname === "/.compadre/preview/activate") {
               if (
                 request.method !== "POST" ||
@@ -455,14 +534,14 @@ export const compadrePreviewGatewayLayer = Layer.unwrap(
                 });
               }
               return HttpServerResponse.text(
-                previewActivationHtml(resolution.state, resolution.error),
+                previewActivationHtml(resolution.state, resolution.error, config.telemetryEnabled),
                 {
                   status: resolution.state === "unavailable" ? 410 : 200,
                   contentType: "text/html; charset=utf-8",
                   headers: {
                     "cache-control": "no-store",
                     "content-security-policy":
-                      "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'self'",
+                      "default-src 'none'; style-src 'unsafe-inline'; script-src 'self' 'unsafe-inline'; connect-src 'self'",
                   },
                 },
               );
@@ -499,6 +578,7 @@ export const compadrePreviewGatewayLayer = Layer.unwrap(
                   previewOrigin: previewUrl.origin,
                   sessionCookieName: sessions.cookieName,
                   httpClient,
+                  telemetryEnabled: config.telemetryEnabled,
                 }).pipe(
                   Effect.catchCause((cause) =>
                     Effect.sync(() => targetCache.delete(canonicalThreadId)).pipe(
@@ -511,15 +591,18 @@ export const compadrePreviewGatewayLayer = Layer.unwrap(
                       ),
                       Effect.as(
                         request.method === "GET" || request.method === "HEAD"
-                          ? HttpServerResponse.text(previewActivationHtml("idle"), {
-                              status: 200,
-                              contentType: "text/html; charset=utf-8",
-                              headers: {
-                                "cache-control": "no-store",
-                                "content-security-policy":
-                                  "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'self'",
+                          ? HttpServerResponse.text(
+                              previewActivationHtml("idle", undefined, config.telemetryEnabled),
+                              {
+                                status: 200,
+                                contentType: "text/html; charset=utf-8",
+                                headers: {
+                                  "cache-control": "no-store",
+                                  "content-security-policy":
+                                    "default-src 'none'; style-src 'unsafe-inline'; script-src 'self' 'unsafe-inline'; connect-src 'self'",
+                                },
                               },
-                            })
+                            )
                           : HttpServerResponse.text(
                               "The development environment could not be reached.",
                               { status: 502 },
