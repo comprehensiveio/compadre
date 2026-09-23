@@ -113,16 +113,20 @@ export const makePostgresClientLive = (url: string) =>
         applicationName: "compadre-central-writes",
         maxConnections: 4,
       });
+      // PgClient.reserve has no interrupt handler: a fiber interrupted while queued for a
+      // connection never releases the one the pool later hands it. Wait out the checkout.
+      const reserveRead = Effect.uninterruptible(reads.reserve);
+      const reserveWrite = Effect.uninterruptible(writes.reserve);
       const sql = yield* SqlClient.make({
-        acquirer: reads.reserve,
+        acquirer: reserveRead,
         transactionAcquirer: Effect.flatMap(ReadTransaction, (read) =>
-          read ? reads.reserve : writes.reserve,
+          read ? reserveRead : reserveWrite,
         ),
         compiler: PgClient.makeCompiler(),
         spanAttributes: [["service.name", "compadre-web"]],
       });
       const readSql = yield* SqlClient.make({
-        acquirer: reads.reserve,
+        acquirer: reserveRead,
         compiler: PgClient.makeCompiler(),
         transactionService: sql.transactionService,
         spanAttributes: [["service.name", "compadre-web"]],
