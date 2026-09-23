@@ -121,16 +121,17 @@ export const previewTelemetryScript = String.raw`(() => {
   const clamp = n => Math.max(0, Math.min(86400000, Math.round(Number(n) || 0)));
   const save = () => { try { sessionStorage.setItem(key, JSON.stringify({ pageId, tabId, reason: pendingReason, reasonAt: pendingReasonAt, at: Date.now() })); } catch {} };
   save();
+  const recentPrevious = Date.now() - previous.at < 86400000;
+  const previousReason = Date.now() - previous.reasonAt < 15000 ? previous.reason || "unknown" : "unknown";
   const isActivation = () => !!document.querySelector('meta[name="compadre-preview-activation"]');
   function report(kind) {
     try {
       if (kind !== "heartbeat" && ++eventCount > 40) return;
       const nav = performance.getEntriesByType("navigation")[0] || {};
-      const recent = Date.now() - previous.at < 86400000;
       const payload = {
-        version: 1, pageId, tabId, ...(recent && previous.pageId ? { previousPageId: previous.pageId } : {}),
+        version: 1, pageId, tabId, ...(recentPrevious && previous.pageId ? { previousPageId: previous.pageId } : {}),
         kind, pageKind: isActivation() ? "activation" : "application",
-        navigationType: nav.type || "unknown", previousReason: Date.now() - previous.reasonAt < 15000 ? previous.reason || "unknown" : "unknown",
+        navigationType: nav.type || "unknown", previousReason,
         elapsedMs: clamp(performance.now()), visible: document.visibilityState === "visible",
         wasDiscarded: !!document.wasDiscarded, interactionAgeMs: clamp(performance.now() - lastInteraction), interactionCount,
         ...stats, ttfbMs: clamp(nav.responseStart), domReadyMs: clamp(nav.domContentLoadedEventEnd), loadMs: clamp(nav.loadEventEnd)

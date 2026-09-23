@@ -50,6 +50,7 @@ describe("preview telemetry injection", () => {
 
 // Run the actual shipped script without a browser, app server, or network.
 function browserHarness(stored?: string) {
+  let wallTime = Date.now();
   const events = new Map<string, Array<(event?: unknown) => void>>();
   const reports: Blob[] = [];
   const timers: Array<() => void> = [];
@@ -73,7 +74,7 @@ function browserHarness(stored?: string) {
     crypto: { randomUUID: () => "test-id" },
     Blob,
     URL,
-    Date,
+    Date: { now: () => wallTime },
     performance: {
       now: () => 500,
       getEntriesByType: () => [{ type: "reload", responseStart: 100 }],
@@ -94,6 +95,9 @@ function browserHarness(stored?: string) {
     },
   });
   return {
+    advanceWallTime: (ms: number) => {
+      wallTime += ms;
+    },
     document,
     timers,
     reports,
@@ -145,6 +149,13 @@ it("carries activation reload context to the next page without reusing an old re
   browser.emit("compadre-preview-ready");
   const next = browserHarness(browser.storage.get("compadre.preview.observation.v1"));
   expect(JSON.parse(await next.reports[0]!.text())).toMatchObject({
+    previousReason: "activation_ready",
+    previousPageId: "test-id",
+  });
+  next.advanceWallTime(180_000);
+  next.emit("app-data-ready");
+  expect(JSON.parse(await next.reports.at(-1)!.text())).toMatchObject({
+    kind: "app_ready",
     previousReason: "activation_ready",
     previousPageId: "test-id",
   });
