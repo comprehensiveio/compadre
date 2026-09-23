@@ -25,6 +25,7 @@ import type {
 import type { NativeT3RunWorkflowInput } from "./shared.js";
 import type { PreviewActivationWorkflowInput } from "./shared.js";
 import { PreviewActivationStore } from "../services/preview-activation.js";
+import { log, withLogContext } from "../logging.js";
 import { buildRunRequestStore, getConfiguredNativeThreadDelivery, getConfiguredT3Gateway, getConfiguredT3ArtifactStore, getConfiguredWorkspaceReviewStore } from "../t3/runtime.js";
 
 const HEARTBEAT_INTERVAL_MS = 30_000;
@@ -185,11 +186,18 @@ export async function activatePreviewActivity(
   );
   heartbeatTimer.unref();
   try {
-    const target = await gateway.activatePreview({
+    const target = await withLogContext({
       canonicalThreadId: input.canonicalThreadId,
-      onPhase: async (phase) => {
-        await store.update(input.canonicalThreadId, input.activationId, phase);
-      },
+      activationId: input.activationId,
+      activityAttempt: context.info.attempt,
+    }, async () => {
+      log.info({ event: "preview.activation.attempt" }, "Preview activation activity started");
+      return gateway.activatePreview({
+        canonicalThreadId: input.canonicalThreadId,
+        onPhase: async (phase) => {
+          await store.update(input.canonicalThreadId, input.activationId, phase);
+        },
+      });
     });
     if (!target) {
       throw ApplicationFailure.nonRetryable(

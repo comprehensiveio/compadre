@@ -171,7 +171,7 @@ export class T3EnvironmentUnavailableError extends Error {
 }
 
 export interface T3WorkerLifecycleOptions {
-  /** Modal sandbox lifetime; the only lifecycle clock (default 24 h). */
+  /** Modal sandbox lifetime; the only lifecycle clock (default 2 h). */
   maxLiveMs?: number;
 }
 
@@ -1335,6 +1335,12 @@ export class T3Gateway {
             `T3 Modal sandbox ${connected.binding.sandboxId} does not expose a development server`,
           );
         }
+        log.info({
+          event: "preview.worker.connected",
+          canonicalThreadId: binding.canonicalThreadId,
+          sandboxId: connected.binding.sandboxId,
+          workerMode: connected.binding.sandboxId === binding.sandboxId ? "reconnected" : "restored",
+        }, "Preview worker connected");
         await input.onPhase?.("starting");
         const channel = await sandbox.ports.connect(COMP_DEV_SERVER_PORT);
         const previewUrl =
@@ -1443,7 +1449,7 @@ export class T3Gateway {
       updatedAt: timestamp,
     };
     await this.bindings.bind(updated);
-    // The worker stays alive for follow-up turns (its 24 h sandbox lifetime
+    // The worker stays alive for follow-up turns (its configured sandbox lifetime
     // is the only lifecycle clock), but a best-effort checkpoint after every
     // terminal turn keeps the thread recoverable from that point on.
     if (this.environments.checkpoint) {

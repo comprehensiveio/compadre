@@ -1,3 +1,5 @@
+import { PREVIEW_TELEMETRY_TAG } from "./CompadrePreviewTelemetry.ts";
+
 export type PreviewActivationState =
   | "idle"
   | "requested"
@@ -15,7 +17,11 @@ function escapeHtml(value: string): string {
     .replaceAll("'", "&#039;");
 }
 
-export function previewActivationHtml(state: PreviewActivationState, error?: string): string {
+export function previewActivationHtml(
+  state: PreviewActivationState,
+  error?: string,
+  telemetryEnabled = true,
+): string {
   const failed = state === "failed";
   const unavailable = state === "unavailable";
   const detail = error
@@ -26,6 +32,8 @@ export function previewActivationHtml(state: PreviewActivationState, error?: str
   return `<!doctype html>
 <html lang="en">
 <head>
+  <meta name="compadre-preview-activation" content="true">
+  ${telemetryEnabled ? PREVIEW_TELEMETRY_TAG : ""}
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>Starting preview · Compadre</title>
@@ -72,8 +80,9 @@ export function previewActivationHtml(state: PreviewActivationState, error?: str
         await new Promise((resolve) => setTimeout(resolve, 1500));
         const response = await fetch("/.compadre/preview/status", { cache: "no-store" });
         const result = await response.json();
-        if (result.state === "ready") { location.reload(); return; }
+        if (result.state === "ready") { dispatchEvent(new Event("compadre-preview-ready")); location.reload(); return; }
         if (result.state === "failed" || result.state === "unavailable") {
+          dispatchEvent(new Event("compadre-preview-failed"));
           stopped = true;
           status.textContent = result.error || "Preview startup failed.";
           retry.hidden = result.state === "unavailable";
@@ -87,7 +96,7 @@ export function previewActivationHtml(state: PreviewActivationState, error?: str
       }
     }
     retry.addEventListener("click", () => void activate().catch(showFailure));
-    function showFailure() { stopped = true; status.textContent = "Preview startup failed."; retry.hidden = false; }
+    function showFailure() { window.dispatchEvent(new Event("compadre-preview-failed")); stopped = true; status.textContent = "Preview startup failed."; retry.hidden = false; }
     ${failed ? "" : "void activate().catch(showFailure);"}
   </script>`
   }

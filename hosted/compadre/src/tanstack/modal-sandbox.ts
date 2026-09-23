@@ -28,6 +28,7 @@ import {
 } from "@opentelemetry/api";
 import { devEnvironmentEnabled } from "../t3/dev-environment.js";
 import { DEFAULT_MODAL_TIMEOUT_MS } from "../modal-config.js";
+import { log } from "../logging.js";
 
 export const MODAL_CAPS: SandboxCapabilities = {
   fs: true,
@@ -185,13 +186,14 @@ async function timedModalPhase<T>(
             "compadre.phase.duration_ms": elapsedMs,
           });
           span.end();
-          console.log("[modal-timing]", {
+          log.info({
+            event: "modal.phase.completed",
             traceId: span.spanContext().traceId,
             ...logContext,
             phase,
             outcome,
             elapsedMs,
-          });
+          }, "Modal phase completed");
         }
       },
     );
@@ -761,6 +763,16 @@ export function modalSandboxProvider(
         tags: modalSandboxTags(environment),
       }),
     );
+    log.info({
+      event: "modal.sandbox.created",
+      sandboxId: sandbox.sandboxId,
+      timeoutMs,
+      cpu,
+      cpuLimit,
+      memoryMiB,
+      memoryLimitMiB,
+      tags: modalSandboxTags(environment),
+    }, "Modal sandbox resource allocation");
     return new ModalHandle(sandbox, workdir, snapshotTtlMs, encryptedPorts);
   };
 
