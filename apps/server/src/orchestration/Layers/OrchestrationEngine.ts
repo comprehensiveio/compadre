@@ -10,9 +10,8 @@ import type {
   OrchestrationEvent,
   OrchestrationReadModel,
   ProjectId,
-  ThreadId,
 } from "@t3tools/contracts";
-import { OrchestrationCommand } from "@t3tools/contracts";
+import { OrchestrationCommand, ThreadId } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
 import * as Crypto from "effect/Crypto";
@@ -39,7 +38,7 @@ import {
   orchestrationCommandsTotal,
   orchestrationCommandDuration,
 } from "../../observability/Metrics.ts";
-import { toPersistenceSqlError } from "../../persistence/Errors.ts";
+import { isPersistenceError, toPersistenceSqlError } from "../../persistence/Errors.ts";
 import { OrchestrationEventStore } from "../../persistence/Services/OrchestrationEventStore.ts";
 import { OrchestrationCommandReceiptRepository } from "../../persistence/Services/OrchestrationCommandReceipts.ts";
 import { PersistenceBackend } from "../../persistence/Services/PersistenceBackend.ts";
@@ -141,6 +140,86 @@ const makeOrchestrationEngine = Effect.gen(function* () {
 
   const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
   let commandReadModel = createEmptyReadModel(yield* nowIso);
+
+  // PostgreSQL reads the command model under the global commit lock, and a full read is
+  // O(database). Keep the model this process last committed against: while the event log
+  // has not moved past that commit, only the threads it touched can differ from the database.
+  let postgresCommandModel: {
+    readonly model: OrchestrationReadModel;
+    readonly sequence: number;
+    readonly threadIds: ReadonlyArray<ThreadId>;
+  } | null = null;
+
+  const readPostgresCommandModel = (commandThreadIds: ReadonlyArray<ThreadId>) =>
+    Effect.gen(function* () {
+      const cached = postgresCommandModel;
+      if (cached !== null) {
+        // Every writer appends events; projector cursors need not all advance on every version.
+        const [head] = yield* sql<{ readonly sequence: number | null }>`
+          SELECT MAX(sequence) AS sequence FROM orchestration_events
+        `;
+        if ((head?.sequence ?? 0) === cached.sequence) {
+          // The target is refreshed too: its derived fields may predate its project's identity.
+          const threadIds = [...new Set([...cached.threadIds, ...commandThreadIds])];
+          if (threadIds.length === 0) return cached.model;
+          const refreshed = yield* projectionSnapshotQuery.getCommandReadModel({ threadIds });
+          const cachedById = new Map(cached.model.threads.map((thread) => [thread.id, thread]));
+          const refreshedById = new Map(refreshed.threads.map((thread) => [thread.id, thread]));
+          // A created, recreated or removed thread moves in the list; the full read orders it.
+          const inPlace = threadIds.every((id) => {
+            const before = cachedById.get(id);
+            const after = refreshedById.get(id);
+            return before === undefined
+              ? after === undefined
+              : after?.createdAt === before.createdAt;
+          });
+          if (inPlace) {
+            const identities = new Map(
+              refreshed.projects.flatMap((project) =>
+                project.repositoryIdentity === null
+                  ? []
+                  : [[project.id, project.repositoryIdentity] as const],
+              ),
+            );
+            return {
+              ...cached.model,
+              snapshotSequence: refreshed.snapshotSequence,
+              updatedAt:
+                refreshed.updatedAt > cached.model.updatedAt
+                  ? refreshed.updatedAt
+                  : cached.model.updatedAt,
+              projects: cached.model.projects.map((project) => {
+                const repositoryIdentity = identities.get(project.id);
+                return repositoryIdentity === undefined
+                  ? project
+                  : { ...project, repositoryIdentity };
+              }),
+              threads: cached.model.threads.map((thread) => refreshedById.get(thread.id) ?? thread),
+            };
+          }
+        }
+      }
+      return yield* projectionSnapshotQuery.getCommandReadModel();
+    });
+
+  const rememberPostgresCommandModel = (
+    model: OrchestrationReadModel,
+    events: ReadonlyArray<OrchestrationEvent>,
+    sequence: number,
+  ) => {
+    const threadIds = new Set<ThreadId>();
+    for (const event of events) {
+      // Projections of project events are not confined to one thread.
+      if (event.aggregateKind !== "thread") {
+        postgresCommandModel = null;
+        return;
+      }
+      threadIds.add(ThreadId.make(event.aggregateId));
+    }
+    // Workers finish out of order; never replace a newer model with an older one.
+    if (postgresCommandModel !== null && postgresCommandModel.sequence >= sequence) return;
+    postgresCommandModel = { model, sequence, threadIds: [...threadIds] };
+  };
 
   const commandQueue = yield* Queue.unbounded<CommandEnvelope>();
   const eventPubSub = yield* PubSub.unbounded<OrchestrationEvent>();
@@ -310,7 +389,11 @@ const makeOrchestrationEngine = Effect.gen(function* () {
               // reads the committed projection after it acquires the lock.
               let transactionReadModel =
                 persistenceBackend.kind === "postgres"
-                  ? yield* projectionSnapshotQuery.getCommandReadModel()
+                  ? yield* readPostgresCommandModel(
+                      commandToInitialLockKeys(envelope.command).flatMap((key) =>
+                        key.scope === "thread" ? [ThreadId.make(key.key)] : [],
+                      ),
+                    )
                   : commandReadModel;
               if (
                 persistenceBackend.kind === "postgres" &&
@@ -327,6 +410,7 @@ const makeOrchestrationEngine = Effect.gen(function* () {
                 yield* persistenceBackend.lockOrchestrationKeys(childThreadLocks);
                 transactionReadModel = yield* projectionSnapshotQuery.getCommandReadModel();
               }
+              const committedStateReadModel = transactionReadModel;
               const decision = yield* Effect.gen(function* () {
                 if (
                   envelope.command.type === "thread.auto-settle" &&
@@ -414,8 +498,9 @@ const makeOrchestrationEngine = Effect.gen(function* () {
                 });
               }).pipe(
                 Effect.provideService(Crypto.Crypto, crypto),
+                // A failed read (e.g. a statement timeout) must not become a rejection receipt.
                 Effect.mapError((cause) =>
-                  isOrchestrationCommandRejection(cause)
+                  isOrchestrationCommandRejection(cause) || isPersistenceError(cause)
                     ? cause
                     : new OrchestrationCommandInvariantError({
                         commandType: envelope.command.type,
@@ -529,6 +614,7 @@ const makeOrchestrationEngine = Effect.gen(function* () {
                 attachmentCleanups,
                 lastSequence: lastSavedEvent.sequence,
                 nextCommandReadModel,
+                committedStateReadModel,
               } as const;
             }),
           )
@@ -548,6 +634,11 @@ const makeOrchestrationEngine = Effect.gen(function* () {
           commandReadModel = committedCommand.nextCommandReadModel;
           yield* publishEvents(committedCommand.committedEvents);
         } else {
+          rememberPostgresCommandModel(
+            committedCommand.committedStateReadModel,
+            committedCommand.committedEvents,
+            committedCommand.lastSequence,
+          );
           // More than one PostgreSQL worker can finish at once. Reading from
           // the durable cursor prevents a later worker from publishing ahead
           // of an earlier committed event.
@@ -655,6 +746,13 @@ const makeOrchestrationEngine = Effect.gen(function* () {
   );
   commandReadModel = yield* projectionSnapshotQuery.getCommandReadModel();
   yield* Ref.set(publishedSequence, commandReadModel.snapshotSequence);
+  if (persistenceBackend.kind === "postgres") {
+    postgresCommandModel = {
+      model: commandReadModel,
+      sequence: commandReadModel.snapshotSequence,
+      threadIds: [],
+    };
+  }
 
   if (persistenceBackend.listen) {
     const notificationListener = persistenceBackend.listen(POSTGRES_EVENT_CHANNEL).pipe(

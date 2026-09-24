@@ -35,7 +35,7 @@ const postgresUrl = process.env.COMPADRE_T3_POSTGRES_TEST_URL;
 const createdAt = "2026-09-03T12:00:00.000Z";
 const loadWriteCount = Number.parseInt(process.env.COMPADRE_T3_POSTGRES_LOAD_WRITES ?? "300", 10);
 
-const makeSystem = (missNotifications = false) =>
+const makeSystem = (missNotifications = false, commandReads?: { full: number; threads: number }) =>
   Effect.gen(function* () {
     const base = makeTestPostgresPersistence(postgresUrl!);
     const PersistenceLive = missNotifications
@@ -50,9 +50,26 @@ const makeSystem = (missNotifications = false) =>
     const ServerConfigLayer = ServerConfig.layerTest(process.cwd(), {
       prefix: "compadre-postgres-engine-test-",
     });
+    const EngineSnapshotQueryLive =
+      commandReads === undefined
+        ? OrchestrationProjectionSnapshotQueryLive
+        : Layer.effect(
+            ProjectionSnapshotQuery,
+            Effect.gen(function* () {
+              const query = yield* ProjectionSnapshotQuery;
+              return {
+                ...query,
+                getCommandReadModel: (input) => {
+                  if (input?.threadIds === undefined) commandReads.full += 1;
+                  else commandReads.threads += 1;
+                  return query.getCommandReadModel(input);
+                },
+              };
+            }),
+          ).pipe(Layer.provide(OrchestrationProjectionSnapshotQueryLive));
     const layer = Layer.mergeAll(
       OrchestrationEngineLive.pipe(
-        Layer.provide(OrchestrationProjectionSnapshotQueryLive),
+        Layer.provide(EngineSnapshotQueryLive),
         Layer.provide(OrchestrationProjectionPipelineLive),
       ),
       OrchestrationProjectionSnapshotQueryLive,
@@ -268,6 +285,95 @@ describe.runIf(postgresUrl)("PostgreSQL orchestration engine", () => {
       ).toHaveLength(1);
       expect(events.map((event) => event.type)).toContain("thread.unsnoozed");
 
+      yield* Effect.all([first.close, second.close], { concurrency: "unbounded" });
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("reloads only committed threads until another replica commits", () =>
+    Effect.gen(function* () {
+      const persistence = makeTestPostgresPersistence(postgresUrl!);
+      yield* resetDatabase.pipe(Effect.provide(persistence), Effect.scoped);
+
+      const reads = { full: 0, threads: 0 };
+      const first = yield* makeSystem(false, reads);
+      const threadId = ThreadId.make("cached-thread");
+      yield* first.engine.dispatch({
+        type: "project.create",
+        commandId: CommandId.make("cached-project-create"),
+        projectId: ProjectId.make("cached-project"),
+        title: "Cached project",
+        workspaceRoot: "/tmp/cached-project",
+        defaultModelSelection: {
+          instanceId: ProviderInstanceId.make("codex"),
+          model: "gpt-5-codex",
+        },
+        createdAt,
+      });
+      yield* first.engine.dispatch({
+        type: "thread.create",
+        commandId: CommandId.make("cached-thread-create"),
+        threadId,
+        projectId: ProjectId.make("cached-project"),
+        title: "Cached thread",
+        modelSelection: {
+          instanceId: ProviderInstanceId.make("codex"),
+          model: "gpt-5-codex",
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "full-access",
+        branch: null,
+        worktreePath: null,
+        createdAt,
+      });
+      // The created thread is not in the cached list yet, so this command reads everything.
+      yield* first.engine.dispatch({
+        type: "thread.archive",
+        commandId: CommandId.make("cached-thread-archive-1"),
+        threadId,
+      });
+      const settled = { ...reads };
+
+      // Each decision depends on the previous commit; a stale model would reject it.
+      yield* first.engine.dispatch({
+        type: "thread.unarchive",
+        commandId: CommandId.make("cached-thread-unarchive-1"),
+        threadId,
+      });
+      yield* first.engine.dispatch({
+        type: "thread.archive",
+        commandId: CommandId.make("cached-thread-archive-2"),
+        threadId,
+      });
+      expect(reads).toEqual({ full: settled.full, threads: settled.threads + 2 });
+
+      const second = yield* makeSystem();
+      yield* second.engine.dispatch({
+        type: "thread.unarchive",
+        commandId: CommandId.make("cached-thread-unarchive-2"),
+        threadId,
+      });
+      yield* first.engine.dispatch({
+        type: "thread.archive",
+        commandId: CommandId.make("cached-thread-archive-3"),
+        threadId,
+      });
+      expect(reads.full).toBe(settled.full + 1);
+      const snapshot = yield* first.snapshots.getSnapshot();
+      expect(snapshot.threads[0]?.archivedAt).not.toBeNull();
+
+      // Project projections are not thread-scoped, so a project event forces the next full read.
+      yield* first.engine.dispatch({
+        type: "project.meta.update",
+        commandId: CommandId.make("cached-project-rename"),
+        projectId: ProjectId.make("cached-project"),
+        title: "Renamed project",
+      });
+      yield* first.engine.dispatch({
+        type: "thread.unarchive",
+        commandId: CommandId.make("cached-thread-unarchive-3"),
+        threadId,
+      });
+      expect(reads.full).toBe(settled.full + 2);
       yield* Effect.all([first.close, second.close], { concurrency: "unbounded" });
     }).pipe(Effect.scoped),
   );
