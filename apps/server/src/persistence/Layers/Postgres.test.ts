@@ -237,6 +237,38 @@ describe.runIf(postgresUrl)("PostgreSQL persistence", () => {
     }).pipe(Effect.provide(PersistenceLive()), Effect.scoped),
   );
 
+  it.effect("returns a read connection when a query queued for it is interrupted", () =>
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      const reads = yield* PersistenceReadClient;
+      // Holds all eight read connections and returns the effect that releases them.
+      const occupyReads = Effect.gen(function* () {
+        const release = yield* Deferred.make<void>();
+        const started = yield* Effect.all(Array.from({ length: 8 }, () => Deferred.make<void>()));
+        const busy = yield* Effect.all(
+          started.map((ready) =>
+            reads.withTransaction(
+              Deferred.succeed(ready, undefined).pipe(Effect.andThen(Deferred.await(release))),
+            ),
+          ),
+          { concurrency: 8 },
+        ).pipe(Effect.forkScoped);
+        yield* Effect.raceFirst(
+          Effect.all(started.map(Deferred.await), { concurrency: 8 }),
+          Fiber.join(busy),
+        );
+        return Deferred.succeed(release, undefined).pipe(Effect.andThen(Fiber.join(busy)));
+      });
+
+      const releaseReads = yield* occupyReads;
+      const queued = yield* sql`SELECT 1`.pipe(Effect.forkScoped({ startImmediately: true }));
+      const interrupted = yield* Fiber.interrupt(queued).pipe(Effect.forkScoped);
+      yield* releaseReads;
+      yield* Fiber.join(interrupted);
+      yield* Effect.flatten(occupyReads);
+    }).pipe(Effect.provide(PersistenceLive()), Effect.scoped),
+  );
+
   it.effect("fails closed for a missing database", () => {
     const unavailable = new URL(postgresUrl!);
     unavailable.pathname = "/compadre_missing_database_test";
