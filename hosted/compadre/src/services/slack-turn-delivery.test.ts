@@ -397,3 +397,34 @@ test("yields Slack delivery ownership when a later steer has an outbox row", asy
     ["succeeded", job.triggerMessageTs],
   ]);
 });
+
+test("delivers the saved web error as a concise Slack reason with the existing session link", async () => {
+  const job = delivery();
+  const failed = snapshot("error");
+  failed.thread.session!.lastError = "Event delivery is blocked. Agent work may have completed or may still be running; its latest output has not been synchronized. Delivery requires recovery.";
+  const { slack, calls } = slackRecorder();
+  const completed = await deliverClaimedSlackTurn({
+    delivery: job,
+    store: {
+      async markDelivered() { return true; },
+      async markFailed() { assert.fail("failure notice should be delivered"); },
+    },
+    t3: {
+      baseUrl: "https://t3.example",
+      async environmentDescriptor() { throw new Error("not used"); },
+      async snapshot() { throw new Error("not used"); },
+      async startNewThread() { throw new Error("not used"); },
+      async startTurn() { throw new Error("not used"); },
+      async waitForTurnTerminal() { return failed; },
+    },
+    slack,
+  });
+  assert.equal(completed, true);
+  assert.deepEqual(calls[0], [
+    "message",
+    ":warning: Syncing the agent's output failed; a Compadre maintainer needs to recover delivery before you retry.",
+    job.id,
+    { label: "open session in Compadre web", url: job.detailsUrl },
+  ]);
+  assert.equal(calls.filter(([kind]) => kind === "message").length, 1);
+});
