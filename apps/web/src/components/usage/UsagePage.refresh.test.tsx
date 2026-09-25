@@ -274,11 +274,11 @@ it("keeps manual refresh busy until the already-running automatic check settles"
 });
 
 it("explains when the shared Codex subscription is assigned to a run", async () => {
-  const presentation = state.presentations.get(EnvironmentId.make("test"));
+  const presentation = state.presentations.get(EnvironmentId.make(`test-${environmentNumber}`));
   const provider = presentation.serverConfig.providers[0];
   state.presentations = new Map([
     [
-      EnvironmentId.make("test"),
+      EnvironmentId.make(`test-${environmentNumber}`),
       {
         ...presentation,
         serverConfig: {
