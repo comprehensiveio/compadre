@@ -185,7 +185,7 @@ test("records effective resources for both new and restored billed sandboxes", a
 test("bakes pinned harness CLIs into the default Modal image", () => {
   const commands = modalImageCommands({});
   assert.match(commands.join("\n"), /claude-code@2\.1\.263/);
-  assert.match(commands.join("\n"), /codex@0\.153\.4/);
+  assert.match(commands.join("\n"), /codex@0\.156\.0/);
   assert.match(commands.join("\n"), /t3@0\.0\.33/);
   assert.match(commands.join("\n"), /--prefix '\/opt\/compadre-runtime'/);
   assert.match(

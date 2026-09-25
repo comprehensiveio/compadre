@@ -537,9 +537,6 @@ importers:
       node-pty:
         specifier: ^1.1.0
         version: 1.1.0
-      pg:
-        specifier: 8.22.0
-        version: 8.22.0
       stream-chain:
         specifier: ^4.2.5
         version: 4.2.5
@@ -574,9 +571,6 @@ importers:
       '@types/node':
         specifier: 24.12.4
         version: 24.12.4
-      '@types/pg':
-        specifier: 8.21.0
-        version: 8.21.0
       '@types/yauzl':
         specifier: ^3.4.0
         version: 3.4.0
