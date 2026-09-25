@@ -2,6 +2,9 @@ import { createHash } from "node:crypto";
 import type { NativeDeliveryState } from "./native-events.js";
 
 const TARGET_BYTES = 4 * 1024 * 1024;
+// Central dispatches events sequentially. Small JSON events still incur a
+// transaction and projection, so bytes alone do not bound request work.
+const MAX_EVENTS = 8;
 // Matches central's MaxBodySize. Keep events that could already have been
 // accepted unchanged: their immutable IDs must also replay identical payloads.
 const MAX_BYTES = 8 * 1024 * 1024;
@@ -58,7 +61,7 @@ export function nativeEventBodies(state: NativeDeliveryState, events: unknown[])
     if (envelopeBytes + size > MAX_BYTES) {
       throw new Error(`Native event exceeds the ${MAX_BYTES}-byte central body limit after safe tool-detail omission (${size} event bytes)`);
     }
-    if (batch.length && bytes + 1 + size > TARGET_BYTES) {
+    if (batch.length && (batch.length >= MAX_EVENTS || bytes + 1 + size > TARGET_BYTES)) {
       bodies.push(`${prefix}${batch.join(",")}]}`);
       batch = []; bytes = envelopeBytes;
     }
