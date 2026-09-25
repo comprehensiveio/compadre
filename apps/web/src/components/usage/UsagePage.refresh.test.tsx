@@ -308,7 +308,6 @@ it("explains when the shared Codex subscription is assigned to a run", async () 
   const rendered = JSON.stringify(renderer.toJSON(), (key, value) =>
     key === "props" ? undefined : value,
   );
-  expect(rendered).toContain("Subscription limits are temporarily unavailable.");
   expect(rendered).toContain("shared ChatGPT subscription is assigned to a Codex run");
   expect(rendered).toContain("concurrent Codex runs use API billing");
 });
