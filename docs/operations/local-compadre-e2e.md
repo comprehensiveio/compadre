@@ -135,6 +135,39 @@ and green unit tests alone are not a completed end-to-end proof. For upstream
 integrations, also verify an existing worker version against the new central
 server and review schema compatibility before calling the change deploy-ready.
 
+## Hosted sidebar regression check
+
+Use the authenticated hosted origin printed by this launcher for product UI
+review. A standalone `vp run dev` without hosted authentication deliberately hides
+the identity filters, participant presentation, Slack links, and operations entry.
+Before handing off a browser, confirm its origin against `manifest.json`, the
+launcher checkout, and the branch/revision being reviewed. Keep the hosted stack
+and browser alive while the maintainer reviews. Label standalone provider testing
+separately and return the review window to hosted Compadre afterward.
+
+After at least one completed hosted turn, with browser automation authorized and
+`agent-browser` installed, run:
+
+```sh
+node scripts/compadre-e2e/check-sidebar.mjs /state/directory
+```
+
+This opens a headed browser, authenticates as the synthetic Alice user, and checks
+the real sidebar: Compadre logo, stacked identity tabs/search layout, selected
+filters, search clearing, new-thread entry, loaded participant photo, Slack link,
+Thread environments navigation/back, and reload. It seeds a clearly labeled
+**Sidebar UI fixture** in the disposable central read model, cloning an existing
+thread's metadata with a synthetic avatar and inert Slack URL. The fixture and
+browser remain available for review. It does not send a Slack message, execute a
+provider turn, or provision a worker, and does not establish Slack OIDC/ingress
+correctness. An optional second argument reuses a named agent-browser session.
+
+Fast rendered regression tests run in normal web CI:
+
+```sh
+vp test run apps/web/src/components/sidebar/CompadreSidebar.test.tsx apps/web/src/components/sidebar/SidebarChrome.test.tsx
+```
+
 ## Repeatable readiness checks
 
 After a completed browser turn, run these against that disposable environment:

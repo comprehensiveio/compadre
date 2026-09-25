@@ -22,6 +22,7 @@
         "build-compadre-worker.ts",
         "compadre-e2e/check-storage.mjs",
         "compadre-e2e/check-terminal.mjs",
+        "compadre-e2e/check-sidebar.mjs",
         "compadre-e2e/resume.mjs",
       ],
     },

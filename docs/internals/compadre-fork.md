@@ -247,7 +247,12 @@ retain the upstream storage key.
 
 The hosted sidebar omits project scope and project creation controls for the
 single configured project. Search and new-thread creation remain available;
-the identity filter has spacing above the search row.
+the identity filter has spacing above the search row. Participant photos, initials,
+Slack thread links, and identity tabs live in `components/sidebar/CompadreSidebar.tsx`;
+`SidebarChrome.tsx` owns the hosted operations navigation. Their rendered regression
+tests run in web CI. The local E2E runbook's `check-sidebar.mjs` additionally checks
+these components are wired into the actual authenticated hosted application; a
+standalone local provider window does not exercise these hosted seams.
 
 Hosted artifact-only assistant messages can follow the final answer. The chat
 timeline keeps that last text answer visible when folding completed work, while
