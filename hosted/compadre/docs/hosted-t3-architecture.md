@@ -268,6 +268,22 @@ workflow forwards bounded journal pages into central T3 using Durable Streams
 catch-up and long polling. Central T3 applies native payloads through its ordinary
 command engine with deterministic IDs, transactional receipts, and epoch fencing.
 The controller stores cursors and lifecycle metadata, not another conversation.
+Pages contain at most 128 events. The controller preflights serialized UTF-8
+request bodies and posts ordered batches targeting 4 MiB, below central's 8 MiB
+body limit. An individual event between those limits travels alone unchanged,
+including on replay. Only tool lifecycle events larger than 8 MiB themselves
+lose their detailed payload: central retains their identity,
+name, status, and an explicit omission notice with original event byte count
+and SHA-256. The original worker journal is unchanged; this is not a permanent
+artifact-download facility. Messages and interactive requests are never
+silently truncated. An unshippable event fails before any batch is posted.
+Omission depends on event bytes, not the envelope or epoch, so restoration cannot
+change a previously accepted event. A near-limit event that only exceeds the
+limit with its envelope fails explicitly rather than risking a conflicting replay.
+The page cursor advances only after every batch is acknowledged; a failed or
+lost acknowledgement replays from the old cursor using central's existing
+transactional receipts. This controller-only change works with existing
+workers and central protocol version 1.
 See [Native event delivery](../../../docs/internals/native-event-rollout.md).
 
 ### Cross-entrypoint steering
