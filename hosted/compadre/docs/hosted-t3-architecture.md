@@ -213,6 +213,15 @@ delivery so Slack retries it. The selector is the code constant
 `SLACK_INGRESS_MODE` in `src/services/slack-inbox.ts`; `"direct"` restores the
 acknowledge-then-fire-and-forget behavior.
 
+Slack failure notices use the saved thread error (the same source as the web
+error banner) to select a one-sentence reason and next step. Known delivery,
+context-limit, rate-limit, authentication, request-size, timeout, and incomplete
+answer failures have bounded templates; unknown failures keep a generic fallback.
+Raw provider messages and tool data are never copied into Slack. Delivery failures
+do not imply the agent finished, and direct maintainers to recover delivery rather
+than suggesting an immediate new agent turn. The existing session link carries
+access to further detail; no LLM call or additional transcript is involved.
+
 ### Untagged thread replies (experiment)
 
 Replies posted inside a Compadre-bound Slack thread without tagging the bot

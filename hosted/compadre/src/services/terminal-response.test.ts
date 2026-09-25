@@ -116,3 +116,38 @@ test("explains Modal spend-limit failures without exposing workspace details", (
     AGENT_FAILURE_NOTICE,
   );
 });
+
+test("explains known failures in one sentence without echoing raw details", () => {
+  const cases = [
+    ["Event delivery is blocked. Agent work may have completed or may still be running; its latest output has not been synchronized. Delivery requires recovery.", /recover delivery/],
+    ["context_length_exceeded", /context limit/],
+    ["rate_limit_exceeded", /rate limit/],
+    ["Incorrect API key provided: sk-private", /authentication failed/],
+    ["Request entity too large", /size limit/],
+    ["The operation timed out", /timeout/],
+    ["The agent run completed without a final response.", /before finishing/],
+  ] as const;
+  for (const [message, expected] of cases) {
+    const notice = slackFailureNotice(new Error(`${message}\nsecret payload <@U123> https://private.example`));
+    assert.match(notice, expected);
+    assert.doesNotMatch(notice, /secret|sk-private|U123|https:|\n/);
+    assert.equal(notice.match(/[.!?](?:\s|$)/g)?.length, 1);
+    assert.ok(notice.length < 200);
+  }
+});
+
+test("preserves uncertainty about blocked delivery and prioritizes it over timeout", () => {
+  const notice = slackFailureNotice(new Error("Activity timed out", {
+    cause: { message: "Event delivery is blocked." },
+  }));
+  assert.match(notice, /recover delivery/);
+  assert.doesNotMatch(notice, /finished|completed|saved|@Compadre continue/);
+});
+
+test("handles wrapped errors and cyclic causes with a short unknown fallback", () => {
+  const error = new Error("opaque failure");
+  error.cause = error;
+  assert.equal(slackFailureNotice(error), AGENT_FAILURE_NOTICE);
+  assert.equal(slackFailureNotice(null), AGENT_FAILURE_NOTICE);
+  assert.match(slackFailureNotice({ message: "Activity failed", cause: { message: "rate_limit_exceeded" } }), /rate limit/);
+});
