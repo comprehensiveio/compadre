@@ -79,6 +79,41 @@ describe.runIf(postgresUrl)("PostgreSQL persistence", () => {
     }).pipe(Effect.provide(PersistenceLive())),
   );
 
+  it.effect("bounds statements and idle transactions on the server unless the URL overrides", () =>
+    Effect.gen(function* () {
+      const settings = Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient;
+        const query = sql<{
+          readonly statementTimeout: string;
+          readonly idleInTransaction: string;
+          readonly searchPath: string;
+        }>`
+          SELECT
+            current_setting('statement_timeout') AS "statementTimeout",
+            current_setting('idle_in_transaction_session_timeout') AS "idleInTransaction",
+            current_setting('search_path') AS "searchPath"
+        `;
+        const [read] = yield* query;
+        const [write] = yield* sql.withTransaction(query);
+        return { read, write };
+      });
+      const expected = {
+        statementTimeout: "30s",
+        idleInTransaction: "1min",
+        searchPath: "compadre_t3",
+      };
+      const defaults = yield* settings.pipe(Effect.provide(PersistenceLive()));
+      assert.deepEqual(defaults, { read: expected, write: expected });
+
+      const overrideUrl = new URL(postgresUrl!);
+      overrideUrl.searchParams.set("options", "-c statement_timeout=5s -c search_path=public");
+      const overridden = yield* settings.pipe(
+        Effect.provide(makeTestPostgresPersistence(overrideUrl.toString())),
+      );
+      assert.deepEqual(overridden.write, { ...expected, statementTimeout: "5s" });
+    }),
+  );
+
   it.effect("supports the SQLite JSON query contract", () =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;

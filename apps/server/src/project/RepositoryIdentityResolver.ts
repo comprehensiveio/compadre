@@ -103,8 +103,10 @@ const resolveRepositoryIdentityCacheKey = Effect.fn("RepositoryIdentityResolver.
         timeoutBehavior: "timedOutResult",
       })
       .pipe(Effect.option);
+    // Git exits 128 outside a repository. Anything else (spawn failure, timeout) may be transient.
+    if (topLevelResult._tag === "Some" && topLevelResult.value.code === 128) return null;
     if (topLevelResult._tag === "None" || topLevelResult.value.code !== 0) {
-      return null;
+      return yield* Effect.fail("git-unavailable" as const);
     }
 
     const candidate = topLevelResult.value.stdout.trim();
@@ -139,7 +141,7 @@ export const make = Effect.fn("RepositoryIdentityResolver.make")(function* (
   const processRunner = yield* ProcessRunner.ProcessRunner;
   const cacheCapacity = options.cacheCapacity ?? DEFAULT_REPOSITORY_IDENTITY_CACHE_CAPACITY;
 
-  const repositoryRootCache = yield* Cache.makeWith<string, string | null>(
+  const repositoryRootCache = yield* Cache.makeWith<string, string | null, "git-unavailable">(
     (cwd) =>
       resolveRepositoryIdentityCacheKey(cwd).pipe(
         Effect.provideService(ProcessRunner.ProcessRunner, processRunner),
@@ -147,8 +149,12 @@ export const make = Effect.fn("RepositoryIdentityResolver.make")(function* (
     {
       capacity: cacheCapacity,
       timeToLive: Exit.match({
+        // Hosted command reads resolve linked projects under a global lock, so a folder that is
+        // not a repository stays cached as one; `refresh` bypasses it.
         onSuccess: (value) =>
-          value === null ? Duration.zero : (options.positiveCacheTtl ?? DEFAULT_POSITIVE_CACHE_TTL),
+          value === null
+            ? (options.negativeCacheTtl ?? DEFAULT_NEGATIVE_CACHE_TTL)
+            : (options.positiveCacheTtl ?? DEFAULT_POSITIVE_CACHE_TTL),
         onFailure: () => Duration.zero,
       }),
     },
@@ -175,7 +181,9 @@ export const make = Effect.fn("RepositoryIdentityResolver.make")(function* (
     "RepositoryIdentityResolver.resolve",
   )(function* (cwd, options) {
     if (options?.refresh) yield* Cache.invalidate(repositoryRootCache, cwd);
-    const cacheKey = yield* Cache.get(repositoryRootCache, cwd);
+    const cacheKey = yield* Cache.get(repositoryRootCache, cwd).pipe(
+      Effect.catch(() => Effect.succeed(null)),
+    );
     if (cacheKey === null) return null;
     if (options?.refresh) yield* Cache.invalidate(repositoryIdentityCache, cacheKey);
     return yield* Cache.get(repositoryIdentityCache, cacheKey);

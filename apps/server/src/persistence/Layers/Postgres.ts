@@ -49,6 +49,8 @@ export const runPostgresMigrations = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
   return yield* sql.withTransaction(
     Effect.gen(function* () {
+      // DDL keeps its pre-timeout behavior and runs to completion.
+      yield* sql`SET LOCAL statement_timeout = 0`;
       yield* sql`SELECT pg_advisory_xact_lock(hashtextextended(${POSTGRES_MIGRATION_LOCK_KEY}, 0))`;
       yield* sql`CREATE SCHEMA IF NOT EXISTS compadre_t3`;
       const tables = yield* sql<{
@@ -82,11 +84,19 @@ export const makePostgresClientLive = (url: string) =>
   Layer.effectContext(
     Effect.gen(function* () {
       // Apply to every pooled and LISTEN connection; keep central queries out of the controller schema.
+      // Checkout and in-flight queries cannot be interrupted client-side, so the server bounds
+      // them; a stuck command transaction would otherwise hold the global commit lock. An
+      // `options` parameter on the URL can override these bounds without a deploy.
       const connectionUrl = new URL(url);
       const connectionOptions = connectionUrl.searchParams.get("options");
       connectionUrl.searchParams.set(
         "options",
-        `${connectionOptions ? `${connectionOptions} ` : ""}-c search_path=compadre_t3`,
+        [
+          "-c statement_timeout=30s",
+          "-c idle_in_transaction_session_timeout=60s",
+          ...(connectionOptions ? [connectionOptions] : []),
+          "-c search_path=compadre_t3",
+        ].join(" "),
       );
       const options = {
         types: {

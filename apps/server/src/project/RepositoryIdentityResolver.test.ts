@@ -131,6 +131,57 @@ it.layer(NodeServices.layer)("RepositoryIdentityResolverLive", (it) => {
     }).pipe(Effect.provide(resolverLayer));
   });
 
+  it.effect("caches a folder outside any repository until the negative TTL or a refresh", () => {
+    const calls: Array<ReadonlyArray<string>> = [];
+    let isRepository = false;
+    const processRunner = Layer.succeed(ProcessRunner.ProcessRunner, {
+      run: (input) =>
+        Effect.sync(() => {
+          calls.push(input.args);
+          const outside = input.args.includes("rev-parse") && !isRepository;
+          return {
+            stdout: input.args.includes("rev-parse")
+              ? outside
+                ? ""
+                : "/repo\n"
+              : "origin\tgit@github.com:T3Tools/t3code.git (fetch)\n",
+            stderr: outside ? "fatal: not a git repository" : "",
+            code: ChildProcessSpawner.ExitCode(outside ? 128 : 0),
+            timedOut: false,
+            stdoutTruncated: false,
+            stderrTruncated: false,
+            stdoutInvalidUtf8: false,
+            stderrInvalidUtf8: false,
+          };
+        }),
+    });
+    const resolverLayer = Layer.effect(
+      RepositoryIdentityResolver.RepositoryIdentityResolver,
+      RepositoryIdentityResolver.make({ negativeCacheTtl: Duration.millis(50) }),
+    ).pipe(Layer.provide(processRunner));
+    const rootLookup = (cwd: string) => ["-C", cwd, "rev-parse", "--show-toplevel"];
+
+    return Effect.gen(function* () {
+      const resolver = yield* RepositoryIdentityResolver.RepositoryIdentityResolver;
+      expect(yield* resolver.resolve("/repo/a")).toBeNull();
+      expect(yield* resolver.resolve("/repo/b")).toBeNull();
+      isRepository = true;
+      // Hosted command reads resolve linked projects under a global lock; a miss must not respawn Git.
+      expect(yield* resolver.resolve("/repo/a")).toBeNull();
+      expect(calls).toEqual([rootLookup("/repo/a"), rootLookup("/repo/b")]);
+
+      expect((yield* resolver.resolve("/repo/a", { refresh: true }))?.rootPath).toBe("/repo");
+      yield* TestClock.adjust(Duration.millis(60));
+      expect((yield* resolver.resolve("/repo/b"))?.rootPath).toBe("/repo");
+      expect(calls.filter((args) => args.includes("rev-parse"))).toEqual([
+        rootLookup("/repo/a"),
+        rootLookup("/repo/b"),
+        rootLookup("/repo/a"),
+        rootLookup("/repo/b"),
+      ]);
+    }).pipe(Effect.provide(Layer.merge(TestClock.layer(), resolverLayer)));
+  });
+
   it.effect("normalizes equivalent GitHub remotes into a stable repository identity", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;

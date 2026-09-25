@@ -149,11 +149,27 @@ command decisions across pools: project/workspace invariants and projection
 cursors are global. It leaves read queries concurrent. Optimize only after
 measuring contention and proving an alternative invariant boundary.
 
-After locking, the engine reads the committed SQL projection. Accepted events,
-all projections/cursors and the receipt commit together. Invariant rejection
-receipts commit under the same lock; a late failure cannot overwrite acceptance.
+After locking, the engine reads the committed SQL projection. A full read is
+O(database) and runs while every other command waits, so each process keeps the
+model it last committed against. While the event log head still equals that
+commit's sequence, no other writer has committed since: the engine reloads only
+the threads that commit touched plus the command's own threads. Thread events
+project only their own thread's command-model rows; a project event, a created
+or recreated thread, or another writer's commit forces a full read. Accepted
+events, all projections/cursors and the receipt commit together. Invariant
+rejection receipts commit under the same lock; a late failure cannot overwrite
+acceptance, and a failed read inside the decision is not recorded as a rejection.
 Command-ID conflict and replay behavior remains the existing aggregate-based
 contract (not a new full-payload fingerprint).
+
+Checkout and in-flight queries cannot be interrupted client-side, so both pools
+start sessions with `statement_timeout` 30s and
+`idle_in_transaction_session_timeout` 60s; a stuck command transaction would
+otherwise hold the commit gate indefinitely. An `options` parameter on
+`COMPADRE_T3_POSTGRES_URL` overrides them without a deploy. The migration CLI
+clears the statement timeout for its own transaction. There is deliberately no
+`lock_timeout`: provider runtime ingestion drops most events whose dispatch
+fails, so commands wait for the gate rather than fail.
 
 Each process publishes by catching up from its durable sequence cursor in
 256-event batches under one semaphore. PostgreSQL LISTEN/NOTIFY only wakes that

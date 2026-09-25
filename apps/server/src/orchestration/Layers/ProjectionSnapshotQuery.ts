@@ -530,6 +530,10 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
     );
   });
 
+  const CommandReadModelThreadFilter = Schema.UndefinedOr(
+    Schema.Struct({ threadIds: Schema.Array(ThreadId) }),
+  );
+
   const listProjectRows = SqlSchema.findAll({
     Request: Schema.UndefinedOr(
       Schema.Struct({
@@ -561,9 +565,9 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
   });
 
   const listThreadRows = SqlSchema.findAll({
-    Request: Schema.Void,
+    Request: CommandReadModelThreadFilter,
     Result: ProjectionThreadDbRowSchema,
-    execute: () =>
+    execute: (filter) =>
       sql`
         SELECT
           thread_id AS "threadId",
@@ -599,6 +603,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           external_thread_json AS "externalThread",
           deleted_at AS "deletedAt"
         FROM projection_threads
+        WHERE ${filter === undefined ? sql`1 = 1` : sql.in("thread_id", filter.threadIds)}
         ORDER BY created_at ASC, thread_id ASC
       `,
   });
@@ -716,9 +721,9 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
   });
 
   const listThreadProposedPlanRows = SqlSchema.findAll({
-    Request: Schema.Void,
+    Request: CommandReadModelThreadFilter,
     Result: ProjectionThreadProposedPlanDbRowSchema,
-    execute: () =>
+    execute: (filter) =>
       sql`
         SELECT
           plan_id AS "planId",
@@ -730,14 +735,15 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           created_at AS "createdAt",
           updated_at AS "updatedAt"
         FROM projection_thread_proposed_plans
+        WHERE ${filter === undefined ? sql`1 = 1` : sql.in("thread_id", filter.threadIds)}
         ORDER BY thread_id ASC, created_at ASC, plan_id ASC
       `,
   });
 
   const listThreadPullRequestRows = SqlSchema.findAll({
-    Request: Schema.Void,
+    Request: CommandReadModelThreadFilter,
     Result: ProjectionThreadPullRequestDbRowSchema,
-    execute: () =>
+    execute: (filter) =>
       sql`
         SELECT
           thread_id AS "threadId",
@@ -750,6 +756,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           snapshot_json AS "snapshot",
           stack_json AS "stack"
         FROM projection_thread_pull_requests
+        WHERE ${filter === undefined ? sql`1 = 1` : sql.in("thread_id", filter.threadIds)}
         ORDER BY thread_id ASC, linked_at ASC, number ASC
       `,
   });
@@ -827,9 +834,9 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
   });
 
   const listThreadSessionRows = SqlSchema.findAll({
-    Request: Schema.Void,
+    Request: CommandReadModelThreadFilter,
     Result: ProjectionThreadSessionDbRowSchema,
-    execute: () =>
+    execute: (filter) =>
       sql`
         SELECT
           thread_id AS "threadId",
@@ -843,6 +850,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           last_error AS "lastError",
           updated_at AS "updatedAt"
         FROM projection_thread_sessions
+        WHERE ${filter === undefined ? sql`1 = 1` : sql.in("thread_id", filter.threadIds)}
         ORDER BY thread_id ASC
       `,
   });
@@ -918,9 +926,9 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
   });
 
   const listLatestTurnRows = SqlSchema.findAll({
-    Request: Schema.Void,
+    Request: CommandReadModelThreadFilter,
     Result: ProjectionLatestTurnDbRowSchema,
-    execute: () =>
+    execute: (filter) =>
       sql`
         SELECT
           turns.thread_id AS "threadId",
@@ -937,6 +945,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           ON turns.thread_id = threads.thread_id
           AND turns.turn_id = threads.latest_turn_id
         WHERE threads.latest_turn_id IS NOT NULL
+          AND ${filter === undefined ? sql`1 = 1` : sql.in("threads.thread_id", filter.threadIds)}
         ORDER BY turns.thread_id ASC
       `,
   });
@@ -2317,8 +2326,10 @@ pending_approval_requests AS (
         }),
       );
 
-  const getCommandReadModel: ProjectionSnapshotQueryShape["getCommandReadModel"] = () =>
-    readSql
+  const getCommandReadModel: ProjectionSnapshotQueryShape["getCommandReadModel"] = (input) => {
+    const threadFilter =
+      input?.threadIds === undefined ? undefined : { threadIds: input.threadIds };
+    return readSql
       .withTransaction(
         Effect.all([
           listProjectRows(undefined).pipe(
@@ -2329,7 +2340,7 @@ pending_approval_requests AS (
               ),
             ),
           ),
-          listThreadRows(undefined).pipe(
+          listThreadRows(threadFilter).pipe(
             Effect.mapError(
               toPersistenceSqlOrDecodeError(
                 "ProjectionSnapshotQuery.getCommandReadModel:listThreads:query",
@@ -2337,7 +2348,7 @@ pending_approval_requests AS (
               ),
             ),
           ),
-          listThreadProposedPlanRows(undefined).pipe(
+          listThreadProposedPlanRows(threadFilter).pipe(
             Effect.mapError(
               toPersistenceSqlOrDecodeError(
                 "ProjectionSnapshotQuery.getCommandReadModel:listThreadProposedPlans:query",
@@ -2345,7 +2356,7 @@ pending_approval_requests AS (
               ),
             ),
           ),
-          listThreadPullRequestRows(undefined).pipe(
+          listThreadPullRequestRows(threadFilter).pipe(
             Effect.mapError(
               toPersistenceSqlOrDecodeError(
                 "ProjectionSnapshotQuery.getCommandReadModel:listThreadPullRequests:query",
@@ -2353,7 +2364,7 @@ pending_approval_requests AS (
               ),
             ),
           ),
-          listThreadSessionRows(undefined).pipe(
+          listThreadSessionRows(threadFilter).pipe(
             Effect.mapError(
               toPersistenceSqlOrDecodeError(
                 "ProjectionSnapshotQuery.getCommandReadModel:listThreadSessions:query",
@@ -2361,7 +2372,7 @@ pending_approval_requests AS (
               ),
             ),
           ),
-          listLatestTurnRows(undefined).pipe(
+          listLatestTurnRows(threadFilter).pipe(
             Effect.mapError(
               toPersistenceSqlOrDecodeError(
                 "ProjectionSnapshotQuery.getCommandReadModel:listLatestTurns:query",
@@ -2555,6 +2566,7 @@ pending_approval_requests AS (
           return toPersistenceSqlError("ProjectionSnapshotQuery.getCommandReadModel:query")(error);
         }),
       );
+  };
 
   const getShellSnapshot: ProjectionSnapshotQueryShape["getShellSnapshot"] = () =>
     readSql

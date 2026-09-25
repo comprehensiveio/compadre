@@ -130,7 +130,7 @@ export function toPersistenceDecodeError(operation: string) {
     PersistenceDecodeError.fromSchemaError(operation, cause);
 }
 
-export const isPersistenceError = (u: unknown) =>
+export const isPersistenceError = (u: unknown): u is PersistenceSqlError | PersistenceDecodeError =>
   isPersistenceSqlError(u) || isPersistenceDecodeError(u);
 
 // ===============================
