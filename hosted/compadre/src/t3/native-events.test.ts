@@ -171,3 +171,121 @@ test("a pending long poll does not block a replacement claim or deliver its stal
   assert.deepEqual(appended, []);
   assert.equal((await delivery.get("central"))?.epoch, 2);
 });
+
+const toolEvent = (id: string, output: string) => ({
+  eventId: id, type: "thread.activity-appended", sequence: 8,
+  payload: { threadId: "worker", activity: {
+    id, turnId: "turn", kind: "tool.completed", tone: "tool", summary: "compadre · s3_get_object",
+    payload: { itemType: "mcp_tool_call", toolCallId: id, status: "completed", title: "compadre · s3_get_object",
+      data: { item: { tool: "s3_get_object", result: { content: output } } } },
+  } },
+});
+const nativeOk = () => new Response("{}", { headers: { "x-compadre-native-event-version": "1" } });
+
+test("large journal pages split by serialized UTF-8 bytes without changing events or order", async () => {
+  const events = Array.from({ length: 24 }, (_, i) => toolEvent(`event-${i}`, '🌍"\\\n'.repeat(120_000)));
+  const bodies: string[] = [];
+  const sink = nativeDeliverySink({ baseUrl: "https://central.example", apiKey: "test", fetch: async (_url, init) => {
+    bodies.push(String(init?.body)); return nativeOk();
+  } });
+  await sink.append(initial, events);
+  assert.ok(bodies.length > 1);
+  for (const body of bodies) {
+    assert.ok(Buffer.byteLength(body) <= 4 * 1024 * 1024);
+    assert.equal(JSON.parse(body).sourceThreadId, "worker");
+  }
+  assert.deepEqual(bodies.flatMap((body) => JSON.parse(body).events), events);
+});
+
+test("single events above the batch target but within central's limit replay unchanged", async () => {
+  const event = toolEvent("large-but-valid", "x".repeat(5 * 1024 * 1024));
+  const sink = nativeDeliverySink({ baseUrl: "https://central.example", apiKey: "test", fetch: async (_url, init) => {
+    assert.deepEqual(JSON.parse(String(init?.body)).events, [event]); return nativeOk();
+  } });
+  await sink.append(initial, [event]);
+});
+
+test("oversized tools retain identity/status/name and deterministic omission evidence without mutating the journal", async () => {
+  const event = toolEvent("oversized", "sensitive-output".repeat(650_000));
+  const original = JSON.stringify(event);
+  const bodies: string[] = [];
+  const sink = nativeDeliverySink({ baseUrl: "https://central.example", apiKey: "test", fetch: async (_url, init) => {
+    bodies.push(String(init?.body)); return nativeOk();
+  } });
+  await sink.append(initial, [event]); await sink.append(initial, [event]);
+  assert.equal(bodies[0], bodies[1]);
+  await sink.append({ ...initial, epoch: 100 }, [event]);
+  assert.deepEqual(JSON.parse(bodies[0]!).events, JSON.parse(bodies[2]!).events);
+  assert.equal(JSON.stringify(event), original);
+  assert.ok(!bodies[0]!.includes("sensitive-output"));
+  const compacted = JSON.parse(bodies[0]!).events[0];
+  assert.equal(compacted.eventId, event.eventId);
+  assert.equal(compacted.payload.activity.id, event.payload.activity.id);
+  assert.equal(compacted.payload.activity.summary, event.payload.activity.summary);
+  const details = compacted.payload.activity.payload;
+  assert.equal(details.toolCallId, "oversized");
+  assert.equal(details.status, "completed");
+  assert.equal(details.title, event.payload.activity.payload.title);
+  assert.match(details.detail, /Tool details omitted/);
+  assert.equal(details.detailsOmitted.originalEventBytes, Buffer.byteLength(original));
+  assert.match(details.detailsOmitted.sha256, /^[a-f0-9]{64}$/);
+});
+
+test("oversized messages and interactive requests fail preflight without sending part of the page", async () => {
+  let calls = 0;
+  const sink = nativeDeliverySink({ baseUrl: "https://central.example", apiKey: "test", fetch: async () => { calls++; return nativeOk(); } });
+  const big = "x".repeat(9 * 1024 * 1024);
+  const interactive = toolEvent("interactive", big);
+  Object.assign(interactive.payload.activity.payload, { requestId: "approval" });
+  for (const event of [{ type: "thread.message-sent", payload: { text: big } }, interactive]) {
+    await assert.rejects(sink.append(initial, [toolEvent("small", "ok"), event]), /central body limit/);
+  }
+  assert.equal(calls, 0);
+});
+
+test("losing a later batch acknowledgement preserves the page cursor and replays identical batches", async () => {
+  const store = metadata();
+  const bodies: string[] = [];
+  let fail = true;
+  const sink = nativeDeliverySink({ baseUrl: "https://central.example", apiKey: "test", fetch: async (_url, init) => {
+    if (init?.method === "POST") {
+      bodies.push(String(init.body));
+      if (fail && bodies.length === 2) throw new Error("ack lost");
+    }
+    return nativeOk();
+  } });
+  const delivery = new NativeThreadDelivery(store, new InMemoryLockStore(), sink);
+  await delivery.bind(initial);
+  const events = Array.from({ length: 3 }, (_, i) => toolEvent(`event-${i}`, "x".repeat(3 * 1024 * 1024)));
+  const input = { threadId: "central", epoch: 1, read: async () => ({ events, nextOffset: offset(10), upToDate: true }) };
+  await assert.rejects(delivery.deliverPage(input), /ack lost/);
+  assert.equal((await delivery.get("central"))?.offset, initial.offset);
+  fail = false;
+  await delivery.deliverPage(input);
+  assert.equal((await delivery.get("central"))?.offset, offset(10));
+  assert.equal(bodies.length, 5);
+  assert.deepEqual(bodies.slice(0, 2), bodies.slice(2, 4));
+});
+
+test("the hard limit counts envelope bytes and preserves an exactly fitting event", async () => {
+  const limit = 8 * 1024 * 1024;
+  const event = toolEvent("boundary", "");
+  const envelope = (events: unknown[]) => JSON.stringify({ version: 1, sourceThreadId: initial.sourceThreadId, epoch: initial.epoch, events });
+  event.payload.activity.payload.data.item.result.content = "x".repeat(limit - Buffer.byteLength(envelope([event])));
+  const bodies: string[] = [];
+  const sink = nativeDeliverySink({ baseUrl: "https://central.example", apiKey: "test", fetch: async (_url, init) => {
+    bodies.push(String(init?.body)); return nativeOk();
+  } });
+  await sink.append(initial, [event]);
+  assert.equal(Buffer.byteLength(bodies[0]!), limit);
+  assert.deepEqual(JSON.parse(bodies[0]!).events, [event]);
+  event.payload.activity.payload.data.item.result.content += "x";
+  // An event that once fit must not change just because the envelope grew.
+  await assert.rejects(sink.append(initial, [event]), /central body limit/);
+  event.payload.activity.payload.data.item.result.content += "x".repeat(1024);
+  Object.assign(event.payload.activity.payload.data.item, { status: "failed" });
+  await sink.append(initial, [event]);
+  const details = JSON.parse(bodies[1]!).events[0].payload.activity.payload;
+  assert.equal(details.status, "failed");
+  assert.equal(details.detailsOmitted.originalEventBytes, Buffer.byteLength(JSON.stringify(event)));
+});

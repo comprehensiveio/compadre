@@ -1,5 +1,6 @@
 import { z } from "zod";
 import type { MetadataStore, LockStore } from "./storage.js";
+import { nativeEventBodies } from "./native-event-batches.js";
 
 export const NATIVE_EVENTS_PATH = "/api/compadre/native-events";
 const offsetSchema = z.string().regex(/^\d{20}$/).refine((value) => Number.isSafeInteger(Number(value)));
@@ -153,7 +154,7 @@ export function nativeDeliverySink(input: { baseUrl: string; internalHost?: stri
     if (fault === "delivery-transient") throw new Error("Verification: Central native event POST returned HTTP 503");
     const response = await (input.fetch ?? fetch)(url, {
       method, headers: { authorization: `Bearer ${input.apiKey}`, "content-type": "application/json" },
-      body: JSON.stringify(body), signal: AbortSignal.any([AbortSignal.timeout(30_000), ...(signal ? [signal] : [])]),
+      body: typeof body === "string" ? body : JSON.stringify(body), signal: AbortSignal.any([AbortSignal.timeout(30_000), ...(signal ? [signal] : [])]),
     });
     if (!response.ok) {
       await response.body?.cancel();
@@ -184,8 +185,11 @@ export function nativeDeliverySink(input: { baseUrl: string; internalHost?: stri
       sourceThreadId: state.sourceThreadId, epoch: state.epoch,
       sourceSequence: Number(state.startOffset), checkpointOffset: state.checkpointOffset,
     }, signal),
-    append: (state: NativeDeliveryState, events: unknown[], signal?: AbortSignal) => request(state, "POST", {
-      version: 1, sourceThreadId: state.sourceThreadId, epoch: state.epoch, events,
-    }, signal),
+    append: async (state: NativeDeliveryState, events: unknown[], signal?: AbortSignal) => {
+      for (const body of nativeEventBodies(state, events)) {
+        signal?.throwIfAborted();
+        await request(state, "POST", body, signal);
+      }
+    },
   };
 }
