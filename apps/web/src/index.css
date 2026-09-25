@@ -246,6 +246,14 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   --color-popover: var(--popover);
   --color-card-foreground: var(--contrast-card-foreground);
   --color-card: var(--card);
+  --tracking-brand: 0.18em;
+  --color-preview-ready: var(--color-blue-600);
+  --color-preview-hover-surface: var(--color-blue-500);
+  --color-preview-hover: var(--color-blue-800);
+  --color-preview-ready-dark: var(--color-blue-400);
+  --color-preview-hover-dark: var(--color-blue-200);
+  --color-worker-warning: var(--color-amber-600);
+  --color-worker-warning-dark: var(--color-amber-400);
   --color-terminal: var(--terminal-background);
   --color-code: var(--code-background);
   --color-code-foreground: var(--code-foreground);
@@ -2225,4 +2233,26 @@ code {
 
 .composer-tiptap li[data-checked] > div > p {
   margin: 0;
+}
+
+.compadre-login-glow-top {
+  background-image: radial-gradient(
+    44rem 16rem at top,
+    color-mix(in srgb, var(--color-emerald-500) 14%, transparent),
+    transparent
+  );
+}
+.compadre-login-glow-side {
+  background-image: radial-gradient(
+    28rem 18rem at left,
+    color-mix(in srgb, var(--color-sky-500) 10%, transparent),
+    transparent
+  );
+}
+.compadre-login-shade {
+  background-image: linear-gradient(
+    145deg,
+    color-mix(in srgb, var(--background) 90%, var(--color-black)) 0%,
+    var(--background) 55%
+  );
 }

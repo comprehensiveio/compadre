@@ -15,7 +15,7 @@ import { usePrimaryEnvironmentId } from "../../state/environments";
 import { WorkspacePageHeader } from "../WorkspacePageHeader";
 import { Tooltip, TooltipTrigger, TooltipPopup } from "../ui/tooltip";
 import { Button } from "../ui/button";
-import { Input } from "../ui/input";
+import { InputGroup, InputGroupAddon, InputGroupInput } from "../ui/input-group";
 import { SidebarInset } from "../ui/sidebar";
 import { Toggle, ToggleGroup } from "../ui/toggle-group";
 import {
@@ -169,7 +169,7 @@ function OperationsRow({ thread }: { readonly thread: CompadreThreadOperation })
           </DetailText>
           {thread.health !== "healthy" ? (
             <DetailText
-              className="mt-1 truncate text-amber-600 dark:text-amber-400"
+              className="mt-1 truncate text-worker-warning dark:text-worker-warning-dark"
               detail={thread.healthReason}
             >
               {thread.healthReason}
@@ -196,7 +196,7 @@ function OperationsRow({ thread }: { readonly thread: CompadreThreadOperation })
               {suspended ? "Stopped" : devServer}
             </StatusLabel>
           </p>
-          <p className="mt-1 text-[11px] text-muted-foreground">{observation}</p>
+          <p className="mt-1 text-2xs text-muted-foreground">{observation}</p>
         </div>
         <div>
           <p className="capitalize">
@@ -204,7 +204,7 @@ function OperationsRow({ thread }: { readonly thread: CompadreThreadOperation })
               {suspended ? "Stopped" : database}
             </StatusLabel>
           </p>
-          <p className="mt-1 text-[11px] text-muted-foreground">
+          <p className="mt-1 text-2xs text-muted-foreground">
             {suspended ? "Data health unchecked" : observation}
           </p>
         </div>
@@ -344,13 +344,13 @@ export function ThreadOperationsPage() {
   );
 
   return (
-    <SidebarInset className="h-dvh min-h-0 overflow-hidden bg-background text-foreground">
+    <SidebarInset className="h-dvh min-h-0 overflow-hidden">
       <div className="flex min-h-0 flex-1 flex-col">
         <WorkspacePageHeader electron={isElectron} className="border-b border-border">
           <div className="flex w-full min-w-0 items-center gap-3">
             <div>
               <h1 className="text-sm font-semibold">Thread environments</h1>
-              <p className="text-[11px] text-muted-foreground">
+              <p className="text-2xs text-muted-foreground">
                 {snapshot ? `Updated ${formatOperationsAge(snapshot.generatedAt)}` : "Loading"}
               </p>
             </div>
@@ -395,15 +395,16 @@ export function ThreadOperationsPage() {
               <option value="activity">Latest activity</option>
               <option value="created">Newest created</option>
             </select>
-            <div className="relative ms-auto w-full max-w-sm">
-              <SearchIcon className="pointer-events-none absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2 text-muted-foreground" />
-              <Input
+            <InputGroup className="ms-auto w-full max-w-sm">
+              <InputGroupAddon>
+                <SearchIcon className="size-3.5" />
+              </InputGroupAddon>
+              <InputGroupInput
                 value={query}
                 onChange={(event) => setQuery(event.target.value)}
                 placeholder="Search title, model, phase, or ID"
-                className="ps-8"
               />
-            </div>
+            </InputGroup>
           </div>
 
           {error ? (
@@ -416,7 +417,7 @@ export function ThreadOperationsPage() {
             <div
               className={cn(
                 columns,
-                "min-w-[1050px] border-b border-border bg-muted/25 px-4 py-2 text-[11px] font-medium uppercase tracking-wide text-muted-foreground",
+                "min-w-[1050px] border-b border-border bg-muted/25 px-4 py-2 text-2xs font-medium uppercase tracking-wide text-muted-foreground",
               )}
             >
               <span>Thread</span>

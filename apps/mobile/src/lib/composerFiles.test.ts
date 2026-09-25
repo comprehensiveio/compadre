@@ -1,3 +1,4 @@
+import { MOBILE_COMPOSER_MAX_ATTACHMENTS } from "./composerLimits";
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import { PROVIDER_SEND_TURN_MAX_IMAGE_BYTES } from "@t3tools/contracts";
 import type { ImagePickerAsset } from "expo-image-picker";
@@ -478,12 +479,14 @@ describe("composer file attachments", () => {
       mocks.pickMedia.mockResolvedValue({ canceled: false, assets: [image, video] });
 
       const result = await pickComposerMedia({
-        existingCount: 99,
+        existingCount: MOBILE_COMPOSER_MAX_ATTACHMENTS - 1,
         maxVideoBytes: 50 * 1024 * 1024,
       });
 
       expect(result.attachments).toEqual([expect.objectContaining({ type: "image" })]);
-      expect(result.error).toBe("You can attach up to 100 attachments per message.");
+      expect(result.error).toBe(
+        `You can attach up to ${MOBILE_COMPOSER_MAX_ATTACHMENTS} attachments per message.`,
+      );
       expect(mocks.pickMedia).toHaveBeenCalledWith(expect.objectContaining({ selectionLimit: 1 }));
       expect(mocks.copy).not.toHaveBeenCalled();
     });
@@ -628,9 +631,11 @@ describe("composer file attachments", () => {
   });
 
   it("does not open the picker when the draft has no remaining attachment slots", async () => {
-    await expect(pickComposerFiles({ existingCount: 100 })).resolves.toEqual({
+    await expect(
+      pickComposerFiles({ existingCount: MOBILE_COMPOSER_MAX_ATTACHMENTS }),
+    ).resolves.toEqual({
       files: [],
-      error: "You can attach up to 100 files per message.",
+      error: `You can attach up to ${MOBILE_COMPOSER_MAX_ATTACHMENTS} files per message.`,
     });
 
     expect(mocks.pickFile).not.toHaveBeenCalled();
@@ -841,7 +846,10 @@ describe("composer file attachments", () => {
       ],
     });
 
-    const result = await pickComposerFiles({ existingCount: 99, maxBytes: 1024 * 1024 });
+    const result = await pickComposerFiles({
+      existingCount: MOBILE_COMPOSER_MAX_ATTACHMENTS - 1,
+      maxBytes: 1024 * 1024,
+    });
 
     expect(result.files.map((file) => file.name)).toEqual(["report.pdf"]);
   });
