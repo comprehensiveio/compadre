@@ -269,8 +269,13 @@ catch-up and long polling. Central T3 applies native payloads through its ordina
 command engine with deterministic IDs, transactional receipts, and epoch fencing.
 The controller stores cursors and lifecycle metadata, not another conversation.
 Pages contain at most 128 events. The controller preflights serialized UTF-8
-request bodies and posts ordered batches targeting 4 MiB, below central's 8 MiB
-body limit. An individual event between those limits travels alone unchanged,
+request bodies and posts ordered batches of at most eight events targeting
+4 MiB, below central's 8 MiB body limit. Central dispatches each event separately;
+the count bound limits sequential projection work within each 30-second HTTP
+request, even when a large page contains mostly small events. This bounds per-request work,
+not total delivery latency; sustained central overload still needs capacity or
+projection performance improvements. An individual event between those limits
+travels alone unchanged,
 including on replay. Only tool lifecycle events larger than 8 MiB themselves
 lose their detailed payload: central retains their identity,
 name, status, and an explicit omission notice with original event byte count

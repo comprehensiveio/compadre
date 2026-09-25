@@ -182,6 +182,40 @@ const toolEvent = (id: string, output: string) => ({
 });
 const nativeOk = () => new Response("{}", { headers: { "x-compadre-native-event-version": "1" } });
 
+test("small events are bounded by central dispatch work and replay safely after a timeout", async () => {
+  const events = Array.from({ length: 128 }, (_, i) => ({ eventId: `event-${i}`, sequence: i + 8 }));
+  const committed = new Set<string>();
+  const batches: unknown[][] = [];
+  let loseAcknowledgement = true;
+  const sink = nativeDeliverySink({ baseUrl: "https://central.example", apiKey: "test", fetch: async (_url, init) => {
+    if (init?.method !== "POST") return nativeOk();
+    const batch = JSON.parse(String(init.body)).events as typeof events;
+    batches.push(batch);
+    // Model sequential central dispatch exhausting the request budget even
+    // though the entire page is far below the byte limit.
+    if (batch.length > 8) throw new DOMException("Central apply deadline", "TimeoutError");
+    for (const event of batch) committed.add(event.eventId);
+    if (loseAcknowledgement && batches.length === 2) {
+      loseAcknowledgement = false;
+      throw new DOMException("Acknowledgement lost", "TimeoutError");
+    }
+    return nativeOk();
+  } });
+  const store = metadata();
+  const locks = new InMemoryLockStore();
+  let delivery = new NativeThreadDelivery(store, locks, sink);
+  await delivery.bind(initial);
+  const input = { threadId: "central", epoch: 1, read: async () => ({ events, nextOffset: offset(135), upToDate: true }) };
+  await assert.rejects(delivery.deliverPage(input), /Acknowledgement lost/);
+  assert.equal((await delivery.get("central"))?.offset, initial.offset);
+  delivery = new NativeThreadDelivery(store, locks, sink);
+  await delivery.deliverPage(input);
+  assert.deepEqual(batches.slice(0, 2), batches.slice(2, 4));
+  assert.deepEqual(batches.slice(2).flat(), events);
+  assert.equal(committed.size, events.length);
+  assert.equal((await delivery.get("central"))?.offset, offset(135));
+});
+
 test("large journal pages split by serialized UTF-8 bytes without changing events or order", async () => {
   const events = Array.from({ length: 24 }, (_, i) => toolEvent(`event-${i}`, '🌍"\\\n'.repeat(120_000)));
   const bodies: string[] = [];
