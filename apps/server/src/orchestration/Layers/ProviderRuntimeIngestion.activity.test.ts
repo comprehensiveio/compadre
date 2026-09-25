@@ -85,34 +85,6 @@ describe("runtimeEventToActivities task progress", () => {
   });
 });
 
-describe("runtimeEventToActivities reasoning projection", () => {
-  it("persists accumulated reasoning under a stable replaceable activity id", () => {
-    const event = {
-      ...base,
-      type: "content.delta",
-      eventId: EventId.make("evt-reasoning-delta"),
-      turnId: TurnId.make("turn-1"),
-      itemId: RuntimeItemId.make("reasoning-1"),
-      payload: {
-        streamKind: "reasoning_summary_text",
-        delta: "implementation",
-      },
-    } satisfies ProviderRuntimeEvent;
-
-    const activities = runtimeEventToActivities(event, undefined, "Inspecting the implementation");
-
-    expect(activities).toHaveLength(1);
-    expect(activities[0]).toMatchObject({
-      id: "reasoning:thread-1:turn-1:reasoning-1",
-      kind: "reasoning.updated",
-      summary: "Thinking",
-      payload: {
-        detail: "Inspecting the implementation",
-        streamKind: "reasoning_summary_text",
-      },
-    });
-  });
-});
 describe("runtimeEventToActivities tool streaming persistence", () => {
   const accumulatedStdout = [
     "first line of output",

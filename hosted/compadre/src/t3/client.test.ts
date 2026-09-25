@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  decodeT3ThreadSnapshot,
   exchangeT3PairingToken,
   incompleteProviderStopReason,
   reviewCheckpointForMessage,
@@ -966,4 +967,18 @@ test("persists explicit thread modes before dispatch with retry-stable command I
   assert.deepEqual(commands.map(c=>c.type).slice(0,3), ["thread.runtime-mode.set", "thread.interaction-mode.set", "thread.turn.start"]);
   assert.equal(commands[0]!.runtimeMode, "approval-required");
   assert.equal(commands[1]!.interactionMode, "plan");
+});
+
+
+test("decodes reasoning alongside historical message roles without losing transcript fields", () => {
+  const messages = ["user", "assistant", "system", "reasoning"].map((role) => ({
+    id: role, role, text: role, turnId: "turn-1", streaming: role === "reasoning",
+    createdAt: now.toISOString(), updatedAt: now.toISOString(),
+  }));
+  const decoded = decodeT3ThreadSnapshot({ snapshotSequence: 1, thread: {
+    id: "thread-1", projectId: "project-1", title: "Compatibility",
+    modelSelection: { instanceId: "codex", model: "gpt-5.6-sol" },
+    latestTurn: null, session: null, messages,
+  } });
+  assert.deepEqual(decoded.thread.messages, messages);
 });

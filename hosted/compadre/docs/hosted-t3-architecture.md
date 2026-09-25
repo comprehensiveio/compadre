@@ -719,3 +719,18 @@ existing checkpoint if necessary, and starts journal delivery without a new agen
 turn. Verify the central transcript and attachment bytes afterward; process exit
 only means recovery was scheduled. It does not resend an already completed Slack
 outbox delivery. See the local E2E runbook for the pre-deploy recovery proof.
+
+
+### Reasoning message compatibility
+
+The controller accepts both historical user/assistant/system messages and the
+upstream `reasoning` role in native thread snapshots. The external compatibility
+stream emits accumulated reasoning through `REASONING_CONTENT` and reconstructs
+its per-message cursor from persisted chunks after a driver restart. Historical
+`reasoning.updated` activities remain readable for already-running workers.
+
+Deploy this decoder before a central server or worker package begins writing
+reasoning messages. Central and controller auto-deploy independently, so putting
+both contract changes into one commit does not establish that ordering. Shared
+reasoning belongs to the central conversation, with the same replay and fencing
+rules as assistant output.

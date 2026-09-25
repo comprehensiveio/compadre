@@ -2,7 +2,7 @@ import { EnvironmentId, ProviderInstanceId, ThreadId } from "@t3tools/contracts"
 import * as NodeCrypto from "node:crypto";
 import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
-import * as FileSystem from "effect/FileSystem";
+import * as ByteSize from "effect/ByteSize";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
@@ -53,7 +53,7 @@ const handle = Effect.gen(function* () {
   const threadId = yield* authenticate(request.headers.authorization);
   if (!threadId) return HttpServerResponse.empty({ status: 401, headers });
   const input = yield* request.json.pipe(
-    Effect.provideService(HttpIncomingMessage.MaxBodySize, FileSystem.Size(16 * 1024)),
+    Effect.provideService(HttpIncomingMessage.MaxBodySize, ByteSize.bytes(16 * 1024)),
     Effect.flatMap(decodeRequest),
     Effect.option,
   );

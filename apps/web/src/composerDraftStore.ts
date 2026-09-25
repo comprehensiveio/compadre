@@ -12,6 +12,7 @@ import {
   ProviderDriverKind,
   ProviderOptionSelection,
   PreviewAnnotationPayloadSchema,
+  PastedTextAttachmentSource,
   type PreviewAnnotationPayload,
   RuntimeMode,
   type ServerProvider,
@@ -190,6 +191,7 @@ export const PersistedComposerFileAttachment = Schema.Struct({
   sizeBytes: Schema.Number,
   attachmentId: Schema.String,
   environmentId: EnvironmentId,
+  source: Schema.optional(PastedTextAttachmentSource),
 });
 export type PersistedComposerFileAttachment = typeof PersistedComposerFileAttachment.Type;
 
@@ -206,6 +208,7 @@ export const PersistedComposerDraftFileAttachment = Schema.Struct({
   sizeBytes: Schema.Number,
   attachmentId: Schema.optionalKey(Schema.String),
   environmentId: Schema.optionalKey(EnvironmentId),
+  source: Schema.optional(PastedTextAttachmentSource),
 });
 export type PersistedComposerDraftFileAttachment = typeof PersistedComposerDraftFileAttachment.Type;
 const isPersistedComposerDraftFileAttachment = Schema.is(PersistedComposerDraftFileAttachment);
@@ -494,6 +497,8 @@ interface ComposerDraftStoreState {
   getDraftSession: (draftId: DraftId) => DraftSessionState | null;
   /** Resolves a server-thread ref back to a matching draft session when one exists. */
   getDraftSessionByRef: (threadRef: ScopedThreadRef) => DraftSessionState | null;
+  /** The draft id that reserved a server-thread ref, while its draft record still exists. */
+  getDraftIdByRef: (threadRef: ScopedThreadRef) => DraftId | null;
   getDraftThreadByRef: (threadRef: ScopedThreadRef) => DraftThreadState | null;
   getDraftThread: (threadRef: ComposerThreadTarget) => DraftThreadState | null;
   listDraftThreadKeys: () => string[];
@@ -2150,6 +2155,7 @@ export function partializeComposerDraftStoreState(
               name: file.name,
               mimeType: file.mimeType,
               sizeBytes: file.sizeBytes,
+              ...(file.source ? { source: file.source } : {}),
               ...(file.uploadedAttachmentId && file.uploadEnvironmentId
                 ? {
                     attachmentId: file.uploadedAttachmentId,
@@ -2429,6 +2435,7 @@ function toHydratedThreadDraft(
       mimeType: file.mimeType,
       sizeBytes: file.sizeBytes,
       file: null,
+      ...(file.source ? { source: file.source } : {}),
       // A marker without an attachment id hydrates as needs-reattach: no
       // bytes, no server-side upload, only the metadata to tell the user
       // what to attach again.
@@ -2580,6 +2587,17 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
               draftSession.threadId === threadRef.threadId
             ) {
               return draftSession;
+            }
+          }
+          return null;
+        },
+        getDraftIdByRef: (threadRef) => {
+          for (const [draftId, draftSession] of Object.entries(get().draftThreadsByThreadKey)) {
+            if (
+              draftSession.environmentId === threadRef.environmentId &&
+              draftSession.threadId === threadRef.threadId
+            ) {
+              return DraftId.make(draftId);
             }
           }
           return null;
@@ -4357,6 +4375,23 @@ export function markPromotedDraftThreadByRef(threadRef: ScopedThreadRef): void {
       draftStore.markDraftThreadPromoting(DraftId.make(draftId), threadRef);
     }
   }
+}
+
+export function restoreFailedBackgroundDraftThread(
+  draftId: DraftId,
+  draftThread: DraftThreadState,
+  threadId: ThreadId,
+): void {
+  useComposerDraftStore.setState((state) => ({
+    draftThreadsByThreadKey: {
+      ...state.draftThreadsByThreadKey,
+      [draftId]: {
+        ...draftThread,
+        threadId,
+        promotedTo: null,
+      },
+    },
+  }));
 }
 
 export function finalizePromotedDraftThreadByRef(threadRef: ScopedThreadRef): void {

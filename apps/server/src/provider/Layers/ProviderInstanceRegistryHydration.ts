@@ -168,7 +168,11 @@ export const ProviderInstanceRegistryHydrationLive: Layer.Layer<
         : deriveProviderInstanceConfigMap(initialSettings);
 
     const mutableLayer = ProviderInstanceRegistryMutableLayer({
-      drivers: BUILT_IN_DRIVERS,
+      drivers: process.env.COMPADRE_NATIVE_T3_URL
+        ? BUILT_IN_DRIVERS.filter(
+            (driver) => driver.driverKind === "codex" || driver.driverKind === "claudeAgent",
+          )
+        : BUILT_IN_DRIVERS,
       configMap: initialConfigMap,
     });
 

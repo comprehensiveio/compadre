@@ -51,7 +51,7 @@ export function mapNativeThreadEvent(
   };
   switch (event.type) {
     case "thread.message-sent":
-      if (event.payload.role !== "assistant") return null;
+      if (event.payload.role !== "assistant" && event.payload.role !== "reasoning") return null;
       mapped = {
         ...base,
         type: event.type,
@@ -154,6 +154,7 @@ export function mapNativeThreadEvent(
     case "thread.pinned":
     case "thread.unpinned":
     case "thread.pin-reordered":
+    case "thread.auto-settle-set":
     case "thread.runtime-mode-set":
     case "thread.interaction-mode-set":
     case "thread.turn-start-requested":

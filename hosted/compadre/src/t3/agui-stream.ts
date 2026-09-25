@@ -169,6 +169,7 @@ export class CentralApiResponseProjector {
   private terminal = false;
   private readonly seenActivities = new Set<string>();
   private readonly tools = new Map<string, ProjectedTool>();
+  private readonly reasoningMessages = new Map<string, string>();
   private readonly assistantMessages = new Map<string, ProjectedAssistantMessage>();
 
   constructor(
@@ -203,6 +204,12 @@ export class CentralApiResponseProjector {
     );
     for (const chunk of chunks) {
       switch (chunk.type) {
+        case EventType.REASONING_CONTENT: {
+          if (chunk.messageId && typeof chunk.content === "string") {
+            projector.reasoningMessages.set(chunk.messageId, chunk.content);
+          }
+          break;
+        }
         case EventType.TEXT_MESSAGE_START: {
           if (chunk.messageId && !projector.assistantMessages.has(chunk.messageId)) {
             projector.assistantMessages.set(chunk.messageId, {
@@ -441,6 +448,22 @@ export class CentralApiResponseProjector {
           timestamp: timestamp(activity.createdAt),
         });
       }
+    }
+
+    // New workers use upstream reasoning messages; retain activity decoding above
+    // for already-running workers and snapshots from before that contract.
+    for (const message of snapshot.thread.messages) {
+      if (message.role !== "reasoning" || message.turnId !== this.turnId ||
+          (isSteer && timestamp(message.createdAt) < requestedAt) ||
+          !message.text || this.reasoningMessages.get(message.id) === message.text) continue;
+      this.reasoningMessages.set(message.id, message.text);
+      chunks.push({
+        type: EventType.REASONING_CONTENT,
+        messageId: message.id,
+        content: message.text,
+        streamKind: "reasoning_summary_text",
+        timestamp: timestamp(message.updatedAt),
+      });
     }
 
     const assistants = snapshot.thread.messages.filter(

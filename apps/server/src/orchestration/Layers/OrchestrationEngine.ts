@@ -639,6 +639,23 @@ const makeOrchestrationEngine = Effect.gen(function* () {
                 }),
               ),
             );
+
+            if (
+              isOrchestrationCommandRejection(error) &&
+              !envelope.command.type.startsWith("thread.native-")
+            ) {
+              yield* commandReceiptRepository
+                .upsert({
+                  commandId: envelope.command.commandId,
+                  aggregateKind: aggregateRef.aggregateKind,
+                  aggregateId: aggregateRef.aggregateId,
+                  acceptedAt: yield* nowIso,
+                  resultSequence: commandReadModel.snapshotSequence,
+                  status: "rejected",
+                  error: error.message,
+                })
+                .pipe(Effect.ignore);
+            }
           }
 
           yield* Deferred.fail(envelope.result, error);

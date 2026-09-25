@@ -1,5 +1,7 @@
 import { CENTRAL_SQLITE_TABLES } from "../CompadrePersistenceTables.ts";
-import pg from "pg";
+import * as PgTypes from "@effect/sql-pg/PgTypes";
+import * as Result from "effect/Result";
+import * as Stream from "effect/Stream";
 import { PgClient } from "@effect/sql-pg";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -11,6 +13,7 @@ import * as Migrator from "effect/unstable/sql/Migrator";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 
 import migration002NativeThreadStreams from "../Migrations/045_NativeThreadStreams.ts";
+import { migration004Upstream } from "../CompadrePostgresUpstream202609.ts";
 import { migration003Upstream } from "../CompadrePostgresUpstream.ts";
 import { migration001Initial } from "../CompadrePostgresSchema.ts";
 import {
@@ -23,13 +26,14 @@ class ReadTransaction extends Context.Reference<boolean>("t3/persistence/ReadTra
   defaultValue: () => false,
 }) {}
 
-export const POSTGRES_SCHEMA_VERSION = 3;
-export const SQLITE_SCHEMA_VERSION = 54;
+export const POSTGRES_SCHEMA_VERSION = 4;
+export const SQLITE_SCHEMA_VERSION = 57;
 
 const migrate = Migrator.make({})({
   loader: Migrator.fromRecord({
     "1_compadre_initial": migration001Initial,
     "3_upstream_schema": migration003Upstream,
+    "4_upstream_title_and_review_state": migration004Upstream,
     "2_native_thread_streams": Effect.gen(function* () {
       yield* migration002NativeThreadStreams;
       const sql = yield* SqlClient.SqlClient;
@@ -81,26 +85,24 @@ export const runPostgresMigrations = Effect.gen(function* () {
 export const makePostgresClientLive = (url: string) =>
   Layer.effectContext(
     Effect.gen(function* () {
-      // Apply to every pooled and LISTEN connection; keep central queries out of the controller schema.
-      const connectionUrl = new URL(url);
-      const connectionOptions = connectionUrl.searchParams.get("options");
-      connectionUrl.searchParams.set(
-        "options",
-        `${connectionOptions ? `${connectionOptions} ` : ""}-c search_path=compadre_t3`,
-      );
+      const types = PgTypes.makeRegistry();
+      types.register(PgTypes.OID.int8, {
+        encode: (value: number | bigint) => PgTypes.encode(BigInt(value), PgTypes.OID.int8),
+        decode: (bytes) =>
+          Result.flatMap(PgTypes.decode(bytes, PgTypes.OID.int8, 1), (value) => {
+            const parsed = Number(value);
+            return Number.isSafeInteger(parsed)
+              ? Result.succeed(parsed)
+              : Result.fail(
+                  new PgTypes.CodecError({
+                    message: "PostgreSQL integer exceeds the T3 safe integer contract.",
+                  }),
+                );
+          }),
+      });
       const options = {
-        types: {
-          getTypeParser: (oid: number, format?: "text" | "binary") => {
-            if (oid !== 20 || format === "binary") return pg.types.getTypeParser(oid, format);
-            return (value: string) => {
-              const parsed = Number(value);
-              if (!Number.isSafeInteger(parsed))
-                throw new Error("PostgreSQL integer exceeds the T3 safe integer contract.");
-              return parsed;
-            };
-          },
-        },
-        url: Redacted.make(connectionUrl.toString()),
+        types,
+        url: Redacted.make(url),
         connectTimeout: "5 seconds" as const,
       };
       const reads = yield* PgClient.make({
@@ -115,8 +117,16 @@ export const makePostgresClientLive = (url: string) =>
       });
       // PgClient.reserve has no interrupt handler: a fiber interrupted while queued for a
       // connection never releases the one the pool later hands it. Wait out the checkout.
-      const reserveRead = Effect.uninterruptible(reads.reserve);
-      const reserveWrite = Effect.uninterruptible(writes.reserve);
+      // The native driver does not forward URL `options` to PostgreSQL startup.
+      // Set the schema on every exclusive checkout, before BEGIN or any query.
+      const inCentralSchema = (client: PgClient.PgClient) =>
+        Effect.uninterruptible(client.reserve).pipe(
+          Effect.tap((connection) =>
+            connection.execute("SET search_path TO compadre_t3", [], undefined),
+          ),
+        );
+      const reserveRead = inCentralSchema(reads);
+      const reserveWrite = inCentralSchema(writes);
       const sql = yield* SqlClient.make({
         acquirer: reserveRead,
         transactionAcquirer: Effect.flatMap(ReadTransaction, (read) =>
@@ -177,7 +187,12 @@ export const makePostgresPersistenceLive = (url: string) => {
           sql`SELECT singleton_id FROM orchestration_commit_order WHERE singleton_id = 1 FOR UPDATE`.pipe(
             Effect.asVoid,
           ),
-        listen: postgres.listen,
+        listen: (channel) =>
+          Stream.unwrap(
+            Effect.map(postgres.listen(channel), (queue) =>
+              Stream.fromQueue(queue).pipe(Stream.map((notification) => notification.payload)),
+            ),
+          ),
         notify: postgres.notify,
       });
     }),

@@ -16,4 +16,5 @@ export const CENTRAL_SQLITE_TABLES = [
   "projection_turns",
   "projection_projects",
   "projection_state",
+  "pull_request_files_viewed",
 ] as const;

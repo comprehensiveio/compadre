@@ -122,6 +122,7 @@ function probeGateway(
 ): { gateway: NativeT3DriverGateway; state: ProbeGatewayState } {
   const state: ProbeGatewayState = { sends: 0, waits: 0, cancels: 0 };
   let messageId = "";
+  let acknowledgeCancellation: (() => void) | undefined;
   const gateway: NativeT3DriverGateway = {
     async send() {
       state.sends += 1;
@@ -160,7 +161,14 @@ function probeGateway(
       await onSnapshot?.(
         snapshotAt({ messageId, assistantText: "Working...", terminal: false }),
       );
-      return new Promise((_resolve, reject) => {
+      return new Promise((resolve, reject) => {
+        // A successful interrupt is observed through the worker's terminal
+        // snapshot. The driver deliberately leaves its watch alive for that ack.
+        acknowledgeCancellation = () => {
+          const snapshot = snapshotAt({ messageId, assistantText: "Working...", terminal: true });
+          snapshot.thread.latestTurn!.state = "interrupted";
+          resolve(snapshot);
+        };
         const fail = () => reject(new Error("probe: watch aborted"));
         if (signal?.aborted) return fail();
         signal?.addEventListener("abort", fail, { once: true });
@@ -168,6 +176,7 @@ function probeGateway(
     },
     async cancel() {
       state.cancels += 1;
+      acknowledgeCancellation?.();
       return 1;
     },
   };

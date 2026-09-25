@@ -112,7 +112,7 @@ export interface T3Project {
 export interface T3Message {
   readonly [key: string]: unknown;
   id: string;
-  role: "user" | "assistant" | "system";
+  role: "user" | "assistant" | "system" | "reasoning";
   text: string;
   turnId: string | null;
   streaming: boolean;
@@ -263,7 +263,7 @@ const projectSchema = z.object({
 const messageSchema = z
   .object({
     id: z.string().min(1),
-    role: z.enum(["user", "assistant", "system"]),
+    role: z.enum(["user", "assistant", "system", "reasoning"]),
     text: z.string(),
     turnId: z.string().nullable(),
     streaming: z.boolean(),
