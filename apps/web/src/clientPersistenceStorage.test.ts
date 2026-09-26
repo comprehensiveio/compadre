@@ -32,6 +32,7 @@ function getTestWindow(): Window & typeof globalThis {
 }
 
 afterEach(() => {
+  vi.unstubAllEnvs();
   vi.resetModules();
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
@@ -140,5 +141,41 @@ describe("clientPersistenceStorage", () => {
 
     writeBrowserClientSettings({ ...DEFAULT_CLIENT_SETTINGS, diffLayout: "split" });
     expect(readBrowserClientSettings()?.diffLayout).toBe("split");
+  });
+});
+
+describe.each([true, false])("panel motion defaults (hosted: %s)", (hosted) => {
+  it("uses the mode default before hydration and for older saved settings", async () => {
+    vi.stubEnv("VITE_COMPADRE_AUTH_ENABLED", String(hosted));
+    const testWindow = getTestWindow();
+    const { WEB_CLIENT_SETTINGS_DEFAULTS } = await import("./clientSettingsDefaults");
+    const { readBrowserClientSettings } = await import("./clientPersistenceStorage");
+    expect(WEB_CLIENT_SETTINGS_DEFAULTS.panelAnimationDurationMs).toBe(hosted ? 275 : 0);
+    expect(readBrowserClientSettings()).toBeNull();
+    testWindow.localStorage.setItem(
+      "t3code:client-settings:v1",
+      JSON.stringify({ wordWrap: false }),
+    );
+    expect(readBrowserClientSettings()).toMatchObject({
+      panelAnimationDurationMs: hosted ? 275 : 0,
+      wordWrap: false,
+    });
+  });
+
+  it.each([0, 150, 275])("preserves an explicit %s ms across reloads", async (duration) => {
+    vi.stubEnv("VITE_COMPADRE_AUTH_ENABLED", String(hosted));
+    const testWindow = getTestWindow();
+    testWindow.localStorage.setItem(
+      "t3code:client-settings:v1",
+      JSON.stringify({ panelAnimationDurationMs: duration }),
+    );
+    const { readBrowserClientSettings, writeBrowserClientSettings } =
+      await import("./clientPersistenceStorage");
+    const settings = readBrowserClientSettings()!;
+    expect(settings.panelAnimationDurationMs).toBe(duration);
+    writeBrowserClientSettings(settings);
+    vi.resetModules();
+    const reloaded = await import("./clientPersistenceStorage");
+    expect(reloaded.readBrowserClientSettings()?.panelAnimationDurationMs).toBe(duration);
   });
 });

@@ -23,9 +23,10 @@ of the selected theme.
 
 ## Motion
 
-The main sidebar, right panel, and terminal drawer open and close immediately by default. Move the
-**Panel animations** slider above 0 ms to add motion, up to 400 ms, unless reduced motion is enabled
-in your operating system. Moving between threads always snaps to the selected thread's panel state
+Hosted Compadre defaults panel and composer transitions to 275 ms. Existing saved preferences,
+including 0 ms, are preserved. Standalone web and desktop default to immediate transitions. Use the
+**Panel animations** slider to choose a duration up to 400 ms, or 0 ms to disable motion. Reset uses
+your client’s default. Your operating system’s reduced-motion preference disables these animations. Moving between threads always snaps to the selected thread's panel state
 without replaying its transitions.
 
 ## Custom themes

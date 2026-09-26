@@ -1,4 +1,5 @@
 import { SettingsGroup } from "./SettingsGroup";
+import { WEB_CLIENT_SETTINGS_DEFAULTS } from "../../clientSettingsDefaults";
 import { Spinner } from "~/components/ui/spinner";
 import { NotificationSettings } from "./NotificationSettings";
 import { ArchiveIcon, ArchiveX, CheckIcon, ChevronRightIcon, SettingsIcon } from "lucide-react";
@@ -533,7 +534,8 @@ export function useSettingsRestore(onRestored?: () => void) {
       ...(settings.diffColorScheme !== DEFAULT_UNIFIED_SETTINGS.diffColorScheme
         ? ["Diff colors"]
         : []),
-      ...(settings.panelAnimationDurationMs !== DEFAULT_UNIFIED_SETTINGS.panelAnimationDurationMs
+      ...(settings.panelAnimationDurationMs !==
+      WEB_CLIENT_SETTINGS_DEFAULTS.panelAnimationDurationMs
         ? ["Panel animations"]
         : []),
       ...(settings.environmentIdentificationMode !==
@@ -769,7 +771,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       contextWindowMeterEnabled: DEFAULT_UNIFIED_SETTINGS.contextWindowMeterEnabled,
       environmentIdentificationMode: DEFAULT_UNIFIED_SETTINGS.environmentIdentificationMode,
       glassOpacity: DEFAULT_UNIFIED_SETTINGS.glassOpacity,
-      panelAnimationDurationMs: DEFAULT_UNIFIED_SETTINGS.panelAnimationDurationMs,
+      panelAnimationDurationMs: WEB_CLIENT_SETTINGS_DEFAULTS.panelAnimationDurationMs,
       sidebarThreadPreviewCount: DEFAULT_UNIFIED_SETTINGS.sidebarThreadPreviewCount,
       sidebarProjectGroupingMode: DEFAULT_UNIFIED_SETTINGS.sidebarProjectGroupingMode,
       sidebarAutoSettleAfterDays: DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleAfterDays,
@@ -1426,12 +1428,12 @@ export function AppearanceSettingsPanel() {
           }
           resetAction={
             settings.panelAnimationDurationMs !==
-            DEFAULT_UNIFIED_SETTINGS.panelAnimationDurationMs ? (
+            WEB_CLIENT_SETTINGS_DEFAULTS.panelAnimationDurationMs ? (
               <SettingResetButton
                 label="panel animations"
                 onClick={() =>
                   updateSettings({
-                    panelAnimationDurationMs: DEFAULT_UNIFIED_SETTINGS.panelAnimationDurationMs,
+                    panelAnimationDurationMs: WEB_CLIENT_SETTINGS_DEFAULTS.panelAnimationDurationMs,
                   })
                 }
               />
