@@ -11,6 +11,7 @@ import * as NodeCrypto from "node:crypto";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
+import * as ByteSize from "effect/ByteSize";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
@@ -188,7 +189,7 @@ const receive = Effect.gen(function* () {
   const decoded = yield* Effect.gen(function* () {
     const canonical = yield* decodeThreadId(threadId);
     const batch = yield* request.json.pipe(
-      Effect.provideService(HttpIncomingMessage.MaxBodySize, FileSystem.Size(8 * 1024 * 1024)),
+      Effect.provideService(HttpIncomingMessage.MaxBodySize, ByteSize.bytes(8 * 1024 * 1024)),
       Effect.flatMap(decodeBatch),
     );
     const commands = yield* Effect.try(() =>

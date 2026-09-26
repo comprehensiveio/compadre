@@ -175,8 +175,8 @@ function terminalFontOptions(family: string, size: number): { family?: string; s
 
 export function terminalThemeFromApp(mountElement?: HTMLElement | null): GhosttyTheme {
   const drawerSurface =
-    mountElement?.closest(".thread-terminal-drawer") ??
-    document.querySelector(".thread-terminal-drawer") ??
+    mountElement?.closest("[data-thread-terminal-drawer]") ??
+    document.querySelector("[data-thread-terminal-drawer]") ??
     document.body;
   const drawerStyles = getComputedStyle(drawerSurface);
   const themeStyles = mountElement ? getComputedStyle(mountElement) : drawerStyles;
@@ -999,10 +999,10 @@ export function TerminalViewport({
     };
   }, [drawerHeight, environmentId, resizeEpoch, terminalId, threadId]);
   return (
-    <div className="relative h-full w-full overflow-hidden bg-[var(--terminal-background)]">
+    <div className="relative h-full w-full overflow-hidden bg-terminal">
       <div ref={containerRef} tabIndex={-1} className="h-full w-full" />
       {workerTerminal && terminalStatus === "error" && (
-        <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-[var(--terminal-background)] p-5 text-center text-sm">
+        <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-terminal p-5 text-center text-sm">
           <p>{startWorkerError ?? terminalError}</p>
           <p className="text-muted-foreground">
             Opening this panel connects automatically when the workspace is running.
@@ -1424,9 +1424,10 @@ export default function ThreadTerminalDrawer({
   if (normalizedTerminalIds.length === 0) {
     return (
       <aside
+        data-thread-terminal-drawer
         data-terminal-owner={isPanel ? "right-panel" : "drawer"}
         className={cn(
-          "thread-terminal-drawer relative flex min-w-0 flex-col overflow-hidden bg-background",
+          "relative flex min-w-0 flex-col overflow-hidden bg-background",
           isPanel ? "h-full flex-1" : "shrink-0 border-t border-border/80",
         )}
         style={isPanel ? undefined : { height: `${drawerHeight}px` }}
@@ -1454,9 +1455,10 @@ export default function ThreadTerminalDrawer({
 
   return (
     <aside
+      data-thread-terminal-drawer
       data-terminal-owner={isPanel ? "right-panel" : "drawer"}
       className={cn(
-        "thread-terminal-drawer relative flex min-w-0 flex-col overflow-hidden bg-background",
+        "relative flex min-w-0 flex-col overflow-hidden bg-background",
         isPanel ? "h-full flex-1" : "shrink-0 border-t border-border/80",
       )}
       style={isPanel ? undefined : { height: `${drawerHeight}px` }}
@@ -1477,7 +1479,7 @@ export default function ThreadTerminalDrawer({
             <TerminalActionButton
               className={`p-1 text-foreground/90 transition-colors ${
                 hasReachedSplitLimit
-                  ? "cursor-not-allowed opacity-45 hover:bg-transparent"
+                  ? "cursor-not-allowed opacity-64 hover:bg-transparent"
                   : "hover:bg-accent"
               }`}
               onClick={onSplitTerminalAction}
@@ -1489,7 +1491,7 @@ export default function ThreadTerminalDrawer({
             <TerminalActionButton
               className={`p-1 text-foreground/90 transition-colors ${
                 hasReachedSplitLimit
-                  ? "cursor-not-allowed opacity-45 hover:bg-transparent"
+                  ? "cursor-not-allowed opacity-64 hover:bg-transparent"
                   : "hover:bg-accent"
               }`}
               onClick={onSplitTerminalVerticalAction}
@@ -1520,7 +1522,7 @@ export default function ThreadTerminalDrawer({
       <div className="min-h-0 w-full flex-1">
         <div
           className={cn(
-            "flex h-full min-h-0 bg-[var(--terminal-background)]",
+            "flex h-full min-h-0 bg-(--terminal-background)",
             hasTerminalSidebar && "gap-1.5",
           )}
         >
@@ -1622,7 +1624,7 @@ export default function ThreadTerminalDrawer({
                   <TerminalActionButton
                     className={`inline-flex h-full items-center px-1 text-foreground/90 transition-colors ${
                       hasReachedSplitLimit
-                        ? "cursor-not-allowed opacity-45 hover:bg-transparent"
+                        ? "cursor-not-allowed opacity-64 hover:bg-transparent"
                         : "hover:bg-accent/70"
                     }`}
                     onClick={onSplitTerminalAction}
@@ -1633,7 +1635,7 @@ export default function ThreadTerminalDrawer({
                   <TerminalActionButton
                     className={`inline-flex h-full items-center border-l border-border/70 px-1 text-foreground/90 transition-colors ${
                       hasReachedSplitLimit
-                        ? "cursor-not-allowed opacity-45 hover:bg-transparent"
+                        ? "cursor-not-allowed opacity-64 hover:bg-transparent"
                         : "hover:bg-accent/70"
                     }`}
                     onClick={onSplitTerminalVerticalAction}
@@ -1683,7 +1685,7 @@ export default function ThreadTerminalDrawer({
                       {showGroupHeaders && (
                         <button
                           type="button"
-                          className={`flex h-[22px] w-full cursor-pointer items-center gap-1 rounded px-1.5 text-[11px] ${
+                          className={`flex h-[22px] w-full cursor-pointer items-center gap-1 rounded px-1.5 text-2xs ${
                             isGroupActive
                               ? "bg-accent/50 text-foreground"
                               : "text-muted-foreground hover:bg-accent/40 hover:text-foreground"
@@ -1692,7 +1694,7 @@ export default function ThreadTerminalDrawer({
                         >
                           <GroupIcon className="size-3 shrink-0" />
                           <span className="min-w-0 flex-1 truncate text-left">{groupLabel}</span>
-                          <span className="text-muted-foreground/70 text-[10px] tabular-nums">
+                          <span className="text-muted-foreground/70 text-3xs tabular-nums">
                             {terminalCount}
                           </span>
                         </button>

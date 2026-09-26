@@ -32,7 +32,9 @@ Optional Codex credentials are `CODEX_API_KEY`, `OPENAI_API_KEY`, or the
 existing `CODEX_AUTH_JSON_BASE64` subscription seed.
 For a local ChatGPT Codex sign-in, add `--codex-auth "$HOME/.codex/auth.json"`.
 This copies the sign-in into the disposable worker credential seed; it never
-writes refreshed credentials back to your local account file. Model discovery
+writes refreshed credentials back to your local account file. The launcher generates
+a disposable controller encryption key for this seed and retains it in private
+resume state. Model discovery
 currently requires an API key, so a subscription-only test can show a discovery
 warning even when real Codex turns work.
 The launcher selects only these keys. It does not inherit production databases,
@@ -92,8 +94,15 @@ ENOTFOUND but DNS resolution succeeds. It does not change system DNS or localhos
 resolution. Both public object access and local server readiness are checked
 before the launcher reports success.
 
-The launcher compiles controller helper executables, builds the central server, and packs it into a local npm archive, then sets
-`COMPADRE_T3_PACKAGE_PATH`. This tests uncommitted integration code in Modal;
+The launcher compiles controller helper executables, builds the central server, and packages it with `scripts/build-compadre-worker.ts`, then sets
+`COMPADRE_T3_PACKAGE_PATH`. The worker archive includes the Linux x64 runtime dependency closure and workspace
+patches using upstream’s CLI archive staging. Docker builds `node-pty` for Linux
+x64 and the worker’s Node 22 ABI, even when packaging on macOS. Modal extracts this archive without
+running npm, so a plain `npm pack` of `apps/server` is insufficient. Build the same
+archive for a worker release after `vp run build:bundle` in `apps/server` with
+`node scripts/build-compadre-worker.ts /output/directory`; pin its SHA-256 when
+publishing through the existing worker release process.
+This tests uncommitted integration code in Modal;
 it does not silently use the published production archive. `manifest.json`
 records the archive SHA-256 and checkout location. Start a fresh environment to
 verify changed worker code; hot reload of the local server does not update an
@@ -125,6 +134,39 @@ Record exact flows that passed and those not attempted. Infrastructure readiness
 and green unit tests alone are not a completed end-to-end proof. For upstream
 integrations, also verify an existing worker version against the new central
 server and review schema compatibility before calling the change deploy-ready.
+
+## Hosted sidebar regression check
+
+Use the authenticated hosted origin printed by this launcher for product UI
+review. A standalone `vp run dev` without hosted authentication deliberately hides
+the identity filters, participant presentation, Slack links, and operations entry.
+Before handing off a browser, confirm its origin against `manifest.json`, the
+launcher checkout, and the branch/revision being reviewed. Keep the hosted stack
+and browser alive while the maintainer reviews. Label standalone provider testing
+separately and return the review window to hosted Compadre afterward.
+
+After at least one completed hosted turn, with browser automation authorized and
+`agent-browser` installed, run:
+
+```sh
+node scripts/compadre-e2e/check-sidebar.mjs /state/directory
+```
+
+This opens a headed browser, authenticates as the synthetic Alice user, and checks
+the real sidebar: Compadre logo, stacked identity tabs/search layout, selected
+filters, search clearing, new-thread entry, loaded participant photo, Slack link,
+Thread environments navigation/back, and reload. It seeds a clearly labeled
+**Sidebar UI fixture** in the disposable central read model, cloning an existing
+thread's metadata with a synthetic avatar and inert Slack URL. The fixture and
+browser remain available for review. It does not send a Slack message, execute a
+provider turn, or provision a worker, and does not establish Slack OIDC/ingress
+correctness. An optional second argument reuses a named agent-browser session.
+
+Fast rendered regression tests run in normal web CI:
+
+```sh
+vp test run apps/web/src/components/sidebar/CompadreSidebar.test.tsx apps/web/src/components/sidebar/SidebarChrome.test.tsx
+```
 
 ## Repeatable readiness checks
 

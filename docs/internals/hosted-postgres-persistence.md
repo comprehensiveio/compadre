@@ -76,13 +76,25 @@ queries, and persisted event shapes, not just whether added columns are nullable
 Raise the minimum version when old application behavior is no longer supported.
 Never lower it merely to force a rollback through startup validation.
 
-The upstream integration introduces PostgreSQL migration 3 and SQLite migrations
-46–54. PostgreSQL schema 3 requires application schema 3: its new persisted event
-shapes are not a safe rollback target for schema-2 applications. This is the
-integration's compatibility declaration, not a statement that production has
-already migrated. The central table manifest now includes
-`projection_thread_pull_requests` (17 tables). Populated upgrades backfill model
-defaults and settlement state alongside the new context, ordering, and PR fields.
+The previous upstream integration introduced PostgreSQL migration 3 and SQLite
+migrations 46–54. Their applied identities remain unchanged. The next integration
+adds PostgreSQL migration 4 and SQLite migrations 55–57 for title generation state,
+PR file review state, and automatic-settlement opt-outs. PostgreSQL schema 4
+requires application schema 4 because old readers cannot decode reasoning
+messages. Rollback to schema-3 binaries requires restoring a compatible database;
+do not lower the compatibility declaration.
+
+The central table manifest includes `projection_thread_pull_requests` and
+`pull_request_files_viewed` (18 tables). Existing titles retain their text with
+null generation state; opt-outs default to null. PR file review records are keyed
+by canonical authenticated user in hosted mode, even when the Git provider
+normally writes viewed state to its host. They never use a shared GitHub token as
+the viewer identity, and hosted reads bypass the environment-wide PR cache.
+
+Effect's native PostgreSQL driver does not forward URL `options` to connection
+startup. The adapter sets `search_path` to `compadre_t3` on every exclusive pooled
+checkout before starting a transaction or executing a query. Its int8 decoder
+returns safe JavaScript integers and rejects overflow, matching SQLite contracts.
 
 Read and write SQL clients must share the primary client's transaction service
 and transaction wrapper. The read wrapper chooses a read-only repeatable-read

@@ -4,6 +4,7 @@ import * as SqlClient from "effect/unstable/sql/SqlClient";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 
 import { migration001Initial } from "./CompadrePostgresSchema.ts";
+import { migration004Upstream } from "./CompadrePostgresUpstream202609.ts";
 import { migration003Upstream } from "./CompadrePostgresUpstream.ts";
 import nativeStreams from "./Migrations/045_NativeThreadStreams.ts";
 import { runMigrations } from "./Migrations.ts";
@@ -67,8 +68,18 @@ const verifyUpgrade = (backend: "sqlite" | "postgres") =>
         }
         yield* sql`INSERT INTO native_thread_streams VALUES ('automatic', 'worker-thread', 7, 42, 42)`;
 
-        if (backend === "postgres") yield* migration003Upstream;
-        else yield* runMigrations();
+        if (backend === "postgres") {
+          yield* migration003Upstream;
+          yield* migration004Upstream;
+        } else yield* runMigrations();
+        expect([
+          ...(yield* sql`SELECT title_state_json, auto_settle_disabled_at FROM projection_threads WHERE thread_id = 'manual'`),
+        ]).toEqual([{ title_state_json: null, auto_settle_disabled_at: null }]);
+        yield* sql`INSERT INTO pull_request_files_viewed (provider, host, repository, number, viewer, path, revision, viewed_at)
+          VALUES ('github', 'github.com', 'fixture/repo', 1, 'alice', 'README', 'revision', ${createdAt})`;
+        expect([...(yield* sql`SELECT viewer, revision FROM pull_request_files_viewed`)]).toEqual([
+          { viewer: "alice", revision: "revision" },
+        ]);
 
         expect([
           ...(yield* sql`SELECT project_id, default_model_selection_json FROM projection_projects ORDER BY project_id`),
@@ -114,7 +125,7 @@ const verifyUpgrade = (backend: "sqlite" | "postgres") =>
         if (backend === "postgres") {
           expect([
             ...(yield* sql`SELECT schema_version, minimum_app_schema_version FROM compadre_t3_schema_compatibility`),
-          ]).toEqual([{ schema_version: 3, minimum_app_schema_version: 3 }]);
+          ]).toEqual([{ schema_version: 4, minimum_app_schema_version: 4 }]);
           yield* sql`DROP SCHEMA compadre_upgrade_fixture CASCADE`;
         }
       }),
@@ -123,7 +134,8 @@ const verifyUpgrade = (backend: "sqlite" | "postgres") =>
 
 it.effect(
   "upgrades populated Compadre SQLite while retaining attribution and native delivery",
-  () => verifyUpgrade("sqlite").pipe(Effect.provide(NodeSqliteClient.layerMemory())),
+  () =>
+    verifyUpgrade("sqlite").pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
 );
 
 const url = process.env.COMPADRE_T3_POSTGRES_TEST_URL;

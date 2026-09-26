@@ -1,5 +1,13 @@
 import { MOBILE_COMPOSER_MAX_ATTACHMENTS } from "../../lib/composerLimits";
 import { useAtomValue } from "@effect/atom-react";
+import * as Cause from "effect/Cause";
+import { AsyncResult } from "effect/unstable/reactivity";
+import { clampFileAttachmentUploadBytes } from "@t3tools/client-runtime/state/attachments";
+import {
+  nextPastedTextFileName,
+  pastedTextDisposition,
+  replaceTextSelection,
+} from "@t3tools/client-runtime/text-paste";
 import { NativeHeaderToolbar, NativeStackScreenOptions } from "../../native/StackHeader";
 import {
   CommonActions,
@@ -20,10 +28,17 @@ import Animated from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useUniwindTheme } from "../../lib/useUniwindTheme";
 import { useFontFamily } from "../../lib/useFontFamily";
+import {
+  PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
+  PROVIDER_SEND_TURN_MAX_INPUT_CHARS,
+  resolveEnvironmentMachineKind,
+} from "@t3tools/contracts";
 
-import { resolveEnvironmentMachineKind } from "@t3tools/contracts";
-
-import { ComposerEditor, type ComposerEditorHandle } from "../../components/ComposerEditor";
+import {
+  ComposerEditor,
+  type ComposerEditorHandle,
+  type ComposerTextPaste,
+} from "../../components/ComposerEditor";
 import { composerContextImportsAtom } from "../../state/use-composer-drafts";
 import {
   composerContextSendBlockReason,
@@ -35,10 +50,10 @@ import {
   ComposerToolbarRow,
 } from "../../components/ComposerToolbar";
 import { AndroidScreenHeader } from "../../components/AndroidScreenHeader";
+import { MaterialScreenContent } from "../../components/MaterialScreenContent";
 import { ComposerAttachmentButton } from "../../components/ComposerAttachmentButton";
 import { ComposerAttachmentStrip } from "../../components/ComposerAttachmentStrip";
 import { composerStripAttachments } from "../../lib/composerImages";
-import { collectComposerContextReferences } from "@t3tools/shared/composerContextReferences";
 import { EnvironmentMachineSymbol } from "../../components/EnvironmentMachineSymbol";
 import {
   composerAttachmentUploadBlockReason,
@@ -66,17 +81,20 @@ import {
   useThreadSettingsSheetPresentation,
   type NavigationWithFinishTransitioning,
 } from "./use-thread-settings-sheet-presentation";
-
 import { makeTurnCommandMetadata } from "../../lib/commandMetadata";
 import {
   convertPastedImagesToAttachments,
+  createPastedTextComposerAttachment,
   pickComposerFiles,
   pickComposerMedia,
+  removePersistedComposerAttachmentFile,
   type DraftComposerFileAttachment,
 } from "../../lib/composerImages";
 import { useScaledTextRole } from "../settings/appearance/useScaledTextRole";
 import {
   clearComposerDraftContent,
+  captureComposerDraftInsertion,
+  countComposerDraftAttachmentsAfterSelection,
   getComposerDraftSnapshot,
   mergeComposerDraftContent,
   restoreComposerDraftSnapshot,
@@ -86,6 +104,11 @@ import {
   waitForComposerDraftsLoaded,
 } from "../../state/use-composer-drafts";
 import { useEnvironmentServerConfig, useProjects } from "../../state/entities";
+import { useProjectClone } from "../../state/projectClones";
+import { projectEnvironment } from "../../state/projects";
+import { sourceControlEnvironment } from "../../state/sourceControl";
+import { useAtomCommand } from "../../state/use-atom-command";
+import { ProjectCloneBanner } from "../../components/ProjectCloneBanner";
 import {
   isModelSelectionUnavailable,
   resolveSelectableModelSelection,
@@ -110,31 +133,41 @@ import { fileRoutePathSegments } from "../files/filePath";
 function NewTaskWorkspaceIcon(props: {
   readonly workspaceMode: "local" | "worktree";
   readonly worktreePath: string | null;
+  readonly size: number;
 }) {
   if (props.workspaceMode === "local" && props.worktreePath === null) {
     return (
       <SymbolView
         name="folder"
-        size={16}
-        tintColorClassName={"accent-icon-muted"}
+        size={props.size}
+        tintColorClassName="accent-icon-muted"
         type="monochrome"
       />
     );
   }
 
+  const boxSize = (14 * props.size) / 16;
   return (
-    <View className="size-4">
+    <View
+      className="size-4"
+      style={Platform.OS === "android" ? { width: boxSize, height: boxSize } : undefined}
+    >
       <SymbolView
         name="folder"
-        size={16}
-        tintColorClassName={"accent-icon-muted"}
+        size={props.size}
+        tintColorClassName="accent-icon-muted"
         type="monochrome"
       />
-      <View className="absolute -right-1 -bottom-1">
+      <View
+        className="absolute -right-1 -bottom-1"
+        style={
+          Platform.OS === "android" ? { right: -boxSize / 4, bottom: -boxSize / 4 } : undefined
+        }
+      >
         <SymbolView
           name="arrow.triangle.branch"
-          size={9}
-          tintColorClassName={"accent-icon-muted"}
+          size={Math.round((9 * props.size) / 16)}
+          tintColorClassName="accent-icon-muted"
           type="monochrome"
         />
       </View>
@@ -148,6 +181,8 @@ export function NewTaskDraftScreen(props: {
     readonly projectId?: string;
     readonly branch?: string | null;
     readonly worktreePath?: string | null;
+    /** The project was just added by a clone that is still running. */
+    readonly cloning?: boolean;
   };
   /** Queued outbox message id when editing an existing pending task. */
   readonly pendingTaskId?: string;
@@ -181,6 +216,70 @@ export function NewTaskDraftScreen(props: {
       (environment) => environment.environmentId === selectedProject.environmentId,
     )?.connectionState === "connected";
   const modelUnavailable = environmentConnected && flow.selectedModelOption?.isUnavailable === true;
+  // A project added by cloning exists before its files do: the prompt can be
+  // written meanwhile, but Start waits for the clone.
+  const projectCloneState = useProjectClone(
+    selectedProject
+      ? { environmentId: selectedProject.environmentId, projectId: selectedProject.id }
+      : null,
+  );
+  const projectClone = projectCloneState === "pending" ? null : projectCloneState;
+  // Before the clone stream delivers, only the project this draft was opened
+  // for by Add Project is known to be cloning; any other project (offline
+  // included) must still be able to queue a task.
+  const awaitingKnownClone =
+    projectCloneState === "pending" &&
+    props.initialProjectRef?.cloning === true &&
+    selectedProject !== null &&
+    selectedProject.id === props.initialProjectRef.projectId &&
+    selectedProject.environmentId === props.initialProjectRef.environmentId;
+  const cloneBlocksStart =
+    awaitingKnownClone || (projectClone !== null && projectClone.phase !== "done");
+  const cancelProjectClone = useAtomCommand(sourceControlEnvironment.cancelProjectClone, {
+    reportFailure: false,
+  });
+  const retryProjectClone = useAtomCommand(sourceControlEnvironment.retryProjectClone, {
+    reportFailure: false,
+  });
+  // The banner only reflects the server's state, so a request that never got
+  // there needs its own feedback.
+  const runCloneAction = async (
+    title: string,
+    action: () => Promise<AsyncResult.AsyncResult<unknown, unknown>>,
+  ) => {
+    const result = await action();
+    if (AsyncResult.isFailure(result)) {
+      const error = Cause.squash(result.cause);
+      Alert.alert(title, error instanceof Error ? error.message : "An error occurred.");
+    }
+  };
+  const deleteProject = useAtomCommand(projectEnvironment.delete, { reportFailure: false });
+  // The delete is awaited; by then the picker may point somewhere else, and
+  // only the removed project's draft should leave the screen.
+  const selectedProjectRef = useRef(selectedProject);
+  useEffect(() => {
+    selectedProjectRef.current = selectedProject;
+  }, [selectedProject]);
+  const removeClonedProject = async () => {
+    if (!selectedProject) return;
+    const removed = selectedProject;
+    const result = await deleteProject({
+      environmentId: removed.environmentId,
+      input: { projectId: removed.id },
+    });
+    if (AsyncResult.isFailure(result)) {
+      const error = Cause.squash(result.cause);
+      Alert.alert(
+        "Failed to remove project",
+        error instanceof Error ? error.message : "An error occurred.",
+      );
+      return;
+    }
+    const current = selectedProjectRef.current;
+    if (current?.id === removed.id && current.environmentId === removed.environmentId) {
+      navigation.dispatch(StackActions.replace("Home"));
+    }
+  };
   const uploadStates = useAtomValue(composerAttachmentUploadsAtom);
   const attachmentBlockReason = selectedProject
     ? composerAttachmentUploadBlockReason({
@@ -294,12 +393,23 @@ export function NewTaskDraftScreen(props: {
   const shareImportDraftBackupRef = useRef(new Map<string, ComposerDraft>());
   const activeShareImportTokenRef = useRef<symbol | null>(null);
   const shareImportMountedRef = useRef(true);
+  const pendingPastedTextAttachmentCountRef = useRef(0);
+  const [pendingPastedTextAttachmentCount, setPendingPastedTextAttachmentCount] = useState(0);
+  const pastedTextFileNamesRef = useRef<{ draftKey: string | null; names: Set<string> }>({
+    draftKey: null,
+    names: new Set(),
+  });
   const latestDraftKeyRef = useRef(flow.draftKey);
   const latestIncomingShareIdRef = useRef(props.incomingShareId);
   latestDraftKeyRef.current = flow.draftKey;
   latestIncomingShareIdRef.current = props.incomingShareId;
   const isImportingShare = importingShareKey !== null;
   const alertedUnavailableIncomingShareIdRef = useRef<string | null>(null);
+  // The share this screen already moved into its draft. Sending clears the
+  // draft (and its importedShareIds receipt) a frame before the screen leaves,
+  // and the inbox entry is long gone by then; without this the re-render in
+  // between reads as "shared content vanished" and alerts on every send.
+  const consumedIncomingShareIdRef = useRef<string | null>(null);
   const incomingShare = props.incomingShareId ? getShare(props.incomingShareId) : null;
   const requestedInitialProjectAvailable = Boolean(
     props.initialProjectRef?.environmentId &&
@@ -341,16 +451,8 @@ export function NewTaskDraftScreen(props: {
       : (flow.selectedWorktreePath ?? selectedProject?.workspaceRoot)) || null;
   // Media needs its thumbnail; every other file already reads as its inline chip.
   const stripAttachments = useMemo(
-    () =>
-      composerStripAttachments(
-        flow.attachments,
-        new Set(
-          collectComposerContextReferences(flow.prompt).map(
-            (occurrence) => occurrence.contextId as string,
-          ),
-        ),
-      ),
-    [flow.attachments, flow.prompt],
+    () => composerStripAttachments(flow.attachments),
+    [flow.attachments],
   );
   const composerMenu = useComposerCommandMenu({
     draftMessage: flow.prompt,
@@ -401,8 +503,9 @@ export function NewTaskDraftScreen(props: {
   }, [navigation, preventRemove, submitNavigationAction]);
   const hasImportedIncomingShare = Boolean(
     props.incomingShareId &&
-    flow.draftKey &&
-    getComposerDraftSnapshot(flow.draftKey).importedShareIds?.includes(props.incomingShareId),
+    (consumedIncomingShareIdRef.current === props.incomingShareId ||
+      (flow.draftKey &&
+        getComposerDraftSnapshot(flow.draftKey).importedShareIds?.includes(props.incomingShareId))),
   );
   const isIncomingShareUnavailable = Boolean(
     props.incomingShareId &&
@@ -732,6 +835,7 @@ export function NewTaskDraftScreen(props: {
       }
       await consumeShare(shareId);
       didConsumeShare = true;
+      consumedIncomingShareIdRef.current = shareId;
       // The consumed inbox draft was the last owner of files that never made
       // it into the composer draft (unsupported server, oversize, limit
       // skips). Release them before any early return: an unmount or a
@@ -900,15 +1004,19 @@ export function NewTaskDraftScreen(props: {
       return;
     }
     const capabilities = selectedEnvironmentServerConfig?.environment.capabilities;
+    const insertion = flow.draftKey ? captureComposerDraftInsertion(flow.draftKey) : undefined;
     const result = await pickComposerMedia({
-      existingCount: flow.attachments.length,
+      existingCount:
+        flow.draftKey && insertion
+          ? countComposerDraftAttachmentsAfterSelection(flow.draftKey, insertion)
+          : flow.attachments.length,
       maxVideoBytes:
         capabilities?.attachmentUploads === true
           ? capabilities.fileAttachments?.maxUploadBytes
           : undefined,
     });
     const rejectedCount =
-      result.attachments.length > 0 ? flow.appendAttachments(result.attachments) : 0;
+      result.attachments.length > 0 ? flow.appendAttachments(result.attachments, insertion) : 0;
     const problems = [
       ...(result.error ? [result.error] : []),
       ...(rejectedCount > 0
@@ -930,11 +1038,16 @@ export function NewTaskDraftScreen(props: {
       Alert.alert("File attachments are not available on this server.");
       return;
     }
+    const insertion = flow.draftKey ? captureComposerDraftInsertion(flow.draftKey) : undefined;
     const result = await pickComposerFiles({
-      existingCount: flow.attachments.length,
+      existingCount:
+        flow.draftKey && insertion
+          ? countComposerDraftAttachmentsAfterSelection(flow.draftKey, insertion)
+          : flow.attachments.length,
       maxBytes,
     });
-    const rejectedCount = result.files.length > 0 ? flow.appendAttachments(result.files) : 0;
+    const rejectedCount =
+      result.files.length > 0 ? flow.appendAttachments(result.files, insertion) : 0;
     // The picker error and the live-cap rejection can both happen in one
     // pick; report both in a single alert.
     const problems = [
@@ -951,12 +1064,16 @@ export function NewTaskDraftScreen(props: {
   const handleNativePasteImages = useCallback(
     async (uris: ReadonlyArray<string>) => {
       try {
+        const insertion = flow.draftKey ? captureComposerDraftInsertion(flow.draftKey) : undefined;
         const images = await convertPastedImagesToAttachments({
           uris,
-          existingCount: flow.attachments.length,
+          existingCount:
+            flow.draftKey && insertion
+              ? countComposerDraftAttachmentsAfterSelection(flow.draftKey, insertion)
+              : flow.attachments.length,
         });
         if (images.length > 0) {
-          flow.appendAttachments(images);
+          flow.appendAttachments(images, insertion);
         }
       } catch (error) {
         console.error("[native paste] error converting images", error);
@@ -965,8 +1082,106 @@ export function NewTaskDraftScreen(props: {
     [flow],
   );
 
+  const handleNativePasteText = useCallback(
+    async (paste: ComposerTextPaste) => {
+      const draftKey = flow.draftKey;
+      if (!draftKey) return;
+      const insertion = { text: paste.value, ...paste.selection };
+      const insertPaste = () => {
+        const insertion = replaceTextSelection({
+          value: paste.value,
+          selection: paste.selection,
+          text: paste.text,
+        });
+        const selection = { start: insertion.cursor, end: insertion.cursor };
+        flow.setPrompt(insertion.value);
+        composerMenu.onSelectionChange(selection);
+      };
+      const capabilities = selectedEnvironmentServerConfig?.environment.capabilities;
+      const advertisedMax =
+        capabilities?.attachmentUploads === true
+          ? capabilities.fileAttachments?.maxUploadBytes
+          : undefined;
+      const maxBytes =
+        advertisedMax === undefined ? null : clampFileAttachmentUploadBytes(advertisedMax);
+      const wouldExceedInputLimit =
+        paste.value.length -
+          Math.max(0, paste.selection.end - paste.selection.start) +
+          paste.text.length >
+        PROVIDER_SEND_TURN_MAX_INPUT_CHARS;
+      const canAttach =
+        maxBytes !== null &&
+        countComposerDraftAttachmentsAfterSelection(draftKey, insertion) <
+          PROVIDER_SEND_TURN_MAX_ATTACHMENTS &&
+        new TextEncoder().encode(paste.text).byteLength <= maxBytes;
+      if (
+        pastedTextDisposition({
+          text: paste.text,
+          wouldExceedInputLimit,
+          canAttach: true,
+        }) === "attachment"
+      ) {
+        if (canAttach && maxBytes !== null) {
+          pendingPastedTextAttachmentCountRef.current += 1;
+          setPendingPastedTextAttachmentCount(pendingPastedTextAttachmentCountRef.current);
+          try {
+            if (pastedTextFileNamesRef.current.draftKey !== draftKey) {
+              pastedTextFileNamesRef.current = { draftKey, names: new Set() };
+            }
+            const reservedNames = pastedTextFileNamesRef.current.names;
+            for (const attachment of flow.attachments) reservedNames.add(attachment.name);
+            const name = nextPastedTextFileName([...reservedNames]);
+            reservedNames.add(name);
+            const attachment = await createPastedTextComposerAttachment({
+              text: paste.text,
+              name,
+              maxBytes,
+            });
+            if (latestDraftKeyRef.current !== draftKey) {
+              await removePersistedComposerAttachmentFile(attachment.fileUri);
+              return;
+            }
+            if (flow.appendAttachments([attachment], insertion) > 0) {
+              await removePersistedComposerAttachmentFile(attachment.fileUri);
+              Alert.alert(
+                "Could not attach pasted text",
+                `You can attach up to ${PROVIDER_SEND_TURN_MAX_ATTACHMENTS} files per message.`,
+              );
+            }
+          } catch (error) {
+            Alert.alert(
+              "Could not attach pasted text",
+              error instanceof Error ? error.message : "Try again.",
+            );
+          } finally {
+            pendingPastedTextAttachmentCountRef.current = Math.max(
+              0,
+              pendingPastedTextAttachmentCountRef.current - 1,
+            );
+            setPendingPastedTextAttachmentCount(pendingPastedTextAttachmentCountRef.current);
+          }
+        } else if (!wouldExceedInputLimit) {
+          insertPaste();
+        } else {
+          Alert.alert(
+            wouldExceedInputLimit
+              ? "Pasted text is too large for this message"
+              : "Could not attach pasted text",
+            wouldExceedInputLimit
+              ? "Remove some text or an attachment, then paste again."
+              : "Remove an attachment or use a smaller paste, then try again.",
+          );
+        }
+        return;
+      }
+
+      insertPaste();
+    },
+    [composerMenu, flow, selectedEnvironmentServerConfig],
+  );
+
   async function handleStart(): Promise<void> {
-    if (voiceInput.blocksSubmission) return;
+    if (voiceInput.blocksSubmission || pendingPastedTextAttachmentCountRef.current > 0) return;
     const selectedProject = flow.selectedProject;
     const draftKey = flow.draftKey;
     if (!selectedProject || !draftKey) {
@@ -1116,7 +1331,11 @@ export function NewTaskDraftScreen(props: {
         {Platform.OS === "android" ? (
           <>
             <NativeStackScreenOptions options={{ headerShown: false }} />
-            <AndroidScreenHeader title="New Thread" onBack={() => navigation.goBack()} />
+            <AndroidScreenHeader
+              title="New thread"
+              hideBottomBorder
+              onBack={() => navigation.goBack()}
+            />
           </>
         ) : (
           <NativeStackScreenOptions options={{ title: "Loading task" }} />
@@ -1128,6 +1347,7 @@ export function NewTaskDraftScreen(props: {
   const isAndroid = Platform.OS === "android";
   const canStart =
     !isImportingContext &&
+    !cloneBlocksStart &&
     attachmentBlockReason === null &&
     !modelUnavailable &&
     Boolean(flow.selectedProject) &&
@@ -1136,6 +1356,7 @@ export function NewTaskDraftScreen(props: {
     isIncomingShareReady &&
     !isImportingShare &&
     !flow.submitting &&
+    pendingPastedTextAttachmentCount === 0 &&
     !voiceInput.blocksSubmission &&
     !(flow.workspaceMode === "worktree" && !flow.selectedBranchName);
   const openDraftDocument = (attachment: ComposerDocumentAttachment) => {
@@ -1188,10 +1409,14 @@ export function NewTaskDraftScreen(props: {
         skills={composerMenu.skills}
         selection={composerMenu.selection}
         onChangeText={flow.setPrompt}
+        onSubmit={() => {
+          if (canStart) void handleStart();
+        }}
         onSelectionChange={composerMenu.onSelectionChange}
         onFocus={() => setIsComposerFocused(true)}
         onBlur={() => setIsComposerFocused(false)}
         onPasteImages={(uris) => void handleNativePasteImages(uris)}
+        onPasteText={(paste) => void handleNativePasteText(paste)}
         placeholder="Ask anything…"
         singleLineCentered={false}
         contentInsetVertical={0}
@@ -1241,7 +1466,7 @@ export function NewTaskDraftScreen(props: {
           <Text className="text-2xl font-t3-medium tracking-tight text-foreground">in </Text>
           <Pressable
             accessibilityHint="Opens the project picker"
-            accessibilityLabel={`Change project from ${selectedProject.title}`}
+            accessibilityLabel={selectedProject.title}
             accessibilityRole="button"
             disabled={isComposerInteractionLocked}
             onPress={chooseProject}
@@ -1262,13 +1487,13 @@ export function NewTaskDraftScreen(props: {
         accessibilityLabel={`Environment: ${selectedEnvironmentLabel}`}
         chevronDirection="right"
         disabled={isComposerInteractionLocked || voiceInput.isBusy}
-        iconNode={
+        renderIcon={(size) => (
           <EnvironmentMachineSymbol
             kind={resolveEnvironmentMachineKind(selectedEnvironmentServerConfig)}
-            size={16}
+            size={size}
             tintColorClassName="accent-icon-muted"
           />
-        }
+        )}
         label={`on ${selectedEnvironmentLabel}`}
         maxWidth={260}
         onPress={
@@ -1303,12 +1528,13 @@ export function NewTaskDraftScreen(props: {
         accessibilityHint={`Switches to ${flow.workspaceMode === "local" ? "a new worktree" : "the current checkout"}`}
         accessibilityLabel={workspaceLabel}
         disabled={isComposerInteractionLocked || voiceInput.isBusy}
-        iconNode={
+        renderIcon={(size) => (
           <NewTaskWorkspaceIcon
             workspaceMode={flow.workspaceMode}
             worktreePath={flow.selectedWorktreePath}
+            size={size}
           />
-        }
+        )}
         label={workspaceLabel}
         maxWidth={flow.workspaceMode === "local" ? 220 : 148}
         onPress={() => flow.setWorkspaceMode(flow.workspaceMode === "local" ? "worktree" : "local")}
@@ -1328,7 +1554,12 @@ export function NewTaskDraftScreen(props: {
   );
 
   const composerDock = (
-    <View className="bg-sheet px-[12px] pt-1" style={{ paddingBottom: controlsBottomPadding }}>
+    <View
+      className={
+        Platform.OS === "android" ? "bg-sheet-solid px-[12px] pt-1" : "bg-sheet px-[12px] pt-1"
+      }
+      style={{ paddingBottom: controlsBottomPadding }}
+    >
       {!voiceInput.isBusy &&
       composerMenu.trigger &&
       (composerMenu.items.length > 0 || composerMenu.trigger.kind === "pull-request") ? (
@@ -1339,6 +1570,32 @@ export function NewTaskDraftScreen(props: {
             isLoading={composerMenu.isLoading}
             error={composerMenu.error}
             onSelect={composerMenu.onSelect}
+          />
+        </View>
+      ) : null}
+      {/* Above the workspace controls so they keep their place relative to
+          the composer when the banner goes away once the clone lands. */}
+      {projectClone && projectClone.phase !== "done" && selectedProject ? (
+        <View className="px-1 pb-2">
+          <ProjectCloneBanner
+            clone={projectClone}
+            onCancel={() =>
+              void runCloneAction("Failed to cancel clone", () =>
+                cancelProjectClone({
+                  environmentId: selectedProject.environmentId,
+                  input: { projectId: selectedProject.id },
+                }),
+              )
+            }
+            onRetry={() =>
+              void runCloneAction("Failed to retry clone", () =>
+                retryProjectClone({
+                  environmentId: selectedProject.environmentId,
+                  input: { projectId: selectedProject.id },
+                }),
+              )
+            }
+            onRemove={() => void removeClonedProject()}
           />
         </View>
       ) : null}
@@ -1436,12 +1693,12 @@ export function NewTaskDraftScreen(props: {
                         accessibilityLabel="Model and reasoning settings"
                         disabled={isComposerInteractionLocked}
                         emphasized
-                        iconNode={
+                        renderIcon={(size) => (
                           <ProviderIcon
                             provider={flow.selectedModelOption?.providerDriver}
-                            size={16}
+                            size={size}
                           />
-                        }
+                        )}
                         label={flow.selectedModelOption?.label ?? "Choose model"}
                         maxWidth="100%"
                         onPress={settingsSheetPresentation.open}
@@ -1483,13 +1740,19 @@ export function NewTaskDraftScreen(props: {
                 <ComposerActionButton
                   accessibilityLabel={
                     attachmentBlockReason ??
-                    (flow.submitting
-                      ? "Starting task"
-                      : attachmentsUploading
-                        ? "Queue task, sends when uploads finish"
-                        : environmentConnected
-                          ? "Start task"
-                          : "Queue task")
+                    (cloneBlocksStart
+                      ? projectClone === null || projectClone.phase === "running"
+                        ? "Cloning repository"
+                        : "Repository not cloned"
+                      : pendingPastedTextAttachmentCount > 0
+                        ? "Attaching pasted text"
+                        : flow.submitting
+                          ? "Starting task"
+                          : attachmentsUploading
+                            ? "Queue task, sends when uploads finish"
+                            : environmentConnected
+                              ? "Start task"
+                              : "Queue task")
                   }
                   disabled={!canStart}
                   icon={queuesInsteadOfStarting ? "tray.and.arrow.up" : "arrow.up"}
@@ -1510,15 +1773,17 @@ export function NewTaskDraftScreen(props: {
     return (
       <View className="flex-1 bg-sheet" collapsable={false}>
         <NativeStackScreenOptions options={{ headerShown: false }} />
-        <AndroidScreenHeader title="New task" onBack={closeNewTask} />
-        {heroViewport}
+        <AndroidScreenHeader title="New thread" hideBottomBorder onBack={closeNewTask} />
+        <MaterialScreenContent>
+          {heroViewport}
 
-        <KeyboardStickyView
-          style={{ position: "absolute", bottom: 0, left: 0, right: 0 }}
-          offset={{ closed: 0, opened: keyboardOpenedOffset }}
-        >
-          {composerDock}
-        </KeyboardStickyView>
+          <KeyboardStickyView
+            style={{ position: "absolute", bottom: 0, left: 0, right: 0 }}
+            offset={{ closed: 0, opened: keyboardOpenedOffset }}
+          >
+            {composerDock}
+          </KeyboardStickyView>
+        </MaterialScreenContent>
       </View>
     );
   }

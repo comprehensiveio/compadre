@@ -204,18 +204,18 @@ export function estimateTurnCostUsd(
     inputTokens ?? 0,
     usage["gen_ai.usage.cache_read.input_tokens"] ?? 0,
   );
-  const priced = priceUsage(
-    table,
+  const priced = priceUsage(table, {
     model,
-    {
+    fast: false,
+    reportedCostUsd: null,
+    totals: {
       uncachedInputTokens: Math.max(0, (inputTokens ?? 0) - cachedInputTokens),
       cachedInputTokens,
       cacheCreationTokens: 0,
       outputTokens: outputTokens ?? 0,
       reasoningTokens: usage["gen_ai.usage.reasoning_tokens"] ?? 0,
     },
-    null,
-  );
+  });
   return priced.costSource === "unpriced" ? null : priced.costUsd;
 }
 

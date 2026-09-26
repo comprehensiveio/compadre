@@ -27,6 +27,8 @@ describe.runIf(postgresUrl)("PostgreSQL persistence", () => {
         WHERE table_schema = current_schema()
         ORDER BY table_name
       `;
+      const namespace = yield* sql<{ name: string }>`SELECT current_schema() AS name`;
+      assert.strictEqual(namespace[0]?.name, "compadre_t3");
       const names = new Set(rows.map((row) => row.tableName));
       for (const expected of [
         "auth_pairing_links",
@@ -56,6 +58,7 @@ describe.runIf(postgresUrl)("PostgreSQL persistence", () => {
           { migrationId: 1, name: "compadre_initial" },
           { migrationId: 2, name: "native_thread_streams" },
           { migrationId: 3, name: "upstream_schema" },
+          { migrationId: 4, name: "upstream_title_and_review_state" },
         ],
       );
     }).pipe(Effect.provide(PersistenceLive())),
@@ -313,7 +316,7 @@ describe.runIf(postgresUrl)("PostgreSQL persistence", () => {
               ]) {
                 yield* sql`DROP TABLE ${sql(table)} CASCADE`;
               }
-              assert.strictEqual((yield* runPostgresMigrations).length, 3);
+              assert.strictEqual((yield* runPostgresMigrations).length, 4);
               assert.strictEqual((yield* runPostgresMigrations).length, 0);
               const namespace = yield* sql<{ name: string }>`SELECT current_schema() AS name`;
               assert.strictEqual(namespace[0]?.name, "compadre_t3");

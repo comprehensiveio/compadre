@@ -1,6 +1,6 @@
 import * as Clock from "effect/Clock";
 import * as Console from "effect/Console";
-import * as FileSystem from "effect/FileSystem";
+import * as ByteSize from "effect/ByteSize";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as Data from "effect/Data";
@@ -392,8 +392,8 @@ function proxyWebSocketRequest(input: {
       const writeDownstream = yield* downstream.writer;
       const writeUpstream = yield* upstream.writer;
       yield* Effect.raceFirst(
-        downstream.runRaw((message) => writeUpstream(message)),
-        upstream.runRaw((message) => writeDownstream(message)),
+        Stream.runForEach(Socket.toStream(downstream), (message) => writeUpstream.write(message)),
+        Stream.runForEach(Socket.toStream(upstream), (message) => writeDownstream.write(message)),
       );
       return HttpServerResponse.empty({ status: 101 });
     }),
@@ -458,7 +458,7 @@ export const compadrePreviewGatewayLayer = Layer.unwrap(
                 return HttpServerResponse.empty({ status: 403 });
               }
               const observation = yield* request.json.pipe(
-                Effect.provideService(HttpIncomingMessage.MaxBodySize, FileSystem.Size(8192)),
+                Effect.provideService(HttpIncomingMessage.MaxBodySize, ByteSize.bytes(8192)),
                 Effect.flatMap(Schema.decodeUnknownEffect(PreviewBrowserObservation)),
                 Effect.option,
               );

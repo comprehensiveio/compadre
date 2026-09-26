@@ -70,7 +70,8 @@ it.effect("direct sockets bind input to the ticket, stream output, and reject ti
     );
     const server = yield* HttpServer.HttpServer;
     const address = server.address;
-    if (address._tag !== "TcpAddress") throw new Error("Expected TCP server");
+    if (address._tag !== "InetAddressV4" && address._tag !== "InetAddressV6")
+      throw new Error("Expected TCP server");
     const grant = terminalTickets.issue({
       threadId: "native",
       terminalId: "bound",

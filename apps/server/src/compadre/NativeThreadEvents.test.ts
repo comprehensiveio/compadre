@@ -132,6 +132,64 @@ async function seed(system: Awaited<ReturnType<typeof createOrchestrationSystem>
 }
 
 describe("native thread replication", () => {
+  it("persists reasoning from a worker once across replay and fences old generations", async () => {
+    const threadId = ThreadId.make(NodeCrypto.randomUUID());
+    const sourceThreadId = ThreadId.make(NodeCrypto.randomUUID());
+    const source = await createOrchestrationSystem();
+    const central = await createOrchestrationSystem(true);
+    try {
+      await seed(source, sourceThreadId);
+      await seed(central, threadId);
+      await central.run(
+        bindNativeThreadStream({
+          threadId,
+          sourceThreadId,
+          epoch: 2,
+          sourceSequence: 0,
+          checkpointOffset: 0,
+        }),
+      );
+      await source.run(
+        source.engine.dispatch({
+          type: "thread.message.reasoning.delta",
+          commandId: CommandId.make("reasoning-delta"),
+          threadId: sourceThreadId,
+          messageId: MessageId.make("thought"),
+          delta: "Checking the fixture",
+          createdAt,
+        }),
+      );
+      await source.run(
+        source.engine.dispatch({
+          type: "thread.message.reasoning.complete",
+          commandId: CommandId.make("reasoning-done"),
+          threadId: sourceThreadId,
+          messageId: MessageId.make("thought"),
+          createdAt,
+        }),
+      );
+      const page = await source.run(readNativeEventPage(source.engine, sourceThreadId, 0));
+      const commands = page.events.flatMap((event) => {
+        const command = mapNativeThreadEvent(sourceThreadId, threadId, event, 2);
+        return command ? [command] : [];
+      });
+      expect(commands).toHaveLength(2);
+      await expect(
+        central.run(central.engine.dispatch({ ...commands[0]!, epoch: 1 })),
+      ).rejects.toThrow();
+      for (const command of commands) await central.run(central.engine.dispatch(command));
+      const sequence = await central.run(central.engine.latestSequence);
+      for (const command of commands) await central.run(central.engine.dispatch(command));
+      expect(await central.run(central.engine.latestSequence)).toBe(sequence);
+      expect(
+        (await central.readModel()).threads.find((thread) => thread.id === threadId)?.messages,
+      ).toMatchObject([{ role: "reasoning", text: "Checking the fixture", streaming: false }]);
+    } finally {
+      await source.dispose();
+      await central.dispose();
+    }
+  });
+
   it("persists worker branch discovery without importing paths or overwriting explicit PR links", async () => {
     const threadId = ThreadId.make(NodeCrypto.randomUUID());
     const sourceThreadId = ThreadId.make(NodeCrypto.randomUUID());

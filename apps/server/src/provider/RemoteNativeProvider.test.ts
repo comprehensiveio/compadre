@@ -23,6 +23,7 @@ const options = (
 const manifestService = (read: () => ModelManifestData): ModelManifest["Service"] => ({
   current: Effect.sync(read),
   refresh: Effect.sync(read),
+  forceRefresh: Effect.sync(read),
   refreshInBackground: Effect.void,
 });
 const nativeModel = (model: string) => ({

@@ -96,18 +96,18 @@ function TriggeredPromptRow({
         <div className="min-w-0 flex-1 space-y-1">
           <div className="flex min-h-5 items-center gap-2">
             <h3 className="text-sm font-medium text-foreground">{record.name}</h3>
-            <span className="inline-flex items-center gap-1 rounded-md border border-primary/30 bg-primary/10 px-1 py-0.5 text-[10px] text-primary">
+            <span className="inline-flex items-center gap-1 rounded-md border border-primary/30 bg-primary/10 px-1 py-0.5 text-3xs text-primary">
               <AlarmClockIcon className="size-2.5" aria-hidden />
               cron
             </span>
             {!record.enabled ? (
-              <span className="rounded-md border border-border/70 px-1 py-0.5 text-[10px] text-muted-foreground">
+              <span className="rounded-md border border-border/70 px-1 py-0.5 text-3xs text-muted-foreground">
                 Paused
               </span>
             ) : null}
           </div>
           <p className="line-clamp-2 text-xs text-muted-foreground">{record.prompt}</p>
-          <p className="text-[11px] text-muted-foreground/70">
+          <p className="text-2xs text-muted-foreground/70">
             <code className="font-mono">{describeTriggerSchedule(record)}</code>
             <span aria-hidden> · </span>
             {DELIVERY_MODE_LABELS[record.deliveryMode]}
@@ -195,97 +195,101 @@ function TriggeredPromptDialog({
             The agent receives the prompt verbatim on each fire — it never sees the trigger.
           </DialogDescription>
         </DialogHeader>
-        <DialogPanel className="space-y-4">
-          <DraftField label="Name">
-            <Input
-              value={draft.name}
-              onChange={(event) => set("name", event.target.value)}
-              placeholder="Daily standup summary"
-              disabled={isSaving}
-              autoFocus
-            />
-          </DraftField>
-          <DraftField label="Prompt" hint="sent to the agent verbatim">
-            <Textarea
-              value={draft.prompt}
-              onChange={(event) => set("prompt", event.target.value)}
-              placeholder="Summarize yesterday's merged PRs and open incidents…"
-              rows={4}
-              disabled={isSaving}
-            />
-          </DraftField>
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-            <DraftField label="Cron expression" hint="e.g. 0 9 * * 1-5">
+        <DialogPanel>
+          <div className="space-y-4">
+            <DraftField label="Name">
               <Input
-                value={draft.cronExpression}
-                onChange={(event) => set("cronExpression", event.target.value)}
-                placeholder="0 9 * * 1-5"
-                className="font-mono"
+                value={draft.name}
+                onChange={(event) => set("name", event.target.value)}
+                placeholder="Daily standup summary"
+                disabled={isSaving}
+                autoFocus
+              />
+            </DraftField>
+            <DraftField label="Prompt" hint="sent to the agent verbatim">
+              <Textarea
+                value={draft.prompt}
+                onChange={(event) => set("prompt", event.target.value)}
+                placeholder="Summarize yesterday's merged PRs and open incidents…"
+                rows={4}
                 disabled={isSaving}
               />
             </DraftField>
-            <DraftField label="Timezone" hint="optional IANA, defaults to UTC">
-              <Input
-                value={draft.timezone}
-                onChange={(event) => set("timezone", event.target.value)}
-                placeholder="America/Chicago"
-                disabled={isSaving}
-              />
-            </DraftField>
-          </div>
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-            {draft.deliveryMode === "existing_thread" ? (
-              <DraftField label="Compadre thread" hint="paste the thread's URL">
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+              <DraftField label="Cron expression" hint="e.g. 0 9 * * 1-5">
                 <Input
-                  value={draft.targetThread}
-                  onChange={(event) => set("targetThread", event.target.value)}
-                  placeholder="https://compadre.comprehensive.io/…/thread-id"
+                  value={draft.cronExpression}
+                  onChange={(event) => set("cronExpression", event.target.value)}
+                  placeholder="0 9 * * 1-5"
+                  font="mono"
                   disabled={isSaving}
                 />
               </DraftField>
-            ) : (
-              <DraftField
-                label="Slack channel ID"
-                {...(draft.deliveryMode === "new_thread"
-                  ? { hint: "optional — blank runs web-only" }
-                  : {})}
-              >
+              <DraftField label="Timezone" hint="optional IANA, defaults to UTC">
                 <Input
-                  value={draft.slackChannelId}
-                  onChange={(event) => set("slackChannelId", event.target.value)}
-                  placeholder="C0123456789"
-                  className="font-mono"
+                  value={draft.timezone}
+                  onChange={(event) => set("timezone", event.target.value)}
+                  placeholder="America/Chicago"
                   disabled={isSaving}
                 />
               </DraftField>
-            )}
-            <DraftField label="Thread behavior">
-              <Select
-                value={draft.deliveryMode}
-                onValueChange={(value) => set("deliveryMode", value as TriggeredPromptDeliveryMode)}
-                disabled={isSaving}
-              >
-                <SelectTrigger size="sm" className="w-full" aria-label="Thread behavior">
-                  <SelectValue>{DELIVERY_MODE_LABELS[draft.deliveryMode]}</SelectValue>
-                </SelectTrigger>
-                <SelectPopup align="end" alignItemWithTrigger={false} className="min-w-72">
-                  {(Object.keys(DELIVERY_MODE_LABELS) as TriggeredPromptDeliveryMode[]).map(
-                    (mode) => (
-                      <SelectItem key={mode} value={mode}>
-                        <span className="block">
-                          <span className="block text-sm">{DELIVERY_MODE_LABELS[mode]}</span>
-                          <span className="block text-xs text-muted-foreground">
-                            {DELIVERY_MODE_DESCRIPTIONS[mode]}
+            </div>
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+              {draft.deliveryMode === "existing_thread" ? (
+                <DraftField label="Compadre thread" hint="paste the thread's URL">
+                  <Input
+                    value={draft.targetThread}
+                    onChange={(event) => set("targetThread", event.target.value)}
+                    placeholder="https://compadre.comprehensive.io/…/thread-id"
+                    disabled={isSaving}
+                  />
+                </DraftField>
+              ) : (
+                <DraftField
+                  label="Slack channel ID"
+                  {...(draft.deliveryMode === "new_thread"
+                    ? { hint: "optional — blank runs web-only" }
+                    : {})}
+                >
+                  <Input
+                    value={draft.slackChannelId}
+                    onChange={(event) => set("slackChannelId", event.target.value)}
+                    placeholder="C0123456789"
+                    font="mono"
+                    disabled={isSaving}
+                  />
+                </DraftField>
+              )}
+              <DraftField label="Thread behavior">
+                <Select
+                  value={draft.deliveryMode}
+                  onValueChange={(value) =>
+                    set("deliveryMode", value as TriggeredPromptDeliveryMode)
+                  }
+                  disabled={isSaving}
+                >
+                  <SelectTrigger size="sm" className="w-full" aria-label="Thread behavior">
+                    <SelectValue>{DELIVERY_MODE_LABELS[draft.deliveryMode]}</SelectValue>
+                  </SelectTrigger>
+                  <SelectPopup align="end" alignItemWithTrigger={false} className="min-w-72">
+                    {(Object.keys(DELIVERY_MODE_LABELS) as TriggeredPromptDeliveryMode[]).map(
+                      (mode) => (
+                        <SelectItem key={mode} value={mode}>
+                          <span className="block">
+                            <span className="block text-sm">{DELIVERY_MODE_LABELS[mode]}</span>
+                            <span className="block text-xs text-muted-foreground">
+                              {DELIVERY_MODE_DESCRIPTIONS[mode]}
+                            </span>
                           </span>
-                        </span>
-                      </SelectItem>
-                    ),
-                  )}
-                </SelectPopup>
-              </Select>
-            </DraftField>
+                        </SelectItem>
+                      ),
+                    )}
+                  </SelectPopup>
+                </Select>
+              </DraftField>
+            </div>
+            {validationError ? <p className="text-xs text-destructive">{validationError}</p> : null}
           </div>
-          {validationError ? <p className="text-xs text-destructive">{validationError}</p> : null}
         </DialogPanel>
         <DialogFooter variant="bare">
           <Button variant="outline" disabled={isSaving} onClick={() => onOpenChange(false)}>

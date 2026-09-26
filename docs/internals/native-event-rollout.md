@@ -12,7 +12,7 @@ That journal is the source outbox. The controller reads it using the Durable
 Streams catch-up/long-poll protocol and forwards bounded batches to central T3.
 There is no second copy of the conversation payload in controller Postgres.
 
-Central T3 imports assistant messages, sessions, activities, plans, checkpoint
+Central T3 imports assistant and reasoning messages, sessions, activities, plans, checkpoint
 summaries and selected branch observations through its ordinary command engine. It preserves native payloads and
 maps environment-local identifiers. Event append, projection, delivery ownership
 validation, and the command receipt commit in one transaction. Replayed commands
@@ -42,6 +42,26 @@ claim. Central PUT claims a binding; central POST applies a versioned batch.
 Those write operations require the controller credential. Clients continue
 reading their existing central T3 projections and never wake a worker to open
 history.
+
+### Reasoning and title state
+
+Reasoning messages follow the same native identity translation, immutable payload,
+receipt, replay, and epoch-fencing rules as assistant messages. Upstream's separate
+reasoning transcript replaces the custom `reasoning.updated` producer. Historical
+activities remain readable for old workers. The controller must first accept the
+new snapshot role and project it to its external stream; deploy that compatibility
+change before central or worker upgrades. Otherwise its old decoder rejects the
+whole snapshot. Rollout order is controller compatibility, central migration and
+server, then the packaged worker for fresh/restored generations.
+
+Title generation and refinement update central-owned thread metadata; worker title
+observations remain excluded. New `thread.auto-settle-set` events are also excluded:
+organization is user-owned in Compadre, and the incoming shared thread opt-out has
+no personal adapter yet. Hosted capability discovery and command normalization
+reject that opt-out. Active reorder, question attachments, stack mutation, and
+conversation/checkpoint rollback retain their existing hosted gates. Automatic
+storage cleanup is not exposed or run centrally: workspace retention belongs to
+the controller and Modal, and cleanup-setting writes fail explicitly.
 
 ### Pull request associations
 

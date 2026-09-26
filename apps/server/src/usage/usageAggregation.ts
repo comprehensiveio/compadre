@@ -112,7 +112,7 @@ export class UsageAggregator {
    * can derive per-window facts (distinct sessions, for one) from the records
    * that landed rather than everything the mtime prefilter happened to admit.
    */
-  add(record: UsageRecord): boolean {
+  add(record: UsageRecord, sourcePath?: string): boolean {
     if (record.dedupeKey !== null) {
       if (this.#seen.has(record.dedupeKey)) {
         this.#duplicatesDropped += 1;
@@ -146,7 +146,7 @@ export class UsageAggregator {
             this.#hourlyWindow.sinceTimeMs +
               Math.floor((record.timestampMs - this.#hourlyWindow.sinceTimeMs) / HOUR_MS) * HOUR_MS,
           ).toISOString();
-    const key = `${day}\u0000${hourStart}\u0000${record.provider}\u0000${record.model}\u0000${record.userId ?? ""}\u0000${record.userDisplayName ?? ""}`;
+    const key = `${day}\u0000${hourStart}\u0000${record.provider}\u0000${record.model}\u0000${sourcePath ?? ""}\u0000${record.userId ?? ""}\u0000${record.userDisplayName ?? ""}`;
     let bucket = this.#buckets.get(key);
     if (bucket === undefined) {
       bucket = {
@@ -161,20 +161,13 @@ export class UsageAggregator {
       this.#buckets.set(key, bucket);
     }
 
-    const priced = priceUsage(
-      this.#options.rates,
-      record.model,
-      record.totals,
-      record.reportedCostUsd,
-      this.#options.priceOverrides,
-    );
+    const priced = priceUsage(this.#options.rates, record, this.#options.priceOverrides);
 
     bucket.totals = addTotals(bucket.totals, record.totals);
     bucket.costUsd += priced.costUsd;
     bucket.cacheSavingsUsd += cacheSavingsUsd(
       this.#options.rates,
-      record.model,
-      record.totals,
+      record,
       this.#options.priceOverrides,
     );
     bucket.records += 1;
@@ -192,6 +185,7 @@ export class UsageAggregator {
         hourStart = "",
         provider = "",
         model = "",
+        sourcePath = "",
         userId = "",
         userDisplayName = "",
       ] = key.split("\u0000");
@@ -202,6 +196,7 @@ export class UsageAggregator {
         model,
         ...(userId === "" ? {} : { userId }),
         ...(userDisplayName === "" ? {} : { userDisplayName }),
+        ...(sourcePath === "" ? {} : { sourcePath }),
         totals: bucket.totals,
         costUsd: bucket.costUsd,
         cacheSavingsUsd: bucket.cacheSavingsUsd,

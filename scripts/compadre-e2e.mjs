@@ -312,10 +312,10 @@ try {
   );
   await run(
     "worker-package",
-    "npm",
-    ["pack", "--ignore-scripts", "--pack-destination", dir],
+    "node",
+    [NodePath.join(root, "scripts/build-compadre-worker.ts"), dir],
     base,
-    NodePath.join(root, "apps/server"),
+    root,
   );
   const archive =
     option("--worker-archive") ??
@@ -329,6 +329,7 @@ try {
   const controllerEnv = {
     ...base,
     ...credentials,
+    COMPADRE_CODEX_AUTH_ENCRYPTION_KEY: NodeCrypto.randomBytes(32).toString("base64"),
     ...awsEnv,
     ...tunnelDnsEnv,
     PORT: String(apiPort),
