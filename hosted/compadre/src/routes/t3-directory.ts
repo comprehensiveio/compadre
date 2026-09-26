@@ -411,7 +411,7 @@ function nativeModelSelection(
       model:
         model && model !== "codex"
           ? model
-          : process.env.COMPADRE_T3_CODEX_MODEL?.trim() || "gpt-5.6-sol",
+          : process.env.COMPADRE_T3_CODEX_MODEL?.trim() || "gpt-6-sol",
       ...(options.length > 0 ? { options } : {}),
     };
   }

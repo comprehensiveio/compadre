@@ -117,10 +117,10 @@ test("delivers only terminal assistant text and returns a native T3 deep link", 
   );
 });
 
-test("defaults un-routed Slack conversations to Codex GPT-5.6 Sol", () => {
+test("defaults un-routed Slack conversations to Codex GPT-6 Sol", () => {
   assert.deepEqual(t3ModelSelectionForProfile(undefined), {
     instanceId: "codex",
-    model: "gpt-5.6-sol",
+    model: "gpt-6-sol",
   });
 });
 
