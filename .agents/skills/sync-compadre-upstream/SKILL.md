@@ -15,7 +15,11 @@ an equivalent custom implementation.
 Follow the target repository's AGENTS.md and load its
 `.agents/skills/change-compadre-stack/SKILL.md`. Use that skill's fork and
 database guides for integration and its deployment guide only when relevant.
-Resolve paths below relative to the Compadre checkout.
+Resolve paths below relative to the Compadre checkout. Explicitly target
+`comprehensiveio/compadre` for GitHub CLI/API PR, check, and release operations:
+a fork checkout's CLI default can resolve to upstream, where the same PR numbers
+refer to unrelated changes. Confirm the returned repository and head SHA before
+using a result as verification evidence or updating a PR body.
 
 Inspect the current branch, dirty files, worktrees, remote URLs, and intended
 base. Fetch upstream main and record the exact upstream and Compadre commits.
@@ -216,6 +220,13 @@ Read/write SQL wrappers must share transaction context where nested operations
 need atomicity. Serialize tests that intentionally use the same disposable
 Postgres schema, or give them independent databases.
 
+Worker archives extracted without an npm install must carry the current external
+runtime dependency closure, including workspace patches. Reuse upstream packaging
+helpers rather than relying on dependencies baked into an older worker image.
+Cross-platform staging alone does not build native addons for the target Node ABI:
+verify a clean Linux archive by starting the server and a real pseudoterminal, not
+just by running `--help`, before spending time on cloud provisioning.
+
 When shifting incoming migration numbers, update tests that stop at explicit migration IDs too. Keep inheritance tests independent of upstream default values when Compadre intentionally changes those defaults. Register standalone operator commands with upstream dead-code tooling and use the workspace test runner for new helper tests. Large integrations can exceed GitHub path-filter limits, so verify that controller CI actually starts even when its files fall beyond the first paths GitHub considers.
 
 Run focused verification permitted by AGENTS.md. Cover changed backend behavior,
@@ -230,6 +241,24 @@ Before recommending merge/deployment after a substantial integration, use
 the assembled product. The same tool is intended for ordinary Compadre updates.
 Compose owns isolated Postgres, Temporal, and local S3; host processes run the
 web/central server and controller, and real Modal runs the packaged integration.
+Before testing or handing a browser to the maintainer, identify the running
+checkout, branch/revision, local dirty changes, web origin, and application mode.
+Use the retained launcher state and process configuration; the app name or a
+successful page load does not establish that the intended build is running.
+Open the authenticated **hosted Compadre** environment for hosted E2E and final
+review. Standalone `vp run dev` without hosted authentication intentionally hides
+Compadre identity, Slack, and operations controls. If standalone providers also
+need testing, open that app separately and label its origin and verification
+scope; return the maintainer's review window to the hosted app afterward.
+
+Exercise populated hosted UI fixtures including a participant photo, a Slack-linked
+thread, identity filters, search/new-thread controls, and Thread environments
+navigation and return. Verify the relevant layouts and reload, comparing Compadre's
+pre-sync UI as well as upstream's. Initials-only users and web-origin threads cannot
+prove photo or Slack-link preservation. Run the repository's sidebar UI regression
+check when available. Retain the hosted launcher and authenticated browser while
+the maintainer reviews; do not replace them with a standalone instance at handoff.
+
 Verify the archive fingerprint and both directions of service connectivity.
 Use the runbook’s storage stop/start and terminal reconnect probes, plus its
 resume command, rather than assuming a mounted object-store volume persists.
@@ -238,6 +267,16 @@ worker restore. Check final text remains visible when generated artifacts arrive
 Synthetic local identities exercise the normal session exchange but do not
 establish Slack OIDC correctness. Local S3 does not prove production IAM or
 worker access to object URLs. State these limits explicitly.
+
+Check the generated provider prompt as well as successful attachment reads:
+central filesystem paths must not be advertised inside a remote worker. Preserve
+the hosted adapter's remote attachment-path capability and let the worker add
+its own paths. Verify actual downloaded output bytes through the product's
+artifact collection path; do not assume an explicit artifact tool exists.
+After deployment, prove controller-to-central connectivity on the replacement
+instance before treating a canary failure as a code regression. Public HTTP
+readiness can precede private routing convergence; retain failed-run evidence
+and require a terminal successful retry after convergence.
 
 Require at least one real browser-to-Modal-to-persisted-browser turn, reload,
 and applicable multi-user behavior before claiming end-to-end validation.
