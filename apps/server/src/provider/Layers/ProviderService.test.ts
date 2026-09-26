@@ -988,6 +988,56 @@ it.effect("ProviderServiceLive rejects new sessions for disabled custom instance
 
 const routing = makeProviderServiceLayer();
 
+const remoteAttachments = makeFakeCodexAdapter();
+const remoteAttachmentRouting = makeProviderServiceLayer({
+  registry: makeStaticInstanceRegistry([
+    [
+      codexInstanceId,
+      {
+        ...remoteAttachments.adapter,
+        capabilities: {
+          ...remoteAttachments.adapter.capabilities,
+          attachmentPromptPaths: "remote",
+        },
+      },
+    ],
+  ]),
+});
+remoteAttachmentRouting.layer("Remote attachment prompts", (it) => {
+  it.effect(
+    "forwards files without central paths, preserving caller text and attachment-only turns",
+    () =>
+      Effect.gen(function* () {
+        const provider = yield* ProviderService.ProviderService;
+        const threadId = asThreadId("remote-attachment-paths");
+        yield* provider.startSession(threadId, {
+          provider: CODEX_DRIVER,
+          providerInstanceId: codexInstanceId,
+          threadId,
+          runtimeMode: "full-access",
+        });
+        const attachments = [
+          {
+            type: "file" as const,
+            id: "remote-12345678-1234-1234-1234-123456789abc-txt",
+            name: "proof.txt",
+            mimeType: "text/plain",
+            sizeBytes: 12,
+          },
+        ];
+        const text =
+          'Read the proof. Keep this quoted text: [Attached file "example" is saved at: /example]';
+        for (const input of [text, undefined]) {
+          remoteAttachments.sendTurn.mockClear();
+          yield* provider.sendTurn({ threadId, ...(input ? { input } : {}), attachments });
+          const forwarded = remoteAttachments.sendTurn.mock.calls[0]?.[0];
+          assert.equal(forwarded?.input, input);
+          assert.deepStrictEqual(forwarded?.attachments, attachments);
+        }
+      }),
+  );
+});
+
 const customCompactionDriver = ProviderDriverKind.make("custom-compaction-provider");
 const nativeCompactionInstanceId = ProviderInstanceId.make("native-compaction");
 const slashCompactionInstanceId = ProviderInstanceId.make("slash-compaction");
@@ -4726,6 +4776,13 @@ validation.layer("ProviderServiceLive validation", (it) => {
   it.effect("rejects input that leaves no room for pasted-text attachment context", () =>
     Effect.gen(function* () {
       const provider = yield* ProviderService.ProviderService;
+      const threadId = asThreadId("thread-pasted-text-context-limit");
+      yield* provider.startSession(threadId, {
+        provider: CODEX_DRIVER,
+        providerInstanceId: codexInstanceId,
+        threadId,
+        runtimeMode: "full-access",
+      });
       const attachment = {
         type: "file" as const,
         id: "thread-attach-12345678-1234-1234-1234-123456789abc-txt",
@@ -4738,7 +4795,7 @@ validation.layer("ProviderServiceLive validation", (it) => {
 
       const failure = yield* provider
         .sendTurn({
-          threadId: asThreadId("thread-pasted-text-context-limit"),
+          threadId,
           input: "x".repeat(PROVIDER_SEND_TURN_MAX_INPUT_CHARS),
           attachments: [attachment],
         })

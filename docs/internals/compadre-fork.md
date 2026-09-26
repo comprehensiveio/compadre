@@ -62,6 +62,14 @@ crosses the journal boundary, with project identity remapped centrally; hosted
 central discovery/settlement must not consult Render's checkout for that branch.
 See [native delivery ownership and rollout](native-event-rollout.md#pull-request-associations).
 
+### Attachment prompts
+
+Hosted adapters declare `attachmentPromptPaths: "remote"`. Central ProviderService
+forwards attachment bytes and context without appending Render filesystem paths;
+the worker adds paths after saving its own attachments. Keep local/desktop path
+injection and captured-window accessibility context intact. Do not strip paths
+from caller text: only the execution environment owns generated attachment paths.
+
 ### Model discovery
 
 Hosted usage reads centrally replicated `context-window.updated` activities.

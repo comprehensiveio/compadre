@@ -481,7 +481,7 @@ export function makeCompadreAdapter(options: CompadreAdapterOptions) {
 
     return {
       provider: runtimeProvider,
-      capabilities: { sessionModelSwitch: "in-session" },
+      capabilities: { sessionModelSwitch: "in-session", attachmentPromptPaths: "remote" },
       startSession,
       sendTurn,
       interruptTurn,

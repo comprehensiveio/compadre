@@ -282,6 +282,7 @@ it.layer(Layer.merge(NodeServices.layer, FetchHttpClient.layer))("CompadreAdapte
           cwd: process.cwd(),
           runtimeMode: "full-access",
         });
+        assert.equal(adapter.capabilities.attachmentPromptPaths, "remote");
         yield* adapter.sendTurn({
           threadId,
           attachments: [
