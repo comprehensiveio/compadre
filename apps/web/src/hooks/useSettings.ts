@@ -9,6 +9,7 @@
  * access is intentionally named as such so environment-sensitive consumers
  * cannot silently read the wrong server's settings.
  */
+import { WEB_CLIENT_SETTINGS_DEFAULTS } from "../clientSettingsDefaults";
 import { useCallback, useMemo, useSyncExternalStore } from "react";
 import { useAtomValue } from "@effect/atom-react";
 import {
@@ -20,7 +21,6 @@ import {
 import {
   type ClientSettingsPatch,
   type ClientSettings,
-  DEFAULT_CLIENT_SETTINGS,
   type EnvironmentIdentificationMode,
   type UnifiedSettings,
 } from "@t3tools/contracts/settings";
@@ -53,7 +53,7 @@ type UnifiedSettingsPatch = ServerSettingsPatch & ClientSettingsPatch;
 const clientSettingsListeners = new Set<() => void>();
 const clientSettingsHydrationListeners = new Set<() => void>();
 type ClientSettingsHydrationStatus = "pending" | "ready" | "failed" | "retrying";
-let clientSettingsSnapshot = DEFAULT_CLIENT_SETTINGS;
+let clientSettingsSnapshot = WEB_CLIENT_SETTINGS_DEFAULTS;
 let clientSettingsHydrationStatus: ClientSettingsHydrationStatus = "pending";
 let clientSettingsHydrationPromise: Promise<void> | null = null;
 let clientSettingsHydrationGeneration = 0;
@@ -134,7 +134,7 @@ async function hydrateClientSettings(): Promise<void> {
         return;
       }
       if (persistedSettings) {
-        replaceClientSettingsSnapshot({ ...DEFAULT_CLIENT_SETTINGS, ...persistedSettings });
+        replaceClientSettingsSnapshot({ ...WEB_CLIENT_SETTINGS_DEFAULTS, ...persistedSettings });
       }
       setClientSettingsHydrationStatus("ready");
     } catch (error) {
@@ -296,7 +296,7 @@ function useClientSettingsValue(): ClientSettings {
   return useSyncExternalStore(
     subscribeClientSettings,
     getClientSettingsSnapshot,
-    () => DEFAULT_CLIENT_SETTINGS,
+    () => WEB_CLIENT_SETTINGS_DEFAULTS,
   );
 }
 
@@ -507,7 +507,7 @@ export function useUpdateClientSettings() {
 
 export function __resetClientSettingsPersistenceForTests(): void {
   clientSettingsHydrationGeneration += 1;
-  clientSettingsSnapshot = DEFAULT_CLIENT_SETTINGS;
+  clientSettingsSnapshot = WEB_CLIENT_SETTINGS_DEFAULTS;
   clientSettingsHydrationStatus = "pending";
   clientSettingsHydrationPromise = null;
   clientSettingsPersistenceQueue = Promise.resolve();
