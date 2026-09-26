@@ -52,6 +52,8 @@ export interface ProviderAdapterCapabilities {
   readonly promptlessTurnContinuation?: boolean;
   /** False when native conversation history cannot be rewound. */
   readonly supportsConversationRollback?: boolean;
+  /** Remote transports add attachment paths on the machine that executes the turn. */
+  readonly attachmentPromptPaths?: "local" | "remote";
 }
 
 export interface ProviderThreadTurnSnapshot {

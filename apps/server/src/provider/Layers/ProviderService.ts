@@ -1602,7 +1602,13 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
       });
     }
 
-    // Every attachment gets an on-disk path in the prompt so the model's tools
+    let routed = yield* resolveRoutableSession({
+      threadId: parsed.threadId,
+      operation: "ProviderService.sendTurn",
+      allowRecovery: false,
+    });
+
+    // Local attachments get an on-disk path in the prompt so the model's tools
     // can dereference the actual file. All attachments then go to the adapter,
     // and each adapter decides what its provider ingests natively. Folded
     // clipboard text remains path-only everywhere: eagerly embedding it would
@@ -1621,7 +1627,9 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
       }
       return false;
     };
-    for (const attachment of attachments) {
+    const pathAttachments =
+      routed.adapter.capabilities.attachmentPromptPaths === "remote" ? [] : attachments;
+    for (const attachment of pathAttachments) {
       const attachmentPath = resolveAttachmentPath({
         attachmentsDir: serverConfig.attachmentsDir,
         attachment,
@@ -1696,11 +1704,6 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
     let metricProvider = "unknown";
     let metricModel = input.modelSelection?.model;
     return yield* Effect.gen(function* () {
-      let routed = yield* resolveRoutableSession({
-        threadId: input.threadId,
-        operation: "ProviderService.sendTurn",
-        allowRecovery: false,
-      });
       if (
         input.continuation === true &&
         !input.input &&
