@@ -707,3 +707,20 @@ test("projects approval and user-input transitions once for operations observers
   assert.equal(restored.project(state).filter(event => event.type === "COMPADRE_AGENT_ACTIVITY").length, 0);
   assert.equal(projector.project(state).filter(event => event.type === "COMPADRE_AGENT_ACTIVITY").length, 0);
 });
+
+
+test("projects upstream reasoning messages and restores their replay cursor", () => {
+  const fixture = snapshot({ sequence: 4, state: "running", text: "", streaming: true });
+  fixture.thread.messages = [...fixture.thread.messages, {
+    id: "reasoning-1", role: "reasoning", text: "Inspecting", turnId: "turn-1",
+    streaming: true, createdAt: "2026-08-26T16:00:00.100Z", updatedAt: "2026-08-26T16:00:00.300Z",
+  }];
+  const projector = new CentralApiResponseProjector("run-1", "central-thread", "user-1");
+  const first = projector.project(fixture);
+  assert.deepEqual(first.filter((chunk) => chunk.type === EventType.REASONING_CONTENT).map((chunk) => chunk.content), ["Inspecting"]);
+  const restored = CentralApiResponseProjector.restore("run-1", "central-thread", "user-1", first);
+  assert.equal(restored.project(fixture).filter((chunk) => chunk.type === EventType.REASONING_CONTENT).length, 0);
+  fixture.thread.messages.at(-1)!.text = "Inspecting the implementation";
+  fixture.thread.messages.at(-1)!.streaming = false;
+  assert.deepEqual(restored.project(fixture).filter((chunk) => chunk.type === EventType.REASONING_CONTENT).map((chunk) => chunk.content), ["Inspecting the implementation"]);
+});
