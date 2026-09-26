@@ -593,6 +593,21 @@ test("generates hidden provider text without creating a directory thread", async
       options: [{ id: "reasoningEffort", value: "low" }],
     },
   );
+
+  const defaultResponse = await app.request(
+    "/hosted/t3/text-generation",
+    authorized({
+      prompt: "Generate a title",
+      provider: "codex",
+      modelOptions: [{ id: "reasoningEffort", value: "medium" }],
+    }),
+  );
+  assert.equal(defaultResponse.status, 200, await defaultResponse.clone().text());
+  assert.deepEqual((received as { modelSelection: unknown }).modelSelection, {
+    instanceId: "codex",
+    model: "gpt-6-sol",
+    options: [{ id: "reasoningEffort", value: "medium" }],
+  });
 });
 
 test("streams a native Modal T3 turn through the central provider endpoint", async (t) => {

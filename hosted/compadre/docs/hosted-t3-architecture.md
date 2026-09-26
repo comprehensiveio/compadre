@@ -734,3 +734,18 @@ reasoning messages. Central and controller auto-deploy independently, so putting
 both contract changes into one commit does not establish that ordering. Shared
 reasoning belongs to the central conversation, with the same replay and fencing
 rules as assistant output.
+
+### Hosted provider versions and defaults
+
+The controller pins Codex 0.157.1 and Claude Code 2.1.283 in
+`src/t3/provider-versions.ts` and its npm lockfile. Both cold Modal images and
+restored snapshots use those pins. This exposes GPT-6 Sol through native model
+discovery and Claude Opus 5.5 through the version-aware catalog. Warm workers
+retain their running CLI until their runtime is reprojected; verify a fresh
+worker and a restored snapshot when changing these pins.
+
+New Codex conversations default to `gpt-6-sol`. The central web server's saved
+`defaultModelSelection` is a separate configuration owner: update its model
+through Settings while preserving its option values when rolling out a default
+change. Explicit thread/project model selections and reasoning preferences are
+not migrated. Claude model defaults remain unchanged; Opus 5.5 is selectable.
