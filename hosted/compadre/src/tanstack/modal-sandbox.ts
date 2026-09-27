@@ -128,6 +128,9 @@ export function modalImageCommands(environment: NodeJS.ProcessEnv): string[] {
     : [];
   return [
     "RUN apt-get update -qq && apt-get install -y -qq --no-install-recommends git ca-certificates curl gh gnupg jq postgresql-client ripgrep && rm -rf /var/lib/apt/lists/*",
+    // Doppler CLI: compadre-dev-up.sh (in comp) starts the Comp dev server under `doppler run`
+    // when the controller projects DOPPLER_TOKEN, so sandboxes get fresh nonprod secrets.
+    "RUN curl -sLf --retry 3 --tlsv1.2 --proto '=https' 'https://packages.doppler.com/public/cli/gpg.DE2A7741A397C129.key' | gpg --dearmor -o /usr/share/keyrings/doppler-archive-keyring.gpg && echo 'deb [signed-by=/usr/share/keyrings/doppler-archive-keyring.gpg] https://packages.doppler.com/public/cli/deb/debian any-version main' > /etc/apt/sources.list.d/doppler-cli.list && apt-get update -qq && apt-get install -y -qq --no-install-recommends doppler && rm -rf /var/lib/apt/lists/*",
     `RUN corepack enable && corepack prepare pnpm@${PNPM_VERSION} --activate`,
     `RUN mkdir -p ${quote(workdir)} ${quote(runtimeRoot)}`,
     ...(environment.COMPADRE_MODAL_SKIP_CLI_SETUP === "true"

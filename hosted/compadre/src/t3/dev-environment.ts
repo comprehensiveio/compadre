@@ -62,6 +62,25 @@ function artifactKey(prefix: string, filename: string): string {
  * Signing is local at worker creation; S3 is contacted only when the agent
  * actually runs the repository's lazy development command.
  */
+/**
+ * Read-only Doppler service token for `comp/dev_compadre`, projected as DOPPLER_TOKEN so
+ * comp's `scripts/compadre-dev-up.sh` can start the dev server under `doppler run`. Only
+ * the dev server uses it; the token can read nothing but that one config. Absent when the
+ * dev environment is disabled.
+ */
+export function compDevSecretsProjection(
+  environment: NodeJS.ProcessEnv = process.env,
+): Record<string, string> {
+  if (!devEnvironmentEnabled(environment)) return {};
+  const token = environment.COMP_DEV_DOPPLER_TOKEN?.trim();
+  if (!token) {
+    throw new Error(
+      "COMP_DEV_DOPPLER_TOKEN must be configured when COMPADRE_DEV_ENVIRONMENT_ENABLED=true; comp's dev server starts under doppler run",
+    );
+  }
+  return { DOPPLER_TOKEN: token };
+}
+
 export async function devEnvironmentArtifactProjection(
   environment: NodeJS.ProcessEnv = process.env,
   options: { sign?: DevArtifactSigner } = {},

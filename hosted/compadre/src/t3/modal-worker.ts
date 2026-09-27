@@ -21,6 +21,7 @@ import { exchangeT3PairingToken, type T3Client } from "../t3/client.js";
 import {
   authenticatedDevPreviewUrl,
   COMP_DEV_SERVER_PORT,
+  compDevSecretsProjection,
   devEnvironmentArtifactProjection,
   devEnvironmentEnabled,
   t3EncryptedPorts,
@@ -530,6 +531,7 @@ async function projectWorkerRuntimeEnvironment(
   const devArtifactEnvironment =
     await devEnvironmentArtifactProjection(workerEnvironment);
   const devBackupEnvironment = devBackupAccessProjection(workerEnvironment);
+  const compDevSecretsEnvironment = compDevSecretsProjection(workerEnvironment);
   const devPreviewEnvironment: Record<string, string> = devEnvironmentEnabled(
     workerEnvironment,
   )
@@ -549,6 +551,7 @@ async function projectWorkerRuntimeEnvironment(
     ...pullRequestAccessProjection(workerEnvironment),
     ...devArtifactEnvironment,
     ...devBackupEnvironment,
+    ...compDevSecretsEnvironment,
     ...devPreviewEnvironment,
     HOME: "/home/node",
   });

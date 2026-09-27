@@ -3,6 +3,7 @@ import test from "node:test";
 import {
   COMP_DEV_SERVER_PORT,
   authenticatedDevPreviewUrl,
+  compDevSecretsProjection,
   devEnvironmentArtifactProjection,
   t3EncryptedPorts,
   T3_SERVER_PORT,
@@ -74,5 +75,28 @@ test("rejects artifact credentials outside the supported lifetime", async () => 
       COMPADRE_DEV_ARTIFACT_URL_TTL_SECONDS: "900000",
     }),
     /integer from 60 to 604800/,
+  );
+});
+
+test("projects the comp dev Doppler token only for enabled dev environments", () => {
+  assert.deepEqual(compDevSecretsProjection({}), {});
+  assert.deepEqual(
+    compDevSecretsProjection({ COMP_DEV_DOPPLER_TOKEN: "dp.st.example" }),
+    {},
+  );
+  assert.deepEqual(
+    compDevSecretsProjection({
+      COMPADRE_DEV_ENVIRONMENT_ENABLED: "true",
+      COMP_DEV_DOPPLER_TOKEN: " dp.st.example ",
+    }),
+    { DOPPLER_TOKEN: "dp.st.example" },
+  );
+});
+
+test("refuses an enabled dev environment without the comp Doppler token", () => {
+  assert.throws(
+    () =>
+      compDevSecretsProjection({ COMPADRE_DEV_ENVIRONMENT_ENABLED: "true" }),
+    /COMP_DEV_DOPPLER_TOKEN must be configured/,
   );
 });
