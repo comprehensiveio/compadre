@@ -3,7 +3,10 @@ import { log } from "../logging.js";
 import { modalSandboxProvider } from "../tanstack/modal-sandbox.js";
 import { repositoryCloneCommand } from "../tanstack/sandbox-runtime.js";
 import { devBackupAccessProjection } from "./dev-backups.js";
-import { devEnvironmentArtifactProjection } from "./dev-environment.js";
+import {
+  compDevSecretsProjection,
+  devEnvironmentArtifactProjection,
+} from "./dev-environment.js";
 import type { MetadataStore } from "./storage.js";
 
 /**
@@ -179,6 +182,8 @@ export async function buildT3WorkerTemplate(input: {
         : {}),
       ...(await devEnvironmentArtifactProjection(environment)),
       ...devBackupAccessProjection(environment),
+      // The build runs compadre-dev-up.sh, which refuses to start Vite without it.
+      ...compDevSecretsProjection(environment),
       COMPADRE_DEV_PREVIEW_URL: preview.url.replace(/\/$/, ""),
       COMPADRE_DEV_PORT: "3000",
       HOME: "/home/node",
