@@ -55,6 +55,38 @@ const captureProcessResult = (
   );
 
 describe("VcsProcess.run", () => {
+  it.effect("allows checkpoint Git more time without delaying other VCS operations", () =>
+    Effect.gen(function* () {
+      const timeouts: unknown[] = [];
+      const service = yield* VcsProcess.make.pipe(
+        Effect.provideService(ProcessRunner.ProcessRunner, {
+          run: (input) =>
+            Effect.sync(() => {
+              timeouts.push(input.timeout ?? 0);
+              return {
+                stdout: "",
+                stderr: "",
+                code: ChildProcessSpawner.ExitCode(0),
+                timedOut: false,
+                stdoutTruncated: false,
+                stderrTruncated: false,
+                stdoutInvalidUtf8: false,
+                stderrInvalidUtf8: false,
+              };
+            }),
+        }),
+      );
+      yield* service.run({ ...baseInput, operation: VcsProcess.CHECKPOINT_CAPTURE_OPERATION });
+      yield* service.run(baseInput);
+      yield* service.run({
+        ...baseInput,
+        operation: VcsProcess.CHECKPOINT_CAPTURE_OPERATION,
+        timeoutMs: 5_000,
+      });
+      expect(timeouts).toEqual([90_000, 30_000, 5_000]);
+    }),
+  );
+
   it.effect.each([
     { stderr: "fatal: Unable to create '/private/repo/index.lock': File exists", retryable: true },
     {
