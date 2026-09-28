@@ -147,15 +147,22 @@ old generic expiry notice already persisted by earlier controllers.
 
 Question responses, approvals, interrupts and session stops route using the
 persisted central binding, without an in-memory Compadre adapter session.
-The per-thread consumer publishes files and reviews from native checkpoint
-completion, including checkpoints after the parent run ends. Native background
-task completion also collects files for the task's owning turn: Codex children
+The per-thread consumer publishes files from each completed provider turn's
+native activity before acknowledging it; this does not depend on the Git
+checkpoint succeeding. The run observer persists a turn-to-run association so
+the consumer retains the right Slack destination even if a newer run has started.
+It publishes workspace reviews from native checkpoint completion, including
+checkpoints after the parent run ends. Native background task completion also
+collects files for the task's owning turn: Codex children
 can finish after the parent checkpoint without starting another parent turn.
 This emits ordinary native attachment messages without inventing a provider
-response or a new workspace review. On consumer catch-up, a quiescent completed
-worker is checked once for unpublished files, repairing missed completion edges.
-Publication happens
-before acknowledging that source page, using stable per-turn IDs on retries.
+response or a new workspace review. On consumer catch-up, a completed worker
+is checked for unpublished files once it becomes quiescent, repairing missed
+completion edges even if an earlier consumer acknowledged the event while busy.
+The catch-up check remains pending until publication and page acknowledgement
+succeed.
+Publication happens before acknowledging that source page, using stable
+per-turn IDs on retries.
 Files are uploaded to the worker and become native assistant-completion commands;
 the consumer copies attachment objects to central storage before acknowledging
 their events. Saved workspace reviews replace worker-local checkpoint references

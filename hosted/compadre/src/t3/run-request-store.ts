@@ -1,5 +1,5 @@
 import type { ProviderAction } from "./provider-actions.js";
-import type { MetadataStore } from "./storage.js";
+import { InMemoryLockStore, type LockStore, type MetadataStore } from "./storage.js";
 import type { T3ModelSelection, T3TurnDispatch } from "./client.js";
 import { MAX_INPUT_REQUEST_BYTES, type InputFile } from "../services/input-files.js";
 import { createHash } from "node:crypto";
@@ -7,6 +7,7 @@ import type { T3ArtifactObjectStore } from "./artifact-store.js";
 
 const REQUEST_NAMESPACE = "compadre.t3.run-requests.v1";
 const DISPATCH_NAMESPACE = "compadre.t3.run-dispatches.v1";
+const TURN_RUN_NAMESPACE = "compadre.t3.run-by-turn.v1";
 
 export interface NativeT3RunSlackMirror {
   channelId: string;
@@ -86,6 +87,7 @@ export class NativeT3RunRequestStore {
     private readonly metadata: MetadataStore,
     private readonly objects?: Pick<T3ArtifactObjectStore, "put" | "get">,
     private readonly beforePersist?: (threadId: string) => Promise<void>,
+    private readonly locks: LockStore = new InMemoryLockStore(),
   ) {}
 
   async saveRequest(request: NativeT3RunRequest): Promise<void> {
@@ -133,6 +135,24 @@ export class NativeT3RunRequestStore {
 
   async saveDispatch(runId: string, record: NativeT3RunDispatch): Promise<void> {
     await this.metadata.set(DISPATCH_NAMESPACE, runId, record);
+  }
+
+  async saveTurnRun(canonicalThreadId: string, turnId: string, runId: string): Promise<void> {
+    const key = `${canonicalThreadId}:${turnId}`;
+    await this.locks.withLock(`compadre:native-turn-run:${key}`, async (signal) => {
+      signal.throwIfAborted();
+      const existing = await this.getRunIdForTurn(canonicalThreadId, turnId);
+      if (existing === runId) return;
+      if (existing !== null) throw new Error("Native T3 turn belongs to a different run");
+      await this.metadata.set(TURN_RUN_NAMESPACE, key, runId);
+    });
+  }
+
+  async getRunIdForTurn(canonicalThreadId: string, turnId: string): Promise<string | null> {
+    const value = await this.metadata.get(TURN_RUN_NAMESPACE, `${canonicalThreadId}:${turnId}`);
+    if (value === null) return null;
+    if (typeof value !== "string" || !value) throw new Error("Invalid native T3 turn run mapping");
+    return value;
   }
 
   async getDispatch(runId: string): Promise<NativeT3RunDispatch | null> {

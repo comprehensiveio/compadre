@@ -604,6 +604,7 @@ export async function driveNativeT3Run(
       });
     }
     let terminalChunk: StreamChunk | undefined;
+    let mappedTurnId: string | undefined;
     let failure: unknown;
     let consecutiveUnavailable = 0;
     const inactivityLimitMs =
@@ -634,13 +635,27 @@ export async function driveNativeT3Run(
         wake?.();
         wake = undefined;
       };
-      const observeSnapshot = (snapshot: T3ThreadSnapshot) => {
+      const observeSnapshot = async (snapshot: T3ThreadSnapshot) => {
         consecutiveUnavailable = 0;
         if (snapshot.snapshotSequence > lastSequence) {
           lastSequence = snapshot.snapshotSequence;
           lastProgressAt = now();
         }
-        pending.push(...projector.project(snapshot));
+        const messageIndex = snapshot.thread.messages.findIndex((message) => message.id === turn.dispatch.messageId && message.role === "user");
+        const latest = snapshot.thread.latestTurn;
+        if (messageIndex >= 0 && latest && mappedTurnId !== latest.turnId) {
+          const requestedAt = Date.parse(latest.requestedAt);
+          const messageAt = Date.parse(snapshot.thread.messages[messageIndex]!.createdAt);
+          const nextUser = snapshot.thread.messages.slice(messageIndex + 1).find((message) =>
+            message.role === "user" && message.id.startsWith("native-user:"));
+          if (Number.isFinite(requestedAt) && requestedAt >= messageAt &&
+              (!nextUser || requestedAt < Date.parse(nextUser.createdAt))) {
+            await deps.requests.saveTurnRun(request.canonicalThreadId, latest.turnId, runId);
+            mappedTurnId = latest.turnId;
+          }
+        }
+        const chunks = projector.project(snapshot);
+        pending.push(...chunks);
         mirror?.replaceAssistantTexts?.(projector.assistantTexts);
       };
       const waiter = deps.gateway
@@ -649,17 +664,17 @@ export async function driveNativeT3Run(
           turn,
           timeoutMs: inactivityLimitMs,
           signal: watchAbort.signal,
-          onSnapshot(snapshot) {
-            observeSnapshot(snapshot);
+          async onSnapshot(snapshot) {
+            await observeSnapshot(snapshot);
             heartbeat("streaming native T3 turn");
             notify();
           },
         })
         .then(
-          (snapshot) => {
-            observeSnapshot(snapshot);
-            completed = true;
-            notify();
+          async (snapshot) => {
+            try { await observeSnapshot(snapshot); }
+            catch (error) { watchFailure = error; }
+            finally { completed = true; notify(); }
           },
           (error) => {
             watchFailure = error;

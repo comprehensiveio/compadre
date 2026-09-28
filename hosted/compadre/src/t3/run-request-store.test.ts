@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { memoryPersistence } from "@tanstack/ai-persistence";
 import { NativeT3RunRequestStore, type NativeT3RunRequest } from "./run-request-store.js";
+import { InMemoryLockStore } from "./storage.js";
 
 const request: NativeT3RunRequest = {
   runId: "run-1", canonicalThreadId: "thread-1", provider: "codex", title: "Test", text: "Inspect attachments",
@@ -51,4 +52,33 @@ test("inline records require migration and corrupt object bytes are rejected", a
   const store = new NativeT3RunRequestStore(metadata, { async put() {}, async get() { return Buffer.from("y"); } });
   await store.saveRequest(input);
   await assert.rejects(store.getRequest(input.runId), /integrity/);
+});
+
+test("completed turns retain their owning run across controller restarts", async () => {
+  const metadata = memoryPersistence().stores.metadata;
+  const locks = new InMemoryLockStore();
+  const store = new NativeT3RunRequestStore(metadata, undefined, undefined, locks);
+  const record = { canonicalThreadId: "thread-1", dispatchedAt: request.createdAt,
+    dispatch: { threadId: "worker", messageId: "user-a", commandId: "command-a", sequence: 1, createdAt: request.createdAt } };
+  await store.saveDispatch("run-a", record);
+  await store.saveTurnRun("thread-1", "turn-a", "run-a");
+  const restarted = new NativeT3RunRequestStore(metadata, undefined, undefined, locks);
+  assert.equal(await restarted.getRunIdForTurn("thread-1", "turn-a"), "run-a");
+  await assert.rejects(restarted.saveTurnRun("thread-1", "turn-a", "run-b"), /different run/);
+  assert.equal(await restarted.getRunIdForTurn("thread-1", "turn-a"), "run-a");
+  assert.equal(await restarted.getRunIdForTurn("thread-2", "turn-a"), null);
+  assert.equal(await restarted.getRunIdForTurn("thread-1", "turn-b"), null);
+  assert.deepEqual(await restarted.getDispatch("run-a"), record);
+});
+
+test("concurrent turn ownership claims cannot overwrite each other", async () => {
+  const metadata = memoryPersistence().stores.metadata;
+  const locks = new InMemoryLockStore();
+  const first = new NativeT3RunRequestStore(metadata, undefined, undefined, locks);
+  const second = new NativeT3RunRequestStore(metadata, undefined, undefined, locks);
+  const claims = await Promise.allSettled([
+    first.saveTurnRun("central", "turn", "run-a"), second.saveTurnRun("central", "turn", "run-b"),
+  ]);
+  assert.deepEqual(claims.map((claim) => claim.status), ["fulfilled", "rejected"]);
+  assert.equal(await first.getRunIdForTurn("central", "turn"), "run-a");
 });

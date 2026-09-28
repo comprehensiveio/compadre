@@ -4,7 +4,8 @@ import { createHash } from "node:crypto";
 import { memoryPersistence } from "@tanstack/ai-persistence";
 import { T3Client } from "./client.js";
 import { T3ArtifactStore } from "./artifact-store.js";
-import { nativeBackgroundOutputTurns, nativeQuiescentOutputTurn, nativeOutputCheckpoints, nativeOutputRunId, publishNativeRunOutputs } from "./native-outputs.js";
+import { NativeT3RunRequestStore } from "./run-request-store.js";
+import { nativeBackgroundOutputTurns, nativeCompletedOutputTurns, nativeOutputContextForTurn, nativeOutputReconciler, nativeQuiescentOutputTurn, nativeOutputCheckpoints, nativeOutputRunId, publishNativeRunOutputs } from "./native-outputs.js";
 
 const backgroundEvent = (turnId: string | null, status: string, kind = "task.updated") => ({
   type: "thread.activity-appended", payload: { activity: { kind, turnId, payload: { taskId: "child", status } } },
@@ -100,4 +101,76 @@ test("catch-up checks HEAD liveness before recovering an already acknowledged co
   head = { ...head, sessionStatus: "running", backgroundLiveness: null };
   assert.equal(await nativeQuiescentOutputTurn(client, "worker"), null);
   assert.equal(snapshots, 1);
+});
+
+test("completed provider activity identifies its own turn without a Git checkpoint", () => {
+  const completion = (turnId: string, state: string) => ({ type: "thread.activity-appended", payload: { activity: {
+    kind: "provider.turn.completed", payload: { state }, turnId,
+  } } });
+  assert.deepEqual(nativeCompletedOutputTurns([
+    completion("turn-a", "completed"), completion("turn-a", "completed"),
+    completion("turn-b", "failed"), completion("turn-c", "completed"),
+  ]), ["turn-a", "turn-c"]);
+});
+
+test("an older completed turn keeps its own Slack destination after a newer run starts", async () => {
+  const requests = new NativeT3RunRequestStore(memoryPersistence().stores.metadata);
+  const createdAt = "2026-09-10T12:00:00.000Z";
+  for (const [runId, messageId, threadTs] of [["run-a", "user-a", "111.000"], ["run-b", "user-b", "222.000"]]) {
+    await requests.saveRequest({ runId, canonicalThreadId: "central", provider: "codex", title: "Native", text: "",
+      modelSelection: { instanceId: "codex", model: "test" }, inputFiles: [], collectArtifacts: true, createdAt,
+      slackArtifactDestination: { channelId: "channel", threadTs },
+    });
+    await requests.saveDispatch(runId, { canonicalThreadId: "central", dispatchedAt: createdAt,
+      dispatch: { threadId: "worker", messageId, commandId: `command-${runId}`, sequence: 1, createdAt },
+    });
+    await requests.saveTurnRun("central", `turn-${runId.slice(-1)}`, runId);
+  }
+  const snapshot = { snapshotSequence: 3, thread: { id: "worker", projectId: "project", title: "Native",
+    modelSelection: { instanceId: "codex", model: "test" }, session: null,
+    latestTurn: { turnId: "turn-b", state: "running" as const, requestedAt: createdAt, startedAt: createdAt, completedAt: null, assistantMessageId: null },
+    messages: ["a", "b"].map((suffix) => ({ id: `user-${suffix}`, role: "user" as const, text: "", turnId: null,
+      streaming: false, createdAt, updatedAt: createdAt })),
+  } };
+  const context = await nativeOutputContextForTurn({ requests, snapshot, canonicalThreadId: "central", turnId: "turn-a", currentRunId: "run-b" });
+  assert.ok(context);
+  assert.equal(context.request.runId, "run-a");
+  assert.equal(context.request.slackArtifactDestination?.threadTs, "111.000");
+  assert.equal(context.dispatch.dispatch.messageId, "user-a");
+  assert.equal(await nativeOutputContextForTurn({ requests, snapshot, canonicalThreadId: "central",
+    turnId: "legacy-unmapped", currentRunId: "run-b" }), null);
+});
+
+test("catch-up retries until its completed turn is delivered and acknowledged", async () => {
+  const client = new T3Client("https://worker.example", "unused");
+  let ready = false;
+  let headReads = 0;
+  client.nativeEventPage = async () => {
+    headReads++;
+    return { events: [], nextOffset: "00000000000000000009", upToDate: true,
+      sessionStatus: ready ? "ready" : "running", backgroundLiveness: null };
+  };
+  client.threadSnapshot = async () => ({ snapshotSequence: 9, thread: {
+    id: "worker", projectId: "project", title: "Native", modelSelection: { instanceId: "codex", model: "test" },
+    messages: [], session: null, latestTurn: { turnId: "completed-parent", state: "completed", requestedAt: "2026-09-10T12:00:00Z",
+      startedAt: "2026-09-10T12:00:00Z", completedAt: "2026-09-10T12:00:01Z", assistantMessageId: null },
+  } });
+  const reconcile = nativeOutputReconciler();
+  const page = (events: unknown[], upToDate = true) => ({ events, nextOffset: "00000000000000000009", upToDate });
+  assert.equal(await reconcile.read(client, "worker", page([])), null);
+  assert.equal(await reconcile.read(client, "worker", page([])), null);
+  ready = true;
+  assert.equal(await reconcile.read(client, "worker", page([])), "completed-parent");
+  assert.equal(await reconcile.read(client, "worker", page([])), "completed-parent", "failed publication must retry");
+  const readsAfterCompletion = headReads;
+  reconcile.acknowledge("completed-parent");
+  assert.equal(await reconcile.read(client, "worker", page([])), null);
+  assert.equal(headReads, readsAfterCompletion);
+
+  // After an activity restart, the completion page may already be acknowledged.
+  ready = false;
+  const restarted = nativeOutputReconciler();
+  assert.equal(await restarted.read(client, "worker", page([])), null);
+  ready = true;
+  assert.equal(await restarted.read(client, "worker", page([])), "completed-parent");
 });
