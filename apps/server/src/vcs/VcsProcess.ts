@@ -55,6 +55,7 @@ export class VcsProcess extends Context.Service<
 >()("t3/vcs/VcsProcess") {}
 
 const DEFAULT_TIMEOUT_MS = 30_000;
+const CHECKPOINT_TIMEOUT_MS = 90_000;
 const DEFAULT_MAX_OUTPUT_BYTES = 1_000_000;
 const OUTPUT_TRUNCATED_MARKER = "\n\n[truncated]";
 const VCS_PROCESS_CONCURRENCY = 8;
@@ -135,7 +136,11 @@ export const make = Effect.gen(function* () {
         ...(input.stdin !== undefined ? { stdin: input.stdin } : {}),
         ...(input.onStdoutChunk !== undefined ? { onStdoutChunk: input.onStdoutChunk } : {}),
         ...(input.env !== undefined ? { env: input.env } : {}),
-        timeout: input.timeoutMs ?? DEFAULT_TIMEOUT_MS,
+        timeout:
+          input.timeoutMs ??
+          (input.operation === CHECKPOINT_CAPTURE_OPERATION && input.command === "git"
+            ? CHECKPOINT_TIMEOUT_MS
+            : DEFAULT_TIMEOUT_MS),
         maxOutputBytes: input.maxOutputBytes ?? DEFAULT_MAX_OUTPUT_BYTES,
         outputMode: input.outputMode ?? "truncate",
         truncatedMarker: input.appendTruncationMarker ? OUTPUT_TRUNCATED_MARKER : "",
