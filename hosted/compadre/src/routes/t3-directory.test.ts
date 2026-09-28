@@ -685,9 +685,9 @@ test("streams a native Modal T3 turn through the central provider endpoint", asy
       return {
         binding: { ...binding, status: "working" as const },
         dispatch: {
-          sequence: 3,
-          commandId: "command-1",
-          messageId: "message-1",
+          sequence: sends + 2,
+          commandId: `command-${sends}`,
+          messageId: `message-${sends}`,
           threadId: "native-thread-1",
           createdAt: "2026-08-26T15:00:01.000Z",
         },
@@ -697,10 +697,24 @@ test("streams a native Modal T3 turn through the central provider endpoint", asy
     async open() { return null; },
     async cancel() { return 7; },
     async waitForTerminal(input: {
+      turn: T3GatewayTurn;
       onSnapshot?(snapshot: T3ThreadSnapshot): void | Promise<void>;
     }) {
-      await input.onSnapshot?.(turnSnapshot);
-      return turnSnapshot;
+      const turnId = `turn-${input.turn.dispatch.sequence - 2}`;
+      const currentSnapshot: T3ThreadSnapshot = {
+        ...turnSnapshot,
+        thread: {
+          ...turnSnapshot.thread,
+          latestTurn: { ...turnSnapshot.thread.latestTurn!, turnId },
+          messages: turnSnapshot.thread.messages.map((message) => ({
+            ...message,
+            id: message.id === "message-1" ? input.turn.dispatch.messageId : message.id,
+            turnId,
+          })),
+        },
+      };
+      await input.onSnapshot?.(currentSnapshot);
+      return currentSnapshot;
     },
   };
   const slackBindingLookups: string[] = [];
@@ -936,9 +950,12 @@ test("provider actions survive durable dispatch without prompt decorations or de
     async resumeTurn() { return null; },
     async send(input: unknown) {
       sent.push(input);
-      return { binding, dispatch: { sequence: 1, commandId: "command-1", messageId: "input-1", threadId: "native-thread-1", createdAt: "2026-08-26T15:00:01.000Z" } };
+      return { binding, dispatch: { sequence: sent.length, commandId: `command-${sent.length}`, messageId: `input-${sent.length}`, threadId: "native-thread-1", createdAt: "2026-08-26T15:00:01.000Z" } };
     },
-    async waitForTerminal() { return { ...snapshot, thread: { ...snapshot.thread, messages: [{ id: "input-1", role: "user" as const, text: "/compact", turnId: "turn-1", streaming: false, createdAt: "2026-08-26T15:00:01.000Z", updatedAt: "2026-08-26T15:00:01.000Z" }, ...snapshot.thread.messages] } }; },
+    async waitForTerminal(input: { turn: T3GatewayTurn }) {
+      const turnId = `turn-${input.turn.dispatch.sequence}`;
+      return { ...snapshot, thread: { ...snapshot.thread, latestTurn: { ...snapshot.thread.latestTurn!, turnId }, messages: [{ id: input.turn.dispatch.messageId, role: "user" as const, text: "/compact", turnId, streaming: false, createdAt: "2026-08-26T15:00:01.000Z", updatedAt: "2026-08-26T15:00:01.000Z" }, ...snapshot.thread.messages] } };
+    },
   };
   const service = new TemporalNativeT3RunService(new NativeT3RunCoordinator(durability), requests, {
     async start({ input }) {
