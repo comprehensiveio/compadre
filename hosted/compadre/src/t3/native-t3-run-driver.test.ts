@@ -50,7 +50,7 @@ const userMessage = {
   id: "message-1",
   role: "user" as const,
   text: "run pwd",
-  turnId: "turn-1",
+  turnId: null,
   streaming: false,
   createdAt: "2026-08-31T15:00:01.000Z",
   updatedAt: "2026-08-31T15:00:01.000Z",
@@ -282,6 +282,7 @@ test("drives a native T3 run to completion against durable state", async (t) => 
   assert.equal(text, "", "conversation events belong to the native journal");
   const run = await durability.runs.get(runId);
   assert.equal(run?.status, "completed");
+  assert.equal(await requests.getRunIdForTurn("thread-1", "turn-1"), runId);
 });
 
 test("terminalizes a Modal spend-limit rejection with a safe actionable error", async (t) => {

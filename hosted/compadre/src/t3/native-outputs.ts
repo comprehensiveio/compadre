@@ -2,9 +2,12 @@ import { z } from "zod";
 import { createHash } from "node:crypto";
 import { collectNativeT3ArtifactEvents } from "./artifact-events.js";
 import type { T3ArtifactStore } from "./artifact-store.js";
+import type { T3ThreadSnapshot } from "./client.js";
 import type { T3CommandClient, T3Gateway, T3GatewayTurn } from "./gateway.js";
+import type { NativeEventPage } from "./native-events.js";
 import type { MetadataStore } from "./storage.js";
 import type { NativeT3RunRequest } from "./run-request-store.js";
+import type { NativeT3RunRequestStore } from "./run-request-store.js";
 import type { WorkspaceReviewStore } from "./workspace-review.js";
 
 const attachmentSchema = z.object({ id: z.string(), type: z.enum(["image", "file"]), name: z.string(), mimeType: z.string(), sizeBytes: z.number() });
@@ -17,6 +20,16 @@ const backgroundEventSchema = z.object({ type: z.literal("thread.activity-append
     payload: z.object({ taskId: z.string().min(1), status: z.enum(["idle", "completed"]) }),
   }),
 }) });
+const completedTurnEventSchema = z.object({ type: z.literal("thread.activity-appended"), payload: z.object({
+  activity: z.object({ kind: z.literal("provider.turn.completed"), turnId: z.string().min(1), payload: z.object({ state: z.literal("completed") }) }),
+}) });
+
+export function nativeCompletedOutputTurns(events: unknown[]): string[] {
+  return [...new Set(events.flatMap((event) => {
+    const parsed = completedTurnEventSchema.safeParse(event);
+    return parsed.success ? [parsed.data.payload.activity.turnId] : [];
+  }))];
+}
 
 /** Child completion can happen after the parent's final checkpoint. */
 export function nativeBackgroundOutputTurns(events: unknown[]): string[] {
@@ -34,6 +47,25 @@ export async function nativeQuiescentOutputTurn(client: Pick<T3CommandClient, "n
   return snapshot.thread.latestTurn?.state === "completed" ? snapshot.thread.latestTurn.turnId : null;
 }
 
+/** Recover a completion already acknowledged by an older consumer. */
+export function nativeOutputReconciler() {
+  let catchUpPending = true;
+  let pendingTurnId: string | null = null;
+  return {
+    read: async (client: Pick<T3CommandClient, "nativeEventPage" | "threadSnapshot">, threadId: string,
+      page: NativeEventPage, signal?: AbortSignal): Promise<string | null> => {
+      if (!catchUpPending || !page.upToDate) return null;
+      pendingTurnId ??= await nativeQuiescentOutputTurn(client, threadId, signal);
+      return pendingTurnId;
+    },
+    acknowledge: (turnId: string) => {
+      if (pendingTurnId !== turnId) return;
+      catchUpPending = false;
+      pendingTurnId = null;
+    },
+  };
+}
+
 export function nativeOutputCheckpoints(events: unknown[]) {
   return events.flatMap((event) => {
     const parsed = checkpointEventSchema.safeParse(event);
@@ -43,6 +75,28 @@ export function nativeOutputCheckpoints(events: unknown[]) {
 
 export const nativeOutputRunId = (threadId: string, turnId: string) =>
   `native-${createHash("sha256").update(JSON.stringify([threadId, turnId])).digest("hex")}`;
+
+/** Resolve the owning request from the durable turn/run association, not the latest active run. */
+export async function nativeOutputContextForTurn(input: {
+  requests: Pick<NativeT3RunRequestStore, "getRunIdForTurn" | "getDispatch" | "getRequest">;
+  snapshot: T3ThreadSnapshot; canonicalThreadId: string; turnId: string; currentRunId?: string;
+}) {
+  const mappedRunId = await input.requests.getRunIdForTurn(input.canonicalThreadId, input.turnId);
+  const fallback = !mappedRunId && input.currentRunId ? await input.requests.getDispatch(input.currentRunId) : null;
+  const latest = input.snapshot.thread.latestTurn;
+  const fallbackMessage = fallback && input.snapshot.thread.messages.find((message) =>
+    message.role === "user" && message.id === fallback.dispatch.messageId);
+  const runId = mappedRunId
+    ?? (latest?.turnId === input.turnId && fallbackMessage && Date.parse(fallback.dispatch.createdAt) <= Date.parse(latest.requestedAt)
+      ? input.currentRunId : null);
+  // Pre-rollout turns may have no mapping. Never attach their files to a newer run.
+  if (!runId) return null;
+  const [request, dispatch] = await Promise.all([
+    input.requests.getRequest(runId, { includeInputFiles: false }), input.requests.getDispatch(runId),
+  ]);
+  if (!request || !dispatch) throw new Error("Native output has no durable run context");
+  return { request, dispatch };
+}
 
 /** Files and immutable diffs become native worker commands and follow journal delivery. */
 export async function publishNativeRunOutputs(input: {

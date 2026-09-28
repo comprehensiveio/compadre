@@ -246,7 +246,7 @@ export async function buildRunRequestStore(): Promise<NativeT3RunRequestStore | 
       if (await new T3VerificationStore(runtime.persistence.stores.metadata, runtime.locks).consume(threadId, "request")) {
         throw new Error("Verification: request persistence failed");
       }
-    });
+    }, runtime.locks);
 }
 
 async function buildRunControlStore(): Promise<NativeT3RunControlStore | null> {

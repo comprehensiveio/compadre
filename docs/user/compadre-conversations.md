@@ -8,6 +8,9 @@ Settings → General controls the composer and follow-up preferences.
 Responses default to showing finished paragraphs. Provider reasoning appears in
 the conversation alongside tool activity and remains available after reload.
 Shared conversations retain the identity of the person who submitted each message.
+Generated files are sent to the linked Slack thread after the agent finishes,
+even if its Git checkpoint fails. A failed checkpoint
+can still leave the workspace diff unavailable.
 
 PR file review checkmarks belong to the signed-in Compadre user. Checking or
 unchecking a file does not change another person's progress. PR links and the

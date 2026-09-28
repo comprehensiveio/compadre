@@ -1,5 +1,5 @@
 import { copyNativeAttachments } from "../t3/native-attachments.js";
-import { nativeBackgroundOutputTurns, nativeQuiescentOutputTurn, nativeOutputCheckpoints, nativeOutputRunId, publishNativeRunOutputs } from "../t3/native-outputs.js";
+import { nativeBackgroundOutputTurns, nativeCompletedOutputTurns, nativeOutputContextForTurn, nativeOutputReconciler, nativeOutputCheckpoints, nativeOutputRunId, publishNativeRunOutputs } from "../t3/native-outputs.js";
 import { configuredCentralT3Client } from "../t3/central-conversation.js";
 import { T3EnvironmentUnavailableError } from "../t3/gateway.js";
 import { Context } from "@temporalio/activity";
@@ -275,7 +275,7 @@ export async function deliverNativeThreadEventsActivity(input: { threadId: strin
   const timer = setInterval(() => context.heartbeat(input), HEARTBEAT_INTERVAL_MS);
   timer.unref();
   let attached: Awaited<ReturnType<typeof gateway.attachWorker>> | undefined;
-  let reconcileOutputs = true;
+  const reconcileOutputs = nativeOutputReconciler();
   try {
   while (Date.now() < deadline) {
     context.cancellationSignal.throwIfAborted();
@@ -294,48 +294,68 @@ export async function deliverNativeThreadEventsActivity(input: { threadId: strin
     const client = attached.environment.client;
     if (!client.nativeEventPage) throw new Error("Worker cannot stream native events");
     let releaseIdleAuth = false;
+    let readPage: Awaited<ReturnType<NonNullable<typeof client.nativeEventPage>>> | undefined;
+    let reconciledTurnId: string | null = null;
+    let reconciliationHandled = false;
     const page = await delivery.deliverPage({
       threadId: input.threadId, epoch: input.epoch, signal: context.cancellationSignal,
       prepare: (current, events, signal) => copyNativeAttachments({ metadata: persistence.persistence.stores.metadata, worker: client, central, sourceThreadId: current.sourceThreadId, events, signal }),
       read: async (current, signal) => {
         const page = await client.nativeEventPage!({ threadId: current.sourceThreadId, offset: current.offset, live: true, signal });
+        readPage = page;
         const checkpoints = nativeOutputCheckpoints(page.events);
-        const backgroundTurns = new Set(nativeBackgroundOutputTurns(page.events));
-        // Recover files from a completion already acknowledged by an older
-        // consumer. Read once on catch-up, only when the worker is quiescent.
-        if (reconcileOutputs && page.upToDate) {
-          const turnId = await nativeQuiescentOutputTurn(client, current.sourceThreadId, signal);
-          if (turnId) backgroundTurns.add(turnId);
-          reconcileOutputs = false;
-        }
-        if ((checkpoints.length || backgroundTurns.size) && current.runId) {
-          const request = await requests?.getRequest(current.runId, { includeInputFiles: false });
-          const dispatch = await requests?.getDispatch(current.runId);
-          if (!request || !dispatch) throw new Error("Native output has no durable run context");
+        const backgroundTurns = new Set([...nativeBackgroundOutputTurns(page.events), ...nativeCompletedOutputTurns(page.events)]);
+        // Completed provider activities carry their owning turn ID. Collect files
+        // before acknowledging that event, without waiting for Git or a later idle HEAD.
+        reconciledTurnId = await reconcileOutputs.read(client, current.sourceThreadId, page, signal);
+        if (reconciledTurnId) backgroundTurns.add(reconciledTurnId);
+        if (checkpoints.length || backgroundTurns.size) {
+          if (!requests) throw new Error("Native output has no durable run store");
+          const snapshot = await client.threadSnapshot(current.sourceThreadId, signal);
+          const contextForTurn = (turnId: string) => nativeOutputContextForTurn({ requests, snapshot,
+            canonicalThreadId: current.canonicalThreadId, turnId, ...(current.runId ? { currentRunId: current.runId } : {}),
+          });
           let published = 0;
-          if (request.collectArtifacts) {
+          for (const checkpoint of checkpoints) {
+            const context = await contextForTurn(checkpoint.turnId);
+            if (!context) {
+              console.warn("[native-delivery] checkpoint output has no owning run", { threadId: input.threadId, turnId: checkpoint.turnId });
+              continue;
+            }
+            const { request, dispatch } = context;
+            if (!request.collectArtifacts) continue;
             if (!artifacts) throw new Error("Native output storage is unavailable");
-            for (const checkpoint of checkpoints) published += await publishNativeRunOutputs({ gateway, artifactStore: artifacts, reviews,
+            published += await publishNativeRunOutputs({ gateway, artifactStore: artifacts, reviews,
               metadata: persistence.persistence.stores.metadata, checkpoint, turn: { binding, dispatch: dispatch.dispatch },
               request: { ...request, runId: nativeOutputRunId(current.sourceThreadId, checkpoint.turnId) },
             });
-            for (const turnId of backgroundTurns) {
-              if (checkpoints.some((checkpoint) => checkpoint.turnId === turnId)) continue;
-              published += await publishNativeRunOutputs({ gateway, artifactStore: artifacts, reviews,
-                metadata: persistence.persistence.stores.metadata, backgroundTurnId: turnId,
-                turn: { binding, dispatch: dispatch.dispatch },
-                request: { ...request, runId: nativeOutputRunId(current.sourceThreadId, turnId) },
-              });
+          }
+          for (const turnId of backgroundTurns) {
+            if (checkpoints.some((checkpoint) => checkpoint.turnId === turnId)) continue;
+            const context = await contextForTurn(turnId);
+            if (!context) {
+              console.warn("[native-delivery] completed output has no owning run", { threadId: input.threadId, turnId });
+              continue;
             }
+            const { request, dispatch } = context;
+            if (!request.collectArtifacts) continue;
+            if (!artifacts) throw new Error("Native output storage is unavailable");
+            published += await publishNativeRunOutputs({ gateway, artifactStore: artifacts, reviews,
+              metadata: persistence.persistence.stores.metadata, backgroundTurnId: turnId,
+              turn: { binding, dispatch: dispatch.dispatch },
+              request: { ...request, runId: nativeOutputRunId(current.sourceThreadId, turnId) },
+            });
           }
           // Output publication precedes acknowledgement. Retries revisit the
           // same checkpoint, with stable output IDs and immutable review storage.
           if (checkpoints.length || published > 0) await gateway.checkpointWorkspace(input.threadId);
           releaseIdleAuth = true;
+          reconciliationHandled = true;
         }
         return page;
       },
     });
+    if (page === readPage && reconciliationHandled && reconciledTurnId) reconcileOutputs.acknowledge(reconciledTurnId);
     const current = await delivery.get(input.threadId);
     if (current?.epoch === input.epoch && current.runId && (releaseIdleAuth || page.events.some((event) => {
       if (!event || typeof event !== "object" || !("type" in event) || event.type !== "thread.activity-appended" || !("payload" in event)) return false;
