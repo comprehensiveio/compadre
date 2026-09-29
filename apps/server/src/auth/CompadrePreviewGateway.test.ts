@@ -7,6 +7,7 @@ import { compadrePreviewGatewayLayer } from "./CompadrePreviewGateway.ts";
 import { describe, expect, it } from "vite-plus/test";
 import {
   previewGatewayConfiguration,
+  previewRequestKind,
   previewThreadIdFromHost,
   rewritePreviewRequestHeaders,
   rewritePreviewResponse,
@@ -18,6 +19,15 @@ const threadId = "e160a306-b842-57ba-a8f2-04de157e5366";
 const suffix = "dev.compadre.comprehensive.io";
 
 describe("CompadrePreviewGateway", () => {
+  it("groups requests without retaining resource paths", () => {
+    expect(previewRequestKind("/company/private", "document")).toBe("document");
+    expect(previewRequestKind("/api/private.js")).toBe("api");
+    expect(previewRequestKind("/_serverFn/private")).toBe("api");
+    expect(previewRequestKind("/lib/private.tsx")).toBe("module");
+    expect(previewRequestKind("/node_modules/.vite/deps/private")).toBe("module");
+    expect(previewRequestKind("/@vite/client")).toBe("module");
+    expect(previewRequestKind("/assets/private.png")).toBe("other");
+  });
   it("recognizes only UUID thread subdomains when fully configured", () => {
     expect(
       previewGatewayConfiguration({
@@ -129,6 +139,7 @@ describe("preview telemetry routes", () => {
               "content-type": "text/html",
               "content-length": String(new TextEncoder().encode(html).length),
               etag: "old",
+              "server-timing": "app;dur=7",
               "content-encoding": "gzip",
             },
           }),
@@ -216,6 +227,9 @@ describe("preview telemetry routes", () => {
         }),
       );
       expect(page.status).toBe(200);
+      expect(page.headers.get("server-timing")).toMatch(
+        /^compadre_auth;dur=\d+, compadre_resolve;dur=\d+, compadre_proxy;dur=\d+, app;dur=7$/,
+      );
       expect(page.headers.get("content-length")).toBeNull();
       expect(page.headers.get("content-encoding")).toBeNull();
       expect(page.headers.get("etag")).toBeNull();
@@ -227,12 +241,21 @@ describe("preview telemetry routes", () => {
         ),
       );
       expect(upstreamRequests).toBe(2);
+      process.env.COMPADRE_PREVIEW_TELEMETRY_ENABLED = "false";
+      const disabled = await handler(
+        new Request(`${origin}/module.js`, {
+          headers: { host: `${threadId}.${suffix}`, cookie: "session=test" },
+        }),
+      );
+      expect(disabled.headers.get("server-timing")).toBe("app;dur=7");
+      expect(await disabled.text()).toBe(html);
     } finally {
       await dispose();
       for (const key of [
         "COMPADRE_CONTROLLER_URL",
         "COMPADRE_PREVIEW_GATEWAY_SECRET",
         "COMPADRE_PREVIEW_HOST_SUFFIX",
+        "COMPADRE_PREVIEW_TELEMETRY_ENABLED",
       ]) {
         if (previous[key] === undefined) delete process.env[key];
         else process.env[key] = previous[key];

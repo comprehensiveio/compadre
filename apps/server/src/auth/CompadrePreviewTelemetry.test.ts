@@ -49,13 +49,16 @@ describe("preview telemetry injection", () => {
 });
 
 // Run the actual shipped script without a browser, app server, or network.
-function browserHarness(stored?: string) {
+function browserHarness(stored?: string, supportsLongTasks = false) {
   let wallTime = 1_000_000;
+  let performanceTime = 500;
   const events = new Map<string, Array<(event?: unknown) => void>>();
   const reports: Blob[] = [];
   const timers: Array<() => void> = [];
   const storage = new Map(stored ? [["compadre.preview.observation.v1", stored]] : []);
-  let resourceCallback: (list: { getEntries(): unknown[] }) => void = () => {};
+  type ObserverCallback = (list: { getEntries(): unknown[] }) => void;
+  const observers = new Map<string, ObserverCallback>();
+  const pending = new Map<string, unknown[]>();
   const on = (name: string, callback: (event?: unknown) => void) =>
     events.set(name, [...(events.get(name) ?? []), callback]);
   const document = {
@@ -76,7 +79,7 @@ function browserHarness(stored?: string) {
     URL,
     Date: { now: () => wallTime },
     performance: {
-      now: () => 500,
+      now: () => performanceTime,
       getEntriesByType: () => [{ type: "reload", responseStart: 100 }],
     },
     navigator: { sendBeacon: (_url: string, body: Blob) => reports.push(body) },
@@ -88,13 +91,27 @@ function browserHarness(stored?: string) {
     setTimeout: (callback: () => void) => callback(),
     setInterval: (callback: () => void) => timers.push(callback),
     PerformanceObserver: class {
-      constructor(callback: typeof resourceCallback) {
-        resourceCallback = callback;
+      static supportedEntryTypes = supportsLongTasks ? ["resource", "longtask"] : ["resource"];
+      type = "";
+      callback: ObserverCallback;
+      constructor(callback: ObserverCallback) {
+        this.callback = callback;
       }
-      observe() {}
+      observe({ type }: { type: string }) {
+        this.type = type;
+        observers.set(type, this.callback);
+      }
+      takeRecords() {
+        const entries = pending.get(this.type) ?? [];
+        pending.delete(this.type);
+        return entries;
+      }
     },
   });
   return {
+    advancePerformanceTime: (ms: number) => {
+      performanceTime += ms;
+    },
     advanceWallTime: (ms: number) => {
       wallTime += ms;
     },
@@ -103,7 +120,9 @@ function browserHarness(stored?: string) {
     reports,
     storage,
     emit: (name: string, event?: unknown) => events.get(name)?.forEach((fn) => fn(event)),
-    resource: (entry: unknown) => resourceCallback({ getEntries: () => [entry] }),
+    resource: (entry: unknown) => observers.get("resource")?.({ getEntries: () => [entry] }),
+    queue: (type: string, entry: unknown) =>
+      pending.set(type, [...(pending.get(type) ?? []), entry]),
   };
 }
 
@@ -177,4 +196,76 @@ it("rejects unbounded measurements and excludes unrecognized fields", async () =
   expect(() => decodeObservation({ ...report, elapsedMs: Infinity })).toThrow();
   const decoded = decodeObservation({ ...report, url: "secret" });
   expect(decoded).not.toHaveProperty("url");
+});
+
+it("separates request phases and gateway timings by category without recording names", async () => {
+  const browser = browserHarness();
+  browser.resource({
+    name: "https://preview.example/node_modules/.vite/deps/chunk.js?v=private",
+    duration: 100,
+    startTime: 10,
+    requestStart: 30,
+    responseStart: 90,
+    responseEnd: 110,
+    serverTiming: [
+      { name: "compadre_auth", duration: 5 },
+      { name: "compadre_resolve", duration: 10 },
+      { name: "compadre_proxy", duration: 35 },
+      { name: "private-server-data", duration: 900 },
+    ],
+  });
+  browser.resource({ name: "https://preview.example/api/test", duration: 20 });
+  browser.emit("app-data-ready");
+  const body = await browser.reports.at(-1)!.text();
+  expect(body).not.toContain("private");
+  expect(decodeObservation(JSON.parse(body)).requests?.module).toEqual({
+    count: 1,
+    durationMs: 100,
+    preRequestMs: 20,
+    waitMs: 60,
+    transferMs: 20,
+    gatewayCount: 1,
+    authMs: 5,
+    resolveMs: 10,
+    proxyHeadersMs: 35,
+  });
+  expect(decodeObservation(JSON.parse(body)).requests?.api).toMatchObject({
+    count: 1,
+    gatewayCount: 0,
+    waitMs: 0,
+  });
+});
+
+it("retains time spent hidden even when app readiness arrives in the foreground", async () => {
+  const browser = browserHarness();
+  browser.document.visibilityState = "hidden";
+  browser.emit("visibilitychange");
+  browser.advancePerformanceTime(3_000);
+  browser.document.visibilityState = "visible";
+  browser.emit("visibilitychange");
+  browser.emit("app-data-ready");
+  expect(decodeObservation(JSON.parse(await browser.reports.at(-1)!.text()))).toMatchObject({
+    hiddenMs: 3_000,
+    visible: true,
+    longTasksSupported: false,
+  });
+});
+
+it("drains queued resources and long tasks before reporting readiness", async () => {
+  const browser = browserHarness(undefined, true);
+  browser.queue("resource", { name: "https://preview.example/api/test", duration: 20 });
+  browser.queue("longtask", { duration: 120, name: "private" });
+  browser.emit("app-data-ready");
+  const data = decodeObservation(JSON.parse(await browser.reports.at(-1)!.text()));
+  expect(data).toMatchObject({
+    longTasksSupported: true,
+    longTaskCount: 1,
+    longTaskMs: 120,
+    resourceCount: 1,
+  });
+  browser.emit("pagehide");
+  expect(decodeObservation(JSON.parse(await browser.reports.at(-1)!.text()))).toMatchObject({
+    longTaskCount: 1,
+    resourceCount: 1,
+  });
 });
