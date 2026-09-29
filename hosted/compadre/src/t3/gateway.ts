@@ -1,3 +1,4 @@
+import { parsePreviewStartupStages } from "./preview-startup-stages.js";
 import { type ProviderAction, ProviderActionsUnavailableError } from "./provider-actions.js";
 import { captureWorkspaceReview } from "./workspace-review-capture.js";
 import { reviewCheckpointForMessage, type T3OrchestrationSnapshot } from "./client.js";
@@ -1357,6 +1358,14 @@ export class T3Gateway {
           "scripts/compadre-dev-up.sh up",
           { cwd: sandbox.workspaceRoot ?? "/workspace" },
         );
+        for (const stage of parsePreviewStartupStages(started.stdout)) {
+          log.info({
+            event: "preview.startup.stage",
+            canonicalThreadId: binding.canonicalThreadId,
+            sandboxId: connected.binding.sandboxId,
+            ...stage,
+          }, "Preview startup stage completed");
+        }
         if (started.exitCode !== 0) {
           const detail = (started.stderr || started.stdout)
             .trim()

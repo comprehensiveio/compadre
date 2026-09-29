@@ -2,6 +2,7 @@ import { NativeJournalUnavailableError } from "./native-events.js";
 import { ProviderActionsUnavailableError } from "./provider-actions.js";
 import { T3Client } from "./client.js";
 import assert from "node:assert/strict";
+import { log } from "../logging.js";
 import test from "node:test";
 import { memoryPersistence } from "@tanstack/ai-persistence";
 import { T3ThreadBindingStore } from "../services/t3-thread-bindings.js";
@@ -900,7 +901,8 @@ test("inspects preview readiness without starting the development server", async
   assert.match(commands[0] ?? "", /127\.0\.0\.1:3000/);
 });
 
-test("reprojects the dev environment before starting preview in a running worker", async () => {
+test("reprojects the dev environment before starting preview in a running worker", async (t) => {
+  const info = t.mock.method(log, "info", () => {});
   const persistence = memoryPersistence();
   const bindings = new T3ThreadBindingStore(persistence.stores.metadata);
   const operations: string[] = [];
@@ -916,7 +918,7 @@ test("reprojects the dev environment before starting preview in a running worker
     process: {
       exec: async () => {
         operations.push("start");
-        return { exitCode: 0, stdout: "DEV_ENV_READY", stderr: "" };
+        return { exitCode: 0, stdout: "compadre-dev-stage-v1 readiness 154 0\nprivate command output", stderr: "" };
       },
     },
     ports: {
@@ -959,6 +961,14 @@ test("reprojects the dev environment before starting preview in a running worker
   });
 
   assert.deepEqual(operations, ["port", "environment", "start"]);
+  assert.deepEqual(info.mock.calls.at(-1)?.arguments, [{
+    event: "preview.startup.stage",
+    canonicalThreadId: "canonical-thread",
+    sandboxId: "sandbox-1",
+    stage: "readiness",
+    elapsedMs: 154_000,
+    exitCode: 0,
+  }, "Preview startup stage completed"]);
   assert.equal(target?.url, "https://sandbox-3000.modal.host");
 });
 

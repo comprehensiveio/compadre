@@ -64,6 +64,7 @@ a fabricated total duration. The controller emits these single-line JSON events:
 | `preview.activation.requested` | One activation accepted, identified by `activationId` and `canonicalThreadId`. Refreshes reuse an in-flight activation. |
 | `preview.activation.attempt` | A Temporal activity attempt starts; `activityAttempt` distinguishes retries. |
 | `preview.activation.transition` | `previousPhase`, new `phase`, `phaseDurationMs`, and cumulative `elapsedMs` since the accepted request. Terminal phases are `ready` and `failed`. |
+| `preview.startup.stage` | Fixed `stage` (`bootstrap`, `services`, `launch`, `readiness`), whole-second `elapsedMs`, and command `exitCode`; correlated with thread, sandbox, activation and activity attempt. |
 | `preview.worker.connected` | `workerMode` is `reconnected` or `restored`; includes the resulting `sandboxId`. |
 | `modal.phase.completed` | Low-level Modal operation, `outcome`, and `elapsedMs`; preview operations inherit the activation ID and activity attempt. |
 | `modal.sandbox.created` | Sandbox ID, effective resource requests/limits, hard timeout, and cost tags for both fresh and restored sandboxes. |
@@ -75,6 +76,18 @@ setup and the development-stack startup command. Retry backoff remains in the
 cumulative total; individual phase intervals can include backoff. Repeated updates
 to the same phase preserve the original phase start. Terminal redeliveries and
 updates from superseded activations do not emit another outcome.
+
+Startup stage records require a worker checkout containing the
+`compadre-dev-stage-v1` protocol in Comp's `scripts/compadre-dev-up.sh`. Older
+checkpoints continue working without stage records. Deploy the tolerant controller
+consumer before the Comp script producer. Existing worker checkouts are not changed
+by either merge. Stages cover bootstrap, database/dependency preparation, process
+launch, and HTTP/routing/dev-login readiness. They exclude the lifecycle lock wait
+and have one-second resolution. Records arrive after the startup command returns,
+including a nonzero exit; a killed sandbox or transport failure can lose them.
+The controller accepts only fixed labels and bounded integers, never raw command
+output. Query `@event:preview.startup.stage` grouped by `@stage`; a missing record
+is not a zero duration. Browser app readiness remains a separate measurement.
 
 These are **server activation timings**, not browser navigation or first-render
 timings. `ready` means the development startup command succeeded, before the
