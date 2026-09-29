@@ -903,6 +903,17 @@ test("inspects preview readiness without starting the development server", async
 
 test("reprojects the dev environment before starting preview in a running worker", async (t) => {
   const info = t.mock.method(log, "info", () => {});
+  const previousEnabled = process.env.COMPADRE_DEV_ENVIRONMENT_ENABLED;
+  const previousToken = process.env.COMP_DEV_DOPPLER_TOKEN;
+  process.env.COMPADRE_DEV_ENVIRONMENT_ENABLED = "true";
+  process.env.COMP_DEV_DOPPLER_TOKEN = "test-read-only-token";
+  t.after(() => {
+    if (previousEnabled === undefined) delete process.env.COMPADRE_DEV_ENVIRONMENT_ENABLED;
+    else process.env.COMPADRE_DEV_ENVIRONMENT_ENABLED = previousEnabled;
+    if (previousToken === undefined) delete process.env.COMP_DEV_DOPPLER_TOKEN;
+    else process.env.COMP_DEV_DOPPLER_TOKEN = previousToken;
+  });
+  let projectedToken: string | undefined;
   const persistence = memoryPersistence();
   const bindings = new T3ThreadBindingStore(persistence.stores.metadata);
   const operations: string[] = [];
@@ -911,12 +922,14 @@ test("reprojects the dev environment before starting preview in a running worker
     id: "sandbox-1",
     workspaceRoot: "/workspace",
     env: {
-      set: async () => {
+      set: async (environment: Record<string, string>) => {
+        projectedToken = environment.DOPPLER_TOKEN;
         operations.push("environment");
       },
     },
     process: {
       exec: async () => {
+        assert.equal(projectedToken, "test-read-only-token");
         operations.push("start");
         return { exitCode: 0, stdout: "compadre-dev-stage-v1 readiness 154 0\nprivate command output", stderr: "" };
       },

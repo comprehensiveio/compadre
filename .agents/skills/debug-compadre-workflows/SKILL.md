@@ -247,3 +247,17 @@ existing worker/checkpoint under the normal dispatch lock and starts delivery
 without a provider turn. Confirm central completion, exactly-once message replay,
 and attachment downloads. Use the blocked-delivery/checkpoint recovery flow in
 `docs/operations/local-compadre-e2e.md` before shipping changes to this path.
+
+
+## Preview launch fails after reconnect
+
+A preview can reconnect to a healthy T3 worker yet fail immediately at app launch
+with `DOPPLER_TOKEN is unavailable`. The Modal adapter's `env.set` belongs to one
+handle's command environment; it is not persisted as container-wide environment.
+A fresh reconnect handle does not inherit the secrets projected during worker
+provisioning. Preview activation must reapply `compDevSecretsProjection` before
+running the startup command. Check credential presence only, never its value;
+reading the environment through an unrelated raw Modal exec is not proof of what
+the controller's handle passed to its command. Correlate `preview.startup.stage`
+records with the activation attempt and launch error. A failed launch is not a
+successful warm-up, even when service preparation completed.

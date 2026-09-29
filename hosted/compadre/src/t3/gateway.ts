@@ -35,6 +35,7 @@ import {
 } from "./modal-worker.js";
 import {
   authenticatedDevPreviewUrl,
+  compDevSecretsProjection,
   COMP_DEV_SERVER_PORT,
 } from "./dev-environment.js";
 import { appendSetupSteering } from "./run-control.js";
@@ -1350,6 +1351,9 @@ export class T3Gateway {
             COMPADRE_CANONICAL_THREAD_ID: connected.binding.canonicalThreadId,
           }) ?? channel.url.replace(/\/$/, "");
         await sandbox.env.set({
+          // A resumed handle has a fresh per-command environment. Provisioning
+          // its worker earlier does not project secrets into this handle.
+          ...compDevSecretsProjection(),
           COMPADRE_DEV_PREVIEW_URL: previewUrl,
           COMPADRE_DEV_PORT: String(COMP_DEV_SERVER_PORT),
           AGENT_BROWSER_EXECUTABLE_PATH: "/usr/bin/chromium",
