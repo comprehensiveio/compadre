@@ -35,6 +35,23 @@ import {
   previewTelemetryScript,
 } from "./CompadrePreviewTelemetry.ts";
 const encodeBrowserLog = Schema.encodeEffect(PreviewBrowserLog);
+const encodeRequestLog = Schema.encodeEffect(
+  Schema.fromJsonString(
+    Schema.Struct({
+      event: Schema.Literal("compadre.preview.request"),
+      canonicalThreadId: Schema.String,
+      actorId: Schema.String,
+      requestKind: Schema.Literals(["document", "api", "module", "other"]),
+      method: Schema.String,
+      status: Schema.Number,
+      authMs: Schema.Number,
+      resolveMs: Schema.Number,
+      proxyHeadersMs: Schema.Number,
+      headersMs: Schema.Number,
+      proxyFailed: Schema.Boolean,
+    }),
+  ),
+);
 
 const TARGET_CACHE_MS = 30_000;
 const MAX_BUFFERED_REQUEST_BYTES = 25 * 1024 * 1024;
@@ -400,6 +417,18 @@ function proxyWebSocketRequest(input: {
   );
 }
 
+export function previewRequestKind(pathname: string, destination?: string) {
+  if (destination === "document") return "document";
+  if (pathname.startsWith("/api/") || pathname.startsWith("/_serverFn/")) return "api";
+  if (
+    /\.[cm]?[jt]sx?$/.test(pathname) ||
+    pathname.startsWith("/@") ||
+    pathname.includes("/node_modules/")
+  )
+    return "module";
+  return "other";
+}
+
 export const compadrePreviewGatewayLayer = Layer.unwrap(
   Effect.gen(function* () {
     const sessions = yield* SessionStore.SessionStore;
@@ -416,6 +445,7 @@ export const compadrePreviewGatewayLayer = Layer.unwrap(
           if (!canonicalThreadId) return httpEffect;
 
           return Effect.gen(function* () {
+            const requestStartedAt = yield* Clock.currentTimeMillis;
             const token = request.cookies[sessions.cookieName];
             const verified = token
               ? yield* sessions.verify(token).pipe(Effect.option)
@@ -547,14 +577,10 @@ export const compadrePreviewGatewayLayer = Layer.unwrap(
               );
             }
             const targetOrigin = resolution.url;
+            const resolvedAt = yield* Clock.currentTimeMillis;
 
-            yield* Effect.logInfo("Compadre preview request", {
-              canonicalThreadId,
-              actorId: user.id,
-              method: request.method,
-              path: previewUrl.pathname,
-            });
             const isWebSocket = request.headers.upgrade?.toLowerCase() === "websocket";
+            let proxyFailed = false;
             const response = isWebSocket
               ? yield* proxyWebSocketRequest({ request, targetOrigin }).pipe(
                   Effect.catchCause((cause) =>
@@ -581,7 +607,10 @@ export const compadrePreviewGatewayLayer = Layer.unwrap(
                   telemetryEnabled: config.telemetryEnabled,
                 }).pipe(
                   Effect.catchCause((cause) =>
-                    Effect.sync(() => targetCache.delete(canonicalThreadId)).pipe(
+                    Effect.sync(() => {
+                      proxyFailed = true;
+                      targetCache.delete(canonicalThreadId);
+                    }).pipe(
                       Effect.andThen(
                         Effect.logWarning("Compadre preview HTTP proxy failed", {
                           canonicalThreadId,
@@ -612,15 +641,37 @@ export const compadrePreviewGatewayLayer = Layer.unwrap(
                   ),
                 );
             const completedAt = yield* Clock.currentTimeMillis;
-            yield* Effect.logInfo("Compadre preview request completed", {
+            if (isWebSocket || !config.telemetryEnabled) return response;
+            const authMs = Math.max(0, startedAt - requestStartedAt);
+            const resolveMs = Math.max(0, resolvedAt - startedAt);
+            // Ends at response headers, before the streaming body is consumed.
+            // This includes the network hop to Modal, not just worker CPU time.
+            const proxyHeadersMs = Math.max(0, completedAt - resolvedAt);
+            const requestLog = yield* encodeRequestLog({
+              event: "compadre.preview.request",
+              method: request.method,
               canonicalThreadId,
               actorId: user.id,
-              method: request.method,
-              path: previewUrl.pathname,
+              requestKind: previewRequestKind(
+                previewUrl.pathname,
+                request.headers["sec-fetch-dest"],
+              ),
               status: response.status,
-              durationMs: completedAt - startedAt,
-            });
-            return response;
+              authMs,
+              resolveMs,
+              proxyHeadersMs,
+              headersMs: Math.max(0, completedAt - requestStartedAt),
+              proxyFailed,
+            }).pipe(Effect.orDie);
+            yield* Console.log(requestLog);
+            const timing = `compadre_auth;dur=${authMs}, compadre_resolve;dur=${resolveMs}, compadre_proxy;dur=${proxyHeadersMs}`;
+            return HttpServerResponse.setHeader(
+              response,
+              "server-timing",
+              response.headers["server-timing"]
+                ? `${timing}, ${response.headers["server-timing"]}`
+                : timing,
+            );
           });
         }),
       { global: true },
