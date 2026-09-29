@@ -248,7 +248,6 @@ without a provider turn. Confirm central completion, exactly-once message replay
 and attachment downloads. Use the blocked-delivery/checkpoint recovery flow in
 `docs/operations/local-compadre-e2e.md` before shipping changes to this path.
 
-
 ## Preview launch fails after reconnect
 
 A preview can reconnect to a healthy T3 worker yet fail immediately at app launch
