@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { SandboxFilesystemNotFoundError, type ModalClient, type Sandbox } from "modal";
 import { log } from "../logging.js";
+import { CLAUDE_CODE_VERSION, CODEX_VERSION } from "../t3/provider-versions.js";
 import {
   cacheSuccessfulPromise,
   ModalHandle,
@@ -184,8 +185,8 @@ test("records effective resources for both new and restored billed sandboxes", a
 
 test("bakes pinned harness CLIs into the default Modal image", () => {
   const commands = modalImageCommands({});
-  assert.match(commands.join("\n"), /claude-code@2\.1\.283/);
-  assert.match(commands.join("\n"), /codex@0\.157\.1/);
+  assert.ok(commands.join("\n").includes(`@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}`));
+  assert.ok(commands.join("\n").includes(`@openai/codex@${CODEX_VERSION}`));
   assert.match(commands.join("\n"), /t3@0\.0\.33/);
   assert.match(commands.join("\n"), /--prefix '\/opt\/compadre-runtime'/);
   assert.match(
