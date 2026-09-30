@@ -100,7 +100,9 @@ The hosted provider snapshot refreshes through the normal T3 managed-provider
 lifecycle. It has no model allowlist. The controller's authenticated
 `GET /hosted/t3/providers/:provider/models` endpoint runs its pinned Codex CLI's
 `model/list`, collects all pages, and returns native capability metadata.
-Central T3 reuses the local Codex parser. The model probe uses an isolated
+Central T3 reuses the local Codex parser and default-model preference, selecting
+GPT-6.1 Sol when discovery includes it. Saved Settings and project selections
+still take precedence. The model probe uses an isolated
 temporary Codex home and the worker API credential. When the managed ChatGPT
 subscription lane is enabled and idle, the same response is enriched with an
 account and `account/rateLimits/read` snapshot from a second temporary Codex

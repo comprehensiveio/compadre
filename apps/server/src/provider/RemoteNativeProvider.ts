@@ -13,6 +13,7 @@ import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/unstab
 import * as ModelManifest from "./ModelManifest.ts";
 import { resolveClaudeModelCatalog, resolveClaudeModelsForVersion } from "./ClaudeModelCatalog.ts";
 import {
+  applyPreferredCodexDefaultModel,
   codexAccountAuthLabel,
   codexAccountEmail,
   parseCodexModelListResponse,
@@ -96,7 +97,9 @@ export function makeRemoteProviderModelCheck(
     const models =
       options.agentProvider === "codex"
         ? ModelManifest.classifyModels(
-            parseCodexModelListResponse(yield* decodeCodexModels(response)),
+            applyPreferredCodexDefaultModel(
+              parseCodexModelListResponse(yield* decodeCodexModels(response)),
+            ),
             catalog,
             options.driverKind,
           )
