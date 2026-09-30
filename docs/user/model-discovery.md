@@ -13,3 +13,8 @@ successful discovery has no invented fallback choices.
 Slack shortcuts such as `--fable` and `--codex` use explicit configured defaults.
 They do not limit which models appear in the web picker. The built-in
 `--fable` default is Claude Fable 5.1.
+
+New Codex conversations default to GPT-6.1 Sol (`gpt-6.1-sol`), including
+Slack and API conversations. Saved model selections in Settings, projects, and
+existing threads take precedence. Claude Opus 5.5 is available in the Claude
+picker with a supported Claude Code version.

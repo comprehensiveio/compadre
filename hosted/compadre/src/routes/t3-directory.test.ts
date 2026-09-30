@@ -605,7 +605,7 @@ test("generates hidden provider text without creating a directory thread", async
   assert.equal(defaultResponse.status, 200, await defaultResponse.clone().text());
   assert.deepEqual((received as { modelSelection: unknown }).modelSelection, {
     instanceId: "codex",
-    model: "gpt-6-sol",
+    model: "gpt-6.1-sol",
     options: [{ id: "reasoningEffort", value: "medium" }],
   });
 });

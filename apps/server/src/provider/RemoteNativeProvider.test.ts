@@ -247,3 +247,30 @@ it.effect("keeps disabled providers offline and reports initial discovery failur
     assert.deepEqual(unavailable.models, []);
   }),
 );
+
+it.effect("hosted discovery prefers Sol 6.1 over the native default", () =>
+  Effect.gen(function* () {
+    const client = HttpClient.make((request) =>
+      Effect.succeed(
+        HttpClientResponse.fromWeb(
+          request,
+          Response.json({
+            version: "0.159.2",
+            data: [nativeModel("gpt-6-astra"), { ...nativeModel("gpt-6.1-sol"), isDefault: false }],
+            nextCursor: null,
+          }),
+        ),
+      ),
+    );
+    const check = makeRemoteProviderModelCheck(
+      options(),
+      client,
+      manifestService(() => ({ version: 1, currentModels: {} })),
+    );
+    const snapshot = yield* check.checkProvider;
+    assert.deepEqual(
+      snapshot.models.filter((model) => model.isDefault).map((model) => model.slug),
+      ["gpt-6.1-sol"],
+    );
+  }),
+);
