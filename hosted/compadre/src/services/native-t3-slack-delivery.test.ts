@@ -268,3 +268,39 @@ test("a cancelled native run posts a stopped notice even after partial text", as
     "clear",
   ]);
 });
+
+test("both native Slack mirrors preserve an unrecognized provider terminal error", async () => {
+  const message = "Selected model is at capacity. Please try a different model.";
+  const error: StreamChunk = {
+    type: EventType.RUN_ERROR,
+    runId: "run-capacity",
+    message,
+    timestamp: 1,
+  };
+  const input = {
+    binding: { channelId: "C1", threadTs: "123.4" },
+    userMessage: "Question",
+    botToken: "test-token",
+    detailsUrl: "https://central.example/project/thread",
+  };
+  for (const mode of ["observer", "stream"] as const) {
+    const posts: Array<{ message: string; url?: string }> = [];
+    const slack: NativeT3SlackDeliveryStream = {
+      async postThreadMessage(message, _id, link) { posts.push({ message, url: link?.url }); },
+      async setStatus() {},
+      async clearStatus() {},
+    };
+    if (mode === "observer") {
+      const mirror = new SlackRunMirror(input, undefined, slack);
+      await mirror.start();
+      mirror.observe(error);
+      await mirror.finish();
+    } else {
+      async function* failed(): AsyncIterable<StreamChunk> { yield error; }
+      const events: StreamChunk[] = [];
+      for await (const chunk of mirrorNativeT3RunToSlack(failed(), input, slack)) events.push(chunk);
+      assert.deepEqual(events, [error]);
+    }
+    assert.deepEqual(posts.at(-1), { message: `:warning: ${message}`, url: input.detailsUrl });
+  }
+});

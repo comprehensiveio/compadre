@@ -57,19 +57,25 @@ export class IncompleteTerminalResponseError extends Error {
   }
 }
 
-export function slackFailureNotice(error: unknown): string {
+export function slackFailureNotice(
+  error: unknown,
+  providerMessage?: string | null,
+): string {
   if (error instanceof IncompleteTerminalResponseError) {
     return INCOMPLETE_RESPONSE_NOTICE;
   }
   if (isModalSpendLimitError(error)) return MODAL_SPEND_LIMIT_NOTICE;
 
-  // Match saved error summaries, never relay arbitrary provider text or tool data.
+  // Known failures keep their actionable notices; native provider errors retain
+  // their original message when no notice matches.
   // Delivery takes precedence: a failed sync does not establish an agent failure.
   const messages = failureMessages(error);
   for (const [pattern, notice] of FAILURE_NOTICES) {
     if (messages.some((message) => pattern.test(message))) return notice;
   }
-  return AGENT_FAILURE_NOTICE;
+  return providerMessage?.trim()
+    ? `:warning: ${providerMessage}`
+    : AGENT_FAILURE_NOTICE;
 }
 
 const FAILURE_NOTICES: ReadonlyArray<readonly [RegExp, string]> = [

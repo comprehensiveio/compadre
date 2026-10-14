@@ -151,3 +151,21 @@ test("handles wrapped errors and cyclic causes with a short unknown fallback", (
   assert.equal(slackFailureNotice(null), AGENT_FAILURE_NOTICE);
   assert.match(slackFailureNotice({ message: "Activity failed", cause: { message: "rate_limit_exceeded" } }), /rate limit/);
 });
+
+test("passes unrecognized native provider messages through unchanged", () => {
+  for (const message of [
+    "Selected model is at capacity. Please try a different model.",
+    "Provider rejected the request.\nRequest ID: abc-123",
+  ]) {
+    assert.equal(slackFailureNotice(new Error(message), message), `:warning: ${message}`);
+  }
+  assert.equal(slackFailureNotice(new Error("infrastructure failed")), AGENT_FAILURE_NOTICE);
+  assert.equal(slackFailureNotice(new Error("infrastructure failed"), "  "), AGENT_FAILURE_NOTICE);
+});
+
+test("known failure notices take precedence over the original provider message", () => {
+  const message = "rate_limit_exceeded: provider request abc-123";
+  const notice = slackFailureNotice(new Error(message), message);
+  assert.match(notice, /service hit a rate limit/);
+  assert.doesNotMatch(notice, /abc-123/);
+});

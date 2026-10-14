@@ -152,7 +152,7 @@ ${this.input.userMessage}`);
         );
       } else if (this.terminalError) {
         await this.slack.postThreadMessage(
-          slackFailureNotice(new Error(this.terminalError)),
+          slackFailureNotice(new Error(this.terminalError), this.terminalError),
           undefined,
           sessionLink,
         );
@@ -285,7 +285,7 @@ ${input.userMessage}`);
         );
       } else if (terminalError) {
         await slack.postThreadMessage(
-          slackFailureNotice(new Error(terminalError)),
+          slackFailureNotice(new Error(terminalError), terminalError),
           undefined,
           sessionLink,
         );

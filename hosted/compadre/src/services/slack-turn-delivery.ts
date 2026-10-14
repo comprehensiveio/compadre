@@ -140,6 +140,7 @@ export async function deliverClaimedSlackTurn(input: {
                   ? `The agent stopped before completing (${incompleteReason}).`
                 : "The agent run completed without a final response."),
           ),
+          snapshot.thread.session?.lastError,
         )
       : finalText;
 

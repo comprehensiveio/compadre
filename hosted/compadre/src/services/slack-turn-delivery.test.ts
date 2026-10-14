@@ -428,3 +428,34 @@ test("delivers the saved web error as a concise Slack reason with the existing s
   ]);
   assert.equal(calls.filter(([kind]) => kind === "message").length, 1);
 });
+
+test("delivers an unrecognized provider error unchanged with the existing session link", async () => {
+  const job = delivery();
+  const failed = snapshot("error");
+  failed.thread.session!.lastError = "Selected model is at capacity. Please try a different model.";
+  const { slack, calls } = slackRecorder();
+  const completed = await deliverClaimedSlackTurn({
+    delivery: job,
+    store: {
+      async markDelivered() { return true; },
+      async markFailed() { assert.fail("failure notice should be delivered"); },
+    },
+    t3: {
+      baseUrl: "https://t3.example",
+      async environmentDescriptor() { throw new Error("not used"); },
+      async snapshot() { throw new Error("not used"); },
+      async startNewThread() { throw new Error("not used"); },
+      async startTurn() { throw new Error("not used"); },
+      async waitForTurnTerminal() { return failed; },
+    },
+    slack,
+  });
+  assert.equal(completed, true);
+  assert.deepEqual(calls[0], [
+    "message",
+    ":warning: Selected model is at capacity. Please try a different model.",
+    job.id,
+    { label: "open session in Compadre web", url: job.detailsUrl },
+  ]);
+  assert.equal(calls.filter(([kind]) => kind === "message").length, 1);
+});
